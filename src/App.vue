@@ -7,15 +7,18 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import { computed, onMounted, reactive, ref } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
+import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
 import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "./core/model";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
+import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
+import { normalizeImportedVaultItem } from "./manager/import-items";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { vaultClient } from "./runtime/client";
 import type { VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | "passwords" | "providers" | "settings";
+type Section = "overview" | VaultManagerSection | "providers" | "settings";
 
-const credentials = ref<LoginItem[]>([]);
+const vaultItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
@@ -26,6 +29,9 @@ const authBusy = ref(false);
 const authError = ref("");
 const mobileNavOpen = ref(false);
 const editorOpen = ref(false);
+const vaultEditorOpen = ref(false);
+const vaultEditorItem = ref<VaultItem | undefined>();
+const vaultEditorKind = ref<EditableVaultKind>("card");
 const editingId = ref<string | null>(null);
 const revealPassword = ref(false);
 const formError = ref("");
@@ -46,13 +52,22 @@ const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bit
 
 useThemePreferences();
 
+const credentials = computed(() => vaultItems.value.filter(isLoginItem));
 const filteredCredentials = computed(() => {
   const needle = query.value.trim().toLowerCase();
   if (!needle) return credentials.value;
   return credentials.value.filter((item) => `${item.title} ${item.username} ${item.uris.join(" ")} ${item.notes}`.toLowerCase().includes(needle));
 });
 const uniqueHosts = computed(() => new Set(credentials.value.flatMap((item) => item.uris)).size);
-const favoriteCount = computed(() => credentials.value.filter((item) => item.favorite).length);
+const favoriteCount = computed(() => vaultItems.value.filter((item) => item.favorite).length);
+const walletItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
+const noteItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "notes"));
+const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
+const filteredSectionItems = computed(() => {
+  if (activeSection.value !== "wallet" && activeSection.value !== "notes" && activeSection.value !== "passkeys") return [];
+  const needle = query.value.trim().toLocaleLowerCase();
+  return vaultItems.value.filter((item) => itemSection(item) === activeSection.value && (!needle || itemSearchText(item).toLocaleLowerCase().includes(needle)));
+});
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
@@ -97,7 +112,7 @@ async function unlockVault() {
 async function authenticate(action: () => Promise<VaultItem[]>) {
   authBusy.value = true;
   try {
-    credentials.value = (await action()).filter(isLoginItem);
+    vaultItems.value = await action();
     await refreshProviders();
     lifecycle.value = "unlocked";
     auth.masterPassword = "";
@@ -111,14 +126,15 @@ async function authenticate(action: () => Promise<VaultItem[]>) {
 
 async function lockVault() {
   await vaultClient.lock();
-  credentials.value = [];
+  vaultItems.value = [];
   lifecycle.value = "locked";
   activeSection.value = "overview";
   editorOpen.value = false;
+  vaultEditorOpen.value = false;
 }
 
 async function refreshItems() {
-  credentials.value = (await vaultClient.listItems()).filter(isLoginItem);
+  vaultItems.value = await vaultClient.listItems();
 }
 
 async function refreshProviders() {
@@ -135,6 +151,26 @@ function navigate(section: Section) {
   if (section === "providers") void refreshProviders();
 }
 
+function sectionTitle(section: Section): string {
+  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "笔记与验证码", passkeys: "Passkey", providers: "密码源", settings: "设置与备份" } as const)[section];
+}
+
+function sectionDescription(section: Section): string {
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "管理安全笔记和 TOTP 动态验证码。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", providers: "连接 Monica Android WebDAV、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+}
+
+function providerName(item: VaultItem): string {
+  const reference = item.providerRefs[0];
+  return reference ? providers.value.find((provider) => provider.id === reference.providerId)?.name || "外部密码源" : "Monica 本地库";
+}
+
+async function removeVaultItem(item: VaultItem) {
+  if (!window.confirm(`确定删除“${item.title}”吗？${item.providerRefs.length ? "此操作会进入同步删除队列。" : ""}`)) return;
+  await vaultClient.deleteItem(item.id);
+  await refreshItems();
+  showNotice(`${itemKindLabel(item.kind)}已删除。`);
+}
+
 function openCreate() {
   editingId.value = null;
   Object.assign(form, { name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: defaultProviderId.value });
@@ -149,6 +185,30 @@ function openEdit(item: LoginItem) {
   formError.value = "";
   revealPassword.value = false;
   editorOpen.value = true;
+}
+
+function openVaultCreate(section: "wallet" | "notes") {
+  vaultEditorItem.value = undefined;
+  vaultEditorKind.value = section === "wallet" ? "card" : "secure-note";
+  vaultEditorOpen.value = true;
+}
+
+function openVaultEdit(item: VaultItem) {
+  if (!isEditableVaultItem(item)) return;
+  vaultEditorItem.value = item;
+  vaultEditorKind.value = item.kind;
+  vaultEditorOpen.value = true;
+}
+
+async function saveVaultItem(item: VaultItem) {
+  await vaultClient.upsertItem(item);
+  await refreshItems();
+  vaultEditorOpen.value = false;
+  showNotice(`${itemKindLabel(item.kind)}已加密保存。`);
+}
+
+function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: EditableVaultKind } {
+  return item.kind === "card" || item.kind === "identity" || item.kind === "billing-address" || item.kind === "payment-account" || item.kind === "secure-note" || item.kind === "totp";
 }
 
 async function submitCredential() {
@@ -348,7 +408,7 @@ function twoFactorName(provider: number): string {
 }
 
 function exportVault() {
-  const blob = new Blob([JSON.stringify({ version: 1, items: credentials.value }, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ version: 1, items: vaultItems.value }, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -363,8 +423,11 @@ async function importVault(event: Event) {
   input.value = "";
   if (!file) return;
   try {
-    const parsed = JSON.parse(await file.text()) as { items?: VaultItem[]; credentials?: Array<Record<string, unknown>> };
-    const items = Array.isArray(parsed.items) ? parsed.items.filter(isLoginItem) : [];
+    const parsed = JSON.parse(await file.text()) as { items?: unknown[]; credentials?: Array<Record<string, unknown>> };
+    const items: VaultItem[] = Array.isArray(parsed.items) ? parsed.items.flatMap((item) => {
+      const normalized = normalizeImportedVaultItem(item);
+      return normalized ? [{ ...normalized, providerRefs: normalized.providerRefs.filter((reference) => providers.value.some((provider) => provider.id === reference.providerId)) } as VaultItem] : [];
+    }) : [];
     if (!items.length && Array.isArray(parsed.credentials)) {
       for (const legacy of parsed.credentials) {
         if (typeof legacy.password !== "string" || !Array.isArray(legacy.urls)) continue;
@@ -374,9 +437,9 @@ async function importVault(event: Event) {
     if (!items.length) throw new Error("no supported items");
     for (const item of items) await vaultClient.upsertItem(item);
     await refreshItems();
-    showNotice(`已加密导入 ${items.length} 个登录项。`);
+    showNotice(`已加密导入 ${items.length} 个密码库项目。`);
   } catch {
-    showNotice("导入失败：文件中没有可识别的 Monica 登录项。");
+    showNotice("导入失败：文件中没有可识别的 Monica 密码库项目。");
   }
 }
 
@@ -421,6 +484,9 @@ function errorMessage(error: unknown) {
             <p class="nav-title">密码库</p>
             <button class="nav-item" :class="{ selected: activeSection === 'overview' }" type="button" @click="navigate('overview')"><m3e-icon name="dashboard"></m3e-icon><span>概览</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'passwords' }" type="button" @click="navigate('passwords')"><m3e-icon name="password"></m3e-icon><span>登录项</span><span class="nav-count">{{ credentials.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'wallet' }" type="button" @click="navigate('wallet')"><m3e-icon name="wallet"></m3e-icon><span>钱包与身份</span><span class="nav-count">{{ walletItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'notes' }" type="button" @click="navigate('notes')"><m3e-icon name="note_stack"></m3e-icon><span>笔记与验证码</span><span class="nav-count">{{ noteItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'passkeys' }" type="button" @click="navigate('passkeys')"><m3e-icon name="key_vertical"></m3e-icon><span>Passkey</span><span class="nav-count">{{ passkeyItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'providers' }" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
           </section>
           <section>
@@ -437,18 +503,19 @@ function errorMessage(error: unknown) {
       <main>
         <m3e-app-bar size="small" class="page-appbar">
           <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
-          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索登录项" placeholder="搜索名称、用户名或网站" /></label></div>
+          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label></div>
         </m3e-app-bar>
 
         <div class="page-heading">
-          <div><h1>{{ activeSection === 'overview' ? '密码库概览' : activeSection === 'passwords' ? '登录项' : activeSection === 'providers' ? '密码源' : '设置与备份' }}</h1><p>{{ activeSection === 'passwords' ? '敏感字段只在解锁后解密。' : activeSection === 'providers' ? 'WebDAV 与 Bitwarden 将作为独立密码源接入。' : '扩展源码复用 WebUI，但运行时完全独立。' }}</p></div>
+          <div><h1>{{ sectionTitle(activeSection) }}</h1><p>{{ sectionDescription(activeSection) }}</p></div>
           <m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="primary-action" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>添加登录项</m3e-button>
+          <m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes'" class="primary-action" variant="filled" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>{{ activeSection === 'wallet' ? '添加钱包项目' : '添加笔记或验证码' }}</m3e-button>
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
 
         <section v-if="activeSection === 'overview'" class="metrics">
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="password"></m3e-icon><p>登录项</p><strong>{{ credentials.length }}</strong><small>加密缓存中的有效项</small></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="language"></m3e-icon><p>网站规则</p><strong>{{ uniqueHosts }}</strong><small>域名或网址匹配项</small></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="inventory_2"></m3e-icon><p>全部项目</p><strong>{{ vaultItems.length }}</strong><small>所有可管理的加密记录</small></div></m3e-card>
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="star"></m3e-icon><p>收藏</p><strong>{{ favoriteCount }}</strong><small>优先匹配的账号</small></div></m3e-card>
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="encrypted"></m3e-icon><p>安全状态</p><strong class="metric-word">已解锁</strong><small>15 分钟无操作自动锁定</small></div></m3e-card>
         </section>
@@ -462,6 +529,16 @@ function errorMessage(error: unknown) {
               <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? '没有匹配的登录项' : '加密密码库还是空的' }}</h2><p>{{ query ? '换一个关键词试试。' : '添加第一个账号后即可在 Popup 中匹配。' }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">添加登录项</m3e-button></div>
+          </m3e-card>
+        </section>
+
+        <section v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'passkeys'" class="content-grid">
+          <m3e-card variant="filled" class="data-card motion-card">
+            <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
+            <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? '私钥已隐藏' : '敏感字段已遮罩' }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要">{{ itemSafeSummary(item) }}</td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+            </tbody></table></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>
         </section>
 
@@ -495,6 +572,8 @@ function errorMessage(error: unknown) {
         </section>
       </main>
     </div>
+
+    <VaultItemEditor v-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" @cancel="vaultEditorOpen = false" @save="saveVaultItem" />
 
     <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>保存时整个密码库会重新加密。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitCredential">
       <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label><label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label><label class="field"><span>密码 *</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label><label class="field"><span>匹配网站 *</span><textarea v-model="form.urls" rows="3" placeholder="github.com&#10;https://accounts.example.com"></textarea><small>每行一个域名或网址；子域名会自动匹配。</small></label><label class="field"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label><label class="field"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源；复制到其他源将在后续批量操作中提供。' : '外部密码源项目会在下次同步时写入。' }}</small></label><label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><footer><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>

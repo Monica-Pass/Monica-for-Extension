@@ -188,6 +188,14 @@
   gap: 16px;
 }
 
+.vault-item-dialog {
+  width: min(100%, 780px);
+}
+
+.vault-item-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .field textarea {
   width: 100%;
   resize: vertical;
@@ -400,6 +408,10 @@
 @media (max-width: 700px) {
   .provider-layout,
   .provider-form {
+    grid-template-columns: 1fr;
+  }
+
+  .vault-item-form {
     grid-template-columns: 1fr;
   }
 
