@@ -13,6 +13,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - PBKDF2-HMAC-SHA256（600,000 次）主密码派生。
 - 解锁密钥只保存于 `chrome.storage.session`，默认 15 分钟无操作锁定。
 - Popup 只接收登录项摘要；点击后由后台解密单个条目并执行填充。
+- Popup 可发现主页面及跨域 iframe 登录表单、选择填充目标，并填充用户名、密码和当前 TOTP。
 - 旧明文原型数据会在首次创建加密密码库时迁移并删除。
 - WebDAV Basic Auth、连接测试、手动同步和多连接管理。
 - 兼容 Android 的普通 `.zip` 与 `MONICA_ENC_V1` 加密 `.enc.zip`。
@@ -50,6 +51,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 npm install
 npm test
 npm run build
+npm run test:e2e -- --grep login
 ```
 
 构建产物位于 `dist/`。

@@ -16,6 +16,8 @@ Isolated content script ---- current page DOM
 
 The page never receives a vault list or provider credentials. The popup receives only match summaries. Password material is decrypted in the background after an explicit fill command and sent only to the selected tab.
 
+For framed login forms, the popup enumerates frames through `webNavigation`, asks each isolated content script only for field-presence metadata, and identifies the chosen frame by ID. Before filling, the background resolves that frame again and requires the selected login to match either the verified frame URL or top-level URL. TOTP is generated in the background at click time and only the current code is sent to the selected frame.
+
 ## Vault envelope
 
 - KDF: PBKDF2-HMAC-SHA256, 600,000 iterations, 32-byte random salt.

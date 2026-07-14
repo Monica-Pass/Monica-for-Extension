@@ -8,6 +8,7 @@ export interface LoginMatchSummary {
   username: string;
   favorite: boolean;
   uris: string[];
+  hasTotp: boolean;
 }
 
 export type BitwardenConnectResult =
@@ -24,7 +25,7 @@ export type ExtensionRequest =
   | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
-  | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number }
+  | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number }
   | { type: "PROVIDER_LIST" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }

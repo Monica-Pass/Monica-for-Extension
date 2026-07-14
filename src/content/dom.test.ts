@@ -26,7 +26,15 @@ describe("content autofill DOM engine", () => {
   });
 
   it("returns a recoverable error without a password field", () => {
-    const dom = page('<form><input type="email"></form>');
+    const dom = page('<form><input type="search"></form>');
     expect(fillCredential({ username: "joy@example.com", password: "secret" }, dom.window.document)).toMatchObject({ ok: false });
+  });
+
+  it("fills a one-time-code step without requiring a password field", () => {
+    const dom = page('<form><input id="otp" autocomplete="one-time-code" inputmode="numeric"></form>');
+    const otp = dom.window.document.querySelector<HTMLInputElement>("#otp")!;
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasPasswordField: false, hasTotpField: true });
+    expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: true, filledTotp: true, filledPassword: false });
+    expect(otp.value).toBe("123456");
   });
 });

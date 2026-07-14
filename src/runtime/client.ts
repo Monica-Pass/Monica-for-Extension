@@ -19,7 +19,7 @@ export const vaultClient = {
   upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
   matchLogins: (pageUrl: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl }),
-  fillLogin: (itemId: string, tabId: number) => send<{ filledUsername: boolean; filledPassword: boolean }>({ type: "VAULT_FILL_LOGIN", itemId, tabId }),
+  fillLogin: (itemId: string, tabId: number, frameId?: number) => send<{ filledUsername: boolean; filledPassword: boolean; filledTotp: boolean }>({ type: "VAULT_FILL_LOGIN", itemId, tabId, frameId }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
   testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
   saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>

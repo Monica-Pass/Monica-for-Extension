@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:webdav": "vitest run src/providers/webdav",
     "test:bitwarden": "vitest run src/providers/bitwarden",
+    "test:e2e": "npm run build && playwright test",
     "build": "npm run check && vite build && node scripts/build-workers.mjs",
     "validate": "npm test && npm run build",
     "preview": "vite preview --host 127.0.0.1"
@@ -30,6 +31,7 @@
     "vue": "^3.5.35"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/chrome": "^0.2.2",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^26.1.1",

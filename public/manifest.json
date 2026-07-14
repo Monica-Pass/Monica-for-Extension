@@ -4,7 +4,7 @@
   "description": "独立运行的 Monica 本地库与网页自动填充插件。",
   "version": "0.1.0",
   "minimum_chrome_version": "109",
-  "permissions": ["activeTab", "alarms", "storage", "tabs"],
+  "permissions": ["activeTab", "alarms", "storage", "tabs", "webNavigation"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "Monica 自动填充",
@@ -24,7 +24,7 @@
       "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ],
   "options_page": "index.html",

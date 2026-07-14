@@ -1,6 +1,7 @@
 import { isLoginItem, createLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { ProviderRegistry } from "../core/provider";
+import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
@@ -78,7 +79,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_FILL_LOGIN": {
       assertExtensionPage(sender);
-      return fillLogin(request.itemId, request.tabId);
+      return fillLogin(request.itemId, request.tabId, request.frameId);
     }
     case "PROVIDER_LIST":
       assertExtensionPage(sender);
@@ -174,17 +175,21 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
   }
 }
 
-async function fillLogin(itemId: string, tabId: number) {
+async function fillLogin(itemId: string, tabId: number, frameId?: number) {
   const item = await service.getItem(itemId);
   if (!item || !isLoginItem(item)) throw new Error("登录项不存在或已被删除。");
   const tab = await chrome.tabs.get(tabId);
-  if (!tab.url || loginMatchScore(item, tab.url) <= 0) throw new Error("登录项与当前网站不匹配，已阻止填充。");
+  const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+  const targetFrame = frameId === undefined ? frames.find((frame) => frame.frameId === 0) : frames.find((frame) => frame.frameId === frameId);
+  const targetUrl = targetFrame?.url || tab.url;
+  if (!targetUrl || (loginMatchScore(item, targetUrl) <= 0 && (!tab.url || loginMatchScore(item, tab.url) <= 0))) throw new Error("登录项与目标页面不匹配，已阻止填充。");
+  const totpCode = item.totpSecret ? await generateTotp(item.totpSecret) : undefined;
   const response = (await chrome.tabs.sendMessage(tabId, {
     type: "MONICA_FILL_CREDENTIAL",
-    credential: { username: item.username, password: item.password }
-  })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean };
+    credential: { username: item.username, password: item.password, totpCode }
+  }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
-  return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword) };
+  return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp) };
 }
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {
@@ -193,7 +198,7 @@ function assertExtensionPage(sender: chrome.runtime.MessageSender): void {
 }
 
 function toMatchSummary(item: LoginItem): LoginMatchSummary {
-  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris };
+  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, hasTotp: Boolean(item.totpSecret) };
 }
 
 async function readLegacyItems(): Promise<VaultItem[]> {
