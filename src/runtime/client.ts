@@ -23,6 +23,7 @@ export const vaultClient = {
   listWalletItems: (kinds: WalletFillKind[]) => send<WalletMatchSummary[]>({ type: "VAULT_LIST_WALLET_ITEMS", kinds }),
   fillWallet: (itemId: string, tabId: number, frameId?: number) => send<WalletFillResult>({ type: "VAULT_FILL_WALLET", itemId, tabId, frameId }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
+  providerQueueStatus: () => send<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>({ type: "PROVIDER_QUEUE_STATUS" }),
   testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
   saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>
     send<ProviderAccount>({ type: "WEBDAV_SAVE", name, config, providerId, isDefaultSaveTarget }),

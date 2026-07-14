@@ -89,4 +89,17 @@ describe("encrypted vault", () => {
     const envelope = await encryptVaultState(state, key, kdf);
     await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT", schemaVersion: 1 });
   });
+
+  it("queues external mutations, caps failed attempts, and clears them after sync", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("mutation queue password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const login = createLoginItem({ title: "Queued", password: "secret", uris: ["example.com"], providerRefs: [{ providerId: "bw" }] });
+    await service.upsertItem(login);
+    expect((await service.readState()).mutationQueue).toEqual([expect.objectContaining({ providerId: "bw", itemId: login.id, operation: "create", attempts: 0 })]);
+    for (let attempt = 0; attempt < 7; attempt += 1) await service.markProviderSyncFailure("bw", "offline");
+    expect((await service.readState()).mutationQueue[0]).toMatchObject({ attempts: 5, lastError: "offline" });
+    await service.applyProviderSync("bw", [login], { lastSyncAt: new Date().toISOString(), lastError: undefined });
+    expect((await service.readState()).mutationQueue).toEqual([]);
+  });
 });

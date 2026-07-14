@@ -129,6 +129,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "PROVIDER_LIST":
       assertExtensionPage(sender);
       return service.listProviders();
+    case "PROVIDER_QUEUE_STATUS": {
+      assertExtensionPage(sender);
+      const queue = (await service.readState()).mutationQueue;
+      return [...new Set(queue.map((item) => item.providerId))].map((providerId) => { const entries = queue.filter((item) => item.providerId === providerId); return { providerId, pending: entries.length, failed: entries.filter((item) => item.lastError).length, maxAttempts: Math.max(0, ...entries.map((item) => item.attempts)), lastError: [...entries].reverse().find((item) => item.lastError)?.lastError }; });
+    }
     case "WEBDAV_TEST": {
       assertExtensionPage(sender);
       const temporary: ProviderAccount = {
@@ -210,6 +215,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         await service.applyProviderSync(account.id, result.items, result.accountPatch);
         return { warnings: result.warnings, conflicts: result.conflicts.length };
       } catch (error) {
+        await service.markProviderSyncFailure(account.id, error instanceof Error ? error.message : "同步失败");
         await service.upsertProvider({ ...account, lastError: error instanceof Error ? error.message : "同步失败" });
         throw error;
       }

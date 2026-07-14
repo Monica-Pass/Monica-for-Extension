@@ -1,4 +1,4 @@
-import { createEmptyVaultState, type ProviderAccount, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type VaultItem, type VaultState } from "../core/model";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
@@ -134,6 +134,7 @@ export class SecureVaultService {
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
     state.items = items;
+    state.mutationQueue = state.mutationQueue.filter((mutation) => mutation.providerId !== providerId);
     state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
@@ -150,6 +151,7 @@ export class SecureVaultService {
       providerRefs: item.providerRefs || []
     } as VaultItem;
     state.items = existing ? state.items.map((candidate) => (candidate.id === item.id ? normalized : candidate)) : [normalized, ...state.items];
+    queueProviderMutations(state, normalized, existing ? "update" : "create", now);
     state.updatedAt = now;
     await this.persist(state, key, envelope.kdf);
     return normalized;
@@ -161,7 +163,14 @@ export class SecureVaultService {
     const item = state.items.find((candidate) => candidate.id === itemId);
     if (!item) return;
     state.items = state.items.map((candidate) => (candidate.id === itemId ? { ...candidate, deletedAt: now, updatedAt: now } : candidate)) as VaultItem[];
+    queueProviderMutations(state, item, "delete", now);
     state.updatedAt = now;
+    await this.persist(state, key, envelope.kdf);
+  }
+
+  async markProviderSyncFailure(providerId: string, message: string): Promise<void> {
+    const { state, envelope, key } = await this.mutableContext();
+    state.mutationQueue = state.mutationQueue.map((mutation) => mutation.providerId === providerId ? { ...mutation, attempts: Math.min(5, mutation.attempts + 1), lastError: message } : mutation);
     await this.persist(state, key, envelope.kdf);
   }
 
@@ -205,6 +214,18 @@ export class SecureVaultService {
     if (!session) throw new VaultLockedError();
     const now = this.now();
     await this.sessions.write({ ...session, lastActivityAt: now, expiresAt: now + autoLockMinutes * 60_000 });
+  }
+}
+
+function queueProviderMutations(state: VaultState, item: VaultItem, operation: PendingMutation["operation"], now: string): void {
+  for (const reference of item.providerRefs) {
+    const provider = state.providers.find((candidate) => candidate.id === reference.providerId);
+    if (!provider || provider.kind === "local") continue;
+    const existing = state.mutationQueue.find((mutation) => mutation.providerId === provider.id && mutation.itemId === item.id);
+    if (operation === "delete" && existing?.operation === "create") { state.mutationQueue = state.mutationQueue.filter((mutation) => mutation !== existing); continue; }
+    const nextOperation = operation === "delete" ? "delete" : reference.remoteId ? "update" : "create";
+    const queued: PendingMutation = { id: existing?.id || crypto.randomUUID(), providerId: provider.id, itemId: item.id, operation: nextOperation, createdAt: existing?.createdAt || now, attempts: existing?.attempts || 0 };
+    state.mutationQueue = existing ? state.mutationQueue.map((mutation) => mutation === existing ? queued : mutation) : [...state.mutationQueue, queued];
   }
 }
 

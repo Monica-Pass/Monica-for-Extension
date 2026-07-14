@@ -110,6 +110,7 @@ export type ExtensionRequest =
   | { type: "PASSKEY_ACCEPT"; candidateId: string; itemId?: string }
   | { type: "PASSKEY_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }
+  | { type: "PROVIDER_QUEUE_STATUS" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }
   | {
