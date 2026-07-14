@@ -1,3 +1,6 @@
+import type { WalletFillKind } from "../runtime/messages";
+import { scanWalletKinds } from "./wallet-dom";
+
 export interface PageScan {
   ok: true;
   url: string;
@@ -7,6 +10,7 @@ export interface PageScan {
   hasUsernameField: boolean;
   hasPasswordField: boolean;
   hasTotpField: boolean;
+  walletKinds: WalletFillKind[];
 }
 
 export interface FillCredentialInput {
@@ -58,7 +62,8 @@ export function scanPage(rootDocument: Document = document, pageLocation: Locati
     title: rootDocument.title,
     hasUsernameField: Boolean(fields.username),
     hasPasswordField: Boolean(fields.password),
-    hasTotpField: Boolean(fields.totp)
+    hasTotpField: Boolean(fields.totp),
+    walletKinds: scanWalletKinds(rootDocument)
   };
 }
 

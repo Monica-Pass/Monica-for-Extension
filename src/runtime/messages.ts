@@ -11,6 +11,34 @@ export interface LoginMatchSummary {
   hasTotp: boolean;
 }
 
+export type WalletFillKind = "identity" | "billing-address" | "card" | "payment-account";
+
+export type WalletFieldName =
+  | "fullName" | "firstName" | "middleName" | "lastName" | "birthDate" | "nationality" | "documentNumber"
+  | "company" | "streetAddress" | "apartment" | "city" | "stateProvince" | "postalCode" | "country" | "phone" | "email"
+  | "cardholderName" | "cardNumber" | "cardExpiryMonth" | "cardExpiryYear" | "cardExpiry" | "cardSecurityCode" | "cardBrand"
+  | "paymentProvider" | "paymentAccountName" | "paymentAccountHolder" | "paymentUsername" | "paymentAccountId"
+  | "paymentAccountNumber" | "routingNumber" | "iban" | "swiftBic" | "currency";
+
+export interface WalletMatchSummary {
+  id: string;
+  kind: WalletFillKind;
+  title: string;
+  subtitle: string;
+  favorite: boolean;
+  sensitive: boolean;
+}
+
+export interface WalletFillPayload {
+  kind: WalletFillKind;
+  fields: Partial<Record<WalletFieldName, string>>;
+}
+
+export interface WalletFillResult {
+  filledCount: number;
+  filledFields: WalletFieldName[];
+}
+
 export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
   | { status: "two-factor-required"; providers: number[] };
@@ -54,6 +82,8 @@ export type ExtensionRequest =
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number }
+  | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[] }
+  | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }

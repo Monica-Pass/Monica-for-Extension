@@ -1,6 +1,6 @@
 import type { ProviderAccount } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -20,6 +20,8 @@ export const vaultClient = {
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
   matchLogins: (pageUrl: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl }),
   fillLogin: (itemId: string, tabId: number, frameId?: number) => send<{ filledUsername: boolean; filledPassword: boolean; filledTotp: boolean }>({ type: "VAULT_FILL_LOGIN", itemId, tabId, frameId }),
+  listWalletItems: (kinds: WalletFillKind[]) => send<WalletMatchSummary[]>({ type: "VAULT_LIST_WALLET_ITEMS", kinds }),
+  fillWallet: (itemId: string, tabId: number, frameId?: number) => send<WalletFillResult>({ type: "VAULT_FILL_WALLET", itemId, tabId, frameId }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
   testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
   saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>

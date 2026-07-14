@@ -7,7 +7,7 @@ import { computed, onMounted, ref } from "vue";
 import { normalizeHost } from "../core/matching";
 import { activeScheme, themeColor, useThemePreferences } from "../lib/theme";
 import { vaultClient } from "../runtime/client";
-import type { LoginMatchSummary } from "../runtime/messages";
+import type { LoginMatchSummary, WalletFillKind, WalletMatchSummary } from "../runtime/messages";
 import type { VaultLifecycleStatus } from "../security/secure-vault-service";
 
 interface PageScan {
@@ -19,6 +19,7 @@ interface PageScan {
   hasUsernameField: boolean;
   hasPasswordField: boolean;
   hasTotpField: boolean;
+  walletKinds: WalletFillKind[];
   frameId: number;
 }
 
@@ -35,10 +36,11 @@ const tabTitle = ref("");
 const scans = ref<PageScan[]>([]);
 const selectedFrameId = ref(0);
 const matches = ref<LoginMatchSummary[]>([]);
+const walletItems = ref<WalletMatchSummary[]>([]);
 
 useThemePreferences();
 const scan = computed(() => scans.value.find((candidate) => candidate.frameId === selectedFrameId.value) || scans.value[0] || null);
-const fillTargets = computed(() => scans.value.filter((candidate) => candidate.hasUsernameField || candidate.hasPasswordField || candidate.hasTotpField));
+const fillTargets = computed(() => scans.value.filter((candidate) => candidate.hasUsernameField || candidate.hasPasswordField || candidate.hasTotpField || candidate.walletKinds.length));
 const currentHost = computed(() => normalizeHost(scan.value?.url || tabUrl.value) || "当前页面");
 
 onMounted(initialize);
@@ -90,7 +92,34 @@ async function unlock() {
 }
 
 async function loadMatches() {
-  matches.value = await vaultClient.matchLogins(scan.value?.url || tabUrl.value);
+  const [loginMatches, walletMatches] = await Promise.all([
+    vaultClient.matchLogins(scan.value?.url || tabUrl.value),
+    vaultClient.listWalletItems(scan.value?.walletKinds || [])
+  ]);
+  matches.value = loginMatches;
+  walletItems.value = walletMatches;
+}
+
+async function fillWallet(item: WalletMatchSummary) {
+  if (!tabId.value) return;
+  fillingId.value = item.id;
+  status.value = "";
+  try {
+    const result = await vaultClient.fillWallet(item.id, tabId.value, selectedFrameId.value);
+    status.value = `已填充 ${item.title}（${result.filledCount} 个字段）`;
+  } catch (cause) {
+    status.value = errorMessage(cause, "填充失败，请刷新网页后重试。");
+  } finally {
+    fillingId.value = null;
+  }
+}
+
+function walletKindLabel(kind: WalletFillKind) {
+  return ({ identity: "证件", "billing-address": "地址", card: "银行卡", "payment-account": "支付方式" } as const)[kind];
+}
+
+function walletIcon(kind: WalletFillKind) {
+  return ({ identity: "badge", "billing-address": "home_pin", card: "credit_card", "payment-account": "account_balance" } as const)[kind];
 }
 
 async function fill(item: LoginMatchSummary) {
@@ -129,7 +158,7 @@ function errorMessage(cause: unknown, fallback: string) {
     <main class="popup-shell">
       <header class="popup-header"><div class="popup-brand"><img src="/monica-logo.png" alt="" /><div><strong>Monica</strong><small>安全自动填充</small></div></div><m3e-icon-button aria-label="打开密码库管理" @click="openManager"><m3e-icon name="settings"></m3e-icon></m3e-icon-button></header>
 
-      <section class="site-summary" aria-label="当前网站"><span class="site-icon"><m3e-icon name="language"></m3e-icon></span><div><strong>{{ currentHost }}</strong><small>{{ scan?.frameId ? `嵌入登录框 · ${scan.title || tabTitle}` : tabTitle || '正在读取当前页面' }}</small></div><span v-if="scan?.hasPasswordField || scan?.hasTotpField" class="ready-badge"><m3e-icon name="check_circle"></m3e-icon>可填充</span></section>
+      <section class="site-summary" aria-label="当前网站"><span class="site-icon"><m3e-icon name="language"></m3e-icon></span><div><strong>{{ currentHost }}</strong><small>{{ scan?.frameId ? `${scan.hasPasswordField || scan.hasTotpField ? '嵌入登录框' : '嵌入填充框'} · ${scan.title || tabTitle}` : tabTitle || '正在读取当前页面' }}</small></div><span v-if="scan?.hasPasswordField || scan?.hasTotpField || scan?.walletKinds.length" class="ready-badge"><m3e-icon name="check_circle"></m3e-icon>可填充</span></section>
 
       <div v-if="loading" class="popup-state" aria-live="polite"><span class="spinner" aria-hidden="true"></span><strong>正在检查页面与密码库…</strong><small>敏感数据尚未发送到网页</small></div>
       <div v-else-if="error" class="popup-state error-state" role="alert"><m3e-icon name="block"></m3e-icon><strong>当前页面不可用</strong><small>{{ error }}</small><m3e-button variant="tonal" @click="initialize">重试</m3e-button></div>
@@ -144,11 +173,14 @@ function errorMessage(cause: unknown, fallback: string) {
 
       <template v-else>
         <label v-if="fillTargets.length > 1" class="frame-picker"><span>填充目标</span><select :value="selectedFrameId" @change="selectTarget"><option v-for="target in fillTargets" :key="target.frameId" :value="target.frameId">{{ target.frameId === 0 ? '主页面' : `嵌入框：${normalizeHost(target.url)}` }}{{ target.hasTotpField && !target.hasPasswordField ? '（验证码）' : '' }}</option></select></label>
-        <div v-if="!scan?.hasPasswordField && !scan?.hasTotpField && !scan?.hasUsernameField" class="inline-warning"><m3e-icon name="info"></m3e-icon><span>当前目标暂未检测到可填充的登录字段。</span></div>
+        <div v-if="!scan?.hasPasswordField && !scan?.hasTotpField && !scan?.hasUsernameField && !scan?.walletKinds.length" class="inline-warning"><m3e-icon name="info"></m3e-icon><span>当前目标暂未检测到可安全填充的字段。</span></div>
         <section v-if="matches.length" class="match-section"><div class="section-title"><h1>匹配的登录项</h1><span>{{ matches.length }}</span></div><div class="match-list">
           <button v-for="item in matches" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : item.hasTotp && scan?.hasTotpField ? 'timer' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || '无用户名' }}{{ item.hasTotp ? ' · 含验证码' : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? '填充中' : '填充' }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
         </div></section>
-        <div v-else class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>没有匹配项</strong><small>请在密码库中添加包含 {{ currentHost }} 的登录项。</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>打开密码库</m3e-button></div>
+        <section v-if="walletItems.length" class="match-section"><div class="section-title"><h1>证件与支付方式</h1><span>{{ walletItems.length }}</span></div><div class="match-list">
+          <button v-for="item in walletItems" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fillWallet(item)"><span class="credential-icon"><m3e-icon :name="walletIcon(item.kind)"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ walletKindLabel(item.kind) }} · {{ item.subtitle }}{{ item.sensitive ? ' · 点击后填充敏感信息' : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? '填充中' : '填充' }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
+        </div></section>
+        <div v-if="!matches.length && !walletItems.length" class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>没有匹配项</strong><small>请在密码库中添加当前页面可使用的登录、证件、地址或支付项目。</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>打开密码库</m3e-button></div>
       </template>
 
       <p class="popup-status" aria-live="polite">{{ status }}</p>

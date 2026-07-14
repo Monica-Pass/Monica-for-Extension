@@ -1,11 +1,11 @@
-import { isLoginItem, createLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "../core/model";
+import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PaymentAccountItem, type ProviderAccount, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { ProviderRegistry } from "../core/provider";
 import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
-import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SavePromptContext, SavePromptProviderSummary } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -99,6 +99,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_FILL_LOGIN": {
       assertExtensionPage(sender);
       return fillLogin(request.itemId, request.tabId, request.frameId);
+    }
+    case "VAULT_LIST_WALLET_ITEMS": {
+      assertExtensionPage(sender);
+      return listWalletItems(request.kinds);
+    }
+    case "VAULT_FILL_WALLET": {
+      assertExtensionPage(sender);
+      return fillWalletItem(request.itemId, request.tabId, request.frameId);
     }
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);
@@ -370,6 +378,87 @@ async function fillLogin(itemId: string, tabId: number, frameId?: number) {
   }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
   return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp) };
+}
+
+type WalletItem = IdentityItem | BillingAddressItem | CardItem | PaymentAccountItem;
+
+async function listWalletItems(requestedKinds: WalletFillKind[]): Promise<WalletMatchSummary[]> {
+  const kinds = new Set(requestedKinds.filter(isWalletKind));
+  return (await service.listItems()).filter(isWalletItem).filter((item) => kinds.has(item.kind)).map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    title: item.title,
+    subtitle: walletSubtitle(item),
+    favorite: item.favorite,
+    sensitive: item.kind !== "billing-address"
+  })).sort((left, right) => Number(right.favorite) - Number(left.favorite) || left.title.localeCompare(right.title));
+}
+
+async function fillWalletItem(itemId: string, tabId: number, frameId?: number): Promise<WalletFillResult> {
+  const item = await service.getItem(itemId);
+  if (!item || !isWalletItem(item)) throw new Error("证件或支付项目不存在或已被删除。");
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab.active) throw new Error("已阻止向非活动标签页填充敏感信息。");
+  const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
+  const target = frames.find((frame) => frame.frameId === (frameId ?? 0));
+  const targetUrl = target?.url || (frameId === undefined || frameId === 0 ? tab.url : undefined);
+  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) throw new Error("当前目标不是可填充的网页。");
+  const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", wallet: walletPayload(item) }, frameId === undefined ? undefined : { frameId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };
+  if (!response?.ok) throw new Error(response?.error || "网页拒绝了证件或支付信息填充。");
+  return { filledCount: Number(response.filledCount) || 0, filledFields: response.filledFields || [] };
+}
+
+function walletPayload(item: WalletItem): WalletFillPayload {
+  if (item.kind === "identity") return { kind: item.kind, fields: {
+    fullName: item.fullName, firstName: item.firstName, middleName: item.middleName, lastName: item.lastName,
+    birthDate: item.birthDate, nationality: item.nationality, documentNumber: item.documentNumber, email: item.email, phone: item.phone,
+    streetAddress: item.address?.streetAddress, apartment: item.address?.apartment, city: item.address?.city,
+    stateProvince: item.address?.stateProvince, postalCode: item.address?.postalCode, country: item.address?.country
+  } };
+  if (item.kind === "billing-address") return { kind: item.kind, fields: {
+    fullName: item.fullName, company: item.company, streetAddress: item.streetAddress, apartment: item.apartment, city: item.city,
+    stateProvince: item.stateProvince, postalCode: item.postalCode, country: item.country, phone: item.phone, email: item.email
+  } };
+  if (item.kind === "card") return { kind: item.kind, fields: {
+    cardholderName: item.cardholderName, cardNumber: item.number, cardExpiryMonth: item.expiryMonth, cardExpiryYear: item.expiryYear,
+    cardExpiry: [item.expiryMonth, item.expiryYear.length === 4 ? item.expiryYear.slice(-2) : item.expiryYear].filter(Boolean).join("/"),
+    cardSecurityCode: item.securityCode, cardBrand: item.brand
+  } };
+  return { kind: item.kind, fields: {
+    paymentProvider: item.provider, paymentAccountName: item.accountName, paymentAccountHolder: item.accountHolderName,
+    email: item.email, phone: item.phone, paymentUsername: item.username, paymentAccountId: item.accountId,
+    paymentAccountNumber: unmaskedAccountNumber(item.maskedAccountNumber), routingNumber: item.routingNumber, iban: item.iban,
+    swiftBic: item.swiftBic, currency: item.currency
+  } };
+}
+
+function isWalletItem(item: VaultItem): item is WalletItem {
+  return !item.deletedAt && isWalletKind(item.kind);
+}
+
+function isWalletKind(kind: string): kind is WalletFillKind {
+  return kind === "identity" || kind === "billing-address" || kind === "card" || kind === "payment-account";
+}
+
+function walletSubtitle(item: WalletItem): string {
+  if (item.kind === "card") return `${item.brand || "银行卡"}${lastFour(item.number)}`;
+  if (item.kind === "identity") return `${documentLabel(item.documentType)}${lastFour(item.documentNumber)}`;
+  if (item.kind === "billing-address") return [item.city, item.country].filter(Boolean).join(" · ") || "地址";
+  return [item.provider, item.accountName || item.accountHolderName].filter(Boolean).join(" · ") || item.paymentType || "支付账户";
+}
+
+function lastFour(value: string): string {
+  const suffix = value.replace(/\s+/g, "").slice(-4);
+  return suffix ? ` · •••• ${suffix}` : "";
+}
+
+function documentLabel(type: IdentityItem["documentType"]): string {
+  return ({ ID_CARD: "身份证", PASSPORT: "护照", DRIVER_LICENSE: "驾驶证", SOCIAL_SECURITY: "社会保障号", OTHER: "证件" } as const)[type];
+}
+
+function unmaskedAccountNumber(value: string): string | undefined {
+  const normalized = value.trim();
+  return normalized && !/[x*•]/i.test(normalized) ? normalized : undefined;
 }
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {

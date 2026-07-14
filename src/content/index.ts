@@ -1,15 +1,20 @@
-import type { CredentialCaptureInput, ExtensionResponse, SavePromptContext } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionResponse, SavePromptContext, WalletFillPayload } from "../runtime/messages";
 import { captureCredentialInput, captureRootForEvent } from "./credential-capture";
 import { fillCredential, scanPage, type FillCredentialInput } from "./dom";
 import { renderSavePrompt } from "./save-prompt";
+import { fillWallet } from "./wallet-dom";
 
-chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload }, _sender, sendResponse) => {
   if (message?.type === "MONICA_SCAN_PAGE") {
     sendResponse(scanPage());
     return false;
   }
   if (message?.type === "MONICA_FILL_CREDENTIAL") {
     sendResponse(fillCredential(message.credential || {}));
+    return false;
+  }
+  if (message?.type === "MONICA_FILL_WALLET" && message.wallet) {
+    sendResponse(fillWallet(message.wallet));
     return false;
   }
   if (message?.type === "MONICA_SHOW_SAVE_PROMPT" && message.context) {
