@@ -1,0 +1,292 @@
+.vault-auth {
+  align-content: center;
+  background: radial-gradient(circle at top, color-mix(in srgb, var(--app-selected) 76%, transparent), transparent 48%);
+}
+
+.vault-auth h1 {
+  font-size: 2rem;
+}
+
+.security-note {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 22px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-selected) 48%, transparent);
+  font-size: 0.8rem;
+}
+
+.nav-count {
+  min-width: 28px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--app-primary) 14%, transparent);
+  text-align: center;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.local-badge,
+.boundary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.local-badge {
+  min-height: 48px;
+  border-radius: 24px;
+  padding: 8px 12px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-selected) 58%, transparent);
+  font-size: 0.82rem;
+}
+
+.sr-status {
+  min-height: 24px;
+  color: var(--md-sys-color-primary, var(--app-primary));
+  font-weight: 600;
+}
+
+.metric > m3e-icon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  color: var(--md-sys-color-primary, var(--app-primary));
+}
+
+.metric-word {
+  font-size: 1.75rem !important;
+}
+
+.getting-started {
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+}
+
+.getting-started > m3e-icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.getting-started p,
+.supporting,
+.editor-dialog header p,
+.field small {
+  margin-top: 6px;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  line-height: 1.5;
+}
+
+.url-list {
+  display: block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-cell {
+  min-width: 112px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.empty-state {
+  min-height: 340px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 40px;
+  color: var(--app-muted);
+  text-align: center;
+}
+
+.empty-state > m3e-icon {
+  font-size: 52px;
+  color: var(--app-primary);
+}
+
+.file-action {
+  min-height: 48px;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 18px;
+  color: var(--md-sys-color-on-secondary-container, var(--app-text));
+  background: var(--md-sys-color-secondary-container, var(--app-selected));
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.file-action input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+.boundary-row {
+  min-height: 48px;
+  border-radius: 18px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--app-selected) 42%, transparent);
+}
+
+.boundary-row.warning {
+  color: #6f4a00;
+  background: #ffe1a6;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.52);
+  animation: fade-in var(--motion-fast) var(--motion-ease);
+}
+
+.editor-dialog {
+  width: min(100%, 620px);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  border-radius: 30px;
+  padding: 24px;
+  color: var(--app-text);
+  background: var(--md-sys-color-surface-container-high, var(--app-surface));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+  animation: dialog-in var(--motion-medium) var(--motion-ease);
+}
+
+.editor-dialog header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.editor-form {
+  display: grid;
+  gap: 16px;
+}
+
+.field textarea {
+  width: 100%;
+  resize: vertical;
+  border: 0;
+  border-radius: 16px;
+  outline: 0;
+  padding: 14px 16px;
+  color: var(--app-text);
+  background: var(--md-sys-color-surface-container-highest, var(--app-surface-high));
+  font: inherit;
+  line-height: 1.5;
+}
+
+.field textarea:focus {
+  box-shadow: inset 0 0 0 2px var(--app-primary);
+}
+
+.password-field {
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 16px;
+  padding-right: 8px;
+  background: var(--md-sys-color-surface-container-highest, var(--app-surface-high));
+}
+
+.password-field input {
+  background: transparent;
+}
+
+.password-field button {
+  min-width: 64px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 22px;
+  color: var(--app-primary);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.favorite-row {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.favorite-row input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--app-primary);
+}
+
+.editor-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+}
+
+@media (max-width: 700px) {
+  .getting-started {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .getting-started m3e-button {
+    grid-column: 1 / -1;
+  }
+
+  .modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .editor-dialog {
+    max-height: 92dvh;
+    border-radius: 30px 30px 0 0;
+  }
+}

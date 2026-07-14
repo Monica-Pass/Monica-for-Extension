@@ -1,0 +1,353 @@
+html,
+body.popup-body,
+#popup-root {
+  width: 390px;
+  min-width: 390px;
+  min-height: 520px;
+  margin: 0;
+}
+
+body.popup-body {
+  overflow-x: hidden;
+  background: var(--app-bg);
+}
+
+.popup-shell {
+  width: 390px;
+  min-height: 520px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--app-text);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--app-selected) 52%, var(--app-bg)) 0, var(--app-bg) 180px);
+}
+
+.popup-header,
+.popup-brand,
+.site-summary,
+.section-title,
+.credential-card,
+.popup-footer,
+.popup-footer button,
+.inline-warning {
+  display: flex;
+  align-items: center;
+}
+
+.popup-header {
+  justify-content: space-between;
+  min-height: 48px;
+}
+
+.popup-brand {
+  gap: 10px;
+}
+
+.popup-brand img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.popup-brand strong,
+.popup-brand small,
+.site-summary strong,
+.site-summary small,
+.credential-copy strong,
+.credential-copy small {
+  display: block;
+}
+
+.popup-brand strong {
+  font-size: 1.05rem;
+}
+
+.popup-brand small,
+.site-summary small,
+.credential-copy small,
+.popup-state small,
+.popup-footer span {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.site-summary {
+  min-height: 72px;
+  gap: 12px;
+  border-radius: 24px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--app-surface) 88%, var(--app-bg));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.site-summary > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.site-summary strong,
+.site-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-icon,
+.credential-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.site-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+}
+
+.ready-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: #0b5d36;
+  background: #cfe9d8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ready-badge m3e-icon {
+  font-size: 16px;
+}
+
+.popup-state {
+  min-height: 250px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
+  text-align: center;
+}
+
+.popup-state > m3e-icon {
+  font-size: 48px;
+  color: var(--app-primary);
+}
+
+.popup-unlock {
+  min-height: 250px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-content: center;
+  padding: 18px 10px;
+}
+
+.unlock-icon {
+  grid-row: span 1;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.popup-unlock > div {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.popup-unlock small,
+.popup-unlock label > span {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.popup-unlock label {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.popup-unlock input {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 16px;
+  outline: 0;
+  padding: 0 14px;
+  color: var(--app-text);
+  background: var(--app-surface-high);
+}
+
+.popup-unlock input:focus {
+  box-shadow: inset 0 0 0 2px var(--app-primary);
+}
+
+.popup-unlock m3e-button {
+  grid-column: 1 / -1;
+}
+
+.error-state > m3e-icon {
+  color: var(--md-sys-color-error, #b3261e);
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid color-mix(in srgb, var(--app-primary) 18%, transparent);
+  border-top-color: var(--app-primary);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+.inline-warning {
+  min-height: 44px;
+  gap: 8px;
+  border-radius: 16px;
+  padding: 8px 12px;
+  color: #6f4a00;
+  background: #ffe1a6;
+  font-size: 0.78rem;
+}
+
+.section-title {
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.section-title h1 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.section-title span {
+  min-width: 26px;
+  border-radius: 13px;
+  padding: 3px 8px;
+  color: var(--app-primary);
+  background: color-mix(in srgb, var(--app-selected) 72%, transparent);
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.match-section,
+.match-list {
+  display: grid;
+  gap: 9px;
+}
+
+.match-list {
+  max-height: 278px;
+  overflow-y: auto;
+  padding: 1px;
+}
+
+.credential-card {
+  width: 100%;
+  min-height: 68px;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-muted) 22%, transparent);
+  border-radius: 22px;
+  padding: 10px 12px;
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-surface) 90%, var(--app-bg));
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+}
+
+.credential-card:hover,
+.credential-card:focus-visible {
+  border-color: var(--app-primary);
+  background: color-mix(in srgb, var(--app-selected) 52%, var(--app-surface));
+}
+
+.credential-card:active {
+  transform: scale(0.985);
+}
+
+.credential-card:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.credential-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+}
+
+.credential-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.credential-copy strong,
+.credential-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fill-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--app-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.fill-action m3e-icon {
+  font-size: 18px;
+}
+
+.popup-status {
+  min-height: 20px;
+  color: var(--app-primary);
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.popup-footer {
+  min-height: 48px;
+  justify-content: space-between;
+  border-top: 1px solid color-mix(in srgb, var(--app-muted) 20%, transparent);
+  padding: 8px 4px 0;
+}
+
+.popup-footer button {
+  min-height: 44px;
+  gap: 6px;
+  border: 0;
+  border-radius: 22px;
+  padding: 0 12px;
+  color: var(--app-primary);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.popup-footer button:hover {
+  background: color-mix(in srgb, var(--app-selected) 60%, transparent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1.6s !important; }
+}
