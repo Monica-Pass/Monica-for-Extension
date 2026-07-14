@@ -1,11 +1,12 @@
-import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PaymentAccountItem, type ProviderAccount, type VaultItem } from "../core/model";
+import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { ProviderRegistry } from "../core/provider";
 import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
-import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import { createAssertion, createPasskey, fromBase64Url, toBase64Url, validateRpId } from "../passkey/webauthn-core";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -31,6 +32,7 @@ interface PendingCredentialCapture extends CredentialCaptureInput {
 }
 
 const pendingCredentialCaptures = new Map<string, PendingCredentialCapture>();
+const pendingPasskeyRequests = new Map<string, { id: string; request: PasskeyRequest; tabId: number; frameId: number; origin: string; rpId: string; expiresAt: number; matches: string[] }>();
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -46,6 +48,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_LOCK_ALARM) {
     void service.status().then((status) => {
       if (status !== "unlocked") pendingCredentialCaptures.clear();
+      if (status !== "unlocked") pendingPasskeyRequests.clear();
     });
   }
 });
@@ -78,6 +81,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_LOCK":
       assertExtensionPage(sender);
       pendingCredentialCaptures.clear();
+      pendingPasskeyRequests.clear();
       return service.lock();
     case "VAULT_LIST_ITEMS":
       assertExtensionPage(sender);
@@ -116,6 +120,12 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return acceptCredentialCandidate(request.candidateId, request.providerId, sender);
     case "CREDENTIAL_DISMISS":
       return dismissCredentialCandidate(request.candidateId, sender);
+    case "PASSKEY_BEGIN":
+      return beginPasskeyRequest(request.request, sender);
+    case "PASSKEY_ACCEPT":
+      return acceptPasskeyRequest(request.candidateId, request.itemId, sender);
+    case "PASSKEY_DISMISS":
+      return dismissPasskeyRequest(request.candidateId, sender);
     case "PROVIDER_LIST":
       assertExtensionPage(sender);
       return service.listProviders();
@@ -361,6 +371,58 @@ function scheduleCaptureExpiry(candidateId: string, expiresAt: number): void {
     const candidate = pendingCredentialCaptures.get(candidateId);
     if (candidate && candidate.expiresAt <= Date.now()) pendingCredentialCaptures.delete(candidateId);
   }, Math.max(0, expiresAt - Date.now()) + 50);
+}
+
+async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runtime.MessageSender): Promise<PasskeyPromptContext> {
+  const source = assertWebPageSender(sender);
+  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
+  const rpId = validateRpId(source.origin, request.rpId);
+  const passkeys = (await service.listItems()).filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && item.rpId.toLowerCase() === rpId);
+  let matches: PasskeyItem[] = [];
+  if (request.operation === "create") {
+    if (!request.rpName || !request.userName || !request.userId) throw new Error("Passkey 注册请求缺少用户或网站信息。");
+    if (!request.algorithms.includes(-7)) throw new Error("当前仅支持 ES256 Passkey。");
+    const excluded = new Set(request.excludeCredentialIds.map(normalizeCredentialId));
+    if (passkeys.some((item) => excluded.has(normalizeCredentialId(item.credentialId)))) throw new Error("网站已排除此账户现有的 Passkey。");
+  } else {
+    const allowed = new Set(request.allowCredentialIds.map(normalizeCredentialId));
+    matches = passkeys.filter((item) => item.sourceMode !== "android-metadata-only" && Boolean(item.privateKeyPkcs8) && (!allowed.size || allowed.has(normalizeCredentialId(item.credentialId))));
+    if (!matches.length) throw new Error("Monica 中没有可用于此网站的 Passkey。");
+  }
+  const id = crypto.randomUUID(); const expiresAt = Date.now() + 120_000;
+  pendingPasskeyRequests.set(id, { id, request, tabId: source.tabId, frameId: source.frameId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id) });
+  setTimeout(() => { if ((pendingPasskeyRequests.get(id)?.expiresAt || 0) <= Date.now()) pendingPasskeyRequests.delete(id); }, 120_100);
+  return { candidateId: id, operation: request.operation, rpId, rpName: request.operation === "create" ? request.rpName : rpId, userName: request.operation === "create" ? request.userName : matches[0]?.userName || "", credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local" })), expiresAt };
+}
+
+async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
+  const source = assertWebPageSender(sender); const pending = pendingPasskeyRequests.get(candidateId);
+  if (!pending || pending.expiresAt <= Date.now() || pending.tabId !== source.tabId || pending.frameId !== source.frameId || pending.origin !== source.origin) throw new Error("Passkey 请求已过期或来源不匹配。");
+  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定。");
+  pendingPasskeyRequests.delete(candidateId);
+  if (pending.request.operation === "create") {
+    const created = await createPasskey({ ...pending.request, origin: pending.origin, rpId: pending.rpId });
+    const now = new Date().toISOString();
+    const item: PasskeyItem = { id: crypto.randomUUID(), kind: "passkey", title: pending.request.rpName || pending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], credentialId: created.credentialId, rpId: created.rpId, rpName: pending.request.rpName, userHandle: pending.request.userId, userName: pending.request.userName, userDisplayName: pending.request.userDisplayName, algorithm: -7, publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: true, sourceMode: "browser-local" };
+    await service.upsertItem(item);
+    return { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response };
+  }
+  const selectedId = itemId || pending.matches[0];
+  if (!pending.matches.includes(selectedId)) throw new Error("所选 Passkey 不属于当前请求。");
+  const item = await service.getItem(selectedId);
+  if (!item || item.kind !== "passkey" || !item.privateKeyPkcs8 || item.sourceMode === "android-metadata-only") throw new Error("所选 Passkey 没有可用私钥。");
+  const assertion = await createAssertion({ origin: pending.origin, challenge: pending.request.challenge, rpId: pending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount });
+  await service.upsertItem({ ...item, signCount: assertion.signCount });
+  const id = normalizeCredentialId(item.credentialId);
+  return { operation: "get", id, rawId: id, response: assertion.response };
+}
+
+function dismissPasskeyRequest(candidateId: string, sender: chrome.runtime.MessageSender): void { const source = assertWebPageSender(sender); const pending = pendingPasskeyRequests.get(candidateId); if (pending?.tabId === source.tabId && pending.frameId === source.frameId) pendingPasskeyRequests.delete(candidateId); }
+
+function normalizeCredentialId(value: string): string {
+  const uuid = value.trim().match(/^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/i);
+  if (uuid) { const hex = uuid.slice(1).join(""); return toBase64Url(Uint8Array.from(hex.match(/../g) || [], (part) => parseInt(part, 16))); }
+  try { return toBase64Url(fromBase64Url(value)); } catch { return value.trim(); }
 }
 
 async function fillLogin(itemId: string, tabId: number, frameId?: number) {

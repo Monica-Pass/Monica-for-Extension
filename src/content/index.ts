@@ -1,8 +1,9 @@
-import type { CredentialCaptureInput, ExtensionResponse, SavePromptContext, WalletFillPayload } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionResponse, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, WalletFillPayload } from "../runtime/messages";
 import { captureCredentialInput, captureRootForEvent } from "./credential-capture";
 import { fillCredential, scanPage, type FillCredentialInput } from "./dom";
 import { renderSavePrompt } from "./save-prompt";
 import { fillWallet } from "./wallet-dom";
+import { renderPasskeyPrompt } from "./passkey-prompt";
 
 chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload }, _sender, sendResponse) => {
   if (message?.type === "MONICA_SCAN_PAGE") {
@@ -37,6 +38,20 @@ document.addEventListener("click", (event) => {
 }, true);
 
 if (window.top === window) void restorePendingPrompt();
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window || event.origin !== location.origin || event.data?.source !== "monica-passkey-page" || !event.data.requestId) return;
+  const requestId = String(event.data.requestId);
+  void sendRuntime<PasskeyPromptContext>({ type: "PASSKEY_BEGIN", request: event.data.request as PasskeyRequest }).then((context) => {
+    renderPasskeyPrompt(context, async (itemId) => {
+      const result = await sendRuntime<PasskeyResult>({ type: "PASSKEY_ACCEPT", candidateId: context.candidateId, itemId });
+      window.postMessage({ source: "monica-passkey-extension", requestId, result }, location.origin);
+    }, async () => {
+      await sendRuntime({ type: "PASSKEY_DISMISS", candidateId: context.candidateId });
+      window.postMessage({ source: "monica-passkey-extension", requestId, error: "用户取消了 Passkey 操作。", name: "NotAllowedError" }, location.origin);
+    });
+  }).catch((error) => window.postMessage({ source: "monica-passkey-extension", requestId, error: error instanceof Error ? error.message : "Passkey 请求失败。", name: "NotAllowedError" }, location.origin));
+});
 
 async function submitCandidate(candidate: CredentialCaptureInput): Promise<void> {
   try {

@@ -39,6 +39,24 @@ export interface WalletFillResult {
   filledFields: WalletFieldName[];
 }
 
+export type PasskeyRequest =
+  | { operation: "create"; challenge: string; rpId?: string; rpName: string; userId: string; userName: string; userDisplayName: string; algorithms: number[]; excludeCredentialIds: string[] }
+  | { operation: "get"; challenge: string; rpId?: string; allowCredentialIds: string[] };
+
+export interface PasskeyPromptContext {
+  candidateId: string;
+  operation: "create" | "get";
+  rpId: string;
+  rpName: string;
+  userName: string;
+  credentials: Array<{ itemId: string; title: string; userName: string; sourceMode: "browser-local" | "bitwarden" }>;
+  expiresAt: number;
+}
+
+export type PasskeyResult =
+  | { operation: "create"; id: string; rawId: string; response: { clientDataJSON: string; attestationObject: string; authenticatorData: string; publicKey: string; publicKeyAlgorithm: -7 } }
+  | { operation: "get"; id: string; rawId: string; response: { clientDataJSON: string; authenticatorData: string; signature: string; userHandle: string } };
+
 export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
   | { status: "two-factor-required"; providers: number[] };
@@ -88,6 +106,9 @@ export type ExtensionRequest =
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
   | { type: "CREDENTIAL_DISMISS"; candidateId: string }
+  | { type: "PASSKEY_BEGIN"; request: PasskeyRequest }
+  | { type: "PASSKEY_ACCEPT"; candidateId: string; itemId?: string }
+  | { type: "PASSKEY_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }

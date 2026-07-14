@@ -23,5 +23,15 @@ await Promise.all([
     target: "chrome109",
     minify: true,
     legalComments: "none"
+  }),
+  build({
+    entryPoints: [resolve(root, "src/passkey/main-world.ts")],
+    outfile: resolve(root, "dist/main-world.js"),
+    bundle: true,
+    format: "iife",
+    platform: "browser",
+    target: "chrome109",
+    minify: true,
+    legalComments: "none"
   })
 ]);
