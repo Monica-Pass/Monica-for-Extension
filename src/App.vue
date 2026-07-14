@@ -7,14 +7,16 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import { computed, onMounted, reactive, ref } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
-import { createLoginItem, isLoginItem, type LoginItem, type VaultItem } from "./core/model";
+import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "./core/model";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
+import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { vaultClient } from "./runtime/client";
 import type { VaultLifecycleStatus } from "./security/secure-vault-service";
 
 type Section = "overview" | "passwords" | "providers" | "settings";
 
 const credentials = ref<LoginItem[]>([]);
+const providers = ref<ProviderAccount[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
 const query = ref("");
@@ -27,9 +29,13 @@ const editingId = ref<string | null>(null);
 const revealPassword = ref(false);
 const formError = ref("");
 const notice = ref("");
+const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove">("");
+const webDavError = ref("");
+const editingWebDavId = ref<string | undefined>();
 
 const auth = reactive({ masterPassword: "", confirmation: "" });
-const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false });
+const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: "" });
+const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
 
 useThemePreferences();
 
@@ -40,6 +46,9 @@ const filteredCredentials = computed(() => {
 });
 const uniqueHosts = computed(() => new Set(credentials.value.flatMap((item) => item.uris)).size);
 const favoriteCount = computed(() => credentials.value.filter((item) => item.favorite).length);
+const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
+const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
+const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 
 onMounted(initialize);
 
@@ -47,7 +56,7 @@ async function initialize() {
   loading.value = true;
   try {
     lifecycle.value = await vaultClient.status();
-    if (lifecycle.value === "unlocked") await refreshItems();
+    if (lifecycle.value === "unlocked") await Promise.all([refreshItems(), refreshProviders()]);
   } catch (error) {
     authError.value = errorMessage(error);
   } finally {
@@ -81,6 +90,7 @@ async function authenticate(action: () => Promise<VaultItem[]>) {
   authBusy.value = true;
   try {
     credentials.value = (await action()).filter(isLoginItem);
+    await refreshProviders();
     lifecycle.value = "unlocked";
     auth.masterPassword = "";
     auth.confirmation = "";
@@ -103,14 +113,19 @@ async function refreshItems() {
   credentials.value = (await vaultClient.listItems()).filter(isLoginItem);
 }
 
+async function refreshProviders() {
+  providers.value = await vaultClient.listProviders();
+}
+
 function navigate(section: Section) {
   activeSection.value = section;
   mobileNavOpen.value = false;
+  if (section === "providers") void refreshProviders();
 }
 
 function openCreate() {
   editingId.value = null;
-  Object.assign(form, { name: "", username: "", password: "", urls: "", notes: "", favorite: false });
+  Object.assign(form, { name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: defaultProviderId.value });
   formError.value = "";
   revealPassword.value = false;
   editorOpen.value = true;
@@ -118,7 +133,7 @@ function openCreate() {
 
 function openEdit(item: LoginItem) {
   editingId.value = item.id;
-  Object.assign(form, { name: item.title, username: item.username, password: item.password, urls: item.uris.join("\n"), notes: item.notes, favorite: item.favorite });
+  Object.assign(form, { name: item.title, username: item.username, password: item.password, urls: item.uris.join("\n"), notes: item.notes, favorite: item.favorite, providerId: item.providerRefs[0]?.providerId || providers.value.find((provider) => provider.kind === "local")?.id || "" });
   formError.value = "";
   revealPassword.value = false;
   editorOpen.value = true;
@@ -133,7 +148,15 @@ async function submitCredential() {
   const existing = credentials.value.find((item) => item.id === editingId.value);
   const item: LoginItem = existing
     ? { ...existing, title: form.name.trim(), username: form.username.trim(), password: form.password, uris, notes: form.notes.trim(), favorite: form.favorite }
-    : createLoginItem({ title: form.name, username: form.username, password: form.password, uris, notes: form.notes, favorite: form.favorite });
+    : createLoginItem({
+        title: form.name,
+        username: form.username,
+        password: form.password,
+        uris,
+        notes: form.notes,
+        favorite: form.favorite,
+        providerRefs: providers.value.find((provider) => provider.id === form.providerId)?.kind === "local" || !form.providerId ? [] : [{ providerId: form.providerId }]
+      });
   await vaultClient.upsertItem(item);
   await refreshItems();
   showNotice(existing ? "登录项已加密更新。" : "登录项已加密保存。");
@@ -145,6 +168,83 @@ async function removeCredential(item: LoginItem) {
   await vaultClient.deleteItem(item.id);
   await refreshItems();
   showNotice("登录项已删除。");
+}
+
+function newWebDav() {
+  editingWebDavId.value = undefined;
+  Object.assign(webDavForm, { name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
+  webDavError.value = "";
+}
+
+function editWebDav(provider: ProviderAccount) {
+  const config = provider.config as Partial<MonicaWebDavConfig>;
+  editingWebDavId.value = provider.id;
+  Object.assign(webDavForm, {
+    name: provider.name,
+    baseUrl: typeof config.baseUrl === "string" ? config.baseUrl : "",
+    username: typeof config.username === "string" ? config.username : "",
+    password: typeof config.password === "string" ? config.password : "",
+    backupPassword: typeof config.backupPassword === "string" ? config.backupPassword : "",
+    isDefaultSaveTarget: provider.isDefaultSaveTarget
+  });
+  webDavError.value = "";
+}
+
+function webDavConfig(): MonicaWebDavConfig {
+  return {
+    baseUrl: webDavForm.baseUrl.trim(),
+    username: webDavForm.username.trim(),
+    password: webDavForm.password,
+    backupPassword: webDavForm.backupPassword || undefined
+  };
+}
+
+async function testWebDav() {
+  await runWebDavAction("test", async () => {
+    await vaultClient.testWebDav(webDavConfig());
+    showNotice("WebDAV 连接成功，Monica_Backups 目录可访问。");
+  });
+}
+
+async function saveWebDav() {
+  await runWebDavAction("save", async () => {
+    const saved = await vaultClient.saveWebDav(webDavForm.name, webDavConfig(), editingWebDavId.value, webDavForm.isDefaultSaveTarget);
+    editingWebDavId.value = saved.id;
+    await refreshProviders();
+    editWebDav(providers.value.find((provider) => provider.id === saved.id) || saved);
+    showNotice("WebDAV 密码源已保存到加密密码库。");
+  });
+}
+
+async function syncProvider(provider: ProviderAccount) {
+  await runWebDavAction("sync", async () => {
+    const result = await vaultClient.syncProvider(provider.id);
+    await Promise.all([refreshItems(), refreshProviders()]);
+    const details = result.conflicts ? `发现 ${result.conflicts} 个冲突，未覆盖远端数据。` : result.warnings[0] || "同步完成。";
+    showNotice(details);
+  });
+}
+
+async function removeProvider(provider: ProviderAccount) {
+  if (!window.confirm(`确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 WebDAV 文件不会被删除。`)) return;
+  await runWebDavAction("remove", async () => {
+    await vaultClient.removeProvider(provider.id);
+    await Promise.all([refreshItems(), refreshProviders()]);
+    if (editingWebDavId.value === provider.id) newWebDav();
+    showNotice("WebDAV 密码源已从插件中移除，远端备份未改动。");
+  });
+}
+
+async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Promise<void>) {
+  webDavError.value = "";
+  webDavBusy.value = kind;
+  try {
+    await action();
+  } catch (error) {
+    webDavError.value = errorMessage(error);
+  } finally {
+    webDavBusy.value = "";
+  }
 }
 
 function exportVault() {
@@ -265,10 +365,26 @@ function errorMessage(error: unknown) {
           </m3e-card>
         </section>
 
-        <section v-else-if="activeSection === 'providers'" class="source-grid">
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><m3e-icon name="folder_copy"></m3e-icon><h2>Monica Android WebDAV</h2><p class="supporting">下一阶段接入 Android ZIP、MONICA_ENC_V1 和无损快照写回。</p><span class="state state-attention">待配置</span></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><m3e-icon name="shield"></m3e-icon><h2>Bitwarden</h2><p class="supporting">随后接入官方/自托管服务、KDF、2FA、Cipher 与 Passkey。</p><span class="state state-attention">待配置</span></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><m3e-icon name="database"></m3e-icon><h2>Monica 本地库</h2><p class="supporting">当前默认保存目标，数据位于加密 IndexedDB 信封中。</p><span class="state state-healthy">已连接</span></div></m3e-card>
+        <section v-else-if="activeSection === 'providers'" class="provider-layout">
+          <m3e-card variant="filled" class="motion-card provider-config-card">
+            <div slot="header" class="card-head provider-card-head"><div><h2>{{ editingWebDavId ? '编辑 WebDAV' : '连接 Monica Android WebDAV' }}</h2><p>读取并无损写回 Android 的 Monica_Backups 快照。</p></div><m3e-button v-if="editingWebDavId" variant="text" @click="newWebDav"><m3e-icon slot="icon" name="add"></m3e-icon>新连接</m3e-button></div>
+            <form slot="content" class="provider-form" @submit.prevent="saveWebDav">
+              <label class="field"><span>显示名称</span><input v-model="webDavForm.name" autocomplete="off" placeholder="Monica Android WebDAV" /></label>
+              <label class="field field-wide"><span>WebDAV 地址 *</span><input v-model="webDavForm.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small>可以填写服务器根路径，也可以直接填写 Monica_Backups 路径。</small></label>
+              <label class="field"><span>用户名</span><input v-model="webDavForm.username" autocomplete="username" /></label>
+              <label class="field"><span>WebDAV 密码</span><input v-model="webDavForm.password" type="password" autocomplete="current-password" /></label>
+              <label class="field field-wide"><span>Android 备份加密密码</span><input v-model="webDavForm.backupPassword" type="password" autocomplete="off" /><small>仅用于 .enc.zip 的 MONICA_ENC_V1 解密；未加密备份请留空。</small></label>
+              <label class="favorite-row field-wide"><input v-model="webDavForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
+              <p v-if="webDavError" class="form-error field-wide" role="alert">{{ webDavError }}</p>
+              <footer class="provider-actions field-wide"><m3e-button variant="tonal" type="button" :disabled="Boolean(webDavBusy)" @click="testWebDav">{{ webDavBusy === 'test' ? '测试中…' : '测试连接' }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(webDavBusy)">{{ webDavBusy === 'save' ? '保存中…' : '加密保存' }}</m3e-button></footer>
+            </form>
+          </m3e-card>
+
+          <div class="provider-list">
+            <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="folder_copy"></m3e-icon><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div><span class="state" :class="provider.lastError ? 'state-attention' : 'state-healthy'">{{ provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span><p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p><p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : '尚未同步；首次同步会导入最新 Android 快照。' }}</p><div class="source-actions"><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ webDavBusy === 'sync' ? '同步中…' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="编辑 WebDAV" @click="editWebDav(provider)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 WebDAV" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div></m3e-card>
+            <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="shield"></m3e-icon><div><h2>Bitwarden</h2><p>官方及自托管服务</p></div></div><p class="supporting">下一阶段接入 KDF、2FA、Cipher CRUD 与 FIDO2 Passkey。</p><span class="state state-attention">即将接入</span></div></m3e-card>
+            <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="database"></m3e-icon><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span></div></m3e-card>
+          </div>
         </section>
 
         <section v-else class="settings-grid">
@@ -280,7 +396,7 @@ function errorMessage(error: unknown) {
     </div>
 
     <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>保存时整个密码库会重新加密。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitCredential">
-      <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label><label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label><label class="field"><span>密码 *</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label><label class="field"><span>匹配网站 *</span><textarea v-model="form.urls" rows="3" placeholder="github.com&#10;https://accounts.example.com"></textarea><small>每行一个域名或网址；子域名会自动匹配。</small></label><label class="field"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label><label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><footer><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>
+      <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label><label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label><label class="field"><span>密码 *</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label><label class="field"><span>匹配网站 *</span><textarea v-model="form.urls" rows="3" placeholder="github.com&#10;https://accounts.example.com"></textarea><small>每行一个域名或网址；子域名会自动匹配。</small></label><label class="field"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label><label class="field"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源；复制到其他源将在后续批量操作中提供。' : '外部密码源项目会在下次同步时写入。' }}</small></label><label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><footer><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>
     </form></section></div>
   </m3e-theme>
 </template>

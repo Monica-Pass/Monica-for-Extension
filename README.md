@@ -4,7 +4,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 
 ## 当前状态
 
-第一阶段已经完成：
+安全基础和 Monica Android WebDAV 阶段已经完成：
 
 - Vue 3 + Material 3 Expressive 管理页。
 - 浏览器工具栏 Popup 和当前网站登录表单检测。
@@ -14,8 +14,22 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - 解锁密钥只保存于 `chrome.storage.session`，默认 15 分钟无操作锁定。
 - Popup 只接收登录项摘要；点击后由后台解密单个条目并执行填充。
 - 旧明文原型数据会在首次创建加密密码库时迁移并删除。
+- WebDAV Basic Auth、连接测试、手动同步和多连接管理。
+- 兼容 Android 的普通 `.zip` 与 `MONICA_ENC_V1` 加密 `.enc.zip`。
+- 登录、TOTP、银行卡、证件、地址、支付账号、笔记及 Passkey 元数据导入。
+- 浏览器修改和删除会写入新的 Android 快照，未知文件和未来 JSON 字段原样保留。
+- 基于远端文件、ETag 和项目 revision 的三方冲突检测；冲突时停止覆盖。
 
-正在实施：Monica Android WebDAV、Bitwarden、保存密码弹窗、身份/支付填充和 Passkey。
+正在实施：Bitwarden、保存密码弹窗、身份/支付填充和可用 Passkey。
+
+## WebDAV 使用
+
+1. 在管理页打开“密码源”，填写 WebDAV 根地址、用户名和密码。
+2. Android 使用加密备份时，同时填写相同的备份加密密码。
+3. 先“测试连接”，再“加密保存”，最后执行“立即同步”。
+4. 新建登录项时可选择该 WebDAV 源；项目会在下次同步时写入新的 Android 兼容快照。
+
+同步不会修改旧备份文件，而是在 `Monica_Backups` 中生成新的时间戳快照。Android 本地 Passkey 备份只有设备密钥引用，因此插件只显示其元数据，不能用它签名。
 
 ## 开发
 

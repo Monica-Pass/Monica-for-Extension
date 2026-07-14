@@ -1,5 +1,7 @@
-import { isLoginItem, createLoginItem, type LoginItem, type VaultItem } from "../core/model";
+import { isLoginItem, createLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
+import { ProviderRegistry } from "../core/provider";
+import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
 import type { ExtensionRequest, ExtensionResponse, LoginMatchSummary } from "../runtime/messages";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
@@ -8,6 +10,8 @@ import { IndexedDbVaultStorage } from "../security/vault-storage";
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
 const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
 const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore());
+const providers = new ProviderRegistry();
+providers.register(new MonicaWebDavProvider());
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -72,6 +76,60 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       return fillLogin(request.itemId, request.tabId);
     }
+    case "PROVIDER_LIST":
+      assertExtensionPage(sender);
+      return service.listProviders();
+    case "WEBDAV_TEST": {
+      assertExtensionPage(sender);
+      const temporary: ProviderAccount = {
+        id: "webdav-connection-test",
+        kind: "monica-webdav",
+        name: "WebDAV connection test",
+        enabled: true,
+        isDefaultSaveTarget: false,
+        config: request.config
+      };
+      return providers.get("monica-webdav").testConnection(temporary);
+    }
+    case "WEBDAV_SAVE": {
+      assertExtensionPage(sender);
+      const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
+      if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
+      const previousConfig = existing?.config || {};
+      const connectionChanged = ["baseUrl", "username", "password", "backupPassword"].some((key) => previousConfig[key] !== request.config[key]);
+      const config = connectionChanged
+        ? request.config
+        : { ...request.config, lastFileName: previousConfig.lastFileName, lastEtag: previousConfig.lastEtag };
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "monica-webdav",
+        name: request.name.trim() || "Monica Android WebDAV",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(request.isDefaultSaveTarget),
+        config,
+        lastSyncAt: connectionChanged ? undefined : existing?.lastSyncAt,
+        lastError: undefined
+      };
+      await providers.get("monica-webdav").testConnection(account);
+      return service.upsertProvider(account);
+    }
+    case "PROVIDER_SYNC": {
+      assertExtensionPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account) throw new Error("密码源不存在。");
+      if (account.kind === "local") throw new Error("本地密码源不需要同步。");
+      try {
+        const result = await providers.get(account.kind).sync(account, { now: new Date().toISOString(), localItems: (await service.readState()).items });
+        await service.applyProviderSync(account.id, result.items, result.accountPatch);
+        return { warnings: result.warnings, conflicts: result.conflicts.length };
+      } catch (error) {
+        await service.upsertProvider({ ...account, lastError: error instanceof Error ? error.message : "同步失败" });
+        throw error;
+      }
+    }
+    case "PROVIDER_REMOVE":
+      assertExtensionPage(sender);
+      return service.removeProvider(request.providerId);
   }
 }
 

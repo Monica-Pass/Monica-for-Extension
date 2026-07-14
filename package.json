@@ -12,6 +12,7 @@
     "dev": "vite --host 127.0.0.1",
     "check": "tsc -b --pretty false",
     "test": "vitest run",
+    "test:webdav": "vitest run src/providers/webdav",
     "build": "npm run check && vite build && node scripts/build-workers.mjs",
     "validate": "npm test && npm run build",
     "preview": "vite preview --host 127.0.0.1"
@@ -19,6 +20,7 @@
   "dependencies": {
     "@m3e/web": "^2.5.8",
     "@vitejs/plugin-vue": "^6.0.7",
+    "fflate": "^0.8.3",
     "lit": "^3.3.3",
     "material-symbols": "^0.45.8",
     "tslib": "^2.8.1",

@@ -37,6 +37,52 @@ describe("encrypted vault", () => {
     await expect(service.listItems()).rejects.toBeInstanceOf(VaultLockedError);
   });
 
+  it("keeps provider credentials inside the encrypted envelope", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("provider master password");
+    await service.upsertProvider({
+      id: "webdav-1",
+      kind: "monica-webdav",
+      name: "Android WebDAV",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {
+        baseUrl: "https://cloud.example.com/private-dav",
+        username: "webdav-user",
+        password: "webdav-secret",
+        backupPassword: "android-backup-secret"
+      }
+    });
+
+    const serializedEnvelope = JSON.stringify(storage.envelope);
+    expect(serializedEnvelope).not.toContain("webdav-secret");
+    expect(serializedEnvelope).not.toContain("android-backup-secret");
+    expect((await service.listProviders()).find((provider) => provider.id === "webdav-1")?.config).toMatchObject({ password: "webdav-secret", backupPassword: "android-backup-secret" });
+  });
+
+  it("restores the local default and removes provider-only cache when disconnecting", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("disconnect master password");
+    await service.upsertProvider({
+      id: "webdav-1",
+      kind: "monica-webdav",
+      name: "Android WebDAV",
+      enabled: true,
+      isDefaultSaveTarget: true,
+      config: { baseUrl: "https://cloud.example.com/dav", username: "", password: "" }
+    });
+    const login = createLoginItem({ title: "Synced", password: "secret", uris: ["example.com"], providerRefs: [{ providerId: "webdav-1", remoteId: "remote.json" }] });
+    await service.upsertItem(login);
+    await service.removeProvider("webdav-1");
+
+    expect(await service.listItems()).toEqual([]);
+    const providers = await service.listProviders();
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toMatchObject({ kind: "local", isDefaultSaveTarget: true });
+    expect((await service.readState()).settings.defaultProviderId).toBe(providers[0].id);
+  });
+
   it("round-trips an envelope with its derived key", async () => {
     const state = (await new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore()).setup("0123456789-master"));
     const { key, kdf } = await deriveVaultKey("0123456789-master");

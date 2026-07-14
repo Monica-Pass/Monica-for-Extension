@@ -32,11 +32,11 @@ The page never receives a vault list or provider credentials. The popup receives
 - `monica-webdav`
 - `bitwarden`
 
-Every item may contain multiple provider references and revisions. Mutations are queued per provider so WebDAV snapshots and Bitwarden ciphers can be retried independently.
+Every item may contain multiple provider references and revisions. Provider credentials, backup passwords, revisions, and cached items are all stored inside the encrypted vault envelope.
 
-## Planned WebDAV compatibility
+## WebDAV compatibility
 
-The WebDAV adapter will read and losslessly write Android backups under `Monica_Backups`:
+The WebDAV adapter reads and losslessly writes Android backups under `Monica_Backups`:
 
 - `monica_backup_*.zip`
 - `monica_backup_*.enc.zip`
@@ -44,6 +44,8 @@ The WebDAV adapter will read and losslessly write Android backups under `Monica_
 - `folders/<category>/{passwords,authenticators,bank_cards,documents,billing_addresses,payment_accounts,notes,passkeys}`
 
 Unknown ZIP entries must survive round trips.
+
+WebDAV is treated as a timestamped snapshot source rather than a record API. The adapter records the last filename, ETag, and per-item revision; a later sync performs a three-way comparison. Browser-only changes produce a new snapshot, Android-only changes are imported, and concurrent changes are reported without uploading. A final latest-file check narrows the race window immediately before `PUT`.
 
 ## Passkey boundary
 

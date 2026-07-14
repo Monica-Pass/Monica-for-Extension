@@ -1,3 +1,5 @@
+import type { ProviderAccount } from "../core/model";
+import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
@@ -17,5 +19,11 @@ export const vaultClient = {
   upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
   matchLogins: (pageUrl: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl }),
-  fillLogin: (itemId: string, tabId: number) => send<{ filledUsername: boolean; filledPassword: boolean }>({ type: "VAULT_FILL_LOGIN", itemId, tabId })
+  fillLogin: (itemId: string, tabId: number) => send<{ filledUsername: boolean; filledPassword: boolean }>({ type: "VAULT_FILL_LOGIN", itemId, tabId }),
+  listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
+  testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
+  saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>
+    send<ProviderAccount>({ type: "WEBDAV_SAVE", name, config, providerId, isDefaultSaveTarget }),
+  syncProvider: (providerId: string) => send<{ warnings: string[]; conflicts: number }>({ type: "PROVIDER_SYNC", providerId }),
+  removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
 };

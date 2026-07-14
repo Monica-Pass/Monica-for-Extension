@@ -1,4 +1,4 @@
-import { createEmptyVaultState, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type ProviderAccount, type VaultItem, type VaultState } from "../core/model";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
@@ -81,6 +81,62 @@ export class SecureVaultService {
 
   async getItem(itemId: string): Promise<VaultItem | undefined> {
     return (await this.readState()).items.find((item) => item.id === itemId && !item.deletedAt);
+  }
+
+  async listProviders(): Promise<ProviderAccount[]> {
+    return (await this.readState()).providers;
+  }
+
+  async getProvider(providerId: string): Promise<ProviderAccount | undefined> {
+    return (await this.readState()).providers.find((provider) => provider.id === providerId);
+  }
+
+  async upsertProvider(provider: ProviderAccount): Promise<ProviderAccount> {
+    const { state, envelope, key } = await this.mutableContext();
+    const exists = state.providers.some((candidate) => candidate.id === provider.id);
+    state.providers = exists ? state.providers.map((candidate) => (candidate.id === provider.id ? provider : candidate)) : [...state.providers, provider];
+    if (provider.isDefaultSaveTarget) {
+      state.providers = state.providers.map((candidate) => ({ ...candidate, isDefaultSaveTarget: candidate.id === provider.id }));
+      state.settings.defaultProviderId = provider.id;
+    } else if (state.settings.defaultProviderId === provider.id) {
+      const local = state.providers.find((candidate) => candidate.kind === "local");
+      if (!local) throw new Error("本地密码源不存在。");
+      state.providers = state.providers.map((candidate) => ({ ...candidate, isDefaultSaveTarget: candidate.id === local.id }));
+      state.settings.defaultProviderId = local.id;
+    }
+    state.updatedAt = new Date(this.now()).toISOString();
+    await this.persist(state, key, envelope.kdf);
+    return provider;
+  }
+
+  async removeProvider(providerId: string): Promise<void> {
+    const { state, envelope, key } = await this.mutableContext();
+    const provider = state.providers.find((candidate) => candidate.id === providerId);
+    if (!provider || provider.kind === "local") throw new Error("本地密码源不能删除。");
+    state.providers = state.providers.filter((candidate) => candidate.id !== providerId);
+    state.items = state.items.flatMap((item): VaultItem[] => {
+      if (!item.providerRefs.some((reference) => reference.providerId === providerId)) return [item];
+      const providerRefs = item.providerRefs.filter((reference) => reference.providerId !== providerId);
+      return providerRefs.length ? [{ ...item, providerRefs } as VaultItem] : [];
+    });
+    if (state.settings.defaultProviderId === providerId) {
+      const local = state.providers.find((candidate) => candidate.kind === "local");
+      if (!local) throw new Error("本地密码源不存在。");
+      state.providers = state.providers.map((candidate) => ({ ...candidate, isDefaultSaveTarget: candidate.id === local.id }));
+      state.settings.defaultProviderId = local.id;
+    }
+    state.updatedAt = new Date(this.now()).toISOString();
+    await this.persist(state, key, envelope.kdf);
+  }
+
+  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>): Promise<void> {
+    const { state, envelope, key } = await this.mutableContext();
+    const provider = state.providers.find((candidate) => candidate.id === providerId);
+    if (!provider) throw new Error("密码源不存在。");
+    state.items = items;
+    state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
+    state.updatedAt = new Date(this.now()).toISOString();
+    await this.persist(state, key, envelope.kdf);
   }
 
   async upsertItem(item: VaultItem): Promise<VaultItem> {
