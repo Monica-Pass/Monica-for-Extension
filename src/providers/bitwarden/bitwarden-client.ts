@@ -48,7 +48,7 @@ const CLIENT_VERSION = "2026.7.0";
 const DEVICE_TYPE = "2";
 
 export class BitwardenClient {
-  constructor(private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
 
   async prelogin(vaultUrl: string, email: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; email: string; kdf: BitwardenKdfConfig }> {
     const urls = inferBitwardenServerUrls(vaultUrl);

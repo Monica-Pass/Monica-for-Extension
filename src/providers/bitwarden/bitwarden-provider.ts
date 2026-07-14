@@ -1,13 +1,13 @@
 import type { ProviderAccount, ProviderReference, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
-import { decodeBitwardenCipher, encodeBitwardenCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
   private readonly client: BitwardenClient;
 
-  constructor(fetcher: typeof fetch = fetch) {
+  constructor(fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {
     this.client = new BitwardenClient(fetcher);
   }
 
@@ -54,88 +54,83 @@ export class BitwardenProvider implements ProviderAdapter {
       }
     }
 
-    const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-    const localById = new Map(localScoped.map((item) => [item.id, item]));
-    const allIds = new Set([...remoteById.keys(), ...localById.keys()]);
-    const merged: VaultItem[] = [];
+    const localNew = localScoped.filter((item) => !providerReference(item, account.id)?.remoteId);
+    const localByCipher = groupByCipher(localScoped.filter((item) => Boolean(providerReference(item, account.id)?.remoteId)), account.id);
+    const remoteByCipher = groupByCipher(remoteItems, account.id);
+    const cipherIds = new Set([...rawByCipherId.keys(), ...localByCipher.keys(), ...remoteByCipher.keys()]);
+    const merged: VaultItem[] = [...unrelated];
     const conflicts: ProviderSyncResult["conflicts"] = [];
 
-    for (const itemId of allIds) {
-      const local = localById.get(itemId);
-      const remote = remoteById.get(itemId);
-      if (!local && remote) {
-        merged.push(remote);
+    for (const cipherId of cipherIds) {
+      const locals = localByCipher.get(cipherId) || [];
+      const remotes = remoteByCipher.get(cipherId) || [];
+      if (skippedCipherIds.has(cipherId)) {
+        merged.push(...locals);
         continue;
       }
-      if (!local) continue;
-      const reference = providerReference(local, account.id);
-      const cipherId = baseCipherId(reference?.remoteId);
-      if (cipherId && skippedCipherIds.has(cipherId)) {
-        merged.push(local);
+      if (!locals.length) {
+        merged.push(...remotes);
         continue;
       }
-      if (!remote) {
-        if (!reference?.remoteId) {
-          if (local.deletedAt) continue;
-          try {
-            const created = await this.createWithSession(session, account.id, local, context.signal);
-            session = created.session;
-            merged.push(created.item);
-          } catch (error) {
-            conflicts.push({ itemId: local.id, reason: errorMessage(error), local });
-            merged.push(local);
-          }
-        } else if (local.updatedAt !== reference.revision || local.deletedAt) {
+      const raw = rawByCipherId.get(cipherId);
+      if (!raw) {
+        for (const local of locals.filter((item) => itemChanged(item, account.id))) {
           conflicts.push({ itemId: local.id, reason: "此项目已在 Bitwarden 删除，但浏览器中也有未同步修改。", local });
-          merged.push(local);
         }
+        merged.push(...locals.filter((item) => itemChanged(item, account.id)));
         continue;
       }
-
-      const localChanged = local.updatedAt !== reference?.revision || Boolean(local.deletedAt);
-      const remoteChanged = remote.updatedAt !== reference?.revision;
-      if (localChanged && remoteChanged && !sameVaultPayload(local, remote)) {
-        conflicts.push({ itemId: local.id, reason: "浏览器和 Bitwarden 在上次同步后都修改了此项目。", local, remote });
-        merged.push(local);
+      const changes = locals.filter((item) => itemChanged(item, account.id));
+      if (!changes.length) {
+        merged.push(...remotes);
         continue;
       }
-      if (!localChanged) {
-        merged.push(remote);
-        continue;
-      }
-      if (local.kind === "passkey") {
-        conflicts.push({ itemId: local.id, reason: "Bitwarden Passkey 的独立更新将在 Passkey 阶段启用。", local, remote });
-        merged.push(local);
-        continue;
-      }
-      if (!cipherId) {
-        conflicts.push({ itemId: local.id, reason: "Bitwarden 项目缺少远端 Cipher ID。", local, remote });
-        merged.push(local);
+      const concurrent = changes.flatMap((local) => {
+        const remote = findEquivalent(local, remotes);
+        const reference = providerReference(local, account.id);
+        return remote && remote.updatedAt !== reference?.revision && !sameVaultPayload(local, remote) ? [{ local, remote }] : [];
+      });
+      if (concurrent.length) {
+        for (const entry of concurrent) conflicts.push({ itemId: entry.local.id, reason: "浏览器和 Bitwarden 在上次同步后都修改了此项目。", local: entry.local, remote: entry.remote });
+        merged.push(...locals, ...remotes.filter((remote) => !locals.some((local) => Boolean(findEquivalent(local, [remote])))));
         continue;
       }
       try {
-        if (local.deletedAt) {
+        const primary = changes.find((item) => item.kind !== "passkey");
+        if (primary?.deletedAt) {
           session = await this.client.deleteCipher(session, cipherId, context.signal);
-        } else {
-          const raw = rawByCipherId.get(cipherId);
-          if (!raw) throw new Error("Bitwarden 远端 Cipher 不存在。");
-          const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
-          const payload = await encodeBitwardenCipher(local, cipherKey, raw);
-          const updated = await this.client.updateCipher(session, cipherId, payload, context.signal);
-          session = updated.session;
-          const decoded = await decodeBitwardenCipher(updated.payload, account.id, vaultKey);
-          const primary = decoded.items.find((item) => item.kind === local.kind);
-          if (!primary) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
-          merged.push(primary);
+          continue;
         }
+        const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
+        let payload = primary ? await encodeBitwardenCipher(primary, cipherKey, raw) : raw;
+        for (const passkey of changes.filter((item): item is Extract<VaultItem, { kind: "passkey" }> => item.kind === "passkey")) {
+          payload = await encodeBitwardenPasskeyCipher(passkey, cipherKey, payload, passkey.deletedAt ? "delete" : "upsert");
+        }
+        const updated = await this.client.updateCipher(session, cipherId, payload, context.signal);
+        session = updated.session;
+        const decoded = await decodeBitwardenCipher(updated.payload, account.id, vaultKey);
+        if (!decoded.items.length) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
+        merged.push(...decoded.items);
       } catch (error) {
-        conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote });
+        for (const local of changes) conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote: findEquivalent(local, remotes) });
+        merged.push(...locals);
+      }
+    }
+
+    for (const local of localNew) {
+      if (local.deletedAt) continue;
+      try {
+        const created = await this.createWithSession(session, account.id, local, context.signal);
+        session = created.session;
+        merged.push(...created.items);
+      } catch (error) {
+        conflicts.push({ itemId: local.id, reason: errorMessage(error), local });
         merged.push(local);
       }
     }
 
     return {
-      items: [...unrelated, ...merged.filter((item) => !item.deletedAt)],
+      items: merged.filter((item) => !item.deletedAt),
       accountPatch: { config: session, lastSyncAt: context.now, lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined },
       conflicts,
       warnings
@@ -151,31 +146,44 @@ export class BitwardenProvider implements ProviderAdapter {
     const reference = providerReference(item, account.id);
     const cipherId = baseCipherId(reference?.remoteId);
     if (!cipherId) throw new Error("Bitwarden 项目缺少远端 Cipher ID。");
-    if (item.kind === "passkey") throw new Error("Bitwarden Passkey 更新将在 Passkey 阶段启用。");
     const current = await this.client.sync(session, signal);
     const raw = arrayValue(current.payload, "Ciphers", "ciphers").map(record).find((cipher) => stringValue(cipher, "Id", "id") === cipherId);
     if (!raw) throw new Error("Bitwarden 远端 Cipher 不存在。");
     const vaultKey = this.client.vaultKey(current.session);
     const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
-    const response = await this.client.updateCipher(current.session, cipherId, await encodeBitwardenCipher(item, cipherKey, raw), signal);
+    const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, cipherKey, raw) : await encodeBitwardenCipher(item, cipherKey, raw);
+    const response = await this.client.updateCipher(current.session, cipherId, payload, signal);
     const decoded = await decodeBitwardenCipher(response.payload, account.id, vaultKey);
-    return decoded.items.find((candidate) => candidate.kind === item.kind) || item;
+    return item.kind === "passkey"
+      ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId) || item
+      : decoded.items.find((candidate) => candidate.kind === item.kind) || item;
   }
 
   async remove(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<void> {
-    if (item.kind === "passkey") throw new Error("单独删除 Bitwarden Passkey 将在 Passkey 阶段启用。");
     const cipherId = baseCipherId(providerReference(item, account.id)?.remoteId);
-    if (cipherId) await this.client.deleteCipher(readSession(account), cipherId, signal);
+    if (!cipherId) return;
+    if (item.kind !== "passkey") {
+      await this.client.deleteCipher(readSession(account), cipherId, signal);
+      return;
+    }
+    const current = await this.client.sync(readSession(account), signal);
+    const raw = arrayValue(current.payload, "Ciphers", "ciphers").map(record).find((cipher) => stringValue(cipher, "Id", "id") === cipherId);
+    if (!raw) return;
+    const vaultKey = this.client.vaultKey(current.session);
+    const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
+    await this.client.updateCipher(current.session, cipherId, await encodeBitwardenPasskeyCipher(item, cipherKey, raw, "delete"), signal);
   }
 
-  private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem }> {
-    if (item.kind === "passkey") throw new Error("Bitwarden Passkey 创建将在 Passkey 阶段启用。");
+  private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[] }> {
     const vaultKey = this.client.vaultKey(session);
-    const response = await this.client.createCipher(session, await encodeBitwardenCipher(item, vaultKey), signal);
+    const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, vaultKey) : await encodeBitwardenCipher(item, vaultKey);
+    const response = await this.client.createCipher(session, payload, signal);
     const decoded = await decodeBitwardenCipher(response.payload, providerId, vaultKey);
-    const created = decoded.items.find((candidate) => candidate.kind === item.kind);
+    const created = item.kind === "passkey"
+      ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId)
+      : decoded.items.find((candidate) => candidate.kind === item.kind);
     if (!created) throw new Error("Bitwarden 创建响应无法映射回 Monica 项目。");
-    return { session: response.session, item: created };
+    return { session: response.session, item: created, items: item.kind === "passkey" ? decoded.items : [created] };
   }
 }
 
@@ -197,6 +205,26 @@ function hasProviderReference(item: VaultItem, providerId: string): boolean {
 
 function baseCipherId(remoteId?: string): string | undefined {
   return remoteId?.split("#fido2:")[0] || undefined;
+}
+
+function groupByCipher(items: VaultItem[], providerId: string): Map<string, VaultItem[]> {
+  const groups = new Map<string, VaultItem[]>();
+  for (const item of items) {
+    const cipherId = baseCipherId(providerReference(item, providerId)?.remoteId);
+    if (!cipherId) continue;
+    groups.set(cipherId, [...(groups.get(cipherId) || []), item]);
+  }
+  return groups;
+}
+
+function itemChanged(item: VaultItem, providerId: string): boolean {
+  const reference = providerReference(item, providerId);
+  return Boolean(item.deletedAt) || item.updatedAt !== reference?.revision;
+}
+
+function findEquivalent(local: VaultItem, remotes: VaultItem[]): VaultItem | undefined {
+  if (local.kind === "passkey") return remotes.find((remote) => remote.kind === "passkey" && remote.credentialId === local.credentialId);
+  return remotes.find((remote) => remote.kind === local.kind);
 }
 
 function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {

@@ -159,6 +159,89 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
   return base;
 }
 
+export async function encodeBitwardenPasskeyCipher(
+  item: PasskeyItem,
+  encryptionKey: BitwardenSymmetricKey,
+  preservedRaw?: Record<string, unknown>,
+  operation: "upsert" | "delete" = "upsert"
+): Promise<Record<string, unknown>> {
+  if (item.algorithm !== -7) throw new Error("当前只能把 ES256 Passkey 保存到 Bitwarden。");
+  if (operation === "upsert" && !item.privateKeyPkcs8) throw new Error("Bitwarden Passkey 缺少可同步的 PKCS#8 私钥。");
+  if (preservedRaw && numberValue(preservedRaw, "Type", "type") !== 1) throw new Error("Bitwarden Passkey 的父项目不是登录 Cipher。");
+
+  const preservedLogin = recordValue(preservedRaw || {}, "Login", "login") || {};
+  const existingCredentials = arrayValue(preservedLogin, "Fido2Credentials", "fido2Credentials").map(record);
+  const matched = await Promise.all(existingCredentials.map(async (credential) => ({
+    credential,
+    credentialId: await decryptBitwardenString(stringValue(credential, "CredentialId", "credentialId"), encryptionKey)
+  })));
+  const replacement = operation === "upsert" ? await encodeFido2Credential(item, encryptionKey, matched.find((entry) => entry.credentialId === item.credentialId)?.credential) : undefined;
+  const fido2Credentials = matched.flatMap((entry) => entry.credentialId === item.credentialId ? (replacement ? [replacement] : []) : [entry.credential]);
+  if (replacement && !matched.some((entry) => entry.credentialId === item.credentialId)) fido2Credentials.push(replacement);
+
+  if (!preservedRaw) {
+    return {
+      type: 1,
+      name: await encryptBitwardenString(item.title, encryptionKey),
+      notes: await encryptOptional(item.notes, encryptionKey),
+      favorite: item.favorite,
+      reprompt: 0,
+      key: null,
+      folderId: item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null,
+      fields: null,
+      login: {
+        username: await encryptOptional(item.userName, encryptionKey),
+        password: null,
+        totp: null,
+        uris: [{ uri: await encryptBitwardenString(`https://${item.rpId}`, encryptionKey), match: null }],
+        fido2Credentials
+      }
+    };
+  }
+
+  return {
+    type: 1,
+    name: value(preservedRaw, "Name", "name") || await encryptBitwardenString(item.title, encryptionKey),
+    notes: value(preservedRaw, "Notes", "notes") ?? null,
+    favorite: value(preservedRaw, "Favorite", "favorite") === true,
+    reprompt: numberValue(preservedRaw, "Reprompt", "reprompt"),
+    key: value(preservedRaw, "Key", "key") ?? null,
+    folderId: value(preservedRaw, "FolderId", "folderId") ?? null,
+    fields: value(preservedRaw, "Fields", "fields") ?? null,
+    login: {
+      username: value(preservedLogin, "Username", "username") ?? null,
+      password: value(preservedLogin, "Password", "password") ?? null,
+      totp: value(preservedLogin, "Totp", "totp") ?? null,
+      uris: value(preservedLogin, "Uris", "uris") ?? [],
+      passwordRevisionDate: value(preservedLogin, "PasswordRevisionDate", "passwordRevisionDate") ?? null,
+      autofillOnPageLoad: value(preservedLogin, "AutofillOnPageLoad", "autofillOnPageLoad") ?? null,
+      fido2Credentials
+    }
+  };
+}
+
+async function encodeFido2Credential(item: PasskeyItem, key: BitwardenSymmetricKey, preserved?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const unknown = Object.fromEntries(Object.entries(preserved || {}).filter(([name]) => !FIDO2_FIELD_NAMES.has(name.toLowerCase())));
+  return {
+    ...unknown,
+    credentialId: await encryptBitwardenString(item.credentialId, key),
+    keyAlgorithm: await encryptBitwardenString("ECDSA", key),
+    keyValue: await encryptBitwardenString(item.privateKeyPkcs8 || "", key),
+    rpId: await encryptBitwardenString(item.rpId, key),
+    rpName: await encryptBitwardenString(item.rpName || item.title, key),
+    counter: await encryptBitwardenString(String(Math.max(0, Math.floor(item.signCount))), key),
+    userHandle: await encryptBitwardenString(item.userHandle, key),
+    userName: await encryptBitwardenString(item.userName, key),
+    userDisplayName: await encryptBitwardenString(item.userDisplayName, key),
+    discoverable: await encryptBitwardenString(String(item.discoverable), key),
+    creationDate: await encryptBitwardenString(item.createdAt, key)
+  };
+}
+
+const FIDO2_FIELD_NAMES = new Set([
+  "credentialid", "keyalgorithm", "keyvalue", "rpid", "rpname", "counter", "userhandle", "username", "userdisplayname", "discoverable", "creationdate"
+]);
+
 function bitwardenType(item: VaultItem): number {
   if (item.kind === "login") return 1;
   if (item.kind === "secure-note") return 2;

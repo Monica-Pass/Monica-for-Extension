@@ -13,7 +13,7 @@ export interface MonicaWebDavConfig extends WebDavCredentials, Record<string, un
 export class MonicaWebDavProvider implements ProviderAdapter {
   readonly kind = "monica-webdav" as const;
 
-  constructor(private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
 
   async testConnection(account: ProviderAccount, signal?: AbortSignal): Promise<void> {
     const client = this.client(account);

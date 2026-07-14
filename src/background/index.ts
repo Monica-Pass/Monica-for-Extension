@@ -32,7 +32,7 @@ interface PendingCredentialCapture extends CredentialCaptureInput {
 }
 
 const pendingCredentialCaptures = new Map<string, PendingCredentialCapture>();
-const pendingPasskeyRequests = new Map<string, { id: string; request: PasskeyRequest; tabId: number; frameId: number; origin: string; rpId: string; expiresAt: number; matches: string[] }>();
+const pendingPasskeyRequests = new Map<string, { id: string; request: PasskeyRequest; tabId: number; frameId: number; origin: string; rpId: string; expiresAt: number; matches: string[]; targetProviderId?: string }>();
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -383,7 +383,11 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
   const rpId = validateRpId(source.origin, request.rpId);
-  const passkeys = (await service.listItems()).filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && item.rpId.toLowerCase() === rpId);
+  const state = await service.readState();
+  const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && item.rpId.toLowerCase() === rpId);
+  const configuredTarget = state.providers.find((provider) => provider.id === state.settings.defaultProviderId && provider.enabled);
+  const localTarget = state.providers.find((provider) => provider.kind === "local");
+  const saveTarget = configuredTarget?.kind === "bitwarden" ? configuredTarget : localTarget;
   let matches: PasskeyItem[] = [];
   if (request.operation === "create") {
     if (!request.rpName || !request.userName || !request.userId) throw new Error("Passkey 注册请求缺少用户或网站信息。");
@@ -396,9 +400,9 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
     if (!matches.length) throw new Error("Monica 中没有可用于此网站的 Passkey。");
   }
   const id = crypto.randomUUID(); const expiresAt = Date.now() + 120_000;
-  pendingPasskeyRequests.set(id, { id, request, tabId: source.tabId, frameId: source.frameId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id) });
+  pendingPasskeyRequests.set(id, { id, request, tabId: source.tabId, frameId: source.frameId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), targetProviderId: request.operation === "create" && saveTarget?.kind === "bitwarden" ? saveTarget.id : undefined });
   setTimeout(() => { if ((pendingPasskeyRequests.get(id)?.expiresAt || 0) <= Date.now()) pendingPasskeyRequests.delete(id); }, 120_100);
-  return { candidateId: id, operation: request.operation, rpId, rpName: request.operation === "create" ? request.rpName : rpId, userName: request.operation === "create" ? request.userName : matches[0]?.userName || "", credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local" })), expiresAt };
+  return { candidateId: id, operation: request.operation, rpId, rpName: request.operation === "create" ? request.rpName : rpId, userName: request.operation === "create" ? request.userName : matches[0]?.userName || "", saveTargetName: request.operation === "create" ? saveTarget?.name || "Monica 本地库" : undefined, credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local" })), expiresAt };
 }
 
 async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
@@ -409,7 +413,7 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
   if (pending.request.operation === "create") {
     const created = await createPasskey({ ...pending.request, origin: pending.origin, rpId: pending.rpId });
     const now = new Date().toISOString();
-    const item: PasskeyItem = { id: crypto.randomUUID(), kind: "passkey", title: pending.request.rpName || pending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], credentialId: created.credentialId, rpId: created.rpId, rpName: pending.request.rpName, userHandle: pending.request.userId, userName: pending.request.userName, userDisplayName: pending.request.userDisplayName, algorithm: -7, publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: true, sourceMode: "browser-local" };
+    const item: PasskeyItem = { id: crypto.randomUUID(), kind: "passkey", title: pending.request.rpName || pending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: pending.targetProviderId ? [{ providerId: pending.targetProviderId }] : [], credentialId: created.credentialId, rpId: created.rpId, rpName: pending.request.rpName, userHandle: pending.request.userId, userName: pending.request.userName, userDisplayName: pending.request.userDisplayName, algorithm: -7, publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: true, sourceMode: pending.targetProviderId ? "bitwarden" : "browser-local" };
     await service.upsertItem(item);
     return { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response };
   }

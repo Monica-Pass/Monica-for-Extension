@@ -63,7 +63,7 @@ The Bitwarden master password is ephemeral. The derived user Vault Key, access/r
 
 The document-start MAIN-world bridge serializes WebAuthn requests, while the isolated content script owns confirmation UI. The background validates HTTPS origin/RP ID, creates ES256 `none` attestation objects, stores PKCS#8 only in the encrypted vault, and returns signed assertions. No private key crosses into a content script or page.
 
-Browser-local and Bitwarden FIDO2 credentials with portable base64 PKCS#8 material can sign. Existing Android WebDAV backups contain only device-protected references for Android-local passkeys, so those entries remain metadata-only until Android adds an encrypted portable-key backup field.
+Browser-local and Bitwarden FIDO2 credentials with portable base64 PKCS#8 material can sign. When Bitwarden is the default save target, registration creates a personal login Cipher containing the encrypted FIDO2 credential. Counter updates and individual credential deletion are merged into that parent Cipher in one update, preserving its login fields and sibling credentials. Existing Android WebDAV backups contain only device-protected references for Android-local passkeys, so those entries remain metadata-only until Android adds an encrypted portable-key backup field.
 
 ## Mutation and conflict lifecycle
 

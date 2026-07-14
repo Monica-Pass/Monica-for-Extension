@@ -49,6 +49,7 @@ export interface PasskeyPromptContext {
   rpId: string;
   rpName: string;
   userName: string;
+  saveTargetName?: string;
   credentials: Array<{ itemId: string; title: string; userName: string; sourceMode: "browser-local" | "bitwarden" }>;
   expiresAt: number;
 }

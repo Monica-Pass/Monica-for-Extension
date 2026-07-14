@@ -18,7 +18,7 @@ export interface WebDavBackupFile {
 export class WebDavClient {
   constructor(
     private readonly credentials: WebDavCredentials,
-    private readonly fetcher: typeof fetch = fetch
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)
   ) {}
 
   async testConnection(signal?: AbortSignal): Promise<void> {

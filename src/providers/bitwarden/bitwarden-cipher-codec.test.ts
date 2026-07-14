@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CardItem, IdentityItem, LoginItem, SecureNoteItem } from "../../core/model";
-import { decodeBitwardenCipher, encodeBitwardenCipher } from "./bitwarden-cipher-codec";
+import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem } from "../../core/model";
+import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "./bitwarden-cipher-codec";
 import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
 const KEY: BitwardenSymmetricKey = {
@@ -83,4 +83,65 @@ describe("Bitwarden Cipher codec", () => {
     expect((encoded.login as Record<string, unknown>).fido2Credentials).toEqual(preservedFido);
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
   });
+
+  it("creates a login Cipher containing a Bitwarden-compatible FIDO2 credential", async () => {
+    const encoded = await encodeBitwardenPasskeyCipher(passkey("new-credential", 0), KEY);
+    const decoded = await decodeBitwardenCipher({ ...encoded, id: "created", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+
+    expect(decoded.items).toHaveLength(2);
+    expect(decoded.items[0]).toMatchObject({ kind: "login", title: "Example Passkey", username: "joy@example.com", uris: ["https://example.com"] });
+    expect(decoded.items[1]).toMatchObject({
+      kind: "passkey",
+      credentialId: "new-credential",
+      privateKeyPkcs8: "pkcs8-material-new-credential",
+      signCount: 0,
+      sourceMode: "bitwarden"
+    });
+  });
+
+  it("updates one FIDO2 credential and retains its sibling", async () => {
+    const original = await encodeBitwardenPasskeyCipher(passkey("first", 1), KEY);
+    const withSibling = await encodeBitwardenPasskeyCipher(passkey("sibling", 4), KEY, original);
+    const updated = await encodeBitwardenPasskeyCipher(passkey("first", 9), KEY, withSibling);
+    const decoded = await decodeBitwardenCipher({ ...updated, id: "cipher", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+    const passkeys = decoded.items.filter((item): item is PasskeyItem => item.kind === "passkey");
+
+    expect(passkeys.map((item) => [item.credentialId, item.signCount])).toEqual([["first", 9], ["sibling", 4]]);
+  });
+
+  it("deletes one FIDO2 credential without deleting the parent login or siblings", async () => {
+    const original = await encodeBitwardenPasskeyCipher(passkey("first", 1), KEY);
+    const withSibling = await encodeBitwardenPasskeyCipher(passkey("sibling", 4), KEY, original);
+    const updated = await encodeBitwardenPasskeyCipher(passkey("first", 1), KEY, withSibling, "delete");
+    const decoded = await decodeBitwardenCipher({ ...updated, id: "cipher", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+
+    expect(decoded.items).toHaveLength(2);
+    expect(decoded.items[0]).toMatchObject({ kind: "login", title: "Example Passkey" });
+    expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "sibling", signCount: 4 });
+  });
 });
+
+function passkey(credentialId: string, signCount: number): PasskeyItem {
+  return {
+    id: `passkey-${credentialId}`,
+    kind: "passkey",
+    title: "Example Passkey",
+    favorite: false,
+    notes: "",
+    createdAt: REVISION,
+    updatedAt: REVISION,
+    providerRefs: [{ providerId: "provider-1" }],
+    credentialId,
+    rpId: "example.com",
+    rpName: "Example",
+    userHandle: "dXNlci1oYW5kbGU",
+    userName: "joy@example.com",
+    userDisplayName: "Joy",
+    algorithm: -7,
+    publicKey: "spki-material",
+    privateKeyPkcs8: `pkcs8-material-${credentialId}`,
+    signCount,
+    discoverable: true,
+    sourceMode: "bitwarden"
+  };
+}

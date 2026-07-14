@@ -24,7 +24,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - 基于远端文件、ETag 和项目 revision 的三方冲突检测；冲突时停止覆盖。
 - Bitwarden US、EU 和标准路径自托管服务登录，支持 PBKDF2、Argon2id、身份验证器/邮箱/YubiKey 代码 2FA 和 Token 刷新。
 - Bitwarden 个人登录、TOTP、银行卡、身份与安全笔记 Cipher 的导入、创建、更新和删除。
-- 支持浏览器本地 ES256 Passkey 注册和登录，以及具有可导出 PKCS#8 密钥的 Bitwarden FIDO2 凭据。
+- 支持浏览器本地 ES256 Passkey 注册和登录；Bitwarden 可作为新 Passkey 的默认保存目标，并同步 FIDO2 创建、签名计数器与单凭据删除。
 - Bitwarden revision 冲突检测和异常空密码库防误删保护。
 - 外部源修改进入加密 mutation queue；管理页显示待同步、失败次数和显式重试入口。
 
@@ -36,7 +36,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 2. 登录页选择匹配账号，填充用户名、密码和 TOTP；跨域 iframe 可在“填充目标”中切换。
 3. 提交新密码后，在页面右上角选择保存源并确认保存或更新。
 4. 地址、证件或结账页面从 Popup 选择对应项目；银行卡安全码只在这次显式点击后发送。
-5. 网站请求创建或使用 Passkey 时，在页面确认弹窗中继续或取消。
+5. 网站请求创建或使用 Passkey 时，在页面确认弹窗中核对网站、账户和保存目标，再继续或取消。
 
 ## WebDAV 使用
 
@@ -52,9 +52,10 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 1. 在“密码源”点击“连接 Bitwarden”。
 2. 选择 US/EU 官方地址，或填写自托管 Vault 根地址。
 3. 输入邮箱和主密码；需要 2FA 时选择方式并继续验证。
-4. 连接成功后执行“立即同步”。主密码不会保存；Token、Vault Key 和缓存项目只存在于 Monica 加密信封中。
+4. 如需把网站新建的 Passkey 保存到 Bitwarden，请勾选“设为新项目的默认保存目标”；创建、使用或删除后执行“立即同步”。
+5. 主密码不会保存；Token、Vault Key、FIDO2 私钥和缓存项目只存在于 Monica 加密信封中。
 
-当前版本支持个人 Cipher。组织共享 Cipher 需要用用户 RSA 私钥解包组织密钥，插件会明确跳过并显示警告，不会将其误报为已导入。Bitwarden FIDO2 的 base64 PKCS#8 密钥可用于登录；没有可导出密钥的引用只显示元数据。
+当前版本支持个人 Cipher。组织共享 Cipher 需要用用户 RSA 私钥解包组织密钥，插件会明确跳过并显示警告，不会将其误报为已导入。Bitwarden FIDO2 的 base64 PKCS#8 密钥可用于登录；计数器更新和单凭据删除会合并回父登录 Cipher，不会删除父登录或其他 Passkey。没有可导出密钥的引用只显示元数据。
 
 ## 开发
 
