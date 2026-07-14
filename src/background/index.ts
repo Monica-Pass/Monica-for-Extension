@@ -5,7 +5,7 @@ import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
-import type { ExtensionRequest, ExtensionResponse, LoginMatchSummary } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SavePromptContext, SavePromptProviderSummary } from "../runtime/messages";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -17,6 +17,20 @@ const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const bitwardenClient = new BitwardenClient();
+const CAPTURE_TTL_MS = 60_000;
+
+interface PendingCredentialCapture extends CredentialCaptureInput {
+  id: string;
+  tabId: number;
+  frameId: number;
+  sourceOrigin: string;
+  createdAt: number;
+  expiresAt: number;
+  existingItemId?: string;
+  existingTitle?: string;
+}
+
+const pendingCredentialCaptures = new Map<string, PendingCredentialCapture>();
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -29,7 +43,11 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === AUTO_LOCK_ALARM) void service.status();
+  if (alarm.name === AUTO_LOCK_ALARM) {
+    void service.status().then((status) => {
+      if (status !== "unlocked") pendingCredentialCaptures.clear();
+    });
+  }
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse: (response: ExtensionResponse) => void) => {
@@ -59,6 +77,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_LOCK":
       assertExtensionPage(sender);
+      pendingCredentialCaptures.clear();
       return service.lock();
     case "VAULT_LIST_ITEMS":
       assertExtensionPage(sender);
@@ -81,6 +100,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       return fillLogin(request.itemId, request.tabId, request.frameId);
     }
+    case "CREDENTIAL_CAPTURE":
+      return captureCredentialCandidate(request.candidate, sender);
+    case "CREDENTIAL_PENDING":
+      return pendingCredentialCandidate(sender);
+    case "CREDENTIAL_ACCEPT":
+      return acceptCredentialCandidate(request.candidateId, request.providerId, sender);
+    case "CREDENTIAL_DISMISS":
+      return dismissCredentialCandidate(request.candidateId, sender);
     case "PROVIDER_LIST":
       assertExtensionPage(sender);
       return service.listProviders();
@@ -173,6 +200,159 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       return service.removeProvider(request.providerId);
   }
+}
+
+async function captureCredentialCandidate(input: CredentialCaptureInput, sender: chrome.runtime.MessageSender): Promise<SavePromptContext> {
+  const source = assertWebPageSender(sender);
+  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定；请先解锁 Monica，再重新提交登录表单。");
+  const candidate = validateCredentialCapture(input, source.url);
+  purgeExpiredCaptures();
+
+  const state = await service.readState();
+  const matches = matchingLogins(state.items.filter(isLoginItem), candidate.pageUrl);
+  const normalizedUsername = candidate.username.trim().toLocaleLowerCase();
+  const existing = matches.find((item) => normalizedUsername && item.username.trim().toLocaleLowerCase() === normalizedUsername)
+    || (candidate.captureKind === "password-change" && matches.length === 1 ? matches[0] : undefined);
+  const duplicate = [...pendingCredentialCaptures.values()].find((pending) =>
+    pending.tabId === source.tabId
+    && pending.sourceOrigin === source.origin
+    && pending.username === candidate.username
+    && pending.password === candidate.password
+  );
+  const now = Date.now();
+  const pending: PendingCredentialCapture = {
+    ...candidate,
+    id: duplicate?.id || crypto.randomUUID(),
+    tabId: source.tabId,
+    frameId: source.frameId,
+    sourceOrigin: source.origin,
+    createdAt: duplicate?.createdAt || now,
+    expiresAt: now + CAPTURE_TTL_MS,
+    existingItemId: existing?.id,
+    existingTitle: existing?.title
+  };
+  pendingCredentialCaptures.set(pending.id, pending);
+  scheduleCaptureExpiry(pending.id, pending.expiresAt);
+  const context = savePromptContext(pending, state.providers, state.settings.defaultProviderId);
+  if (source.frameId !== 0) {
+    void chrome.tabs.sendMessage(source.tabId, { type: "MONICA_SHOW_SAVE_PROMPT", context }, { frameId: 0 }).catch(() => undefined);
+  }
+  return context;
+}
+
+async function pendingCredentialCandidate(sender: chrome.runtime.MessageSender): Promise<SavePromptContext | null> {
+  const source = assertWebPageSender(sender);
+  purgeExpiredCaptures();
+  const pending = [...pendingCredentialCaptures.values()]
+    .filter((candidate) => candidate.tabId === source.tabId && candidate.sourceOrigin === source.origin)
+    .sort((left, right) => right.createdAt - left.createdAt)[0];
+  if (!pending || (await service.status()) !== "unlocked") return null;
+  const state = await service.readState();
+  return savePromptContext(pending, state.providers, state.settings.defaultProviderId);
+}
+
+async function acceptCredentialCandidate(candidateId: string, requestedProviderId: string | undefined, sender: chrome.runtime.MessageSender) {
+  const source = assertWebPageSender(sender);
+  purgeExpiredCaptures();
+  const pending = pendingCredentialCaptures.get(candidateId);
+  if (!pending || pending.tabId !== source.tabId) throw new Error("保存候选已过期，请重新提交表单。");
+  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，保存候选未写入。");
+
+  let saved: LoginItem;
+  let providerName = "Monica 本地库";
+  if (pending.existingItemId) {
+    const existing = await service.getItem(pending.existingItemId);
+    if (!existing || !isLoginItem(existing) || loginMatchScore(existing, pending.pageUrl) <= 0) throw new Error("待更新的登录项已不存在或网站不匹配。");
+    saved = await service.upsertItem({
+      ...existing,
+      username: pending.username.trim() || existing.username,
+      password: pending.password
+    }) as LoginItem;
+    const firstReference = saved.providerRefs[0];
+    if (firstReference) providerName = (await service.getProvider(firstReference.providerId))?.name || providerName;
+  } else {
+    const state = await service.readState();
+    const providerId = requestedProviderId || state.settings.defaultProviderId;
+    const provider = state.providers.find((candidate) => candidate.id === providerId && candidate.enabled);
+    if (!provider) throw new Error("所选密码源不存在或已禁用。");
+    providerName = provider.name;
+    saved = await service.upsertItem(createLoginItem({
+      title: pending.pageTitle || new URL(pending.pageUrl).hostname,
+      username: pending.username,
+      password: pending.password,
+      uris: [new URL(pending.pageUrl).origin],
+      providerRefs: provider.kind === "local" ? [] : [{ providerId: provider.id }]
+    })) as LoginItem;
+  }
+  pendingCredentialCaptures.delete(candidateId);
+  return {
+    action: pending.existingItemId ? "updated" : "saved",
+    itemId: saved.id,
+    title: saved.title,
+    providerName,
+    syncPending: saved.providerRefs.length > 0
+  };
+}
+
+function dismissCredentialCandidate(candidateId: string, sender: chrome.runtime.MessageSender): void {
+  const source = assertWebPageSender(sender);
+  const pending = pendingCredentialCaptures.get(candidateId);
+  if (pending?.tabId === source.tabId) pendingCredentialCaptures.delete(candidateId);
+}
+
+function savePromptContext(pending: PendingCredentialCapture, providers: ProviderAccount[], defaultProviderId: string): SavePromptContext {
+  const summaries: SavePromptProviderSummary[] = providers.filter((provider) => provider.enabled).map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    kind: provider.kind,
+    isDefault: provider.id === defaultProviderId
+  }));
+  return {
+    candidateId: pending.id,
+    action: pending.existingItemId ? "update" : "save",
+    title: pending.pageTitle,
+    username: pending.username,
+    host: new URL(pending.pageUrl).hostname,
+    existingItemId: pending.existingItemId,
+    existingTitle: pending.existingTitle,
+    providers: summaries,
+    defaultProviderId,
+    expiresAt: pending.expiresAt
+  };
+}
+
+function validateCredentialCapture(input: CredentialCaptureInput, senderUrl: string): CredentialCaptureInput {
+  const page = new URL(input.pageUrl);
+  const sender = new URL(senderUrl);
+  if (!/^https?:$/.test(page.protocol) || page.origin !== sender.origin) throw new Error("凭据候选来源与当前页面不匹配。");
+  const username = String(input.username || "").trim().slice(0, 1024);
+  const password = String(input.password || "");
+  if (!password || password.length > 8192) throw new Error("捕获的密码为空或过长。");
+  return {
+    username,
+    password,
+    pageUrl: page.toString(),
+    pageTitle: String(input.pageTitle || "").trim().slice(0, 200),
+    captureKind: input.captureKind === "password-change" ? "password-change" : "login"
+  };
+}
+
+function assertWebPageSender(sender: chrome.runtime.MessageSender): { tabId: number; frameId: number; url: string; origin: string } {
+  const url = sender.url || "";
+  if (sender.tab?.id === undefined || !/^https?:\/\//i.test(url)) throw new Error("此命令只允许网页内容脚本调用。");
+  return { tabId: sender.tab.id, frameId: sender.frameId || 0, url, origin: new URL(url).origin };
+}
+
+function purgeExpiredCaptures(): void {
+  const now = Date.now();
+  for (const [id, capture] of pendingCredentialCaptures) if (capture.expiresAt <= now) pendingCredentialCaptures.delete(id);
+}
+
+function scheduleCaptureExpiry(candidateId: string, expiresAt: number): void {
+  setTimeout(() => {
+    const candidate = pendingCredentialCaptures.get(candidateId);
+    if (candidate && candidate.expiresAt <= Date.now()) pendingCredentialCaptures.delete(candidateId);
+  }, Math.max(0, expiresAt - Date.now()) + 50);
 }
 
 async function fillLogin(itemId: string, tabId: number, frameId?: number) {

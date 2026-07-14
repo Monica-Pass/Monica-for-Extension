@@ -15,6 +15,34 @@ export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
   | { status: "two-factor-required"; providers: number[] };
 
+export interface SavePromptProviderSummary {
+  id: string;
+  name: string;
+  kind: ProviderAccount["kind"];
+  isDefault: boolean;
+}
+
+export interface SavePromptContext {
+  candidateId: string;
+  action: "save" | "update";
+  title: string;
+  username: string;
+  host: string;
+  existingItemId?: string;
+  existingTitle?: string;
+  providers: SavePromptProviderSummary[];
+  defaultProviderId: string;
+  expiresAt: number;
+}
+
+export interface CredentialCaptureInput {
+  username: string;
+  password: string;
+  pageUrl: string;
+  pageTitle: string;
+  captureKind: "login" | "password-change";
+}
+
 export type ExtensionRequest =
   | { type: "VAULT_STATUS" }
   | { type: "VAULT_SETUP"; masterPassword: string }
@@ -26,6 +54,10 @@ export type ExtensionRequest =
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number }
+  | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
+  | { type: "CREDENTIAL_PENDING" }
+  | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
+  | { type: "CREDENTIAL_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }
