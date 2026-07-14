@@ -14,8 +14,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run build
+      - run: npm run validate
+      - run: npm run test:security
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - name: Verify extension output
@@ -23,5 +23,11 @@ jobs:
           test -f dist/manifest.json
           test -f dist/background.js
           test -f dist/content.js
+          test -f dist/main-world.js
           test -f dist/index.html
           test -f dist/popup.html
+      - run: npm run package:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monica-extension
+          path: release/*.zip

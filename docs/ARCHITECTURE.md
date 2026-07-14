@@ -14,7 +14,7 @@ Background service worker ---- encrypted IndexedDB envelope
 Isolated content script ---- current page DOM
 ```
 
-The page never receives a vault list or provider credentials. The popup receives only match summaries. Password material is decrypted in the background after an explicit fill command and sent only to the selected tab.
+The page never receives a vault list or provider credentials. The popup receives only match summaries. Password/wallet material is decrypted in the background after an explicit fill command and sent only to the selected active tab and frame.
 
 For framed login forms, the popup enumerates frames through `webNavigation`, asks each isolated content script only for field-presence metadata, and identifies the chosen frame by ID. Before filling, the background resolves that frame again and requires the selected login to match either the verified frame URL or top-level URL. TOTP is generated in the background at click time and only the current code is sent to the selected frame.
 
@@ -61,4 +61,10 @@ The Bitwarden master password is ephemeral. The derived user Vault Key, access/r
 
 ## Passkey boundary
 
-Browser-local and Bitwarden FIDO2 credentials may contain encrypted portable private-key material. Existing Android WebDAV backups contain only device-protected references for Android-local passkeys, so those entries remain metadata-only until Android adds an encrypted portable-key backup field.
+The document-start MAIN-world bridge serializes WebAuthn requests, while the isolated content script owns confirmation UI. The background validates HTTPS origin/RP ID, creates ES256 `none` attestation objects, stores PKCS#8 only in the encrypted vault, and returns signed assertions. No private key crosses into a content script or page.
+
+Browser-local and Bitwarden FIDO2 credentials with portable base64 PKCS#8 material can sign. Existing Android WebDAV backups contain only device-protected references for Android-local passkeys, so those entries remain metadata-only until Android adds an encrypted portable-key backup field.
+
+## Mutation and conflict lifecycle
+
+External create/update/delete operations are recorded in the encrypted `mutationQueue`. Provider sync clears its queue on success; failures retain an error and cap the attempt counter at five. The manager shows pending/failed counts and exposes explicit retry. Provider adapters still perform revision/ETag conflict checks before remote writes.
