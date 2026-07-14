@@ -10,6 +10,10 @@ export interface LoginMatchSummary {
   uris: string[];
 }
 
+export type BitwardenConnectResult =
+  | { status: "authenticated"; providerId: string }
+  | { status: "two-factor-required"; providers: number[] };
+
 export type ExtensionRequest =
   | { type: "VAULT_STATUS" }
   | { type: "VAULT_SETUP"; masterPassword: string }
@@ -24,6 +28,19 @@ export type ExtensionRequest =
   | { type: "PROVIDER_LIST" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }
+  | {
+      type: "BITWARDEN_LOGIN";
+      providerId?: string;
+      name: string;
+      vaultUrl: string;
+      email: string;
+      masterPassword: string;
+      twoFactorCode?: string;
+      twoFactorProvider?: number;
+      rememberTwoFactor?: boolean;
+      isDefaultSaveTarget?: boolean;
+    }
+  | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
   | { type: "PROVIDER_SYNC"; providerId: string }
   | { type: "PROVIDER_REMOVE"; providerId: string };
 

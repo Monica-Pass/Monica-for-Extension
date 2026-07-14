@@ -1,6 +1,6 @@
 import type { ProviderAccount } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import type { ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -24,6 +24,19 @@ export const vaultClient = {
   testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
   saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>
     send<ProviderAccount>({ type: "WEBDAV_SAVE", name, config, providerId, isDefaultSaveTarget }),
+  loginBitwarden: (input: {
+    providerId?: string;
+    name: string;
+    vaultUrl: string;
+    email: string;
+    masterPassword: string;
+    twoFactorCode?: string;
+    twoFactorProvider?: number;
+    rememberTwoFactor?: boolean;
+    isDefaultSaveTarget?: boolean;
+  }) => send<BitwardenConnectResult>({ type: "BITWARDEN_LOGIN", ...input }),
+  sendBitwardenEmailCode: (vaultUrl: string, email: string, masterPassword: string, providerId?: string) =>
+    send<void>({ type: "BITWARDEN_SEND_EMAIL_CODE", vaultUrl, email, masterPassword, providerId }),
   syncProvider: (providerId: string) => send<{ warnings: string[]; conflicts: number }>({ type: "PROVIDER_SYNC", providerId }),
   removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
 };

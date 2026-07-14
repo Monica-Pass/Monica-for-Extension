@@ -32,10 +32,16 @@ const notice = ref("");
 const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove">("");
 const webDavError = ref("");
 const editingWebDavId = ref<string | undefined>();
+const bitwardenDialogOpen = ref(false);
+const bitwardenBusy = ref(false);
+const bitwardenError = ref("");
+const editingBitwardenId = ref<string | undefined>();
+const bitwardenTwoFactorProviders = ref<number[]>([]);
 
 const auth = reactive({ masterPassword: "", confirmation: "" });
 const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: "" });
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
+const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
 
 useThemePreferences();
 
@@ -47,6 +53,7 @@ const filteredCredentials = computed(() => {
 const uniqueHosts = computed(() => new Set(credentials.value.flatMap((item) => item.uris)).size);
 const favoriteCount = computed(() => credentials.value.filter((item) => item.favorite).length);
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
+const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 
@@ -218,20 +225,27 @@ async function saveWebDav() {
 
 async function syncProvider(provider: ProviderAccount) {
   await runWebDavAction("sync", async () => {
-    const result = await vaultClient.syncProvider(provider.id);
-    await Promise.all([refreshItems(), refreshProviders()]);
+    let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
+    try {
+      result = await vaultClient.syncProvider(provider.id);
+    } finally {
+      await refreshProviders();
+    }
+    await refreshItems();
     const details = result.conflicts ? `发现 ${result.conflicts} 个冲突，未覆盖远端数据。` : result.warnings[0] || "同步完成。";
     showNotice(details);
   });
 }
 
 async function removeProvider(provider: ProviderAccount) {
-  if (!window.confirm(`确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 WebDAV 文件不会被删除。`)) return;
+  const remoteName = provider.kind === "bitwarden" ? "Bitwarden 密码库" : "WebDAV 文件";
+  if (!window.confirm(`确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 ${remoteName} 不会被删除。`)) return;
   await runWebDavAction("remove", async () => {
     await vaultClient.removeProvider(provider.id);
     await Promise.all([refreshItems(), refreshProviders()]);
     if (editingWebDavId.value === provider.id) newWebDav();
-    showNotice("WebDAV 密码源已从插件中移除，远端备份未改动。");
+    if (editingBitwardenId.value === provider.id) closeBitwardenDialog();
+    showNotice(`${provider.name} 已从插件中移除，远端数据未改动。`);
   });
 }
 
@@ -245,6 +259,87 @@ async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Prom
   } finally {
     webDavBusy.value = "";
   }
+}
+
+function openBitwarden(provider?: ProviderAccount) {
+  editingBitwardenId.value = provider?.id;
+  const config = provider?.config || {};
+  Object.assign(bitwardenForm, {
+    name: provider?.name || "Bitwarden",
+    vaultUrl: typeof config.vaultUrl === "string" ? config.vaultUrl : "https://vault.bitwarden.com",
+    email: typeof config.email === "string" ? config.email : "",
+    masterPassword: "",
+    twoFactorCode: "",
+    twoFactorProvider: 0,
+    rememberTwoFactor: false,
+    isDefaultSaveTarget: provider?.isDefaultSaveTarget || false
+  });
+  bitwardenTwoFactorProviders.value = [];
+  bitwardenError.value = "";
+  bitwardenDialogOpen.value = true;
+}
+
+function closeBitwardenDialog() {
+  bitwardenDialogOpen.value = false;
+  bitwardenForm.masterPassword = "";
+  bitwardenForm.twoFactorCode = "";
+  bitwardenTwoFactorProviders.value = [];
+  bitwardenError.value = "";
+}
+
+async function connectBitwarden() {
+  if (!bitwardenForm.masterPassword) return void (bitwardenError.value = "请输入 Bitwarden 主密码。");
+  if (bitwardenTwoFactorProviders.value.length && !bitwardenForm.twoFactorCode.trim()) return void (bitwardenError.value = "请输入两步验证代码。");
+  bitwardenBusy.value = true;
+  bitwardenError.value = "";
+  try {
+    const result = await vaultClient.loginBitwarden({
+      providerId: editingBitwardenId.value,
+      name: bitwardenForm.name,
+      vaultUrl: bitwardenForm.vaultUrl,
+      email: bitwardenForm.email,
+      masterPassword: bitwardenForm.masterPassword,
+      twoFactorCode: bitwardenForm.twoFactorCode || undefined,
+      twoFactorProvider: bitwardenTwoFactorProviders.value.length ? bitwardenForm.twoFactorProvider : undefined,
+      rememberTwoFactor: bitwardenForm.rememberTwoFactor,
+      isDefaultSaveTarget: bitwardenForm.isDefaultSaveTarget
+    });
+    if (result.status === "two-factor-required") {
+      const supported = result.providers.filter((provider) => provider === 0 || provider === 1 || provider === 3);
+      if (!supported.length) {
+        bitwardenError.value = "此账号只启用了 Duo/WebAuthn 等交互式两步验证；当前插件阶段支持身份验证器、邮箱和 YubiKey 代码。";
+        return;
+      }
+      bitwardenTwoFactorProviders.value = supported;
+      bitwardenForm.twoFactorProvider = supported.includes(0) ? 0 : supported[0];
+      showNotice("Bitwarden 需要两步验证，请输入代码后继续。");
+      return;
+    }
+    await refreshProviders();
+    closeBitwardenDialog();
+    showNotice("Bitwarden 已连接；点击立即同步导入密码库。");
+  } catch (error) {
+    bitwardenError.value = errorMessage(error);
+  } finally {
+    bitwardenBusy.value = false;
+  }
+}
+
+async function sendBitwardenEmailCode() {
+  bitwardenBusy.value = true;
+  bitwardenError.value = "";
+  try {
+    await vaultClient.sendBitwardenEmailCode(bitwardenForm.vaultUrl, bitwardenForm.email, bitwardenForm.masterPassword, editingBitwardenId.value);
+    showNotice("Bitwarden 邮箱验证码已发送。");
+  } catch (error) {
+    bitwardenError.value = errorMessage(error);
+  } finally {
+    bitwardenBusy.value = false;
+  }
+}
+
+function twoFactorName(provider: number): string {
+  return ({ 0: "身份验证器", 1: "邮箱", 2: "Duo", 3: "YubiKey", 4: "Duo（组织）", 5: "WebAuthn" } as Record<number, string>)[provider] || `方式 ${provider}`;
 }
 
 function exportVault() {
@@ -382,7 +477,8 @@ function errorMessage(error: unknown) {
 
           <div class="provider-list">
             <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="folder_copy"></m3e-icon><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div><span class="state" :class="provider.lastError ? 'state-attention' : 'state-healthy'">{{ provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span><p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p><p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : '尚未同步；首次同步会导入最新 Android 快照。' }}</p><div class="source-actions"><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ webDavBusy === 'sync' ? '同步中…' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="编辑 WebDAV" @click="editWebDav(provider)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 WebDAV" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div></m3e-card>
-            <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="shield"></m3e-icon><div><h2>Bitwarden</h2><p>官方及自托管服务</p></div></div><p class="supporting">下一阶段接入 KDF、2FA、Cipher CRUD 与 FIDO2 Passkey。</p><span class="state state-attention">即将接入</span></div></m3e-card>
+            <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="shield"></m3e-icon><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div><span class="state" :class="provider.lastError ? 'state-attention' : 'state-healthy'">{{ provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span><p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p><p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><div class="source-actions"><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>立即同步</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div></m3e-card>
+            <m3e-card variant="filled" class="motion-card source-card connect-source-card"><button class="connect-source" type="button" @click="openBitwarden()"><m3e-icon name="add_circle"></m3e-icon><span><strong>连接 Bitwarden</strong><small>官方 US/EU 或自托管服务</small></span></button></m3e-card>
             <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><m3e-icon name="database"></m3e-icon><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span></div></m3e-card>
           </div>
         </section>
@@ -397,6 +493,18 @@ function errorMessage(error: unknown) {
 
     <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>保存时整个密码库会重新加密。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitCredential">
       <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label><label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label><label class="field"><span>密码 *</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label><label class="field"><span>匹配网站 *</span><textarea v-model="form.urls" rows="3" placeholder="github.com&#10;https://accounts.example.com"></textarea><small>每行一个域名或网址；子域名会自动匹配。</small></label><label class="field"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label><label class="field"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源；复制到其他源将在后续批量操作中提供。' : '外部密码源项目会在下次同步时写入。' }}</small></label><label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><footer><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>
+    </form></section></div>
+
+    <div v-if="bitwardenDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeBitwardenDialog"><section class="editor-dialog" role="dialog" aria-modal="true" aria-labelledby="bitwarden-dialog-title"><header><div><h2 id="bitwarden-dialog-title">{{ editingBitwardenId ? '重新登录 Bitwarden' : '连接 Bitwarden' }}</h2><p>主密码只用于本次登录和密钥派生，不会保存。</p></div><m3e-icon-button aria-label="关闭" @click="closeBitwardenDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="connectBitwarden">
+      <label class="field"><span>显示名称</span><input v-model="bitwardenForm.name" autocomplete="off" /></label>
+      <label class="field"><span>服务器地址 *</span><input v-model="bitwardenForm.vaultUrl" type="url" list="bitwarden-server-list" autocomplete="url" required /><datalist id="bitwarden-server-list"><option value="https://vault.bitwarden.com">Bitwarden US</option><option value="https://vault.bitwarden.eu">Bitwarden EU</option></datalist><small>自托管请填写 Vault 根地址，例如 https://vault.example.com。</small></label>
+      <label class="field"><span>邮箱 *</span><input v-model="bitwardenForm.email" type="email" autocomplete="username" required /></label>
+      <label class="field"><span>主密码 *</span><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></label>
+      <template v-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
+      <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
+      <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
+      <div class="boundary-row warning"><m3e-icon name="info"></m3e-icon><span>本阶段支持个人 Cipher；组织共享 Cipher 会跳过并在同步结果中提示。</span></div>
+      <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
     </form></section></div>
   </m3e-theme>
 </template>

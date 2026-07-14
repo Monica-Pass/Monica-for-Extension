@@ -290,6 +290,43 @@
   justify-content: flex-end;
 }
 
+.connect-source-card {
+  overflow: hidden;
+}
+
+.connect-source {
+  width: 100%;
+  min-height: 120px;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--app-primary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.connect-source:hover {
+  background: color-mix(in srgb, var(--app-selected) 45%, transparent);
+}
+
+.connect-source > m3e-icon {
+  font-size: 34px;
+}
+
+.connect-source span {
+  display: grid;
+  gap: 4px;
+}
+
+.connect-source small {
+  color: var(--app-muted);
+}
+
 .field textarea:focus {
   box-shadow: inset 0 0 0 2px var(--app-primary);
 }

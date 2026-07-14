@@ -47,6 +47,16 @@ Unknown ZIP entries must survive round trips.
 
 WebDAV is treated as a timestamped snapshot source rather than a record API. The adapter records the last filename, ETag, and per-item revision; a later sync performs a three-way comparison. Browser-only changes produce a new snapshot, Android-only changes are imported, and concurrent changes are reported without uploading. A final latest-file check narrows the race window immediately before `PUT`.
 
+## Bitwarden compatibility
+
+- Official US/EU endpoints and same-origin `/identity` + `/api` self-hosted endpoints.
+- PBKDF2-HMAC-SHA256 through Web Crypto; Argon2id v1.3 through bundled `hash-wasm` with independent Python vectors.
+- Type 2 AES-256-CBC + HMAC-SHA256 CipherStrings with MAC-before-decrypt and independent vectors.
+- Password login, explicit authenticator/email/YubiKey-code 2FA continuation, refresh token rotation, personal Cipher sync and CRUD.
+- Revision-based concurrent edit detection and empty-vault deletion protection.
+
+The Bitwarden master password is ephemeral. The derived user Vault Key, access/refresh tokens, and decrypted provider cache are persisted only as fields inside Monica's AES-GCM envelope. Organization Ciphers are currently skipped with warnings until RSA organization-key unwrap is implemented; personal Cipher support is not presented as organization support.
+
 ## Passkey boundary
 
 Browser-local and Bitwarden FIDO2 credentials may contain encrypted portable private-key material. Existing Android WebDAV backups contain only device-protected references for Android-local passkeys, so those entries remain metadata-only until Android adds an encrypted portable-key backup field.

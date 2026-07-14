@@ -1,6 +1,8 @@
 import { isLoginItem, createLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { ProviderRegistry } from "../core/provider";
+import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
+import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
 import type { ExtensionRequest, ExtensionResponse, LoginMatchSummary } from "../runtime/messages";
 import { ChromeVaultSessionStore } from "../security/vault-session";
@@ -12,6 +14,8 @@ const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
 const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore());
 const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
+providers.register(new BitwardenProvider());
+const bitwardenClient = new BitwardenClient();
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -112,6 +116,43 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       };
       await providers.get("monica-webdav").testConnection(account);
       return service.upsertProvider(account);
+    }
+    case "BITWARDEN_LOGIN": {
+      assertExtensionPage(sender);
+      const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
+      if (existing && existing.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
+      const result = await bitwardenClient.login({
+        vaultUrl: request.vaultUrl,
+        email: request.email,
+        masterPassword: request.masterPassword,
+        deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID(),
+        twoFactorCode: request.twoFactorCode,
+        twoFactorProvider: request.twoFactorProvider,
+        rememberTwoFactor: request.rememberTwoFactor
+      });
+      if (result.status === "two-factor-required") return { status: result.status, providers: result.providers };
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "bitwarden",
+        name: request.name.trim() || "Bitwarden",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(request.isDefaultSaveTarget),
+        config: result.session,
+        lastSyncAt: undefined,
+        lastError: undefined
+      };
+      await service.upsertProvider(account);
+      return { status: "authenticated", providerId: account.id };
+    }
+    case "BITWARDEN_SEND_EMAIL_CODE": {
+      assertExtensionPage(sender);
+      const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
+      return bitwardenClient.sendTwoFactorEmailCode({
+        vaultUrl: request.vaultUrl,
+        email: request.email,
+        masterPassword: request.masterPassword,
+        deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID()
+      });
     }
     case "PROVIDER_SYNC": {
       assertExtensionPage(sender);
