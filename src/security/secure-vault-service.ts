@@ -183,7 +183,7 @@ export class SecureVaultService {
   }
 
   async listProviders(): Promise<ProviderAccount[]> {
-    return (await this.readState()).providers.map(safeProviderAccount);
+    return (await this.readState()).providers.map(publicProviderAccount);
   }
 
   async getProvider(providerId: string): Promise<ProviderAccount | undefined> {
@@ -207,7 +207,7 @@ export class SecureVaultService {
     }
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
-    return provider;
+    return publicProviderAccount(provider);
     });
   }
 
@@ -473,6 +473,38 @@ function safeProviderAccount(provider: ProviderAccount): ProviderAccount {
   return provider.lastError ? { ...provider, lastError: redactProviderMessage(provider.lastError) } : provider;
 }
 
+function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
+  const safe = safeProviderAccount(provider);
+  if (provider.kind === "monica-webdav") {
+    return {
+      ...safe,
+      config: {
+        baseUrl: stringConfig(provider, "baseUrl"),
+        username: stringConfig(provider, "username"),
+        lastFileName: stringConfig(provider, "lastFileName") || undefined,
+        lastEtag: stringConfig(provider, "lastEtag") || undefined,
+        passwordConfigured: Boolean(stringConfig(provider, "password")),
+        backupPasswordConfigured: Boolean(stringConfig(provider, "backupPassword"))
+      }
+    };
+  }
+  if (provider.kind === "bitwarden") {
+    return {
+      ...safe,
+      config: {
+        vaultUrl: stringConfig(provider, "vaultUrl"),
+        email: stringConfig(provider, "email"),
+        authenticated: Boolean(stringConfig(provider, "accessToken"))
+      }
+    };
+  }
+  return { ...safe, config: {} };
+}
+
+function stringConfig(provider: ProviderAccount, key: string): string {
+  return typeof provider.config[key] === "string" ? provider.config[key] as string : "";
+}
+
 function queueProviderMutations(state: VaultState, item: VaultItem, operation: PendingMutation["operation"], now: string): void {
   for (const reference of item.providerRefs) {
     const provider = state.providers.find((candidate) => candidate.id === reference.providerId);
@@ -486,7 +518,7 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
 }
 
 function validateMasterPassword(value: string): void {
-  if (value.length < 10) throw new Error("主密码至少需要 10 个字符。");
+  if (value.length < 15) throw new Error("主密码至少需要 15 个字符。");
 }
 
 function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {

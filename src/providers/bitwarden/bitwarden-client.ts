@@ -1,5 +1,6 @@
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
+import { readBoundedJsonObject } from "../bounded-body";
 import {
   decryptBitwardenSymmetricKey,
   deriveBitwardenMasterKey,
@@ -35,6 +36,16 @@ export type BitwardenLoginResult =
   | { status: "authenticated"; session: BitwardenSessionConfig }
   | { status: "two-factor-required"; providers: number[]; providerData?: Record<string, unknown> };
 
+export interface BitwardenClientLimits {
+  maxAuthResponseBytes: number;
+  maxVaultResponseBytes: number;
+}
+
+export const DEFAULT_BITWARDEN_CLIENT_LIMITS: Readonly<BitwardenClientLimits> = Object.freeze({
+  maxAuthResponseBytes: 2 * 1024 * 1024,
+  maxVaultResponseBytes: 64 * 1024 * 1024
+});
+
 export interface BitwardenLoginInput {
   vaultUrl: string;
   email: string;
@@ -51,7 +62,8 @@ const DEVICE_TYPE = "2";
 export class BitwardenClient {
   constructor(
     private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
-    private readonly transportPolicy: ProviderTransportPolicy = {}
+    private readonly transportPolicy: ProviderTransportPolicy = {},
+    private readonly limitOverrides: Partial<BitwardenClientLimits> = {}
   ) {}
 
   async prelogin(vaultUrl: string, email: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; email: string; kdf: BitwardenKdfConfig }> {
@@ -63,7 +75,7 @@ export class BitwardenClient {
       body: JSON.stringify({ email: normalizedEmail }),
       signal
     }, "Bitwarden 预登录", true);
-    const body = await responseJson(response);
+    const body = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 预登录响应");
     if (!response.ok) throw bitwardenHttpError("Bitwarden 预登录失败", response, body);
     return { urls, email: normalizedEmail, kdf: parseKdf(body) };
   }
@@ -94,7 +106,7 @@ export class BitwardenClient {
       body: form,
       signal
     }, "Bitwarden 登录", false);
-    const body = await responseJson(response);
+    const body = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 登录响应");
     if (!response.ok) {
       const providers = parseTwoFactorProviders(body);
       if (providers.length) return { status: "two-factor-required", providers, providerData: recordValue(body, "twoFactorProviders2", "TwoFactorProviders2") };
@@ -128,7 +140,7 @@ export class BitwardenClient {
     if (!session.refreshToken) throw new Error("Bitwarden 会话没有刷新令牌，请重新登录。");
     const form = new URLSearchParams({ grant_type: "refresh_token", refresh_token: session.refreshToken, client_id: "browser" });
     const response = await this.request(`${session.identityUrl}/connect/token`, { method: "POST", headers: tokenHeaders(session.email, false), body: form, signal }, "Bitwarden 刷新会话", false);
-    const body = await responseJson(response);
+    const body = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 刷新响应");
     if (!response.ok) throw bitwardenHttpError("刷新 Bitwarden 会话失败", response, body);
     const accessToken = stringValue(body, "access_token");
     if (!accessToken) throw new Error("Bitwarden 刷新响应缺少访问令牌。");
@@ -150,7 +162,7 @@ export class BitwardenClient {
       body: JSON.stringify({ deviceIdentifier: input.deviceId, email, masterPasswordHash }),
       signal
     }, "Bitwarden 发送邮箱验证码", false);
-    if (!response.ok) throw bitwardenHttpError("发送 Bitwarden 邮箱验证码失败", response, await responseJson(response));
+    if (!response.ok) throw bitwardenHttpError("发送 Bitwarden 邮箱验证码失败", response, await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 验证码响应"));
   }
 
   async sync(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
@@ -172,7 +184,7 @@ export class BitwardenClient {
       headers: authorizedHeaders(active.accessToken),
       signal
     }, "Bitwarden 删除项目", true);
-    if (!response.ok) throw bitwardenHttpError("删除 Bitwarden 项目失败", response, await responseJson(response));
+    if (!response.ok) throw bitwardenHttpError("删除 Bitwarden 项目失败", response, await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 删除响应"));
     return active;
   }
 
@@ -189,7 +201,7 @@ export class BitwardenClient {
       ...init,
       headers
     }, errorPrefix);
-    const payload = await responseJson(response);
+    const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 密码库响应");
     if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
     return { session: active, payload };
   }
@@ -214,14 +226,24 @@ export class BitwardenClient {
       idempotent
     });
   }
+
+  private limits(): BitwardenClientLimits {
+    const limits = { ...DEFAULT_BITWARDEN_CLIENT_LIMITS, ...this.limitOverrides };
+    for (const [name, value] of Object.entries(limits)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Bitwarden 安全限制无效: ${name}`);
+    return limits;
+  }
+
+  private responseJson(response: Response, maximum: number, label: string): Promise<Record<string, unknown>> {
+    return readBoundedJsonObject(response, maximum, label);
+  }
 }
 
 export function inferBitwardenServerUrls(rawVaultUrl: string): BitwardenServerUrls {
   const raw = rawVaultUrl.trim() || "https://vault.bitwarden.com";
   const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") throw new Error("Bitwarden 地址必须使用 HTTPS。");
-  parsed.hash = "";
-  parsed.search = "";
+  if (parsed.username || parsed.password) throw new Error("Bitwarden 地址不能包含用户名或密码。");
+  if (parsed.search || parsed.hash) throw new Error("Bitwarden 地址不能包含查询参数或片段。");
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopbackHost(parsed.hostname))) throw new Error("Bitwarden 地址必须使用 HTTPS。");
   parsed.pathname = parsed.pathname.replace(/\/(api|identity)\/?$/i, "").replace(/\/$/, "");
   const vault = parsed.toString().replace(/\/$/, "");
   if (parsed.hostname === "vault.bitwarden.com") return { vault: "https://vault.bitwarden.com", api: "https://api.bitwarden.com", identity: "https://identity.bitwarden.com" };
@@ -275,17 +297,12 @@ function commonHeaders(): Headers {
   return new Headers({ Accept: "application/json", "Bitwarden-Client-Name": "browser", "Bitwarden-Client-Version": CLIENT_VERSION, "Cache-Control": "no-store" });
 }
 
-async function responseJson(response: Response): Promise<Record<string, unknown>> {
-  try {
-    const value = await response.json();
-    return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
 function bitwardenHttpError(prefix: string, response: Response, _body?: Record<string, unknown>): Error {
   return providerHttpError(prefix, response);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
 function stringValue(body: Record<string, unknown>, ...keys: string[]): string {

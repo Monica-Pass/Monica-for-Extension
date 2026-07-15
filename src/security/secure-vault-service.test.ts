@@ -58,7 +58,36 @@ describe("encrypted vault", () => {
     const serializedEnvelope = JSON.stringify(storage.envelope);
     expect(serializedEnvelope).not.toContain("webdav-secret");
     expect(serializedEnvelope).not.toContain("android-backup-secret");
-    expect((await service.listProviders()).find((provider) => provider.id === "webdav-1")?.config).toMatchObject({ password: "webdav-secret", backupPassword: "android-backup-secret" });
+    const publicConfig = (await service.listProviders()).find((provider) => provider.id === "webdav-1")?.config;
+    expect(publicConfig).toMatchObject({
+      baseUrl: "https://cloud.example.com/private-dav",
+      username: "webdav-user",
+      passwordConfigured: true,
+      backupPasswordConfigured: true
+    });
+    expect(JSON.stringify(publicConfig)).not.toMatch(/webdav-secret|android-backup-secret/);
+
+    const returned = await service.upsertProvider({
+      id: "bitwarden-1",
+      kind: "bitwarden",
+      name: "Bitwarden",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {
+        vaultUrl: "https://vault.bitwarden.com",
+        email: "joy@example.com",
+        accessToken: "bitwarden-access-secret",
+        refreshToken: "bitwarden-refresh-secret",
+        vaultKeyEnc: "vault-key-secret"
+      }
+    });
+    expect(returned.config).toMatchObject({ vaultUrl: "https://vault.bitwarden.com", email: "joy@example.com", authenticated: true });
+    expect(JSON.stringify(await service.listProviders())).not.toMatch(/bitwarden-access-secret|bitwarden-refresh-secret|vault-key-secret/);
+  });
+
+  it("requires a modern minimum length for newly created master passwords", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await expect(service.setup("fourteen-chars!".slice(0, 14))).rejects.toThrow("至少需要 15 个字符");
   });
 
   it("stores support diagnostics encrypted and exports a redacted bounded document", async () => {

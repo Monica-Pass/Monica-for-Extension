@@ -57,7 +57,7 @@ const auth = reactive({ masterPassword: "", confirmation: "" });
 const passwordChange = reactive({ currentPassword: "", newPassword: "", confirmation: "" });
 const restoreForm = reactive({ backupPassword: "", currentPassword: "" });
 const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: "" });
-const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
+const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
 const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
 
 useThemePreferences();
@@ -157,7 +157,7 @@ async function initialize() {
 async function setupVault() {
   authError.value = "";
   if (auth.masterPassword.length < 10) {
-    authError.value = "主密码至少需要 10 个字符。";
+    authError.value = "主密码至少需要 15 个字符。";
     return;
   }
   if (auth.masterPassword !== auth.confirmation) {
@@ -325,7 +325,7 @@ async function removeCredential(item: LoginItem) {
 
 function newWebDav() {
   editingWebDavId.value = undefined;
-  Object.assign(webDavForm, { name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
+  Object.assign(webDavForm, { name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
   webDavError.value = "";
   webDavDialogOpen.value = true;
 }
@@ -337,8 +337,10 @@ function editWebDav(provider: ProviderAccount) {
     name: provider.name,
     baseUrl: typeof config.baseUrl === "string" ? config.baseUrl : "",
     username: typeof config.username === "string" ? config.username : "",
-    password: typeof config.password === "string" ? config.password : "",
-    backupPassword: typeof config.backupPassword === "string" ? config.backupPassword : "",
+    password: "",
+    backupPassword: "",
+    passwordConfigured: config.passwordConfigured === true,
+    backupPasswordConfigured: config.backupPasswordConfigured === true,
     isDefaultSaveTarget: provider.isDefaultSaveTarget
   });
   webDavError.value = "";
@@ -363,7 +365,7 @@ function webDavConfig(): MonicaWebDavConfig {
 
 async function testWebDav() {
   await runWebDavAction("test", async () => {
-    await vaultClient.testWebDav(webDavConfig());
+    await vaultClient.testWebDav(webDavConfig(), editingWebDavId.value);
     showNotice("WebDAV 连接成功，Monica_Backups 目录可访问。");
   });
 }
@@ -603,7 +605,7 @@ async function restoreEncryptedVault() {
 async function changeMasterPassword() {
   securityError.value = "";
   if (!passwordChange.currentPassword) return void (securityError.value = "请输入当前主密码。");
-  if (passwordChange.newPassword.length < 10) return void (securityError.value = "新主密码至少需要 10 个字符。");
+  if (passwordChange.newPassword.length < 15) return void (securityError.value = "新主密码至少需要 15 个字符。");
   if (passwordChange.newPassword !== passwordChange.confirmation) return void (securityError.value = "两次输入的新主密码不一致。");
   securityBusy.value = "password";
   try {
@@ -819,8 +821,8 @@ function errorMessage(error: unknown) {
         <label class="field"><span>显示名称</span><input v-model="webDavForm.name" autocomplete="off" placeholder="Monica Android WebDAV" /></label>
         <label class="field field-wide"><span>WebDAV 地址 *</span><input v-model="webDavForm.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small>可以填写服务器根路径，也可以直接填写 Monica_Backups 路径。</small></label>
         <label class="field"><span>用户名</span><input v-model="webDavForm.username" autocomplete="username" /></label>
-        <label class="field"><span>WebDAV 密码</span><input v-model="webDavForm.password" type="password" autocomplete="current-password" /></label>
-        <label class="field field-wide"><span>Android 备份加密密码</span><input v-model="webDavForm.backupPassword" type="password" autocomplete="off" /><small>仅用于 .enc.zip 的 MONICA_ENC_V1 解密；未加密备份请留空。</small></label>
+        <label class="field"><span>WebDAV 密码</span><input v-model="webDavForm.password" type="password" autocomplete="current-password" :placeholder="webDavForm.passwordConfigured ? '已加密保存；留空保持不变' : ''" /></label>
+        <label class="field field-wide"><span>Android 备份加密密码</span><input v-model="webDavForm.backupPassword" type="password" autocomplete="new-password" :placeholder="webDavForm.backupPasswordConfigured ? '已加密保存；留空保持不变' : '至少 12 个字符'" /><small>强制用于后续 MONICA_ENC_V1 快照；导入普通 ZIP 后也会升级为加密快照。</small></label>
         <label class="favorite-row field-wide"><input v-model="webDavForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
         <p v-if="webDavError" class="form-error field-wide" role="alert">{{ webDavError }}</p>
         <footer class="provider-actions field-wide"><m3e-button variant="text" type="button" @click="closeWebDavDialog">取消</m3e-button><m3e-button variant="tonal" type="button" :disabled="Boolean(webDavBusy)" @click="testWebDav">{{ webDavBusy === 'test' ? '测试中…' : '测试连接' }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(webDavBusy)">{{ webDavBusy === 'save' ? '保存中…' : '加密保存' }}</m3e-button></footer>

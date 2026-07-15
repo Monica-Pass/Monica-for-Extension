@@ -1,4 +1,5 @@
 import { bytesToBase64 } from "../../security/encoding";
+import { readBoundedResponseBytes, readBoundedResponseText } from "../bounded-body";
 import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
 import { DEFAULT_ZIP_SAFETY_LIMITS } from "./zip-safety";
 
@@ -53,7 +54,7 @@ export class WebDavClient {
     }
     if (!response.ok && response.status !== 207) throw webDavError("读取 Monica_Backups 失败", response);
     const limits = this.limits();
-    return parseMultiStatus(await readBoundedText(response, limits.maxMultiStatusBytes, "WebDAV 目录响应"), folderUrl)
+    return parseMultiStatus(await readBoundedResponseText(response, limits.maxMultiStatusBytes, "WebDAV 目录响应"), folderUrl)
       .filter((file) => BACKUP_FILE_PATTERN.test(file.name))
       .sort((left, right) => compareBackups(right, left));
   }
@@ -67,7 +68,7 @@ export class WebDavClient {
     }
     const response = await this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份");
     if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
-    return readBoundedBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载");
+    return readBoundedResponseBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载");
   }
 
   async upload(bytes: Uint8Array, encrypted: boolean, signal?: AbortSignal): Promise<WebDavBackupFile> {
@@ -151,47 +152,6 @@ export function parseMultiStatus(xml: string, folderUrl: string): WebDavBackupFi
       encrypted: /\.enc\.zip$/i.test(name)
     }];
   });
-}
-
-async function readBoundedText(response: Response, maximum: number, label: string): Promise<string> {
-  return new TextDecoder().decode(await readBoundedBytes(response, maximum, label));
-}
-
-async function readBoundedBytes(response: Response, maximum: number, label: string): Promise<Uint8Array> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength) {
-    const parsed = Number(declaredLength);
-    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximum) throw new Error(`${label}超过安全上限。`);
-  }
-  if (!response.body) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > maximum) throw new Error(`${label}超过安全上限。`);
-    return bytes;
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.length;
-      if (!Number.isSafeInteger(total) || total > maximum) {
-        await reader.cancel();
-        throw new Error(`${label}超过安全上限。`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const output = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return output;
 }
 
 function assertSameProviderOrigin(target: string, configuredBaseUrl: string): void {

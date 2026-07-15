@@ -5,7 +5,8 @@ import { renderSavePrompt } from "./save-prompt";
 import { fillWallet } from "./wallet-dom";
 import { renderPasskeyPrompt } from "./passkey-prompt";
 
-chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload }, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("")) || sender.tab !== undefined) return false;
   if (message?.type === "MONICA_SCAN_PAGE") {
     sendResponse(scanPage());
     return false;
@@ -32,6 +33,10 @@ if (window.top === window) void restorePendingPrompt();
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.origin !== location.origin || event.data?.source !== "monica-passkey-page" || !event.data.requestId) return;
   const requestId = String(event.data.requestId);
+  if (requestId.length > 128 || !isBoundedBridgeRequest(event.data.request)) {
+    window.postMessage({ source: "monica-passkey-extension", requestId: requestId.slice(0, 128), error: "Passkey 请求格式无效或过大。", name: "DataError" }, location.origin);
+    return;
+  }
   void sendRuntime<PasskeyPromptContext>({ type: "PASSKEY_BEGIN", request: event.data.request as PasskeyRequest }).then((context) => {
     renderPasskeyPrompt(context, async (itemId) => {
       const result = await sendRuntime<PasskeyResult>({ type: "PASSKEY_ACCEPT", candidateId: context.candidateId, itemId });
@@ -42,6 +47,15 @@ window.addEventListener("message", (event) => {
     });
   }).catch((error) => window.postMessage({ source: "monica-passkey-extension", requestId, error: error instanceof Error ? error.message : "Passkey 请求失败。", name: "NotAllowedError" }, location.origin));
 });
+
+function isBoundedBridgeRequest(request: unknown): request is PasskeyRequest {
+  if (!request || typeof request !== "object") return false;
+  try {
+    return JSON.stringify(request).length <= 64 * 1024;
+  } catch {
+    return false;
+  }
+}
 
 async function submitCandidate(candidate: CredentialCaptureInput): Promise<void> {
   try {

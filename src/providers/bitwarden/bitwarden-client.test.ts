@@ -10,7 +10,11 @@ describe("Bitwarden auth client", () => {
     expect(inferBitwardenServerUrls("https://vault.bitwarden.com")).toEqual({ vault: "https://vault.bitwarden.com", api: "https://api.bitwarden.com", identity: "https://identity.bitwarden.com" });
     expect(inferBitwardenServerUrls("vault.bitwarden.eu")).toEqual({ vault: "https://vault.bitwarden.eu", api: "https://api.bitwarden.eu", identity: "https://identity.bitwarden.eu" });
     expect(inferBitwardenServerUrls("https://passwords.example.com/api/")).toEqual({ vault: "https://passwords.example.com", api: "https://passwords.example.com/api", identity: "https://passwords.example.com/identity" });
+    expect(inferBitwardenServerUrls("http://localhost:8080")).toEqual({ vault: "http://localhost:8080", api: "http://localhost:8080/api", identity: "http://localhost:8080/identity" });
     expect(() => inferBitwardenServerUrls("http://passwords.example.com")).toThrow("HTTPS");
+    expect(() => inferBitwardenServerUrls("ftp://localhost/vault")).toThrow("HTTPS");
+    expect(() => inferBitwardenServerUrls("https://user:secret@passwords.example.com")).toThrow("不能包含用户名或密码");
+    expect(() => inferBitwardenServerUrls("https://passwords.example.com?token=secret")).toThrow("不能包含查询参数或片段");
   });
 
   it("performs prelogin and password login and unwraps the vault key", async () => {
@@ -158,6 +162,16 @@ describe("Bitwarden auth client", () => {
 
     await expect(client.sync(activeSession(), controller.signal)).rejects.toMatchObject({ code: "cancelled", retryable: false });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("caps authentication and vault JSON responses without trusting Content-Length", async () => {
+    const authFetcher = vi.fn().mockResolvedValue(json({ Kdf: 0, padding: "x".repeat(128) })) as unknown as typeof fetch;
+    const authClient = new BitwardenClient(authFetcher, {}, { maxAuthResponseBytes: 32 });
+    await expect(authClient.prelogin("https://self.example.com", EMAIL)).rejects.toThrow("Bitwarden 预登录响应超过安全上限");
+
+    const vaultFetcher = vi.fn().mockResolvedValue(json({ Ciphers: [], padding: "x".repeat(128) })) as unknown as typeof fetch;
+    const vaultClient = new BitwardenClient(vaultFetcher, {}, { maxVaultResponseBytes: 32 });
+    await expect(vaultClient.sync(activeSession())).rejects.toThrow("Bitwarden 密码库响应超过安全上限");
   });
 });
 

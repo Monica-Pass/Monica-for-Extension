@@ -4,10 +4,12 @@ import { ProviderRegistry } from "../core/provider";
 import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
-import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
+import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, fromBase64Url, toBase64Url, validateRpId } from "../passkey/webauthn-core";
+import { validatePasskeyRequest } from "../passkey/request-policy";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -35,6 +37,15 @@ interface PendingCredentialCapture extends CredentialCaptureInput {
 
 const pendingCredentialCaptures = new Map<string, PendingCredentialCapture>();
 const pendingPasskeyRequests = new Map<string, { id: string; request: PasskeyRequest; tabId: number; frameId: number; origin: string; rpId: string; expiresAt: number; matches: string[]; targetProviderId?: string }>();
+const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
+  "CREDENTIAL_CAPTURE",
+  "CREDENTIAL_PENDING",
+  "CREDENTIAL_ACCEPT",
+  "CREDENTIAL_DISMISS",
+  "PASSKEY_BEGIN",
+  "PASSKEY_ACCEPT",
+  "PASSKEY_DISMISS"
+]);
 
 void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 
@@ -67,6 +78,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
 });
 
 async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  if (!WEB_PAGE_REQUEST_TYPES.has(request.type)) assertExtensionPage(sender);
   switch (request.type) {
     case "VAULT_STATUS":
       return service.status();
@@ -169,13 +181,15 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.exportProviderDiagnostics();
     case "WEBDAV_TEST": {
       assertExtensionPage(sender);
+      const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
+      if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
       const temporary: ProviderAccount = {
         id: "webdav-connection-test",
         kind: "monica-webdav",
         name: "WebDAV connection test",
         enabled: true,
         isDefaultSaveTarget: false,
-        config: request.config
+        config: effectiveWebDavConfig(request.config, existing?.config)
       };
       return providers.get("monica-webdav").testConnection(temporary);
     }
@@ -184,10 +198,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
       const previousConfig = existing?.config || {};
-      const connectionChanged = ["baseUrl", "username", "password", "backupPassword"].some((key) => previousConfig[key] !== request.config[key]);
+      const effectiveConfig = effectiveWebDavConfig(request.config, previousConfig);
+      if (typeof effectiveConfig.backupPassword !== "string" || effectiveConfig.backupPassword.length < 12) {
+        throw new Error("Android WebDAV 备份加密密码至少需要 12 个字符。");
+      }
+      const connectionChanged = ["baseUrl", "username", "password", "backupPassword"].some((key) => previousConfig[key] !== effectiveConfig[key]);
       const config = connectionChanged
-        ? request.config
-        : { ...request.config, lastFileName: previousConfig.lastFileName, lastEtag: previousConfig.lastEtag };
+        ? effectiveConfig
+        : { ...effectiveConfig, lastFileName: previousConfig.lastFileName, lastEtag: previousConfig.lastEtag };
       const account: ProviderAccount = {
         id: existing?.id || crypto.randomUUID(),
         kind: "monica-webdav",
@@ -284,11 +302,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
       return service.removeProvider(request.providerId);
   }
+  throw new Error("不支持的 Monica 运行时命令。");
 }
 
 function abortProviderSyncs(): void {
   for (const controller of activeProviderSyncs.values()) controller.abort(new DOMException("密码库已锁定", "AbortError"));
   activeProviderSyncs.clear();
+}
+
+function effectiveWebDavConfig(config: MonicaWebDavConfig, previous: Record<string, unknown> = {}): MonicaWebDavConfig {
+  return {
+    ...config,
+    password: config.password || (typeof previous.password === "string" ? previous.password : ""),
+    backupPassword: config.backupPassword || (typeof previous.backupPassword === "string" ? previous.backupPassword : undefined)
+  };
 }
 
 async function recordProviderDiagnosticIfUnlocked(diagnostic: Parameters<SecureVaultService["recordProviderDiagnostic"]>[0]): Promise<void> {
@@ -352,7 +379,7 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
   const source = assertWebPageSender(sender);
   purgeExpiredCaptures();
   const pending = pendingCredentialCaptures.get(candidateId);
-  if (!pending || pending.tabId !== source.tabId) throw new Error("保存候选已过期，请重新提交表单。");
+  if (!pending || pending.tabId !== source.tabId || (source.frameId !== pending.frameId && source.frameId !== 0)) throw new Error("保存候选已过期，请重新提交表单。");
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，保存候选未写入。");
 
   let saved: LoginItem;
@@ -394,7 +421,7 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
 function dismissCredentialCandidate(candidateId: string, sender: chrome.runtime.MessageSender): void {
   const source = assertWebPageSender(sender);
   const pending = pendingCredentialCaptures.get(candidateId);
-  if (pending?.tabId === source.tabId) pendingCredentialCaptures.delete(candidateId);
+  if (pending?.tabId === source.tabId && (source.frameId === pending.frameId || source.frameId === 0)) pendingCredentialCaptures.delete(candidateId);
 }
 
 function savePromptContext(pending: PendingCredentialCapture, providers: ProviderAccount[], defaultProviderId: string): SavePromptContext {
@@ -422,6 +449,7 @@ function validateCredentialCapture(input: CredentialCaptureInput, senderUrl: str
   const page = new URL(input.pageUrl);
   const sender = new URL(senderUrl);
   if (!/^https?:$/.test(page.protocol) || page.origin !== sender.origin) throw new Error("凭据候选来源与当前页面不匹配。");
+  if (!isSecureSensitivePageUrl(page.toString())) throw new Error("已阻止从不安全的 HTTP 页面保存密码。");
   const username = String(input.username || "").trim().slice(0, 1024);
   const password = String(input.password || "");
   if (!password || password.length > 8192) throw new Error("捕获的密码为空或过长。");
@@ -435,9 +463,7 @@ function validateCredentialCapture(input: CredentialCaptureInput, senderUrl: str
 }
 
 function assertWebPageSender(sender: chrome.runtime.MessageSender): { tabId: number; frameId: number; url: string; origin: string } {
-  const url = sender.url || "";
-  if (sender.tab?.id === undefined || !/^https?:\/\//i.test(url)) throw new Error("此命令只允许网页内容脚本调用。");
-  return { tabId: sender.tab.id, frameId: sender.frameId || 0, url, origin: new URL(url).origin };
+  return requireTrustedWebPageSender(sender, chrome.runtime.id);
 }
 
 function purgeExpiredCaptures(): void {
@@ -453,6 +479,7 @@ function scheduleCaptureExpiry(candidateId: string, expiresAt: number): void {
 }
 
 async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runtime.MessageSender): Promise<PasskeyPromptContext> {
+  request = validatePasskeyRequest(request);
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
   const rpId = validateRpId(source.origin, request.rpId);
@@ -512,9 +539,11 @@ async function fillLogin(itemId: string, tabId: number, frameId?: number) {
   const item = await service.getItem(itemId);
   if (!item || !isLoginItem(item)) throw new Error("登录项不存在或已被删除。");
   const tab = await chrome.tabs.get(tabId);
+  if (!tab.active) throw new Error("已阻止向非活动标签页填充登录信息。");
   const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
   const targetFrame = frameId === undefined ? frames.find((frame) => frame.frameId === 0) : frames.find((frame) => frame.frameId === frameId);
   const targetUrl = targetFrame?.url || tab.url;
+  if (!targetUrl || !isSecureSensitivePageUrl(targetUrl)) throw new Error("已阻止向不安全的 HTTP 页面填充登录信息。");
   if (!targetUrl || (loginMatchScore(item, targetUrl) <= 0 && (!tab.url || loginMatchScore(item, tab.url) <= 0))) throw new Error("登录项与目标页面不匹配，已阻止填充。");
   const totpCode = item.totpSecret ? await generateTotp(item.totpSecret) : undefined;
   const response = (await chrome.tabs.sendMessage(tabId, {
@@ -547,7 +576,7 @@ async function fillWalletItem(itemId: string, tabId: number, frameId?: number): 
   const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
   const target = frames.find((frame) => frame.frameId === (frameId ?? 0));
   const targetUrl = target?.url || (frameId === undefined || frameId === 0 ? tab.url : undefined);
-  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) throw new Error("当前目标不是可填充的网页。");
+  if (!targetUrl || !isSecureSensitivePageUrl(targetUrl)) throw new Error("已阻止向不安全的 HTTP 页面填充证件或支付信息。");
   const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", wallet: walletPayload(item) }, frameId === undefined ? undefined : { frameId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了证件或支付信息填充。");
   return { filledCount: Number(response.filledCount) || 0, filledFields: response.filledFields || [] };
@@ -607,8 +636,7 @@ function unmaskedAccountNumber(value: string): string | undefined {
 }
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {
-  const root = chrome.runtime.getURL("");
-  if (!sender.url?.startsWith(root)) throw new Error("此命令只允许 Monica 插件页面调用。");
+  assertTrustedExtensionPage(sender, chrome.runtime.id, chrome.runtime.getURL(""));
 }
 
 function toMatchSummary(item: LoginItem): LoginMatchSummary {

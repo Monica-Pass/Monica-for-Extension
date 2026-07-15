@@ -119,7 +119,7 @@ export type ExtensionRequest =
   | { type: "PROVIDER_CONFLICT_LIST"; providerId?: string }
   | { type: "PROVIDER_CONFLICT_RESOLVE"; conflictId: string; resolution: ProviderConflictResolution }
   | { type: "PROVIDER_DIAGNOSTIC_EXPORT" }
-  | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
+  | { type: "WEBDAV_TEST"; providerId?: string; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }
   | {
       type: "BITWARDEN_LOGIN";

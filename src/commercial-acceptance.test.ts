@@ -50,9 +50,9 @@ describe("commercial installability and least privilege", () => {
     expect(manifest.background.service_worker).toBe("background.js");
     expect(manifest.action.default_popup).toBe("popup.html");
     expect(manifest.options_page).toBe("index.html");
-    expect(manifest.content_security_policy.extension_pages).toBe("script-src 'self' 'wasm-unsafe-eval'; object-src 'self'");
+    expect(manifest.content_security_policy.extension_pages).toBe("script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(manifest).not.toHaveProperty("externally_connectable");
-    expect(manifest.web_accessible_resources).toEqual([{ resources: ["icons/logo-256.png"], matches: ["http://*/*", "https://*/*"] }]);
+    expect(manifest.web_accessible_resources).toEqual([{ resources: ["icons/logo-256.png"], matches: ["http://*/*", "https://*/*"], use_dynamic_url: true }]);
     expect(readme).toContain("运行时不依赖 Monica Server WebUI");
     expect(appearance).not.toContain("../i18n");
     expect(appearance).not.toContain("setLocale");

@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:webdav": "vitest run src/providers/webdav",
     "test:bitwarden": "vitest run src/providers/bitwarden",
-    "test:security": "vitest run src/security src/passkey/webauthn-core.test.ts src/content/wallet-dom.test.ts && npm run build && node scripts/security-audit.mjs",
+    "test:security": "vitest run src/security src/runtime/sender-policy.test.ts src/passkey/request-policy.test.ts src/passkey/webauthn-core.test.ts src/content/wallet-dom.test.ts && npm run build && node scripts/security-audit.mjs",
     "test:e2e": "npm run build && playwright test",
     "capture:store-assets": "npm run build && node scripts/capture-store-assets.mjs",
     "build": "npm run check && vite build && node scripts/build-workers.mjs",

@@ -33,7 +33,7 @@ export const vaultClient = {
   listProviderConflicts: (providerId?: string) => send<ProviderConflict[]>({ type: "PROVIDER_CONFLICT_LIST", providerId }),
   resolveProviderConflict: (conflictId: string, resolution: ProviderConflictResolution) => send<void>({ type: "PROVIDER_CONFLICT_RESOLVE", conflictId, resolution }),
   exportProviderDiagnostics: () => send<ProviderDiagnosticExport>({ type: "PROVIDER_DIAGNOSTIC_EXPORT" }),
-  testWebDav: (config: MonicaWebDavConfig) => send<void>({ type: "WEBDAV_TEST", config }),
+  testWebDav: (config: MonicaWebDavConfig, providerId?: string) => send<void>({ type: "WEBDAV_TEST", config, providerId }),
   saveWebDav: (name: string, config: MonicaWebDavConfig, providerId?: string, isDefaultSaveTarget = false) =>
     send<ProviderAccount>({ type: "WEBDAV_SAVE", name, config, providerId, isDefaultSaveTarget }),
   loginBitwarden: (input: {
