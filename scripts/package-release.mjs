@@ -63,7 +63,7 @@ const evidenceBytes = jsonBytes({
   },
   policyDocuments: ["SECURITY.md", "docs/SECURITY_ARCHITECTURE.md"],
   releaseGate: "npm run release:check",
-  externalAttestation: "GitHub Actions attest-build-provenance on push builds"
+  externalAttestation: "GitHub Actions attest-build-provenance on public push builds; unsupported private organization plans retain the package hash and embedded release evidence instead"
 });
 
 const packagedEntries = new Map(distEntries);

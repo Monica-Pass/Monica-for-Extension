@@ -52,11 +52,11 @@ Official source builds use the exact Node/npm versions in `package.json`, a lock
 - `SBOM.cdx.json`;
 - `THIRD-PARTY-LICENSES.json`;
 - `SECURITY-EVIDENCE.json`;
-- an external `.sha256` checksum and GitHub build-provenance attestation for push builds.
+- an external `.sha256` checksum and, for public push builds, a GitHub build-provenance attestation.
 
 Run `npm run release:check` from a clean tracked worktree to reproduce and verify the package.
 
-CodeQL uses the `security-extended` query suite. While this repository is private without GitHub Advanced Security, the workflow retains SARIF as a downloadable build artifact instead of claiming Security-tab publication; public repositories and private repositories with Advanced Security upload results normally. OpenSSF Scorecard evidence is available only when the repository is public.
+CodeQL uses the `security-extended` query suite. While this repository is private without GitHub Advanced Security, the workflow retains SARIF as a downloadable build artifact instead of claiming Security-tab publication; public repositories and private repositories with Advanced Security upload results normally. GitHub-hosted provenance persistence and OpenSSF Scorecard evidence are available only after the repository is public or the organization plan supports the corresponding feature; the private build still publishes deterministic package metadata, hashes and embedded security evidence.
 
 The full engineering threat model is in [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md). Independent third-party audit completion will be reported there only after an actual report exists.
 
