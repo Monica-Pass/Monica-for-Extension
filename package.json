@@ -16,22 +16,22 @@
     "test:bitwarden": "vitest run src/providers/bitwarden",
     "test:security": "vitest run src/security src/passkey/webauthn-core.test.ts src/content/wallet-dom.test.ts && npm run build && node scripts/security-audit.mjs",
     "test:e2e": "npm run build && playwright test",
+    "capture:store-assets": "npm run build && node scripts/capture-store-assets.mjs",
     "build": "npm run check && vite build && node scripts/build-workers.mjs",
     "validate": "npm test && npm run build",
     "package:release": "npm run build && node scripts/package-release.mjs",
     "package:verify": "node scripts/verify-release.mjs",
-    "release:check": "npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
+    "audit:production": "npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org",
+    "release:check": "npm run audit:production && npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@m3e/web": "^2.5.8",
-    "@vitejs/plugin-vue": "^6.0.7",
     "fflate": "^0.8.3",
     "hash-wasm": "^4.12.0",
     "lit": "^3.3.3",
     "material-symbols": "^0.45.8",
     "tslib": "^2.8.1",
-    "vite": "^8.0.16",
     "vue": "^3.5.35"
   },
   "devDependencies": {
@@ -40,9 +40,11 @@
     "@types/chrome": "^0.2.2",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^26.1.1",
+    "@vitejs/plugin-vue": "^6.0.7",
     "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
     "typescript": "^5.6.3",
+    "vite": "^8.0.16",
     "vitest": "^4.1.10"
   }
 }

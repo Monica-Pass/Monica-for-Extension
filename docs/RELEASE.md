@@ -13,7 +13,7 @@ npm ci
 npm run release:check
 ```
 
-`release:check` 依次执行单元测试、TypeScript/生产构建、安全测试与审计、Chromium MV3 E2E、正式打包和独立发布验证。
+`release:check` 依次通过官方 npm registry 审计生产依赖，再执行单元测试、TypeScript/生产构建、安全测试与审计、Chromium MV3 E2E、正式打包和独立发布验证。
 
 ## 发布产物
 

@@ -156,7 +156,7 @@ function errorMessage(cause: unknown, fallback: string) {
 <template>
   <m3e-theme :color="themeColor" :scheme="activeScheme" variant="expressive" motion="expressive" strong-focus>
     <main class="popup-shell">
-      <header class="popup-header"><div class="popup-brand"><img src="/monica-logo.png" alt="" /><div><strong>Monica</strong><small>安全自动填充</small></div></div><m3e-icon-button aria-label="打开密码库管理" @click="openManager"><m3e-icon name="settings"></m3e-icon></m3e-icon-button></header>
+      <header class="popup-header"><div class="popup-brand"><img src="/icons/logo-256.png" alt="" /><div><strong>Monica</strong><small>安全自动填充</small></div></div><m3e-icon-button aria-label="打开密码库管理" @click="openManager"><m3e-icon name="settings"></m3e-icon></m3e-icon-button></header>
 
       <section class="site-summary" aria-label="当前网站"><span class="site-icon"><m3e-icon name="language"></m3e-icon></span><div><strong>{{ currentHost }}</strong><small>{{ scan?.frameId ? `${scan.hasPasswordField || scan.hasTotpField ? '嵌入登录框' : '嵌入填充框'} · ${scan.title || tabTitle}` : tabTitle || '正在读取当前页面' }}</small></div><span v-if="scan?.hasPasswordField || scan?.hasTotpField || scan?.walletKinds.length" class="ready-badge"><m3e-icon name="check_circle"></m3e-icon>可填充</span></section>
 

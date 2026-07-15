@@ -33,8 +33,7 @@ Monica 密码管理器是一款独立运行的 Manifest V3 浏览器插件，用
 ## 商店素材清单
 
 - 128×128 插件图标：`public/icons/icon-128.png`；透明安全边距已纳入图标画布。
-- 至少 3 张管理页截图：概览、密码源、设置与备份。
-- 至少 2 张 Popup/页面交互截图：匹配填充、保存或 Passkey 确认。
+- 1280×800 脱敏截图：`store-assets/01-vault-overview.png`、`02-login-items.png`、`03-password-sources.png`、`04-explicit-autofill-popup.png`、`05-save-password-prompt.png`。
 - 截图不得包含真实密码、Token、邮箱、服务器地址、证件或支付信息。
 - 隐私政策公开 URL：发布后的 `docs/PRIVACY.md` GitHub 页面。
 - 支持 URL：`https://github.com/Monica-Pass/Monica-for-Extension/issues`

@@ -2,7 +2,7 @@
 
 审计日期：2026-07-15
 
-当前状态：进行中。此矩阵只记录仓库当前可复核证据；最终状态必须在完整发布门禁、仓库同步和产物哈希复核后更新。
+当前状态：待最终门禁。此矩阵只记录仓库当前可复核证据；最终状态必须在完整发布门禁、仓库同步和产物哈希复核后更新。
 
 ## 原始需求追踪
 
@@ -23,7 +23,16 @@
 | 键盘、焦点、缩放、暗色、reduced-motion、Popup 可访问性 | `src/App.vue`、样式和 Popup | `tests/e2e/accessibility.spec.ts` + axe | 通过 |
 | zh-CN 首发本地化、隐私、权限和商店材料 | `_locales/zh_CN`、`docs/PRIVACY.md`、`PERMISSIONS.md`、`DATA_SAFETY.md`、商店文案 | `src/release-readiness.test.ts` | 通过 |
 | 可复现发布、checksum、SBOM、许可证清单 | `scripts/package-release.mjs`、`verify-release.mjs`、`docs/RELEASE.md` | `npm run package:verify` | 通过 |
-| 分发许可证、方形多尺寸图标和最小权限 | `LICENSE`、`public/icons/`、`public/manifest.json` | `src/commercial-acceptance.test.ts` | 待最终门禁复核 |
+| 分发许可证、方形多尺寸图标和最小权限 | `LICENSE`、`public/icons/`、`public/manifest.json` | `src/commercial-acceptance.test.ts` | 通过；GPL 随 ZIP 分发，3 个命名权限 |
+| 脱敏 Chrome/Edge 商店截图 | `store-assets/`、`scripts/capture-store-assets.mjs` | 1280×800 PNG 尺寸与素材清单断言 | 通过；5 张合成数据截图已人工复核 |
+
+## 当前审计快照
+
+- 官方 npm registry 生产依赖审计：0 个已知漏洞。
+- 生产 lockfile/SBOM：39 个组件，0 个未知许可证；Vite 构建工具仅列为 devDependencies。
+- 最近完整功能门禁：134 项单元测试、30 项安全测试/静态审计、19 项 Chromium MV3 E2E 全部通过；其后新增的 Passkey SVG 和 1280px 表格专项测试也已通过。
+- 当前可复现 ZIP SHA-256：`64032f0f38d04d03f57782f7607aae1ee7ea937c3f0b069f56163d226a6d47b3`。
+- 商店素材：5 张 1280×800 PNG，仅含 `.example.test`、测试卡号和明确标注的合成数据。
 
 ## 不夸大的已知边界
 

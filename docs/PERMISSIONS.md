@@ -23,6 +23,7 @@ Popup 与后台会使用 `chrome.tabs.query/get/sendMessage` 访问当前 HTTP/H
 
 - 隔离世界 `content.js` 在所有 HTTP/HTTPS frame 中扫描字段、执行明确填充以及显示保存/Passkey 确认 UI。
 - MAIN world `main-world.js` 在 document-start 安装 WebAuthn/开放 ShadowRoot 桥接。它不包含密码库、Provider 凭据或 Passkey 私钥。
+- 唯一的 web-accessible resource 是 `icons/logo-256.png`，只用于网页内 Monica 保存提示显示品牌图；它不包含代码或用户数据。
 - 所有运行时代码随扩展打包；Content Security Policy 禁止远程脚本和任意对象加载。
 
 更详细的数据流见 [隐私政策](PRIVACY.md) 和 [架构说明](ARCHITECTURE.md)。

@@ -44,6 +44,32 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
   } finally { await context?.close(); }
 });
 
+test("login table actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("table-polish-profile"), { channel: "chromium", headless: true, viewport: { width: 1280, height: 800 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    expect(await page.evaluate(async (createdAt) => {
+      const setup = await chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "table polish master password" });
+      if (!setup.ok) return setup;
+      return chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: { id: "table-login", kind: "login", title: "示例工作账号", username: "demo@example.test", password: "not-a-real-password", uris: ["https://shop-demo.example.test"], customFields: [], favorite: false, notes: "", createdAt, updatedAt: createdAt, providerRefs: [] } });
+    }, createdAt)).toMatchObject({ ok: true });
+    await page.reload();
+    await page.getByRole("button", { name: /^登录项/ }).click();
+    const tableWrap = page.locator(".table-wrap");
+    await expect(tableWrap).toBeVisible();
+    const tableLayout = await tableWrap.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, tableWidth: element.querySelector("table")?.getBoundingClientRect().width }));
+    expect(tableLayout.scrollWidth, JSON.stringify(tableLayout)).toBeLessThanOrEqual(tableLayout.clientWidth);
+    const finalAction = page.getByRole("button", { name: "删除登录项" });
+    const bounds = await finalAction.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1280);
+    await expect(page.locator(".sidebar-brand small")).toHaveCSS("display", "block");
+  } finally { await context?.close(); }
+});
+
 async function expectCentered(container: Locator, glyph: Locator): Promise<void> {
   const label = await container.evaluate((element) => `${element.tagName.toLowerCase()}.${element.className}`);
   const glyphElement = await glyph.elementHandle();

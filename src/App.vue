@@ -660,11 +660,11 @@ function errorMessage(error: unknown) {
 <template>
   <m3e-theme :color="themeColor" :scheme="activeScheme" variant="expressive" motion="expressive" strong-focus>
     <div v-if="loading" class="loading">
-      <img src="/monica-logo.png" alt="" /><h1>Monica</h1><p>正在检查加密密码库…</p>
+      <img src="/icons/logo-256.png" alt="" /><h1>Monica</h1><p>正在检查加密密码库…</p>
     </div>
 
     <form v-else-if="lifecycle !== 'unlocked'" class="login vault-auth" @submit.prevent="lifecycle === 'uninitialized' ? setupVault() : unlockVault()">
-      <div class="brand"><img src="/monica-logo.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
+      <div class="brand"><img src="/icons/logo-256.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
       <m3e-card variant="outlined" class="login-card">
         <div slot="content" class="stack">
           <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码仅用于本机派生加密密钥，Monica 不会保存它。' : '输入主密码以解密本地缓存并连接密码源。' }}</p></div>
@@ -690,7 +690,7 @@ function errorMessage(error: unknown) {
     <div v-else class="shell" :class="{ 'nav-open': mobileNavOpen }">
       <a class="skip-link" href="#main-content">跳到主内容</a>
       <aside id="primary-navigation" class="sidebar">
-        <div class="brand sidebar-brand"><img src="/monica-logo.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
+        <div class="brand sidebar-brand"><img src="/icons/logo-256.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
         <nav aria-label="主导航">
           <section>
             <p class="nav-title">密码库</p>

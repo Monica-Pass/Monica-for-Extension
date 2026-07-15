@@ -5,12 +5,18 @@ const root = new URL("../", import.meta.url);
 
 describe("commercial installability and least privilege", () => {
   it("ships a complete GPLv3 license and repository identity", async () => {
-    const [license, pkg] = await Promise.all([read("LICENSE"), readJson<{ license: string; repository: { url: string } }>("package.json")]);
+    const [license, pkg] = await Promise.all([read("LICENSE"), readJson<{ license: string; repository: { url: string }; scripts: Record<string, string>; dependencies: Record<string, string>; devDependencies: Record<string, string> }>("package.json")]);
     expect(pkg.license).toBe("GPL-3.0-only");
     expect(pkg.repository.url).toBe("https://github.com/Monica-Pass/Monica-for-Extension.git");
     expect(license).toContain("GNU GENERAL PUBLIC LICENSE");
     expect(license).toContain("Version 3, 29 June 2007");
     expect(license.length).toBeGreaterThan(30_000);
+    expect(pkg.scripts["audit:production"]).toContain("registry.npmjs.org");
+    expect(pkg.scripts["release:check"]).toContain("audit:production");
+    expect(pkg.dependencies).not.toHaveProperty("vite");
+    expect(pkg.dependencies).not.toHaveProperty("@vitejs/plugin-vue");
+    expect(pkg.devDependencies).toHaveProperty("vite");
+    expect(pkg.devDependencies).toHaveProperty("@vitejs/plugin-vue");
   });
 
   it("uses only required named permissions and explicit HTTP/HTTPS host scopes", async () => {
@@ -32,6 +38,10 @@ describe("commercial installability and least privilege", () => {
       expect(bytes.readUInt32BE(16), `${path} width`).toBe(Number(declaredSize));
       expect(bytes.readUInt32BE(20), `${path} height`).toBe(Number(declaredSize));
     }
+    const brand = await readBytes("public/icons/logo-256.png");
+    expect(brand.readUInt32BE(16)).toBe(256);
+    expect(brand.readUInt32BE(20)).toBe(256);
+    expect(await exists("public/monica-logo.png")).toBe(false);
   });
 
   it("keeps MV3 extension code self-contained and blocks remote scripts", async () => {
@@ -42,10 +52,23 @@ describe("commercial installability and least privilege", () => {
     expect(manifest.options_page).toBe("index.html");
     expect(manifest.content_security_policy.extension_pages).toBe("script-src 'self' 'wasm-unsafe-eval'; object-src 'self'");
     expect(manifest).not.toHaveProperty("externally_connectable");
+    expect(manifest.web_accessible_resources).toEqual([{ resources: ["icons/logo-256.png"], matches: ["http://*/*", "https://*/*"] }]);
     expect(readme).toContain("运行时不依赖 Monica Server WebUI");
     expect(appearance).not.toContain("../i18n");
     expect(appearance).not.toContain("setLocale");
     expect(await read("scripts/package-release.mjs")).toContain('packagedEntries.set("LICENSE"');
+  });
+
+  it("ships five sanitized Chrome/Edge store screenshots at the required size", async () => {
+    const names = ["01-vault-overview.png", "02-login-items.png", "03-password-sources.png", "04-explicit-autofill-popup.png", "05-save-password-prompt.png"];
+    const captureScript = await read("scripts/capture-store-assets.mjs");
+    expect(captureScript).toContain("example.test");
+    expect(captureScript).not.toMatch(/joyins|correct horse|client-secret|server-secret/i);
+    for (const name of names) {
+      const bytes = await readBytes(`store-assets/${name}`);
+      expect(bytes.readUInt32BE(16), `${name} width`).toBe(1280);
+      expect(bytes.readUInt32BE(20), `${name} height`).toBe(800);
+    }
   });
 });
 

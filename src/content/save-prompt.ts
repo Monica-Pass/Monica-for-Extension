@@ -23,7 +23,7 @@ export function renderSavePrompt(context: SavePromptContext, handlers: SavePromp
   card.setAttribute("aria-labelledby", "monica-save-title");
   const header = element(rootDocument, "header", "header");
   const logo = rootDocument.createElement("img");
-  logo.src = chrome.runtime.getURL("monica-logo.png");
+  logo.src = chrome.runtime.getURL("icons/logo-256.png");
   logo.alt = "";
   const heading = element(rootDocument, "div", "heading");
   const title = element(rootDocument, "strong", "title");
