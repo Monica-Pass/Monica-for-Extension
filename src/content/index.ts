@@ -1,5 +1,5 @@
 import type { CredentialCaptureInput, ExtensionResponse, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, WalletFillPayload } from "../runtime/messages";
-import { captureCredentialInput, captureRootForEvent } from "./credential-capture";
+import { installCredentialCapture } from "./content-lifecycle";
 import { fillCredential, scanPage, type FillCredentialInput } from "./dom";
 import { renderSavePrompt } from "./save-prompt";
 import { fillWallet } from "./wallet-dom";
@@ -25,17 +25,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; credential?: Fil
   return false;
 });
 
-document.addEventListener("submit", (event) => {
-  const candidate = captureCredentialInput(captureRootForEvent(event.target));
-  if (candidate) void submitCandidate(candidate);
-}, true);
-
-document.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target.closest('button,input[type="submit"],input[type="button"]') : null;
-  if (!target || !isCredentialSubmissionControl(target)) return;
-  const candidate = captureCredentialInput(captureRootForEvent(target));
-  if (candidate) window.setTimeout(() => void submitCandidate(candidate), 0);
-}, true);
+installCredentialCapture({ onCandidate: submitCandidate });
 
 if (window.top === window) void restorePendingPrompt();
 
@@ -83,12 +73,4 @@ async function sendRuntime<T>(request: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(request) as ExtensionResponse<T>;
   if (!response?.ok) throw new Error(response?.error || "Monica 后台操作失败。");
   return response.data;
-}
-
-function isCredentialSubmissionControl(target: Element): boolean {
-  const type = target.getAttribute("type")?.toLowerCase();
-  if (target.tagName === "INPUT") return type === "submit";
-  if (!type || type === "submit") return true;
-  const label = `${target.textContent || ""} ${target.getAttribute("aria-label") || ""}`.toLowerCase();
-  return /sign.?in|log.?in|登录|登入|继续|continue|submit|save|保存|更新/.test(label);
 }

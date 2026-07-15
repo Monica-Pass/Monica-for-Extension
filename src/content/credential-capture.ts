@@ -17,7 +17,7 @@ const USERNAME_SELECTORS = [
   'input[type="text"]'
 ];
 
-export function captureCredentialInput(root: ParentNode, rootDocument: Document = document, pageLocation: Location = location): CredentialCaptureInput | null {
+export function captureCredentialInput(root: ParentNode, rootDocument: Document = document, pageLocation: Location = location, fallbackUsername = ""): CredentialCaptureInput | null {
   const passwordInputs = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="password"]'))
     .filter((input) => !input.disabled && !input.readOnly && input.value.length > 0);
   if (!passwordInputs.length) return null;
@@ -26,7 +26,7 @@ export function captureCredentialInput(root: ParentNode, rootDocument: Document 
   const captureKind = newPasswordInputs.length ? "password-change" : "login";
   const password = choosePassword(newPasswordInputs.length ? newPasswordInputs : passwordInputs);
   if (!password) return null;
-  const username = findUsername(root, passwordInputs)?.value || "";
+  const username = findUsername(root, passwordInputs)?.value || fallbackUsername;
   return {
     username: username.trim(),
     password,
@@ -34,6 +34,10 @@ export function captureCredentialInput(root: ParentNode, rootDocument: Document 
     pageTitle: rootDocument.title,
     captureKind
   };
+}
+
+export function captureUsernameInput(root: ParentNode): string {
+  return (findUsername(root, [])?.value || "").trim();
 }
 
 export function captureRootForEvent(target: EventTarget | null, rootDocument: Document = document): ParentNode {

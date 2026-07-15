@@ -1,5 +1,19 @@
+import { OPEN_SHADOW_ROOT_EVENT } from "../content/shadow-bridge";
+
 const PAGE_SOURCE = "monica-passkey-page";
 const EXTENSION_SOURCE = "monica-passkey-extension";
+
+const attachShadowDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "attachShadow");
+const currentAttachShadow = attachShadowDescriptor?.value as (this: Element, init: ShadowRootInit) => ShadowRoot;
+if (currentAttachShadow && !(currentAttachShadow as typeof currentAttachShadow & { __monicaShadowBridge?: boolean }).__monicaShadowBridge) {
+  const bridgedAttachShadow = function (this: Element, init: ShadowRootInit): ShadowRoot {
+    const root = currentAttachShadow.call(this, init);
+    if (init.mode === "open") this.dispatchEvent(new CustomEvent(OPEN_SHADOW_ROOT_EVENT, { bubbles: true, composed: true }));
+    return root;
+  };
+  Object.defineProperty(bridgedAttachShadow, "__monicaShadowBridge", { value: true });
+  Object.defineProperty(Element.prototype, "attachShadow", { ...attachShadowDescriptor, value: bridgedAttachShadow });
+}
 
 if (navigator.credentials && !(navigator.credentials as CredentialsContainer & { __monicaPasskey?: boolean }).__monicaPasskey) {
   const credentials = navigator.credentials as CredentialsContainer & { __monicaPasskey?: boolean };
