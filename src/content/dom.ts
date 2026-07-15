@@ -21,27 +21,28 @@ export interface FillCredentialInput {
 
 const USERNAME_SELECTORS = [
   'input[autocomplete="username"]',
+  'input[autocomplete="email"]',
+  'input[autocomplete="tel"]',
   'input[type="email"]',
+  'input[type="tel"]',
   'input[name*="user" i]',
   'input[id*="user" i]',
   'input[name*="email" i]',
   'input[id*="email" i]',
+  'input[name*="phone" i]',
+  'input[id*="phone" i]',
+  'input[name*="mobile" i]',
+  'input[id*="mobile" i]',
   'input[type="text"]'
 ];
 
 const TOTP_SELECTORS = [
-  'input[autocomplete="one-time-code"]',
-  'input[name*="totp" i]',
-  'input[id*="totp" i]',
-  'input[name*="otp" i]',
-  'input[id*="otp" i]',
-  'input[name="code" i]',
-  'input[id="code" i]'
+  'input[autocomplete="one-time-code"]'
 ];
 
 export function findLoginFields(rootDocument: Document = document): { username?: HTMLInputElement; password?: HTMLInputElement; totp?: HTMLInputElement } {
   const password = firstVisible('input[type="password"]', rootDocument);
-  const totp = firstVisibleFrom(TOTP_SELECTORS, rootDocument);
+  const totp = firstVisibleFrom(TOTP_SELECTORS, rootDocument) || findExplicitTotp(rootDocument);
   const root: ParentNode = password?.form || totp?.form || rootDocument;
   let username: HTMLInputElement | undefined;
   for (const selector of USERNAME_SELECTORS) {
@@ -91,6 +92,21 @@ function firstVisibleFrom(selectors: string[], root: ParentNode): HTMLInputEleme
     if (input) return input;
   }
   return undefined;
+}
+
+function findExplicitTotp(root: ParentNode): HTMLInputElement | undefined {
+  return Array.from(root.querySelectorAll<HTMLInputElement>("input")).find((input) => {
+    if (!visibleInput(input)) return false;
+    return inputHints(input).some((hint) => /^(totp|otp|2fa|twofa)(code|token|input|field)?$|^(code|token)(totp|otp|2fa|twofa)$/.test(hint));
+  });
+}
+
+function inputHints(input: HTMLInputElement): string[] {
+  const labelledBy = (input.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+    .map((id) => input.ownerDocument.getElementById(id)?.textContent);
+  return [input.id, input.name, input.getAttribute("aria-label"), input.placeholder, ...labelledBy, ...Array.from(input.labels || []).map((label) => label.textContent)]
+    .map((value) => (value || "").toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter(Boolean);
 }
 
 function visibleInput(input: HTMLInputElement): boolean {

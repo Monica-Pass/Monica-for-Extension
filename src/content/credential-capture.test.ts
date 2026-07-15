@@ -31,4 +31,9 @@ describe("credential submit capture", () => {
     expect(captureRootForEvent(button, dom.window.document)).toBe(button.closest("form"));
     expect(captureCredentialInput(button.closest("form")!, dom.window.document, dom.window.location)).toBeNull();
   });
+
+  it("captures phone-number usernames used by mobile login forms", () => {
+    const dom = page('<form><label>手机号码<input type="tel" value="13800000000"></label><input type="password" value="secret"></form>');
+    expect(captureCredentialInput(dom.window.document.querySelector("form")!, dom.window.document, dom.window.location)).toMatchObject({ username: "13800000000", password: "secret" });
+  });
 });

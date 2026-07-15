@@ -49,30 +49,30 @@ const FIELD_KINDS: Record<WalletFieldName, WalletFillKind[]> = {
 };
 
 const HEURISTICS: Array<[WalletFieldName, RegExp]> = [
-  ["cardSecurityCode", /^(cvv|cvc|cardsecuritycode|cardverificationcode)$/],
+  ["cardSecurityCode", /^(cvv|cvc|cardsecuritycode|cardverificationcode|银行卡安全码|信用卡安全码|卡片安全码)$/],
   ["cardExpiryMonth", /^(card|cc)?expir(y|ation)?month$/],
   ["cardExpiryYear", /^(card|cc)?expir(y|ation)?year$/],
-  ["cardExpiry", /^(card|cc)?expir(y|ation)?(date)?$/],
-  ["cardholderName", /^(cardholder|cardholdername|nameoncard)$/],
-  ["cardNumber", /^(card|cc)(number|no)$/],
-  ["documentNumber", /^(passport|passportnumber|documentnumber|identitynumber|idcardnumber|driverslicen[cs]enumber|socialsecuritynumber|ssn)$/],
-  ["birthDate", /^(birthdate|dateofbirth|dob)$/],
-  ["nationality", /^nationality$/],
-  ["routingNumber", /^(routing|routingnumber|abarn)$/],
-  ["swiftBic", /^(swift|swiftbic|bic|biccode)$/],
-  ["iban", /^iban(number)?$/],
-  ["paymentAccountId", /^(payment)?accountid$/],
-  ["paymentAccountNumber", /^(bank|payment)accountnumber$/],
-  ["paymentAccountHolder", /^(account)?holder(name)?$/],
-  ["paymentProvider", /^(payment)?provider$/],
-  ["paymentAccountName", /^paymentaccountname$/],
-  ["paymentUsername", /^paymentusername$/],
-  ["firstName", /^(firstname|givenname)$/], ["middleName", /^(middlename|additionalname)$/], ["lastName", /^(lastname|surname|familyname)$/],
-  ["fullName", /^(fullname|recipientname)$/], ["company", /^(company|organization)$/],
-  ["streetAddress", /^(streetaddress|addressline1|address1)$/], ["apartment", /^(apartment|addressline2|address2)$/],
-  ["city", /^(city|town)$/], ["stateProvince", /^(state|province|stateprovince)$/], ["postalCode", /^(postalcode|postcode|zipcode|zip)$/],
-  ["country", /^(country|countryname)$/], ["phone", /^(phone|phonenumber|telephone|tel)$/], ["email", /^(email|emailaddress)$/],
-  ["currency", /^(currency|transactioncurrency)$/]
+  ["cardExpiry", /^(card|cc)?expir(y|ation)?(date)?$|^(银行卡|信用卡|卡片)(有效期|到期日|到期日期)$/],
+  ["cardholderName", /^(cardholder|cardholdername|nameoncard|持卡人|持卡人姓名|持有人姓名)$/],
+  ["cardNumber", /^(card|cc)(number|no)$|^(银行卡号|信用卡号|借记卡号|卡号)$/],
+  ["documentNumber", /^(passport|passportnumber|documentnumber|identitynumber|idcardnumber|driverslicen[cs]enumber|socialsecuritynumber|ssn|证件号|证件号码|身份证号|身份证号码|护照号|护照号码|驾照号|驾驶证号|社保号|社会保障号码)$/],
+  ["birthDate", /^(birthdate|dateofbirth|dob|出生日期|出生年月日)$/],
+  ["nationality", /^(nationality|国籍)$/],
+  ["routingNumber", /^(routing|routingnumber|abarn|路由号码|银行路由号码)$/],
+  ["swiftBic", /^(swift|swiftbic|bic|biccode|swift代码|swift码|银行识别码)$/],
+  ["iban", /^(iban(number)?|国际银行账号|国际银行账户)$/],
+  ["paymentAccountId", /^(payment)?accountid$|^(支付账户标识|账户标识)$/],
+  ["paymentAccountNumber", /^(bank|payment)accountnumber$|^(银行账号|银行账户号码|支付账户号码)$/],
+  ["paymentAccountHolder", /^(account)?holder(name)?$|^(账户持有人|账户持有人姓名)$/],
+  ["paymentProvider", /^(payment)?provider$|^(支付机构|支付服务商|银行名称)$/],
+  ["paymentAccountName", /^paymentaccountname$|^(支付账户名称|账户名称)$/],
+  ["paymentUsername", /^paymentusername$|^支付用户名$/],
+  ["firstName", /^(firstname|givenname|名)$/], ["middleName", /^(middlename|additionalname|中间名)$/], ["lastName", /^(lastname|surname|familyname|姓)$/],
+  ["fullName", /^(fullname|recipientname|姓名|收件人姓名|收货人姓名)$/], ["company", /^(company|organization|公司|公司名称|单位|单位名称)$/],
+  ["streetAddress", /^(streetaddress|addressline1|address1|地址|街道地址|详细地址|收货地址)$/], ["apartment", /^(apartment|addressline2|address2|公寓|房间号|单元号)$/],
+  ["city", /^(city|town|城市|市)$/], ["stateProvince", /^(state|province|stateprovince|省|省份|州|州省)$/], ["postalCode", /^(postalcode|postcode|zipcode|zip|邮编|邮政编码)$/],
+  ["country", /^(country|countryname|国家|国家或地区|国家地区)$/], ["phone", /^(phone|phonenumber|telephone|tel|电话|电话号码|手机|手机号|手机号码)$/], ["email", /^(email|emailaddress|邮箱|电子邮箱)$/],
+  ["currency", /^(currency|transactioncurrency|币种|货币)$/]
 ];
 
 export function scanWalletKinds(rootDocument: Document = document): WalletFillKind[] {
@@ -102,13 +102,15 @@ function findWalletFields(rootDocument: Document): WalletField[] {
 }
 
 function heuristicField(element: WalletControl): WalletFieldName | undefined {
-  const hints = [element.id, element.getAttribute("name"), element.getAttribute("aria-label"), element.getAttribute("placeholder"), ...Array.from(element.labels || []).map((label) => label.textContent)]
+  const labelledBy = (element.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+    .map((id) => element.ownerDocument.getElementById(id)?.textContent);
+  const hints = [element.id, element.getAttribute("name"), element.getAttribute("aria-label"), element.getAttribute("placeholder"), ...labelledBy, ...Array.from(element.labels || []).map((label) => label.textContent)]
     .map((value) => normalizeHint(value || "")).filter(Boolean);
   return HEURISTICS.find(([, pattern]) => hints.some((hint) => pattern.test(hint)))?.[0];
 }
 
 function normalizeHint(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function visibleControl(element: WalletControl): boolean {

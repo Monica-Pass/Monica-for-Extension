@@ -2,11 +2,18 @@ import type { CredentialCaptureInput } from "../runtime/messages";
 
 const USERNAME_SELECTORS = [
   'input[autocomplete="username"]',
+  'input[autocomplete="email"]',
+  'input[autocomplete="tel"]',
   'input[type="email"]',
+  'input[type="tel"]',
   'input[name*="email" i]',
   'input[id*="email" i]',
   'input[name*="user" i]',
   'input[id*="user" i]',
+  'input[name*="phone" i]',
+  'input[id*="phone" i]',
+  'input[name*="mobile" i]',
+  'input[id*="mobile" i]',
   'input[type="text"]'
 ];
 

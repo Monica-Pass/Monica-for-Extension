@@ -31,8 +31,26 @@ describe("wallet DOM filling", () => {
   });
 
   it("does not guess generic number code or password fields", () => {
-    const dom = page('<input name="number"><input name="code"><input name="secret" type="password">');
+    const dom = page('<label>号码<input name="number"></label><label>验证码<input name="code"></label><input name="secret" type="password">');
     expect(scanWalletKinds(dom.window.document)).toEqual([]);
     expect(fillWallet({ kind: "card", fields: { cardNumber: "4111111111111111", cardSecurityCode: "123" } }, dom.window.document)).toMatchObject({ ok: false, filledCount: 0 });
+  });
+
+  it("recognizes Android-derived Chinese card labels", () => {
+    const dom = page('<label>持卡人姓名<input></label><label>银行卡号<input></label><label>信用卡有效期<input></label><label>信用卡安全码<input></label>');
+    expect(scanWalletKinds(dom.window.document)).toEqual(["card"]);
+    expect(fillWallet({ kind: "card", fields: { cardholderName: "Joy Lin", cardNumber: "4111111111111111", cardExpiry: "12/30", cardSecurityCode: "123" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 4 });
+  });
+
+  it("recognizes Chinese identity and address labels", () => {
+    const dom = page('<label>姓<input></label><label>名<input></label><label>身份证号码<input></label><label>出生日期<input></label><label>详细地址<input></label><label>省份<input></label><label>城市<input></label><label>邮政编码<input></label><label>国家或地区<input></label><label>手机号码<input></label><label>电子邮箱<input></label>');
+    expect(scanWalletKinds(dom.window.document)).toEqual(["identity", "billing-address", "payment-account"]);
+    expect(fillWallet({ kind: "identity", fields: { firstName: "Joy", lastName: "Lin", documentNumber: "310000000000000000", birthDate: "2000-01-01", streetAddress: "Monica 路 1 号", stateProvince: "上海", city: "上海", postalCode: "200000", country: "中国", phone: "13800000000", email: "joy@example.com" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 11 });
+  });
+
+  it("recognizes Chinese and legacy bank-account labels", () => {
+    const dom = page('<label>银行名称<input></label><label>账户名称<input></label><label>账户持有人<input></label><label>银行账号<input></label><label>路由号码<input></label><label>国际银行账号<input></label><label>SWIFT代码<input></label><label>币种<input></label>');
+    expect(scanWalletKinds(dom.window.document)).toEqual(["payment-account"]);
+    expect(fillWallet({ kind: "payment-account", fields: { paymentProvider: "Example Bank", paymentAccountName: "Daily", paymentAccountHolder: "Joy Lin", paymentAccountNumber: "0042", routingNumber: "021000021", iban: "DE89370400440532013000", swiftBic: "EXAMPLEBIC", currency: "CNY" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 8 });
   });
 });

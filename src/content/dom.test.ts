@@ -37,4 +37,18 @@ describe("content autofill DOM engine", () => {
     expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: true, filledTotp: true, filledPassword: false });
     expect(otp.value).toBe("123456");
   });
+
+  it("recognizes phone-number usernames and explicit 2FA labels", () => {
+    const dom = page('<form><label>手机号码<input type="tel"></label><label>2FA 验证码<input aria-label="2FA code"></label></form>');
+    const inputs = dom.window.document.querySelectorAll<HTMLInputElement>("input");
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: true, hasTotpField: true });
+    expect(fillCredential({ username: "13800000000", totpCode: "654321" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledTotp: true });
+    expect(Array.from(inputs).map((input) => input.value)).toEqual(["13800000000", "654321"]);
+  });
+
+  it("does not treat a generic code field as TOTP", () => {
+    const dom = page('<form><label>验证码<input name="code"></label></form>');
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasTotpField: false });
+    expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: false });
+  });
 });
