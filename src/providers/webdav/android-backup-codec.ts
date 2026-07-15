@@ -5,6 +5,7 @@ export interface AndroidBackupRecord {
   path: string;
   raw: Record<string, unknown>;
   itemId: string;
+  item: VaultItem;
 }
 
 export interface AndroidBackupDocument {
@@ -29,7 +30,7 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string): And
       const item = androidRecordToItem(path, raw, providerId);
       if (!item) continue;
       items.push(item);
-      records.set(item.id, { path, raw, itemId: item.id });
+      records.set(item.id, { path, raw, itemId: item.id, item: cloneVaultItem(item) });
     } catch (error) {
       warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
     }
@@ -45,7 +46,8 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
       if (existing) delete entries[existing.path];
       continue;
     }
-    const target = serializeAndroidItem(item, existing?.raw);
+    if (existing && sameWritableItem(item, existing.item)) continue;
+    const target = serializeAndroidItem(item, existing?.raw, existing?.item);
     if (!target) continue;
     const remotePath = existing?.path || providerPath(item, target.id);
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
@@ -218,36 +220,162 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
   };
 }
 
-function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>): { id: number | string; raw: Record<string, unknown> } | null {
+function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem): { id: number | string; raw: Record<string, unknown> } | null {
   const originalId = original?.id;
   const id: number | string = typeof originalId === "number" || typeof originalId === "string" ? originalId : numericId(item);
-  const base = {
-    ...(original || {}),
-    id,
-    title: item.title,
-    notes: item.notes,
-    isFavorite: item.favorite,
-    createdAt: Date.parse(item.createdAt) || Date.now(),
-    updatedAt: Date.parse(item.updatedAt) || Date.now()
+  const raw: Record<string, unknown> = { ...(original || {}) };
+  const isNew = !original || !originalItem;
+  const setChanged = (key: string, value: unknown, current: unknown, previous: unknown) => {
+    if (isNew || !sameValue(current, previous)) raw[key] = value;
   };
+  const setNested = (updates: Record<string, unknown>, key: string, value: unknown, current: unknown, previous: unknown) => {
+    if (isNew || !sameValue(current, previous)) updates[key] = value;
+  };
+  const applyCommon = (expectedKind: VaultItem["kind"], itemType?: string) => {
+    const previous = originalItem?.kind === expectedKind ? originalItem : undefined;
+    if (isNew) {
+      raw.id = id;
+      if (itemType) raw.itemType = itemType;
+    }
+    setChanged("title", item.title, item.title, previous?.title);
+    setChanged("notes", item.notes, item.notes, previous?.notes);
+    setChanged("isFavorite", item.favorite, item.favorite, previous?.favorite);
+    setChanged("createdAt", Date.parse(item.createdAt) || Date.now(), item.createdAt, previous?.createdAt);
+    setChanged("updatedAt", Date.parse(item.updatedAt) || Date.now(), item.updatedAt, previous?.updatedAt);
+    return previous;
+  };
+  const applyNested = (updates: Record<string, unknown>) => {
+    if (Object.keys(updates).length > 0) raw.itemData = mergeNestedItemData(original?.itemData, updates);
+  };
+
   switch (item.kind) {
-    case "login":
-      return { id, raw: { ...base, username: item.username, password: item.password, website: item.uris.join("\n"), authenticatorKey: item.totpSecret || "", customFields: item.customFields.map((field) => ({ title: field.name, value: field.value, isProtected: field.protected })) } };
-    case "secure-note":
-      return { id, raw: { ...base, itemType: "NOTE", itemData: mergeNestedItemData(original?.itemData, { content: item.content }) } };
-    case "totp":
-      return { id, raw: { ...base, itemType: "TOTP", itemData: mergeNestedItemData(original?.itemData, { secret: item.secret, issuer: item.issuer || "", accountName: item.accountName || "", algorithm: item.algorithm, digits: item.digits, period: item.period }) } };
-    case "card":
-      return { id, raw: { ...base, itemType: "BANK_CARD", itemData: mergeNestedItemData(original?.itemData, { cardholderName: item.cardholderName, cardNumber: item.number, expiryMonth: item.expiryMonth, expiryYear: item.expiryYear, cvv: item.securityCode, brand: item.brand || "" }) } };
-    case "identity":
-      return { id, raw: { ...base, itemType: "DOCUMENT", itemData: mergeNestedItemData(original?.itemData, { documentType: item.documentType, documentNumber: item.documentNumber, firstName: item.firstName, middleName: item.middleName, lastName: item.lastName, fullName: item.fullName, birthDate: item.birthDate || "", issuedDate: item.issuedDate || "", expiryDate: item.expiryDate || "", issuedBy: item.issuedBy || "", nationality: item.nationality || "", email: item.email || "", phone: item.phone || "", address1: item.address?.streetAddress || "", address2: item.address?.apartment || "", city: item.address?.city || "", stateProvince: item.address?.stateProvince || "", postalCode: item.address?.postalCode || "", country: item.address?.country || "" }) } };
-    case "billing-address":
-      return { id, raw: { ...base, itemType: "BILLING_ADDRESS", itemData: mergeNestedItemData(original?.itemData, { fullName: item.fullName, company: item.company, streetAddress: item.streetAddress, apartment: item.apartment, city: item.city, stateProvince: item.stateProvince, postalCode: item.postalCode, country: item.country, phone: item.phone, email: item.email }) } };
-    case "payment-account":
-      return { id, raw: { ...base, itemType: "PAYMENT_ACCOUNT", itemData: mergeNestedItemData(original?.itemData, { paymentType: item.paymentType, provider: item.provider, accountName: item.accountName, accountHolderName: item.accountHolderName, email: item.email, phone: item.phone, username: item.username, accountId: item.accountId, maskedAccountNumber: item.maskedAccountNumber, routingNumber: item.routingNumber, iban: item.iban, swiftBic: item.swiftBic, website: item.website, currency: item.currency }) } };
-    case "passkey":
-      return { id: item.credentialId, raw: { ...base, credentialId: item.credentialId, rpId: item.rpId, rpName: item.rpName, userId: item.userHandle, userName: item.userName, userDisplayName: item.userDisplayName, publicKeyAlgorithm: item.algorithm, publicKey: item.publicKey, privateKeyAlias: stringValue(original?.privateKeyAlias), signCount: item.signCount, isDiscoverable: item.discoverable, passkeyMode: item.sourceMode === "bitwarden" ? "BW_COMPAT" : "LEGACY" } };
+    case "login": {
+      const previous = applyCommon("login") as LoginItem | undefined;
+      setChanged("username", item.username, item.username, previous?.username);
+      setChanged("password", item.password, item.password, previous?.password);
+      setChanged("website", item.uris.join("\n"), item.uris, previous?.uris);
+      setChanged("authenticatorKey", item.totpSecret || "", item.totpSecret || "", previous?.totpSecret || "");
+      const customFields = item.customFields.map((field) => ({ title: field.name, value: field.value, isProtected: field.protected }));
+      setChanged("customFields", customFields, item.customFields, previous?.customFields);
+      return { id, raw };
+    }
+    case "secure-note": {
+      const previous = applyCommon("secure-note", "NOTE") as SecureNoteItem | undefined;
+      const updates: Record<string, unknown> = {};
+      setNested(updates, "content", item.content, item.content, previous?.content);
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "totp": {
+      const previous = applyCommon("totp", "TOTP") as TotpItem | undefined;
+      const updates: Record<string, unknown> = {};
+      setNested(updates, "secret", item.secret, item.secret, previous?.secret);
+      setNested(updates, "issuer", item.issuer || "", item.issuer || "", previous?.issuer || "");
+      setNested(updates, "accountName", item.accountName || "", item.accountName || "", previous?.accountName || "");
+      setNested(updates, "algorithm", item.algorithm, item.algorithm, previous?.algorithm);
+      setNested(updates, "digits", item.digits, item.digits, previous?.digits);
+      setNested(updates, "period", item.period, item.period, previous?.period);
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "card": {
+      const previous = applyCommon("card", "BANK_CARD") as CardItem | undefined;
+      const updates: Record<string, unknown> = {};
+      setNested(updates, "cardholderName", item.cardholderName, item.cardholderName, previous?.cardholderName);
+      setNested(updates, "cardNumber", item.number, item.number, previous?.number);
+      setNested(updates, "expiryMonth", item.expiryMonth, item.expiryMonth, previous?.expiryMonth);
+      setNested(updates, "expiryYear", item.expiryYear, item.expiryYear, previous?.expiryYear);
+      setNested(updates, "cvv", item.securityCode, item.securityCode, previous?.securityCode);
+      setNested(updates, "brand", item.brand || "", item.brand || "", previous?.brand || "");
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "identity": {
+      const previous = applyCommon("identity", "DOCUMENT") as IdentityItem | undefined;
+      const updates: Record<string, unknown> = {};
+      setNested(updates, "documentType", item.documentType, item.documentType, previous?.documentType);
+      setNested(updates, "documentNumber", item.documentNumber, item.documentNumber, previous?.documentNumber);
+      setNested(updates, "firstName", item.firstName, item.firstName, previous?.firstName);
+      setNested(updates, "middleName", item.middleName, item.middleName, previous?.middleName);
+      setNested(updates, "lastName", item.lastName, item.lastName, previous?.lastName);
+      setNested(updates, "fullName", item.fullName, item.fullName, previous?.fullName);
+      setNested(updates, "birthDate", item.birthDate || "", item.birthDate || "", previous?.birthDate || "");
+      setNested(updates, "issuedDate", item.issuedDate || "", item.issuedDate || "", previous?.issuedDate || "");
+      setNested(updates, "expiryDate", item.expiryDate || "", item.expiryDate || "", previous?.expiryDate || "");
+      setNested(updates, "issuedBy", item.issuedBy || "", item.issuedBy || "", previous?.issuedBy || "");
+      setNested(updates, "nationality", item.nationality || "", item.nationality || "", previous?.nationality || "");
+      setNested(updates, "email", item.email || "", item.email || "", previous?.email || "");
+      setNested(updates, "phone", item.phone || "", item.phone || "", previous?.phone || "");
+      setNested(updates, "address1", item.address?.streetAddress || "", item.address?.streetAddress || "", previous?.address?.streetAddress || "");
+      setNested(updates, "address2", item.address?.apartment || "", item.address?.apartment || "", previous?.address?.apartment || "");
+      setNested(updates, "city", item.address?.city || "", item.address?.city || "", previous?.address?.city || "");
+      setNested(updates, "stateProvince", item.address?.stateProvince || "", item.address?.stateProvince || "", previous?.address?.stateProvince || "");
+      setNested(updates, "postalCode", item.address?.postalCode || "", item.address?.postalCode || "", previous?.address?.postalCode || "");
+      setNested(updates, "country", item.address?.country || "", item.address?.country || "", previous?.address?.country || "");
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "billing-address": {
+      const previous = applyCommon("billing-address", "BILLING_ADDRESS") as BillingAddressItem | undefined;
+      const updates: Record<string, unknown> = {};
+      for (const key of ["fullName", "company", "streetAddress", "apartment", "city", "stateProvince", "postalCode", "country", "phone", "email"] as const) {
+        setNested(updates, key, item[key], item[key], previous?.[key]);
+      }
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "payment-account": {
+      const previous = applyCommon("payment-account", "PAYMENT_ACCOUNT") as PaymentAccountItem | undefined;
+      const updates: Record<string, unknown> = {};
+      for (const key of ["paymentType", "provider", "accountName", "accountHolderName", "email", "phone", "username", "accountId", "maskedAccountNumber", "routingNumber", "iban", "swiftBic", "website", "currency"] as const) {
+        setNested(updates, key, item[key], item[key], previous?.[key]);
+      }
+      applyNested(updates);
+      return { id, raw };
+    }
+    case "passkey": {
+      const previous = originalItem?.kind === "passkey" ? originalItem : undefined;
+      setChanged("credentialId", item.credentialId, item.credentialId, previous?.credentialId);
+      setChanged("rpId", item.rpId, item.rpId, previous?.rpId);
+      setChanged("rpName", item.rpName, item.rpName, previous?.rpName);
+      setChanged("userId", item.userHandle, item.userHandle, previous?.userHandle);
+      setChanged("userName", item.userName, item.userName, previous?.userName);
+      setChanged("userDisplayName", item.userDisplayName, item.userDisplayName, previous?.userDisplayName);
+      setChanged("publicKeyAlgorithm", item.algorithm, item.algorithm, previous?.algorithm);
+      setChanged("publicKey", item.publicKey, item.publicKey, previous?.publicKey);
+      setChanged("createdAt", Date.parse(item.createdAt) || Date.now(), item.createdAt, previous?.createdAt);
+      setChanged("signCount", item.signCount, item.signCount, previous?.signCount);
+      setChanged("isDiscoverable", item.discoverable, item.discoverable, previous?.discoverable);
+      setChanged("notes", item.notes, item.notes, previous?.notes);
+      if (isNew) {
+        raw.privateKeyAlias = "";
+        raw.lastUsedAt = Date.parse(item.updatedAt) || Date.now();
+        raw.useCount = 0;
+        raw.iconUrl = null;
+        raw.isUserVerificationRequired = true;
+        raw.transports = "internal";
+        raw.aaguid = "";
+        raw.boundPasswordId = null;
+        raw.passkeyMode = item.sourceMode === "bitwarden" ? "BW_COMPAT" : "LEGACY";
+        raw.categoryName = null;
+      }
+      return { id: item.credentialId, raw };
+    }
   }
+}
+
+function sameWritableItem(left: VaultItem, right: VaultItem): boolean {
+  const { providerRefs: _leftProviderRefs, deletedAt: _leftDeletedAt, ...leftPayload } = left;
+  const { providerRefs: _rightProviderRefs, deletedAt: _rightDeletedAt, ...rightPayload } = right;
+  return sameValue(leftPayload, rightPayload);
+}
+
+function cloneVaultItem(item: VaultItem): VaultItem {
+  return JSON.parse(JSON.stringify(item)) as VaultItem;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return Object.is(left, right) || JSON.stringify(left) === JSON.stringify(right);
 }
 
 function providerPath(item: VaultItem, id: number | string): string {
@@ -264,6 +392,7 @@ function providerPath(item: VaultItem, id: number | string): string {
   };
   const [folder, prefix] = mapping[item.kind];
   const safeId = String(id).replace(/\//g, "_");
+  if (item.kind === "passkey") return `folders/_root/${folder}/${prefix}_${safeId}.json`;
   return `folders/_root/${folder}/${prefix}_${safeId}_${millis}.json`;
 }
 

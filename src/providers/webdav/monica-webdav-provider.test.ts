@@ -2,6 +2,7 @@ import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
 import type { LoginItem, ProviderAccount, VaultItem } from "../../core/model";
 import { readAndroidBackup } from "./android-backup-codec";
+import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
 import { MonicaWebDavProvider } from "./monica-webdav-provider";
 
 const PROVIDER_ID = "webdav-provider";
@@ -91,6 +92,30 @@ describe("Monica WebDAV provider", () => {
     expect(uploaded).toBeDefined();
     expect(unzipSync(uploaded!)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
     expect(readAndroidBackup(uploaded!, PROVIDER_ID).items[0]).toMatchObject({ password: "browser-secret" });
+  });
+
+  it("imports and writes an encrypted Android snapshot without losing opaque entries", async () => {
+    const backupPassword = "android-backup-password";
+    const encryptedRemote = await encryptAndroidBackup(androidZip(), backupPassword);
+    const mock = server(encryptedRemote, multiStatus("monica_backup_20260715_020202.enc.zip", '"remote-encrypted"'));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const firstAccount = account({ backupPassword });
+    const first = await provider.sync(firstAccount, { now: "2026-07-15T03:00:00.000Z", localItems: [] });
+    const imported = first.items[0] as LoginItem;
+    const changed: LoginItem = { ...imported, password: "encrypted-browser-secret", updatedAt: "2026-07-15T03:01:00.000Z" };
+
+    const result = await provider.sync(account({ ...first.accountPatch?.config, backupPassword }), {
+      now: "2026-07-15T03:02:00.000Z",
+      localItems: [changed]
+    });
+
+    expect(result.conflicts).toEqual([]);
+    const uploaded = mock.uploaded();
+    expect(uploaded).toBeDefined();
+    expect(isAndroidEncryptedBackup(uploaded!)).toBe(true);
+    const decrypted = await decryptAndroidBackup(uploaded!, backupPassword);
+    expect(unzipSync(decrypted)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
+    expect(readAndroidBackup(decrypted, PROVIDER_ID).items[0]).toMatchObject({ password: "encrypted-browser-secret" });
   });
 
   it("reports a three-way conflict and does not overwrite a newer Android snapshot", async () => {
