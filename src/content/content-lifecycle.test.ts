@@ -129,4 +129,19 @@ describe("dynamic credential capture lifecycle", () => {
     expect(candidates[0]).toMatchObject({ username: "single-user", password: "single-secret" });
     stop();
   });
+
+  it("does not recapture page credentials when a Monica prompt button is clicked", async () => {
+    const dom = page('<form><input autocomplete="username" value="page-user"><input type="password" value="page-secret"></form><div id="monica-save-prompt-host"></div>');
+    const candidates: CredentialCaptureInput[] = [];
+    const host = dom.window.document.querySelector("#monica-save-prompt-host")!;
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<button type="button">保存密码</button>';
+    const stop = installCredentialCapture({ rootDocument: dom.window.document, pageLocation: dom.window.location, onCandidate: (candidate) => { candidates.push(candidate); } });
+
+    click(dom, shadow.querySelector("button")!);
+    await settle(dom);
+
+    expect(candidates).toEqual([]);
+    stop();
+  });
 });

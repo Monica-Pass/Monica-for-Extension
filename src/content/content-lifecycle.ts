@@ -6,6 +6,7 @@ import { OPEN_SHADOW_ROOT_EVENT } from "./shadow-bridge";
 export { OPEN_SHADOW_ROOT_EVENT } from "./shadow-bridge";
 
 const USERNAME_CONTEXT_TTL_MS = 5 * 60 * 1_000;
+const MONICA_UI_HOST_IDS = new Set(["monica-save-prompt-host", "monica-passkey-prompt-host"]);
 
 interface CaptureOptions {
   rootDocument?: Document;
@@ -66,6 +67,10 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
 
   const onSubmit = (event: Event): void => {
     if (handledEvents.has(event)) return;
+    if (isMonicaUiEvent(event, view)) {
+      handledEvents.add(event);
+      return;
+    }
     handledEvents.add(event);
     const root = captureRootForEvent(deepestEventElement(event, view), rootDocument);
     clearClickFallback(root);
@@ -74,6 +79,10 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
 
   const onClick = (event: Event): void => {
     if (handledEvents.has(event)) return;
+    if (isMonicaUiEvent(event, view)) {
+      handledEvents.add(event);
+      return;
+    }
     const target = submissionControl(event, view);
     if (!target || !isCredentialSubmissionControl(target)) return;
     handledEvents.add(event);
@@ -157,4 +166,8 @@ function isCredentialSubmissionControl(target: Element): boolean {
   if (!type || type === "submit") return true;
   const label = `${target.textContent || ""} ${target.getAttribute("aria-label") || ""}`.toLowerCase();
   return /sign.?in|log.?in|登录|登入|继续|continue|submit|save|保存|更新/.test(label);
+}
+
+function isMonicaUiEvent(event: Event, view: Window & typeof globalThis): boolean {
+  return event.composedPath().some((node) => node instanceof view.Element && MONICA_UI_HOST_IDS.has(node.id));
 }
