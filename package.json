@@ -19,7 +19,8 @@
     "build": "npm run check && vite build && node scripts/build-workers.mjs",
     "validate": "npm test && npm run build",
     "package:release": "npm run build && node scripts/package-release.mjs",
-    "release:check": "npm run validate && npm run test:security && npm run test:e2e && npm run package:release",
+    "package:verify": "node scripts/verify-release.mjs",
+    "release:check": "npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

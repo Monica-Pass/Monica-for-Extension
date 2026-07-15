@@ -42,6 +42,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - [数据安全申报底稿](docs/DATA_SAFETY.md)
 - [zh-CN 商店文案](docs/STORE_LISTING.zh-CN.md)
 - [安全漏洞报告政策](SECURITY.md)
+- [可复现发布流程](docs/RELEASE.md)
 
 ## 日常使用
 
@@ -79,6 +80,7 @@ npm test
 npm run test:security
 npm run test:e2e
 npm run package:release
+npm run package:verify
 ```
 
 构建产物位于 `dist/`，可安装 ZIP 位于 `release/`。

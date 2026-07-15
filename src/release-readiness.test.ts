@@ -62,6 +62,25 @@ describe("store-facing privacy and security artifacts", () => {
   });
 });
 
+describe("reproducible release contract", () => {
+  it("keeps deterministic packaging and independent verification in the release gate", async () => {
+    const [pkg, workflow, releaseGuide, packager, verifier] = await Promise.all([
+      readJson<{ scripts: Record<string, string> }>("package.json"),
+      read(".github/workflows/ci.yml"),
+      read("docs/RELEASE.md"),
+      read("scripts/package-release.mjs"),
+      read("scripts/verify-release.mjs")
+    ]);
+    expect(pkg.scripts["package:verify"]).toContain("verify-release.mjs");
+    expect(pkg.scripts["release:check"]).toContain("package:verify");
+    expect(workflow).toContain("npm run package:verify");
+    for (const term of ["SHA-256", "CycloneDX", "1980-01-01", "逐字节相同"]) expect(releaseGuide).toContain(term);
+    expect(packager).toContain("RELEASE-METADATA.json");
+    expect(packager).toContain("THIRD-PARTY-LICENSES.json");
+    expect(verifier).toContain("byte-reproducible");
+  });
+});
+
 async function read(path: string): Promise<string> {
   return readFile(new URL(path, root), "utf8");
 }

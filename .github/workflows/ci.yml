@@ -27,7 +27,8 @@ jobs:
           test -f dist/index.html
           test -f dist/popup.html
       - run: npm run package:release
+      - run: npm run package:verify
       - uses: actions/upload-artifact@v4
         with:
           name: monica-extension
-          path: release/*.zip
+          path: release/*
