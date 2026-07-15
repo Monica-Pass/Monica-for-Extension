@@ -38,7 +38,7 @@ async function verifyArtifacts(directory) {
 
   const entries = unzipSync(archiveBytes);
   for (const path of Object.keys(entries)) assert(!path.includes("\\") && !path.startsWith("/") && !path.split("/").includes(".."), `Unsafe ZIP path: ${path}`);
-  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json"]) {
+  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json"]) {
     assert(entries[required], `ZIP is missing ${required}.`);
   }
 
@@ -58,6 +58,7 @@ async function verifyArtifacts(directory) {
   const declaredDist = metadata.files.filter((file) => file.source === "dist").map((file) => file.path).sort();
   assert(JSON.stringify(distFiles) === JSON.stringify(declaredDist), "Release metadata does not exactly cover dist files.");
   for (const path of distFiles) assert(sha256(await readFile(resolve(root, "dist", path))) === sha256(entries[path]), `ZIP differs from dist for ${path}.`);
+  assert(equalBytes(await readFile(resolve(root, "LICENSE")), entries.LICENSE), "ZIP license differs from the repository license.");
 
   const sbomSidecar = await readFile(resolve(directory, metadata.sidecars.sbom.file));
   const licensesSidecar = await readFile(resolve(directory, metadata.sidecars.licenses.file));

@@ -9,6 +9,7 @@ const outputDir = resolve(argumentValue("--output-dir") || resolve(root, "releas
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const packageLockBytes = await readFile(resolve(root, "package-lock.json"));
 const packageLock = JSON.parse(packageLockBytes.toString("utf8"));
+const licenseBytes = new Uint8Array(await readFile(resolve(root, "LICENSE")));
 const version = packageJson.version;
 const prefix = `monica-extension-${version}`;
 const fixedTimestamp = "1980-01-01T00:00:00.000Z";
@@ -36,11 +37,12 @@ const licensesBytes = jsonBytes({
 });
 
 const packagedEntries = new Map(distEntries);
+packagedEntries.set("LICENSE", licenseBytes);
 packagedEntries.set("SBOM.cdx.json", sbomBytes);
 packagedEntries.set("THIRD-PARTY-LICENSES.json", licensesBytes);
 const fileManifest = [...packagedEntries.entries()]
   .sort(([left], [right]) => compareText(left, right))
-  .map(([path, bytes]) => ({ path, size: bytes.length, sha256: sha256(bytes), source: distEntries.has(path) ? "dist" : "generated" }));
+  .map(([path, bytes]) => ({ path, size: bytes.length, sha256: sha256(bytes), source: distEntries.has(path) ? "dist" : path === "LICENSE" ? "root" : "generated" }));
 const metadata = {
   schemaVersion: 1,
   product: packageJson.name,

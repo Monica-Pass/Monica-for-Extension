@@ -109,4 +109,4 @@ npm run package:verify
 
 ## 许可证
 
-Monica 项目采用 [GNU GPL v3](https://www.gnu.org/licenses/gpl-3.0.html)（`GPL-3.0-only`）。
+Monica 项目采用 [GNU GPL v3](LICENSE)（`GPL-3.0-only`）。

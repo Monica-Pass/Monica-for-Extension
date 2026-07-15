@@ -5,16 +5,16 @@
   "version": "0.1.0",
   "default_locale": "zh_CN",
   "minimum_chrome_version": "109",
-  "permissions": ["activeTab", "alarms", "storage", "tabs", "webNavigation"],
+  "permissions": ["alarms", "storage", "webNavigation"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "__MSG_actionTitle__",
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "monica-logo.png",
-      "32": "monica-logo.png",
-      "48": "monica-logo.png",
-      "128": "monica-logo.png"
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
     }
   },
   "background": {
@@ -37,10 +37,10 @@
   ],
   "options_page": "index.html",
   "icons": {
-    "16": "monica-logo.png",
-    "32": "monica-logo.png",
-    "48": "monica-logo.png",
-    "128": "monica-logo.png"
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

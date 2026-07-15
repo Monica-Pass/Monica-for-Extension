@@ -29,6 +29,7 @@ ZIP 内额外包含：
 - `RELEASE-METADATA.json`：版本、固定时间、lockfile 哈希和每个归档文件的大小/SHA-256。
 - `SBOM.cdx.json`：与外部 SBOM 字节一致。
 - `THIRD-PARTY-LICENSES.json`：与外部许可证清单字节一致。
+- `LICENSE`：项目的 GNU GPL v3 完整许可证文本。
 
 ZIP 自身的哈希不能嵌入 ZIP（会形成循环依赖），因此由并列的 `.zip.sha256` 文件提供。
 
