@@ -33,6 +33,8 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 
 当前版本的登录填充、密码保存/更新、身份与支付填充、WebDAV、Bitwarden 和 Passkey 主流程均有真实 Chromium MV3 E2E 覆盖。
 
+首发受支持的界面语言为 **zh-CN（简体中文）**；Manifest 商店文案已使用 Chrome `_locales` 管理。字段识别支持部分中英文网页，但不把字段兼容误称为完整英文界面。详见 [本地化支持范围](docs/LOCALIZATION.md)。
+
 ## 日常使用
 
 1. 点击插件图标，按需解锁 Monica。

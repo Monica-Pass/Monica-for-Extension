@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Monica 密码管理器",
+    "description": "浏览器扩展名称，显示在扩展管理页和商店中。"
+  },
+  "extensionDescription": {
+    "message": "独立运行的加密密码库，支持显式自动填充、Monica Android WebDAV、Bitwarden 与 Passkey。",
+    "description": "浏览器扩展简短说明，需准确描述单一用途并控制在商店长度限制内。"
+  },
+  "actionTitle": {
+    "message": "Monica 自动填充",
+    "description": "浏览器工具栏图标的无障碍标题和悬停提示。"
+  }
+}
