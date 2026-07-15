@@ -35,6 +35,14 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 
 首发受支持的界面语言为 **zh-CN（简体中文）**；Manifest 商店文案已使用 Chrome `_locales` 管理。字段识别支持部分中英文网页，但不把字段兼容误称为完整英文界面。详见 [本地化支持范围](docs/LOCALIZATION.md)。
 
+发布与商店材料：
+
+- [隐私政策](docs/PRIVACY.md)
+- [权限说明](docs/PERMISSIONS.md)
+- [数据安全申报底稿](docs/DATA_SAFETY.md)
+- [zh-CN 商店文案](docs/STORE_LISTING.zh-CN.md)
+- [安全漏洞报告政策](SECURITY.md)
+
 ## 日常使用
 
 1. 点击插件图标，按需解锁 Monica。

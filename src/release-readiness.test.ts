@@ -27,6 +27,45 @@ describe("release-facing localization", () => {
   });
 });
 
+describe("store-facing privacy and security artifacts", () => {
+  it("documents every declared permission and host scope", async () => {
+    const manifest = JSON.parse(await read("public/manifest.json")) as { permissions: string[]; host_permissions: string[] };
+    const permissions = await read("docs/PERMISSIONS.md");
+    for (const permission of [...manifest.permissions, ...manifest.host_permissions]) {
+      expect(permissions, `missing permission disclosure for ${permission}`).toContain(`\`${permission}\``);
+    }
+    expect(permissions).toContain("MAIN world");
+    expect(permissions).toContain("完整密码库");
+  });
+
+  it("discloses storage, exports, optional provider transmission and diagnostics consistently", async () => {
+    const [privacy, dataSafety] = await Promise.all([read("docs/PRIVACY.md"), read("docs/DATA_SAFETY.md")]);
+    const disclosure = `${privacy}\n${dataSafety}`;
+    for (const term of ["IndexedDB", "chrome.storage.session", "WebDAV Basic Auth", "普通 ZIP", "Bitwarden", "明文", "加密整库备份", "脱敏诊断", "Passkey", "MAIN-world"]) {
+      expect(disclosure, `missing disclosure: ${term}`).toContain(term);
+    }
+    expect(disclosure).toContain("不自动上传");
+    expect(disclosure).not.toMatch(/零网络|不进行任何网络|no network transmission/i);
+  });
+
+  it("keeps listing metadata and security contact publishable", async () => {
+    const [messages, listing, security] = await Promise.all([
+      readJson<Record<string, { message: string }>>("public/_locales/zh_CN/messages.json"),
+      read("docs/STORE_LISTING.zh-CN.md"),
+      read("SECURITY.md")
+    ]);
+    expect(listing).toContain(messages.extensionName.message);
+    expect(listing).toContain(messages.extensionDescription.message);
+    expect(listing).toContain("zh-CN");
+    expect(security).toContain("GitHub Security Advisories");
+    expect(security).not.toMatch(/guarantee|保证在.*修复/i);
+  });
+});
+
 async function read(path: string): Promise<string> {
   return readFile(new URL(path, root), "utf8");
+}
+
+async function readJson<T>(path: string): Promise<T> {
+  return JSON.parse(await read(path)) as T;
 }
