@@ -87,6 +87,8 @@ describe("commercial requirement traceability", () => {
       "tests/e2e/accessibility.spec.ts", "src/providers/webdav/android-backup-codec.test.ts",
       "src/providers/bitwarden/bitwarden-provider.test.ts", "src/security/secure-vault-service.test.ts"
     ]) expect(await exists(path), `missing evidence file ${path}`).toBe(true);
+    expect(report).toContain("当前状态：通过");
+    expect(report).not.toMatch(/待最终门禁|待生成\/复核|REQUIRED GAP/i);
     expect(report).not.toMatch(/完整英文 UI|closed ShadowRoot.*通过|零网络数据/i);
   });
 });
