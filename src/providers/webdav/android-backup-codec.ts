@@ -1,5 +1,6 @@
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, zipSync } from "fflate";
 import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
+import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
 
 export interface AndroidBackupRecord {
   path: string;
@@ -18,7 +19,7 @@ export interface AndroidBackupDocument {
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
 export function readAndroidBackup(zipBytes: Uint8Array, providerId: string): AndroidBackupDocument {
-  const entries = unzipSync(zipBytes);
+  const entries = safeUnzipSync(zipBytes);
   const items: VaultItem[] = [];
   const records = new Map<string, AndroidBackupRecord>();
   const warnings: string[] = [];
@@ -53,7 +54,10 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
     ensureProviderReference(item, providerId, remotePath);
   }
-  return zipSync(entries, { level: 6 });
+  validateUncompressedZipEntries(entries);
+  const output = zipSync(entries, { level: 6 });
+  inspectZipArchive(output);
+  return output;
 }
 
 export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId: string): void {

@@ -26,4 +26,10 @@ describe("Monica Android backup encryption", () => {
     const plain = Uint8Array.of(0x50, 0x4b, 0x03, 0x04);
     await expect(decryptAndroidBackup(plain, "")).resolves.toEqual(plain);
   });
+
+  it("rejects oversized plaintext and encrypted envelopes before expensive cryptography", async () => {
+    const bytes = Uint8Array.of(1, 2, 3, 4);
+    await expect(encryptAndroidBackup(bytes, "password", undefined, 3)).rejects.toThrow("明文超过安全上限");
+    await expect(decryptAndroidBackup(bytes, "", 3)).rejects.toThrow("备份超过安全上限");
+  });
 });

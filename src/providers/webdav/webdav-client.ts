@@ -1,5 +1,6 @@
 import { bytesToBase64 } from "../../security/encoding";
 import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
+import { DEFAULT_ZIP_SAFETY_LIMITS } from "./zip-safety";
 
 export interface WebDavCredentials {
   baseUrl: string;
@@ -16,11 +17,26 @@ export interface WebDavBackupFile {
   encrypted: boolean;
 }
 
+export interface WebDavClientLimits {
+  maxMultiStatusBytes: number;
+  maxDownloadBytes: number;
+  maxUploadBytes: number;
+}
+
+export const DEFAULT_WEBDAV_CLIENT_LIMITS: Readonly<WebDavClientLimits> = Object.freeze({
+  maxMultiStatusBytes: 2 * 1024 * 1024,
+  maxDownloadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 64,
+  maxUploadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 64
+});
+
+const BACKUP_FILE_PATTERN = /^monica_backup_[^/]+(?:\.enc)?\.zip$/i;
+
 export class WebDavClient {
   constructor(
     private readonly credentials: WebDavCredentials,
     private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
-    private readonly transportPolicy: ProviderTransportPolicy = {}
+    private readonly transportPolicy: ProviderTransportPolicy = {},
+    private readonly limitOverrides: Partial<WebDavClientLimits> = {}
   ) {}
 
   async testConnection(signal?: AbortSignal): Promise<void> {
@@ -36,18 +52,26 @@ export class WebDavClient {
       response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份");
     }
     if (!response.ok && response.status !== 207) throw webDavError("读取 Monica_Backups 失败", response);
-    return parseMultiStatus(await response.text(), folderUrl)
-      .filter((file) => /\.zip$/i.test(file.name))
+    const limits = this.limits();
+    return parseMultiStatus(await readBoundedText(response, limits.maxMultiStatusBytes, "WebDAV 目录响应"), folderUrl)
+      .filter((file) => BACKUP_FILE_PATTERN.test(file.name))
       .sort((left, right) => compareBackups(right, left));
   }
 
   async download(file: WebDavBackupFile, signal?: AbortSignal): Promise<Uint8Array> {
+    const limits = this.limits();
+    assertBackupFileUrl(file.url, backupFolderUrl(this.credentials.baseUrl));
+    if (!BACKUP_FILE_PATTERN.test(file.name)) throw new Error("WebDAV 备份文件名不符合 Monica 格式。");
+    if (file.size !== undefined && (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > limits.maxDownloadBytes)) {
+      throw new Error("WebDAV 备份下载超过安全上限。");
+    }
     const response = await this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份");
     if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
-    return new Uint8Array(await response.arrayBuffer());
+    return readBoundedBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载");
   }
 
   async upload(bytes: Uint8Array, encrypted: boolean, signal?: AbortSignal): Promise<WebDavBackupFile> {
+    if (bytes.length > this.limits().maxUploadBytes) throw new Error("WebDAV 备份上传超过安全上限。");
     await this.ensureBackupFolder(signal);
     const now = new Date();
     const name = `monica_backup_${formatTimestamp(now)}_browser${encrypted ? ".enc.zip" : ".zip"}`;
@@ -72,10 +96,19 @@ export class WebDavClient {
   }
 
   private request(url: string, init: RequestInit, operation: string): Promise<Response> {
+    assertSameProviderOrigin(url, this.credentials.baseUrl);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Basic ${bytesToBase64(new TextEncoder().encode(`${this.credentials.username}:${this.credentials.password}`))}`);
     headers.set("Accept", "*/*");
-    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit" }, { ...this.transportPolicy, operation, fetcher: this.fetcher });
+    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher });
+  }
+
+  private limits(): WebDavClientLimits {
+    const limits = { ...DEFAULT_WEBDAV_CLIENT_LIMITS, ...this.limitOverrides };
+    for (const [name, value] of Object.entries(limits)) {
+      if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`WebDAV 安全限制无效: ${name}`);
+    }
+    return limits;
   }
 }
 
@@ -84,8 +117,11 @@ export function normalizeServerUrl(raw: string): string {
   if (!trimmed) throw new Error("WebDAV 地址不能为空。");
   const withScheme = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
   const url = new URL(withScheme);
-  url.hash = "";
-  url.search = "";
+  if (url.username || url.password) throw new Error("WebDAV 地址不能包含用户名或密码。");
+  if (url.search || url.hash) throw new Error("WebDAV 地址不能包含查询参数或片段。");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
+    throw new Error("WebDAV 必须使用 HTTPS；仅回环地址允许 HTTP。");
+  }
   return url.toString().replace(/\/$/, "");
 }
 
@@ -95,23 +131,101 @@ export function backupFolderUrl(baseUrl: string): string {
 }
 
 export function parseMultiStatus(xml: string, folderUrl: string): WebDavBackupFile[] {
+  const trustedFolderUrl = backupFolderUrl(folderUrl);
   const responses = xml.match(/<(?:[A-Za-z0-9_-]+:)?response\b[\s\S]*?<\/(?:[A-Za-z0-9_-]+:)?response>/gi) || [];
   return responses.flatMap((block): WebDavBackupFile[] => {
     if (/<(?:[A-Za-z0-9_-]+:)?collection\b/i.test(block)) return [];
     const href = xmlValue(block, "href");
     if (!href) return [];
-    const decodedPath = safeDecode(new URL(href, folderUrl).pathname);
+    const resolvedUrl = new URL(href, `${trustedFolderUrl.replace(/\/$/, "")}/`);
+    assertBackupFileUrl(resolvedUrl.toString(), trustedFolderUrl);
+    const decodedPath = safeDecode(resolvedUrl.pathname);
     const name = decodedPath.split("/").filter(Boolean).pop() || "";
     if (!name) return [];
     return [{
       name,
-      url: new URL(href, folderUrl).toString(),
+      url: resolvedUrl.toString(),
       etag: xmlValue(block, "getetag") || undefined,
       size: optionalNumber(xmlValue(block, "getcontentlength")),
       lastModified: xmlValue(block, "getlastmodified") || undefined,
       encrypted: /\.enc\.zip$/i.test(name)
     }];
   });
+}
+
+async function readBoundedText(response: Response, maximum: number, label: string): Promise<string> {
+  return new TextDecoder().decode(await readBoundedBytes(response, maximum, label));
+}
+
+async function readBoundedBytes(response: Response, maximum: number, label: string): Promise<Uint8Array> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength) {
+    const parsed = Number(declaredLength);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximum) throw new Error(`${label}超过安全上限。`);
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > maximum) throw new Error(`${label}超过安全上限。`);
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (!Number.isSafeInteger(total) || total > maximum) {
+        await reader.cancel();
+        throw new Error(`${label}超过安全上限。`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}
+
+function assertSameProviderOrigin(target: string, configuredBaseUrl: string): void {
+  const base = new URL(normalizeServerUrl(configuredBaseUrl));
+  const url = new URL(target);
+  if (url.origin !== base.origin || url.username || url.password || url.search || url.hash) {
+    throw new Error("请求越过 WebDAV Provider 安全边界。");
+  }
+}
+
+function assertBackupFileUrl(target: string, folderUrl: string): void {
+  const folder = new URL(backupFolderUrl(folderUrl));
+  const url = new URL(target);
+  const prefix = `${folder.pathname.replace(/\/$/, "")}/`;
+  const decodedRelativePath = safeDecode(url.pathname.slice(prefix.length));
+  if (
+    url.origin !== folder.origin ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !url.pathname.startsWith(prefix) ||
+    !decodedRelativePath ||
+    decodedRelativePath.includes("/") ||
+    decodedRelativePath.includes("\\") ||
+    decodedRelativePath === "." ||
+    decodedRelativePath === ".."
+  ) {
+    throw new Error("目标越过 WebDAV 备份目录边界。");
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
 function joinUrl(base: string, child: string): string {
