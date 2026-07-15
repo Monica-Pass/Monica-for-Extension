@@ -523,6 +523,30 @@ main {
   min-width: 0;
 }
 
+.data-card table {
+  table-layout: fixed;
+}
+
+.data-card th:last-child,
+.data-card .action-cell {
+  width: 104px;
+  min-width: 0;
+  padding-inline: 4px;
+}
+
+.data-card td {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.data-card .row-title {
+  min-width: 0;
+}
+
+.data-card .url-list {
+  max-width: 100%;
+}
+
 .card-head {
   display: grid;
   gap: 4px;

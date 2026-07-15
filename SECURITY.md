@@ -56,6 +56,8 @@ Official source builds use the exact Node/npm versions in `package.json`, a lock
 
 Run `npm run release:check` from a clean tracked worktree to reproduce and verify the package.
 
+CodeQL uses the `security-extended` query suite. While this repository is private without GitHub Advanced Security, the workflow retains SARIF as a downloadable build artifact instead of claiming Security-tab publication; public repositories and private repositories with Advanced Security upload results normally. OpenSSF Scorecard evidence is available only when the repository is public.
+
 The full engineering threat model is in [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md). Independent third-party audit completion will be reported there only after an actual report exists.
 
 General support and non-sensitive bugs belong in [GitHub Issues](https://github.com/Monica-Pass/Monica-for-Extension/issues).

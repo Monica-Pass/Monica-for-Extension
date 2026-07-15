@@ -31,3 +31,14 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          output: codeql-results
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
+      - name: Preserve private-repository CodeQL SARIF
+        if: github.event.repository.private
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codeql-sarif
+          path: codeql-results/*.sarif
+          if-no-files-found: error
+          retention-days: 30

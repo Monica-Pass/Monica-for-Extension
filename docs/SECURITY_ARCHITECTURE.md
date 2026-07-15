@@ -54,7 +54,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Offline vault cracking | PBKDF2-SHA256 600,000 iterations, 32-byte random salt, AES-256-GCM | Master-password strength remains user-dependent; memory-hard KDF migration is desirable |
 | Android backup cracking | Android-compatible PBKDF2-SHA256 100,000 and AES-256-GCM | Iteration count is format-controlled; recommend a strong independent backup password |
 | Secret leakage in build/logs | Redacted provider errors, fixture-token scan, no source maps, package inventory verification | Independent secret scanning and audit are still required |
-| Dependency compromise | Lockfile, `npm ci`, production audit, planned CodeQL/dependency review/SBOM | Registry and CI platform remain supply-chain trust anchors |
+| Dependency compromise | Lockfile, `npm ci`, production audit, CodeQL, dependency review, SBOM and Dependabot | Registry and CI platform remain supply-chain trust anchors |
 | Malicious extension update | Store/repository release governance and reproducible package evidence | Store signing/account security are external operational controls |
 
 ## Permission rationale
@@ -68,6 +68,8 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Main-world script | WebAuthn API bridge | Public WebAuthn messages only; no vault or provider access |
 
 Broad site access is intrinsic to cross-site autofill. Removing it would materially remove the password-manager function, so the compensating control is strict background authorization and minimal page payloads.
+
+For private repositories without GitHub Advanced Security, CodeQL still runs the `security-extended` suite and retains its SARIF as a workflow artifact for review. GitHub blocks publication to the Security tab in that configuration; publication switches on automatically when the repository is public or Advanced Security is enabled. OpenSSF Scorecard likewise runs only after the repository is public.
 
 ## Cryptography
 

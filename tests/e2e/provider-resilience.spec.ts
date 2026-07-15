@@ -60,7 +60,12 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
     const saved = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
       type: "WEBDAV_SAVE",
       name: "Resilient Android WebDAV",
-      config: { baseUrl: "https://dav.example.test/root", username: "private-user", password: "private-webdav-password" },
+      config: {
+        baseUrl: "https://dav.example.test/root",
+        username: "private-user",
+        password: "private-webdav-password",
+        backupPassword: "private-backup-password"
+      },
       isDefaultSaveTarget: false
     })) as { ok: boolean; data?: { id: string }; error?: string };
     expect(saved, saved.error).toMatchObject({ ok: true });
@@ -102,7 +107,7 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
     const diagnostic = await readDownload(await downloadPromise);
     expect(diagnostic).toMatchObject({ magic: "MONICA_PROVIDER_DIAGNOSTICS", version: 1, summary: { conflicts: 1, cancellations: 1 } });
     const serialized = JSON.stringify(diagnostic);
-    for (const secret of ["private-user", "private-webdav-password", "dav.example.test", "local-conflict-secret", "remote-conflict-secret", providerId]) expect(serialized).not.toContain(secret);
+    for (const secret of ["private-user", "private-webdav-password", "private-backup-password", "dav.example.test", "local-conflict-secret", "remote-conflict-secret", providerId]) expect(serialized).not.toContain(secret);
   } finally {
     releaseDownload?.();
     await context?.close();
