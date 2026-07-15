@@ -1,5 +1,6 @@
 import type { ProviderAccount } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
+import type { EncryptedVaultBackup } from "../security/secure-vault-service";
 import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
@@ -14,6 +15,11 @@ export const vaultClient = {
   setup: (masterPassword: string) => send<VaultItem[]>({ type: "VAULT_SETUP", masterPassword }),
   unlock: (masterPassword: string) => send<VaultItem[]>({ type: "VAULT_UNLOCK", masterPassword }),
   lock: () => send<void>({ type: "VAULT_LOCK" }),
+  changeMasterPassword: (currentPassword: string, newPassword: string) => send<void>({ type: "VAULT_CHANGE_MASTER_PASSWORD", currentPassword, newPassword }),
+  exportEncryptedBackup: () => send<EncryptedVaultBackup>({ type: "VAULT_EXPORT_ENCRYPTED" }),
+  restoreEncryptedBackup: (backup: EncryptedVaultBackup, backupPassword: string, replaceExisting = false, currentPassword?: string) =>
+    send<VaultItem[]>({ type: "VAULT_RESTORE_ENCRYPTED", backup, backupPassword, replaceExisting, currentPassword }),
+  importItems: (items: VaultItem[]) => send<VaultItem[]>({ type: "VAULT_IMPORT_ITEMS", items }),
   listItems: () => send<VaultItem[]>({ type: "VAULT_LIST_ITEMS" }),
   getItem: (itemId: string) => send<VaultItem | undefined>({ type: "VAULT_GET_ITEM", itemId }),
   upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),

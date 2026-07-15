@@ -83,6 +83,25 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       pendingCredentialCaptures.clear();
       pendingPasskeyRequests.clear();
       return service.lock();
+    case "VAULT_CHANGE_MASTER_PASSWORD":
+      assertExtensionPage(sender);
+      return service.changeMasterPassword(request.currentPassword, request.newPassword);
+    case "VAULT_EXPORT_ENCRYPTED":
+      assertExtensionPage(sender);
+      return service.exportEncryptedBackup();
+    case "VAULT_RESTORE_ENCRYPTED": {
+      assertExtensionPage(sender);
+      const state = await service.restoreEncryptedBackup(request.backup, request.backupPassword, {
+        replaceExisting: request.replaceExisting,
+        currentPassword: request.currentPassword
+      });
+      pendingCredentialCaptures.clear();
+      pendingPasskeyRequests.clear();
+      return state.items.filter((item) => !item.deletedAt);
+    }
+    case "VAULT_IMPORT_ITEMS":
+      assertExtensionPage(sender);
+      return service.importItems(request.items);
     case "VAULT_LIST_ITEMS":
       assertExtensionPage(sender);
       return service.listItems();

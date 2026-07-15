@@ -145,6 +145,15 @@
   opacity: 0;
 }
 
+.recovery-panel {
+  border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  padding-top: 16px;
+}
+
+.settings-message {
+  grid-column: 1 / -1;
+}
+
 .boundary-row {
   min-height: 48px;
   border-radius: 18px;

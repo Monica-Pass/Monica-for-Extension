@@ -1,6 +1,6 @@
 import type { LoginItem, ProviderAccount, VaultItem } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import type { VaultLifecycleStatus } from "../security/secure-vault-service";
+import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/secure-vault-service";
 
 export interface LoginMatchSummary {
   id: string;
@@ -95,6 +95,10 @@ export type ExtensionRequest =
   | { type: "VAULT_SETUP"; masterPassword: string }
   | { type: "VAULT_UNLOCK"; masterPassword: string }
   | { type: "VAULT_LOCK" }
+  | { type: "VAULT_CHANGE_MASTER_PASSWORD"; currentPassword: string; newPassword: string }
+  | { type: "VAULT_EXPORT_ENCRYPTED" }
+  | { type: "VAULT_RESTORE_ENCRYPTED"; backup: EncryptedVaultBackup; backupPassword: string; replaceExisting?: boolean; currentPassword?: string }
+  | { type: "VAULT_IMPORT_ITEMS"; items: VaultItem[] }
   | { type: "VAULT_LIST_ITEMS" }
   | { type: "VAULT_GET_ITEM"; itemId: string }
   | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }

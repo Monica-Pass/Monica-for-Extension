@@ -5,6 +5,18 @@ import type { VaultEnvelopeStorage } from "./vault-storage";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
 
+export interface EncryptedVaultBackup {
+  magic: "MONICA_EXTENSION_BACKUP";
+  version: 1;
+  exportedAt: string;
+  envelope: VaultEnvelope;
+}
+
+export interface RestoreEncryptedVaultOptions {
+  replaceExisting?: boolean;
+  currentPassword?: string;
+}
+
 export class VaultLockedError extends Error {
   constructor(message = "Vault is locked") {
     super(message);
@@ -20,6 +32,8 @@ export class VaultUnlockError extends Error {
 }
 
 export class SecureVaultService {
+  private operationTail: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly storage: VaultEnvelopeStorage,
     private readonly sessions: VaultSessionStore,
@@ -27,6 +41,7 @@ export class SecureVaultService {
   ) {}
 
   async status(): Promise<VaultLifecycleStatus> {
+    return this.runExclusive(async () => {
     const envelope = await this.storage.read();
     if (!envelope) return "uninitialized";
     const session = await this.sessions.read();
@@ -36,9 +51,11 @@ export class SecureVaultService {
       return "locked";
     }
     return "unlocked";
+    });
   }
 
   async setup(masterPassword: string, initialItems: VaultItem[] = []): Promise<VaultState> {
+    return this.runExclusive(async () => {
     if ((await this.storage.read()) !== null) throw new Error("Vault has already been initialized");
     validateMasterPassword(masterPassword);
     const state = createEmptyVaultState();
@@ -49,9 +66,11 @@ export class SecureVaultService {
     await this.storage.write(envelope);
     await this.startSession(key, state.settings.autoLockMinutes);
     return state;
+    });
   }
 
   async unlock(masterPassword: string): Promise<VaultState> {
+    return this.runExclusive(async () => {
     const envelope = await this.requireEnvelope();
     try {
       const { key } = await deriveVaultKey(masterPassword, envelope.kdf);
@@ -62,17 +81,96 @@ export class SecureVaultService {
       await this.sessions.clear();
       throw new VaultUnlockError();
     }
+    });
   }
 
   async lock(): Promise<void> {
-    await this.sessions.clear();
+    return this.runExclusive(() => this.sessions.clear());
+  }
+
+  async changeMasterPassword(currentPassword: string, newPassword: string): Promise<void> {
+    return this.runExclusive(async () => {
+      validateMasterPassword(newPassword);
+      const envelope = await this.requireEnvelope();
+      let state: VaultState;
+      try {
+        const { key: currentKey } = await deriveVaultKey(currentPassword, envelope.kdf);
+        state = await decryptVaultState(envelope, currentKey);
+      } catch {
+        throw new VaultUnlockError();
+      }
+      const { key: newKey, kdf: newKdf } = await deriveVaultKey(newPassword);
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.storage.write(await encryptVaultState(state, newKey, newKdf));
+      try {
+        await this.startSession(newKey, state.settings.autoLockMinutes);
+      } catch {
+        await this.sessions.clear();
+        throw new Error("主密码已更改，但无法继续当前会话；请使用新主密码重新解锁。");
+      }
+    });
+  }
+
+  async exportEncryptedBackup(): Promise<EncryptedVaultBackup> {
+    return this.runExclusive(async () => {
+      const { envelope, key } = await this.unlockedContext();
+      const state = await decryptVaultState(envelope, key);
+      await this.touchSession(state.settings.autoLockMinutes);
+      return {
+        magic: "MONICA_EXTENSION_BACKUP",
+        version: 1,
+        exportedAt: new Date(this.now()).toISOString(),
+        envelope: structuredClone(envelope)
+      };
+    });
+  }
+
+  async restoreEncryptedBackup(
+    input: EncryptedVaultBackup,
+    backupPassword: string,
+    options: RestoreEncryptedVaultOptions = {}
+  ): Promise<VaultState> {
+    return this.runExclusive(async () => {
+      const backup = validateEncryptedBackup(input);
+      const existing = await this.storage.read();
+      if (existing && !options.replaceExisting) throw new Error("当前已存在密码库；替换恢复需要明确确认。");
+
+      let restoredState: VaultState;
+      let backupKey: CryptoKey;
+      try {
+        ({ key: backupKey } = await deriveVaultKey(backupPassword, backup.envelope.kdf));
+        restoredState = await decryptVaultState(backup.envelope, backupKey);
+      } catch {
+        throw new VaultUnlockError();
+      }
+
+      if (existing) {
+        try {
+          const { key: currentKey } = await deriveVaultKey(options.currentPassword || "", existing.kdf);
+          await decryptVaultState(existing, currentKey);
+        } catch {
+          throw new VaultUnlockError();
+        }
+      }
+
+      await this.storage.write(structuredClone(backup.envelope));
+      try {
+        await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
+      } catch {
+        await this.sessions.clear();
+        throw new Error("加密备份已恢复，但无法继续当前会话；请使用备份主密码重新解锁。");
+      }
+      return restoredState;
+    });
   }
 
   async readState(): Promise<VaultState> {
+    return this.runExclusive(async () => {
     const { envelope, key } = await this.unlockedContext();
     const state = await decryptVaultState(envelope, key);
     await this.touchSession(state.settings.autoLockMinutes);
     return state;
+    });
   }
 
   async listItems(): Promise<VaultItem[]> {
@@ -92,6 +190,7 @@ export class SecureVaultService {
   }
 
   async upsertProvider(provider: ProviderAccount): Promise<ProviderAccount> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const exists = state.providers.some((candidate) => candidate.id === provider.id);
     state.providers = exists ? state.providers.map((candidate) => (candidate.id === provider.id ? provider : candidate)) : [...state.providers, provider];
@@ -107,9 +206,11 @@ export class SecureVaultService {
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
     return provider;
+    });
   }
 
   async removeProvider(providerId: string): Promise<void> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider || provider.kind === "local") throw new Error("本地密码源不能删除。");
@@ -127,9 +228,11 @@ export class SecureVaultService {
     }
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
+    });
   }
 
   async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>): Promise<void> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
@@ -138,9 +241,11 @@ export class SecureVaultService {
     state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
+    });
   }
 
   async upsertItem(item: VaultItem): Promise<VaultItem> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const now = new Date(this.now()).toISOString();
     const existing = state.items.find((candidate) => candidate.id === item.id);
@@ -155,9 +260,39 @@ export class SecureVaultService {
     state.updatedAt = now;
     await this.persist(state, key, envelope.kdf);
     return normalized;
+    });
+  }
+
+  async importItems(items: VaultItem[]): Promise<VaultItem[]> {
+    return this.runExclusive(async () => {
+      const imported = validateImportedItems(items);
+      const { state, envelope, key } = await this.mutableContext();
+      const providerIds = new Set(state.providers.map((provider) => provider.id));
+      if (imported.some((item) => item.providerRefs.some((reference) => !providerIds.has(reference.providerId)))) {
+        throw new Error("导入项目引用了当前密码库中不存在的密码源。");
+      }
+      const now = new Date(this.now()).toISOString();
+      const committed: VaultItem[] = [];
+      for (const item of imported) {
+        const existing = state.items.find((candidate) => candidate.id === item.id);
+        const normalized = {
+          ...item,
+          createdAt: existing?.createdAt || item.createdAt || now,
+          updatedAt: now,
+          providerRefs: item.providerRefs || []
+        } as VaultItem;
+        state.items = existing ? state.items.map((candidate) => candidate.id === item.id ? normalized : candidate) : [normalized, ...state.items];
+        queueProviderMutations(state, normalized, existing ? "update" : "create", now);
+        committed.push(normalized);
+      }
+      state.updatedAt = now;
+      await this.persist(state, key, envelope.kdf);
+      return committed;
+    });
   }
 
   async deleteItem(itemId: string): Promise<void> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const now = new Date(this.now()).toISOString();
     const item = state.items.find((candidate) => candidate.id === itemId);
@@ -166,12 +301,21 @@ export class SecureVaultService {
     queueProviderMutations(state, item, "delete", now);
     state.updatedAt = now;
     await this.persist(state, key, envelope.kdf);
+    });
   }
 
   async markProviderSyncFailure(providerId: string, message: string): Promise<void> {
+    return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     state.mutationQueue = state.mutationQueue.map((mutation) => mutation.providerId === providerId ? { ...mutation, attempts: Math.min(5, mutation.attempts + 1), lastError: message } : mutation);
     await this.persist(state, key, envelope.kdf);
+    });
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation, operation);
+    this.operationTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private async mutableContext(): Promise<{ state: VaultState; envelope: VaultEnvelope; key: CryptoKey }> {
@@ -231,4 +375,30 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
 
 function validateMasterPassword(value: string): void {
   if (value.length < 10) throw new Error("主密码至少需要 10 个字符。");
+}
+
+function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("加密备份格式无效。");
+  const backup = input as Partial<EncryptedVaultBackup>;
+  if (backup.magic !== "MONICA_EXTENSION_BACKUP" || backup.version !== 1 || typeof backup.exportedAt !== "string" || !backup.envelope || typeof backup.envelope !== "object") {
+    throw new Error("加密备份格式无效或版本不受支持。");
+  }
+  return structuredClone(backup as EncryptedVaultBackup);
+}
+
+function validateImportedItems(input: unknown): VaultItem[] {
+  if (!Array.isArray(input) || !input.length || input.length > 10_000) throw new Error("导入项目列表为空或过大。");
+  const kinds = new Set(["login", "secure-note", "totp", "card", "identity", "billing-address", "payment-account", "passkey"]);
+  const ids = new Set<string>();
+  const items = input.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("导入项目格式无效。");
+    const item = candidate as Partial<VaultItem>;
+    if (typeof item.id !== "string" || !item.id || ids.has(item.id) || typeof item.kind !== "string" || !kinds.has(item.kind) || typeof item.title !== "string" || !Array.isArray(item.providerRefs)) {
+      throw new Error("导入项目缺少有效的 ID、类型、标题或密码源引用。");
+    }
+    ids.add(item.id);
+    if (item.providerRefs.some((reference) => !reference || typeof reference.providerId !== "string" || !reference.providerId)) throw new Error("导入项目包含无效的密码源引用。");
+    return structuredClone(candidate as VaultItem);
+  });
+  return items;
 }

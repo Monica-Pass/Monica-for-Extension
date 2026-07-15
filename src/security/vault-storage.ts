@@ -39,10 +39,27 @@ export class IndexedDbVaultStorage implements VaultEnvelopeStorage {
     const database = await this.openDatabase();
     return new Promise<T>((resolve, reject) => {
       const transaction = database.transaction(this.storeName, mode);
-      action(transaction.objectStore(this.storeName), resolve, reject);
-      transaction.oncomplete = () => database.close();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error || new Error("Vault transaction aborted"));
+      let result: T;
+      let failed = false;
+      const capture = (value: T) => { result = value; };
+      const fail = (reason?: unknown) => {
+        if (failed) return;
+        failed = true;
+        database.close();
+        reject(reason);
+      };
+      try {
+        action(transaction.objectStore(this.storeName), capture, fail);
+      } catch (error) {
+        try { transaction.abort(); } catch { /* transaction may already be inactive */ }
+        fail(error);
+      }
+      transaction.oncomplete = () => {
+        database.close();
+        if (!failed) resolve(result!);
+      };
+      transaction.onerror = () => fail(transaction.error);
+      transaction.onabort = () => fail(transaction.error || new Error("Vault transaction aborted"));
     });
   }
 

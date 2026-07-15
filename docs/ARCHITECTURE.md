@@ -25,6 +25,10 @@ For framed login forms, the popup enumerates frames through `webNavigation`, ask
 - Additional authenticated data: `monica-extension-vault-envelope-v1`.
 - Persistent store: IndexedDB `monica-extension-secure-vault`.
 - Session key: `chrome.storage.session`; refreshed by trusted operations and expired by the background alarm.
+- Master-password rotation verifies the current envelope, derives a new key with a fresh random salt, writes the new envelope, then replaces the session key.
+- Encrypted full backups wrap the authenticated envelope with a versioned backup marker. Restore authenticates and validates the entire candidate before one atomic replacement write; replacing an existing vault also verifies its current master password.
+
+Vault operations share a failure-tolerant exclusive queue so concurrent background requests cannot perform read-modify-write against the same old envelope. IndexedDB storage resolves writes and deletes only after `transaction.oncomplete`, not merely after the individual request succeeds. Plain item imports are normalized first and committed as one encrypted state transition.
 
 ## Provider model
 

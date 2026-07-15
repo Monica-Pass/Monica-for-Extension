@@ -14,7 +14,7 @@ import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, 
 import { normalizeImportedVaultItem } from "./manager/import-items";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { vaultClient } from "./runtime/client";
-import type { VaultLifecycleStatus } from "./security/secure-vault-service";
+import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
 type Section = "overview" | VaultManagerSection | "providers" | "settings";
 
@@ -45,8 +45,14 @@ const bitwardenBusy = ref(false);
 const bitwardenError = ref("");
 const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
+const securityBusy = ref<"" | "password" | "export" | "restore">("");
+const securityError = ref("");
+const selectedEncryptedBackup = ref<EncryptedVaultBackup | null>(null);
+const selectedEncryptedBackupName = ref("");
 
 const auth = reactive({ masterPassword: "", confirmation: "" });
+const passwordChange = reactive({ currentPassword: "", newPassword: "", confirmation: "" });
+const restoreForm = reactive({ backupPassword: "", currentPassword: "" });
 const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: "" });
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", isDefaultSaveTarget: false });
 const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
@@ -419,14 +425,98 @@ function twoFactorName(provider: number): string {
   return ({ 0: "身份验证器", 1: "邮箱", 2: "Duo", 3: "YubiKey", 4: "Duo（组织）", 5: "WebAuthn" } as Record<number, string>)[provider] || `方式 ${provider}`;
 }
 
-function exportVault() {
-  const blob = new Blob([JSON.stringify({ version: 1, items: vaultItems.value }, null, 2)], { type: "application/json" });
+function downloadJsonFile(fileName: string, value: unknown) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `monica-extension-export-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = fileName;
   anchor.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportVault() {
+  downloadJsonFile(`monica-extension-export-${new Date().toISOString().slice(0, 10)}.json`, { version: 1, items: vaultItems.value });
+}
+
+async function exportEncryptedVault() {
+  securityBusy.value = "export";
+  securityError.value = "";
+  try {
+    const backup = await vaultClient.exportEncryptedBackup();
+    downloadJsonFile(`monica-extension-encrypted-${new Date().toISOString().slice(0, 10)}.json`, backup);
+    showNotice("已导出加密整库备份；恢复时需要当前主密码。");
+  } catch (error) {
+    securityError.value = errorMessage(error);
+  } finally {
+    securityBusy.value = "";
+  }
+}
+
+async function selectEncryptedBackup(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  securityError.value = "";
+  if (!file) return;
+  if (file.size > 96 * 1024 * 1024) return void (securityError.value = "加密备份文件过大。");
+  try {
+    const parsed = JSON.parse(await file.text()) as EncryptedVaultBackup;
+    if (parsed.magic !== "MONICA_EXTENSION_BACKUP" || parsed.version !== 1 || !parsed.envelope) throw new Error("格式无效");
+    selectedEncryptedBackup.value = parsed;
+    selectedEncryptedBackupName.value = file.name;
+    restoreForm.backupPassword = "";
+    restoreForm.currentPassword = "";
+  } catch {
+    selectedEncryptedBackup.value = null;
+    selectedEncryptedBackupName.value = "";
+    securityError.value = "所选文件不是受支持的 Monica 加密整库备份。";
+  }
+}
+
+async function restoreEncryptedVault() {
+  if (!selectedEncryptedBackup.value) return void (securityError.value = "请先选择加密整库备份。");
+  if (!restoreForm.backupPassword) return void (securityError.value = "请输入备份主密码。");
+  const replacing = lifecycle.value === "unlocked";
+  if (replacing && !restoreForm.currentPassword) return void (securityError.value = "替换当前密码库需要验证当前主密码。");
+  if (replacing && !window.confirm("恢复会完整替换当前本地密码库。确定继续吗？")) return;
+  securityBusy.value = "restore";
+  securityError.value = "";
+  try {
+    vaultItems.value = await vaultClient.restoreEncryptedBackup(selectedEncryptedBackup.value, restoreForm.backupPassword, replacing, replacing ? restoreForm.currentPassword : undefined);
+    lifecycle.value = "unlocked";
+    selectedEncryptedBackup.value = null;
+    selectedEncryptedBackupName.value = "";
+    restoreForm.backupPassword = "";
+    restoreForm.currentPassword = "";
+    auth.masterPassword = "";
+    auth.confirmation = "";
+    await Promise.all([refreshItems(), refreshProviders()]);
+    showNotice("加密整库备份已完成原子恢复。");
+  } catch (error) {
+    securityError.value = errorMessage(error);
+  } finally {
+    securityBusy.value = "";
+  }
+}
+
+async function changeMasterPassword() {
+  securityError.value = "";
+  if (!passwordChange.currentPassword) return void (securityError.value = "请输入当前主密码。");
+  if (passwordChange.newPassword.length < 10) return void (securityError.value = "新主密码至少需要 10 个字符。");
+  if (passwordChange.newPassword !== passwordChange.confirmation) return void (securityError.value = "两次输入的新主密码不一致。");
+  securityBusy.value = "password";
+  try {
+    await vaultClient.changeMasterPassword(passwordChange.currentPassword, passwordChange.newPassword);
+    passwordChange.currentPassword = "";
+    passwordChange.newPassword = "";
+    passwordChange.confirmation = "";
+    showNotice("主密码已更改，密码库已使用新盐重新加密。");
+  } catch (error) {
+    securityError.value = errorMessage(error);
+  } finally {
+    securityBusy.value = "";
+  }
 }
 
 async function importVault(event: Event) {
@@ -447,7 +537,7 @@ async function importVault(event: Event) {
       }
     }
     if (!items.length) throw new Error("no supported items");
-    for (const item of items) await vaultClient.upsertItem(item);
+    await vaultClient.importItems(items);
     await refreshItems();
     showNotice(`已加密导入 ${items.length} 个密码库项目。`);
   } catch {
@@ -482,6 +572,16 @@ function errorMessage(error: unknown) {
           <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" autocomplete="new-password" /></label>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
+          <div v-if="lifecycle === 'uninitialized'" class="recovery-panel stack">
+            <div><strong>已有加密整库备份？</strong><p class="supporting">选择备份并输入它原来的主密码，可恢复项目、密码源和设置。</p></div>
+            <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
+            <template v-if="selectedEncryptedBackup">
+              <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
+              <label class="field"><span>备份主密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
+              <m3e-button variant="tonal" type="button" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在恢复…' : '恢复并解锁' }}</m3e-button>
+            </template>
+            <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
+          </div>
           <div class="security-note"><m3e-icon name="encrypted"></m3e-icon><span>AES-256-GCM · PBKDF2-SHA256 · 自动锁定</span></div>
         </div>
       </m3e-card>
@@ -568,8 +668,29 @@ function errorMessage(error: unknown) {
 
         <section v-else class="settings-grid">
           <AppearancePanel class="motion-card" />
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>手动迁移</h2><p class="supporting">导出文件是用户主动生成的明文，请只保存到可信位置。</p><m3e-button variant="tonal" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入 JSON</span><input type="file" accept="application/json,.json" @change="importVault" /></label></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
+            <h2>加密整库备份</h2>
+            <p class="supporting">包含项目、密码源和设置，仍由主密码加密；恢复后将使用备份原来的主密码。</p>
+            <m3e-button variant="tonal" :disabled="Boolean(securityBusy)" @click="exportEncryptedVault"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出加密整库备份' }}</m3e-button>
+            <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
+            <template v-if="selectedEncryptedBackup">
+              <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
+              <label class="field"><span>备份主密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
+              <label class="field"><span>恢复前的当前主密码</span><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /></label>
+              <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在验证并恢复…' : '验证并替换当前密码库' }}</m3e-button>
+            </template>
+          </div></m3e-card>
+          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
+            <h2>更改主密码</h2>
+            <p class="supporting">验证当前主密码后，使用新盐重新加密完整密码库。</p>
+            <label class="field"><span>当前主密码</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
+            <label class="field"><span>新主密码</span><input v-model="passwordChange.newPassword" type="password" autocomplete="new-password" /></label>
+            <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" autocomplete="new-password" /></label>
+            <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? '正在重新加密…' : '更改主密码' }}</m3e-button>
+          </div></m3e-card>
+          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出明文 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON</span><input type="file" accept="application/json,.json" @change="importVault" /></label></div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>安全边界</h2><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>持久数据使用 AES-256-GCM 加密</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>解锁密钥仅保留在浏览器会话存储</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>内容脚本无法读取完整密码库</span></div></div></m3e-card>
+          <p v-if="securityError" class="form-error settings-message" role="alert">{{ securityError }}</p>
         </section>
       </main>
     </div>

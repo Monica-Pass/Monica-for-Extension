@@ -3,6 +3,8 @@ import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
 const DEFAULT_ITERATIONS = 600_000;
+const MAX_ITERATIONS = 10_000_000;
+const MAX_VAULT_CIPHERTEXT_BYTES = 64 * 1024 * 1024;
 
 export interface VaultKdfParameters {
   name: "PBKDF2-SHA256";
@@ -26,11 +28,18 @@ export async function deriveVaultKey(masterPassword: string, parameters?: VaultK
     iterations: DEFAULT_ITERATIONS,
     salt: bytesToBase64(randomBytes(32))
   };
-  if (kdf.name !== "PBKDF2-SHA256" || kdf.iterations < 100_000) throw new Error("Unsupported or unsafe vault KDF parameters");
+  if (kdf.name !== "PBKDF2-SHA256" || !Number.isInteger(kdf.iterations) || kdf.iterations < 100_000 || kdf.iterations > MAX_ITERATIONS) throw new Error("Unsupported or unsafe vault KDF parameters");
+  let salt: Uint8Array;
+  try {
+    salt = base64ToBytes(kdf.salt);
+  } catch {
+    throw new Error("Vault KDF salt is invalid");
+  }
+  if (salt.length < 16 || salt.length > 64) throw new Error("Vault KDF salt is invalid");
 
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(masterPassword), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: base64ToBytes(kdf.salt) as BufferSource, iterations: kdf.iterations },
+    { name: "PBKDF2", hash: "SHA-256", salt: salt as BufferSource, iterations: kdf.iterations },
     material,
     256
   );
@@ -60,7 +69,19 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     base64ToBytes(envelope.ciphertext) as BufferSource
   );
   const state = JSON.parse(new TextDecoder().decode(decrypted)) as VaultState;
-  if (state.magic !== "MONICA_EXTENSION_VAULT" || state.schemaVersion !== 1 || !Array.isArray(state.items)) {
+  if (
+    state.magic !== "MONICA_EXTENSION_VAULT" ||
+    state.schemaVersion !== 1 ||
+    !Array.isArray(state.items) ||
+    !Array.isArray(state.providers) ||
+    !Array.isArray(state.mutationQueue) ||
+    !state.settings ||
+    typeof state.settings.defaultProviderId !== "string" ||
+    !Number.isInteger(state.settings.autoLockMinutes) ||
+    state.settings.autoLockMinutes < 1 ||
+    state.settings.autoLockMinutes > 1440 ||
+    !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)
+  ) {
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
@@ -76,7 +97,14 @@ export async function importVaultKey(rawKey: string): Promise<CryptoKey> {
 }
 
 function validateEnvelope(value: VaultEnvelope): void {
-  if (value.version !== 1 || value.cipher !== "AES-256-GCM" || value.kdf?.name !== "PBKDF2-SHA256") {
+  if (!value || value.version !== 1 || value.cipher !== "AES-256-GCM" || value.kdf?.name !== "PBKDF2-SHA256" || typeof value.iv !== "string" || typeof value.ciphertext !== "string" || value.ciphertext.length > MAX_VAULT_CIPHERTEXT_BYTES * 2) {
+    throw new Error("Vault envelope is invalid or unsupported");
+  }
+  try {
+    const iv = base64ToBytes(value.iv);
+    const ciphertext = base64ToBytes(value.ciphertext);
+    if (iv.length !== 12 || ciphertext.length < 16 || ciphertext.length > MAX_VAULT_CIPHERTEXT_BYTES) throw new Error("invalid length");
+  } catch {
     throw new Error("Vault envelope is invalid or unsupported");
   }
 }
