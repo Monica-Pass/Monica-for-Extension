@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createLoginItem, type VaultItem, type VaultState } from "../core/model";
-import { decryptVaultState, deriveVaultKey, encryptVaultState } from "./vault-crypto";
+import { createEmptyVaultState, createLoginItem, type VaultItem, type VaultState } from "../core/model";
+import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
 import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
 import { MemoryVaultStorage } from "./vault-storage";
@@ -12,6 +12,7 @@ describe("encrypted vault", () => {
     const service = new SecureVaultService(storage, sessions);
     const login = createLoginItem({ title: "Example", username: "joy", password: "super-secret-value", uris: ["example.com"] });
     await service.setup("a strong master password", [login]);
+    expect(storage.envelope?.kdf).toMatchObject({ name: "ARGON2ID", memoryKiB: 64 * 1024, iterations: 3, parallelism: 1 });
 
     const serializedEnvelope = JSON.stringify(storage.envelope);
     expect(serializedEnvelope).not.toContain("super-secret-value");
@@ -88,6 +89,7 @@ describe("encrypted vault", () => {
   it("requires a modern minimum length for newly created master passwords", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await expect(service.setup("fourteen-chars!".slice(0, 14))).rejects.toThrow("至少需要 15 个字符");
+    await expect(service.setup("x".repeat(1_025))).rejects.toThrow("不能超过 1024 个字符");
   });
 
   it("stores support diagnostics encrypted and exports a redacted bounded document", async () => {
@@ -152,6 +154,38 @@ describe("encrypted vault", () => {
     const { key, kdf } = await deriveVaultKey("0123456789-master");
     const envelope = await encryptVaultState(state, key, kdf);
     await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT", schemaVersion: 1 });
+  });
+
+  it("migrates a valid legacy PBKDF2 vault to Argon2id on unlock without changing its data", async () => {
+    const storage = new MemoryVaultStorage();
+    const sessions = new MemoryVaultSessionStore();
+    const state = createEmptyVaultState();
+    state.items = [createLoginItem({ title: "Legacy", username: "joy", password: "legacy-secret", uris: ["example.com"] })];
+    const legacyKdf: Pbkdf2VaultKdfParameters = { name: "PBKDF2-SHA256", iterations: 600_000, salt: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" };
+    const legacy = await deriveVaultKey("legacy migration password", legacyKdf);
+    storage.envelope = await encryptVaultState(state, legacy.key, legacy.kdf);
+
+    const service = new SecureVaultService(storage, sessions);
+    await expect(service.unlock("legacy migration password")).resolves.toMatchObject({ items: [expect.objectContaining({ password: "legacy-secret" })] });
+    expect(storage.envelope?.kdf).toMatchObject({ name: "ARGON2ID", memoryKiB: 64 * 1024, iterations: 3, parallelism: 1 });
+    await service.lock();
+    await expect(service.unlock("legacy migration password")).resolves.toMatchObject({ items: [expect.objectContaining({ title: "Legacy" })] });
+  });
+
+  it("keeps a legacy vault usable when its best-effort KDF migration cannot be committed", async () => {
+    const storage = new FlakyMemoryVaultStorage();
+    const sessions = new MemoryVaultSessionStore();
+    const state = createEmptyVaultState();
+    state.items = [createLoginItem({ title: "Fallback", password: "still-readable", uris: ["example.com"] })];
+    const legacyKdf: Pbkdf2VaultKdfParameters = { name: "PBKDF2-SHA256", iterations: 600_000, salt: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" };
+    const legacy = await deriveVaultKey("legacy fallback password", legacyKdf);
+    storage.envelope = await encryptVaultState(state, legacy.key, legacy.kdf);
+    storage.failNextWrite = true;
+
+    const service = new SecureVaultService(storage, sessions);
+    await expect(service.unlock("legacy fallback password")).resolves.toMatchObject({ items: [expect.objectContaining({ password: "still-readable" })] });
+    expect(storage.envelope?.kdf.name).toBe("PBKDF2-SHA256");
+    await expect(service.readState()).resolves.toMatchObject({ items: [expect.objectContaining({ title: "Fallback" })] });
   });
 
   it("migrates a pre-conflict schema-v1 envelope without weakening validation", async () => {
@@ -329,6 +363,22 @@ describe("encrypted vault", () => {
     expect(restored.settings.defaultProviderId).toBe("webdav");
     await target.lock();
     await expect(target.unlock("backup master password")).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT" });
+  });
+
+  it("upgrades a restored legacy PBKDF2 backup before persisting it locally", async () => {
+    const state = createEmptyVaultState();
+    state.items = [createLoginItem({ title: "Legacy backup", password: "backup-secret", uris: ["example.com"] })];
+    const legacyKdf: Pbkdf2VaultKdfParameters = { name: "PBKDF2-SHA256", iterations: 600_000, salt: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" };
+    const legacy = await deriveVaultKey("legacy backup password", legacyKdf);
+    const envelope = await encryptVaultState(state, legacy.key, legacy.kdf);
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+
+    await expect(service.restoreEncryptedBackup({ magic: "MONICA_EXTENSION_BACKUP", version: 1, exportedAt: "2026-07-15T00:00:00.000Z", envelope }, "legacy backup password"))
+      .resolves.toMatchObject({ items: [expect.objectContaining({ password: "backup-secret" })] });
+    expect(storage.envelope?.kdf.name).toBe("ARGON2ID");
+    await service.lock();
+    await expect(service.unlock("legacy backup password")).resolves.toMatchObject({ items: [expect.objectContaining({ title: "Legacy backup" })] });
   });
 
   it("authenticates the complete restore candidate before replacing any existing vault", async () => {

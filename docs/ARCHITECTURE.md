@@ -20,7 +20,7 @@ For framed login forms, the popup enumerates frames through `webNavigation`, ask
 
 ## Vault envelope
 
-- KDF: PBKDF2-HMAC-SHA256, 600,000 iterations, 32-byte random salt.
+- KDF: Argon2id v1.3, 64 MiB memory, 3 iterations, parallelism 1 and a 32-byte random salt. Legacy PBKDF2-HMAC-SHA256 envelopes remain readable and are re-encrypted with Argon2id after a successful unlock/restore.
 - Cipher: AES-256-GCM, 12-byte random IV and 128-bit authentication tag.
 - Additional authenticated data: `monica-extension-vault-envelope-v1`.
 - Persistent store: IndexedDB `monica-extension-secure-vault`.
@@ -56,7 +56,7 @@ WebDAV is treated as a timestamped snapshot source rather than a record API. The
 ## Bitwarden compatibility
 
 - Official US/EU endpoints and same-origin `/identity` + `/api` self-hosted endpoints.
-- PBKDF2-HMAC-SHA256 through Web Crypto; Argon2id v1.3 through bundled `hash-wasm` with independent Python vectors.
+- PBKDF2-HMAC-SHA256 through Web Crypto for legacy vault/Bitwarden/Android compatibility; Argon2id v1.3 through bundled `hash-wasm` with independent Python vectors.
 - Type 2 AES-256-CBC + HMAC-SHA256 CipherStrings with MAC-before-decrypt and independent vectors.
 - Password login, explicit authenticator/email/YubiKey-code 2FA continuation, refresh token rotation, personal Cipher sync and CRUD.
 - Revision-based concurrent edit detection and empty-vault deletion protection.

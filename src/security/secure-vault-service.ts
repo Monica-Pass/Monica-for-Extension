@@ -1,6 +1,6 @@
 import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
-import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
+import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
 
@@ -73,15 +73,26 @@ export class SecureVaultService {
   async unlock(masterPassword: string): Promise<VaultState> {
     return this.runExclusive(async () => {
     const envelope = await this.requireEnvelope();
+    let key: CryptoKey;
+    let state: VaultState;
     try {
-      const { key } = await deriveVaultKey(masterPassword, envelope.kdf);
-      const state = await decryptVaultState(envelope, key);
-      await this.startSession(key, state.settings.autoLockMinutes);
-      return state;
+      ({ key } = await deriveVaultKey(masterPassword, envelope.kdf));
+      state = await decryptVaultState(envelope, key);
     } catch {
       await this.sessions.clear();
       throw new VaultUnlockError();
     }
+    if (vaultKdfNeedsUpgrade(envelope.kdf)) {
+      try {
+        const upgraded = await deriveVaultKey(masterPassword);
+        await this.storage.write(await encryptVaultState(state, upgraded.key, upgraded.kdf));
+        key = upgraded.key;
+      } catch {
+        // A failed best-effort migration must not make a valid legacy vault unreadable.
+      }
+    }
+    await this.startSession(key, state.settings.autoLockMinutes);
+    return state;
     });
   }
 
@@ -154,7 +165,17 @@ export class SecureVaultService {
         }
       }
 
-      await this.storage.write(structuredClone(backup.envelope));
+      let restoredEnvelope = structuredClone(backup.envelope);
+      if (vaultKdfNeedsUpgrade(restoredEnvelope.kdf)) {
+        try {
+          const upgraded = await deriveVaultKey(backupPassword);
+          restoredEnvelope = await encryptVaultState(restoredState, upgraded.key, upgraded.kdf);
+          backupKey = upgraded.key;
+        } catch {
+          // Preserve compatibility if the runtime cannot complete the optional KDF upgrade.
+        }
+      }
+      await this.storage.write(restoredEnvelope);
       try {
         await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
       } catch {
@@ -519,6 +540,7 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
 
 function validateMasterPassword(value: string): void {
   if (value.length < 15) throw new Error("主密码至少需要 15 个字符。");
+  if (value.length > 1_024) throw new Error("主密码不能超过 1024 个字符。");
 }
 
 function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {

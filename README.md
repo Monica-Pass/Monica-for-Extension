@@ -10,7 +10,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - 浏览器工具栏 Popup 和当前网站登录表单检测。
 - Provider 中立的数据模型，覆盖登录、TOTP、银行卡、证件、地址、支付账号和 Passkey。
 - AES-256-GCM 加密 IndexedDB 密码库。
-- PBKDF2-HMAC-SHA256（600,000 次）主密码派生。
+- Argon2id v1.3（64 MiB、3 次、32-byte 随机 salt）主密码派生；旧 PBKDF2 密码库在成功解锁后自动原子迁移。
 - 解锁密钥只保存于 `chrome.storage.session`，默认 15 分钟无操作锁定。
 - 支持验证当前密码后更改主密码；完整密码库使用新盐重新派生并加密。
 - 支持带版本标识的加密整库备份与原子恢复，包含项目、密码源和设置；恢复失败不会改写现有密码库。

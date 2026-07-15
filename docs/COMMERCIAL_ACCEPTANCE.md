@@ -30,7 +30,7 @@
 
 - 官方 npm registry 生产依赖审计：0 个已知漏洞。
 - 生产 lockfile/SBOM 和许可证清单由当前 lockfile 重新生成并由 `package:verify` 核对；Vite 构建工具仅列为 devDependencies。
-- 最终完整功能门禁：160 项单元测试、36 项安全测试/静态审计、23 项 Chromium MV3 E2E 全部通过。
+- 最终完整功能门禁：全量 Vitest、聚焦安全测试/静态审计和 Chromium MV3 E2E 全部通过；精确用例数量以对应候选 commit 的 CI 日志为准，避免静态文档随新增回归测试失真。
 - 当前 ZIP SHA-256 不在静态文档中固化；以对应 commit 的 `.zip.sha256`、`RELEASE-METADATA.json` 和 `SECURITY-EVIDENCE.json` 为准。
 - 商店素材：5 张 1280×800 PNG，仅含 `.example.test`、测试卡号和明确标注的合成数据。
 

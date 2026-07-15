@@ -17,7 +17,7 @@ The auditor must record the exact commit SHA reviewed. Findings against another 
 
 ## Required review areas
 
-1. Vault KDF/envelope construction, authenticated decryption, restore and password rotation.
+1. Vault Argon2id/envelope construction, bounded legacy PBKDF2 migration/fallback, authenticated decryption, restore and password rotation.
 2. Session-key persistence, auto-lock behavior, service-worker restart behavior and renderer exposure.
 3. Runtime message authorization across extension pages, content scripts, frames and the main-world Passkey bridge.
 4. Credential capture, explicit fill, origin matching, iframe handling and navigation/race behavior.
