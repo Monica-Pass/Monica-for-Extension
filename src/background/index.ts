@@ -5,6 +5,7 @@ import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
+import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { createAssertion, createPasskey, fromBase64Url, toBase64Url, validateRpId } from "../passkey/webauthn-core";
 import { ChromeVaultSessionStore } from "../security/vault-session";
@@ -19,6 +20,7 @@ providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
+const activeProviderSyncs = new Map<string, AbortController>();
 
 interface PendingCredentialCapture extends CredentialCaptureInput {
   id: string;
@@ -49,6 +51,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     void service.status().then((status) => {
       if (status !== "unlocked") pendingCredentialCaptures.clear();
       if (status !== "unlocked") pendingPasskeyRequests.clear();
+      if (status !== "unlocked") abortProviderSyncs();
     });
   }
 });
@@ -80,6 +83,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_LOCK":
       assertExtensionPage(sender);
+      abortProviderSyncs();
       pendingCredentialCaptures.clear();
       pendingPasskeyRequests.clear();
       return service.lock();
@@ -91,6 +95,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.exportEncryptedBackup();
     case "VAULT_RESTORE_ENCRYPTED": {
       assertExtensionPage(sender);
+      abortProviderSyncs();
       const state = await service.restoreEncryptedBackup(request.backup, request.backupPassword, {
         replaceExisting: request.replaceExisting,
         currentPassword: request.currentPassword
@@ -151,8 +156,17 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "PROVIDER_QUEUE_STATUS": {
       assertExtensionPage(sender);
       const queue = (await service.readState()).mutationQueue;
-      return [...new Set(queue.map((item) => item.providerId))].map((providerId) => { const entries = queue.filter((item) => item.providerId === providerId); return { providerId, pending: entries.length, failed: entries.filter((item) => item.lastError).length, maxAttempts: Math.max(0, ...entries.map((item) => item.attempts)), lastError: [...entries].reverse().find((item) => item.lastError)?.lastError }; });
+      return [...new Set(queue.map((item) => item.providerId))].map((providerId) => { const entries = queue.filter((item) => item.providerId === providerId); const lastError = [...entries].reverse().find((item) => item.lastError)?.lastError; return { providerId, pending: entries.length, failed: entries.filter((item) => item.lastError).length, maxAttempts: Math.max(0, ...entries.map((item) => item.attempts)), lastError: lastError ? redactProviderMessage(lastError) : undefined }; });
     }
+    case "PROVIDER_CONFLICT_LIST":
+      assertExtensionPage(sender);
+      return service.listProviderConflicts(request.providerId);
+    case "PROVIDER_CONFLICT_RESOLVE":
+      assertExtensionPage(sender);
+      return service.resolveProviderConflict(request.conflictId, request.resolution);
+    case "PROVIDER_DIAGNOSTIC_EXPORT":
+      assertExtensionPage(sender);
+      return service.exportProviderDiagnostics();
     case "WEBDAV_TEST": {
       assertExtensionPage(sender);
       const temporary: ProviderAccount = {
@@ -229,19 +243,59 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const account = await service.getProvider(request.providerId);
       if (!account) throw new Error("密码源不存在。");
       if (account.kind === "local") throw new Error("本地密码源不需要同步。");
+      if (activeProviderSyncs.has(account.id)) throw new Error("此密码源正在同步。");
+      const controller = new AbortController();
+      activeProviderSyncs.set(account.id, controller);
+      const startedAt = Date.now();
       try {
-        const result = await providers.get(account.kind).sync(account, { now: new Date().toISOString(), localItems: (await service.readState()).items });
+        const result = await providers.get(account.kind).sync(account, { signal: controller.signal, now: new Date().toISOString(), localItems: (await service.readState()).items });
         await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts);
+        await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
+          operation: "sync",
+          outcome: result.conflicts.length ? "conflict" : "success",
+          code: result.conflicts.length ? "conflict" : "ok",
+          conflicts: result.conflicts.length,
+          warnings: result.warnings.length,
+          durationMs: Date.now() - startedAt,
+          message: result.conflicts.length ? `发现 ${result.conflicts.length} 个同步冲突。` : "同步完成。"
+        }));
         return { warnings: result.warnings, conflicts: result.conflicts.length };
       } catch (error) {
-        await service.markProviderSyncFailure(account.id, error instanceof Error ? error.message : "同步失败");
-        await service.upsertProvider({ ...account, lastError: error instanceof Error ? error.message : "同步失败" });
-        throw error;
+        const diagnostic = createProviderDiagnostic(account.id, account.kind, error, new Date().toISOString(), { operation: "sync", durationMs: Date.now() - startedAt });
+        if (diagnostic.outcome !== "cancelled") {
+          await service.markProviderSyncFailure(account.id, diagnostic.message);
+          const latest = await service.getProvider(account.id);
+          if (latest) await service.upsertProvider({ ...latest, lastError: diagnostic.message });
+        }
+        await recordProviderDiagnosticIfUnlocked(diagnostic);
+        throw new Error(diagnostic.message);
+      } finally {
+        activeProviderSyncs.delete(account.id);
       }
+    }
+    case "PROVIDER_SYNC_CANCEL": {
+      assertExtensionPage(sender);
+      const controller = activeProviderSyncs.get(request.providerId);
+      controller?.abort(new DOMException("用户取消同步", "AbortError"));
+      return { cancelled: Boolean(controller) };
     }
     case "PROVIDER_REMOVE":
       assertExtensionPage(sender);
+      activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
       return service.removeProvider(request.providerId);
+  }
+}
+
+function abortProviderSyncs(): void {
+  for (const controller of activeProviderSyncs.values()) controller.abort(new DOMException("密码库已锁定", "AbortError"));
+  activeProviderSyncs.clear();
+}
+
+async function recordProviderDiagnosticIfUnlocked(diagnostic: Parameters<SecureVaultService["recordProviderDiagnostic"]>[0]): Promise<void> {
+  try {
+    await service.recordProviderDiagnostic(diagnostic);
+  } catch (error) {
+    if (!(error instanceof VaultLockedError)) throw error;
   }
 }
 

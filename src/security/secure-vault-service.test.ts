@@ -61,6 +61,41 @@ describe("encrypted vault", () => {
     expect((await service.listProviders()).find((provider) => provider.id === "webdav-1")?.config).toMatchObject({ password: "webdav-secret", backupPassword: "android-backup-secret" });
   });
 
+  it("stores support diagnostics encrypted and exports a redacted bounded document", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("diagnostic master password");
+    await service.upsertProvider({
+      id: "legacy-provider",
+      kind: "bitwarden",
+      name: "Legacy provider",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {},
+      lastError: "token=legacy-secret https://legacy.private.example/path"
+    });
+    expect((await service.listProviders()).find((provider) => provider.id === "legacy-provider")?.lastError).not.toMatch(/legacy-secret|legacy\.private/);
+
+    await service.recordProviderDiagnostic({
+      at: "2026-07-15T13:00:00.000Z",
+      providerRef: "provider-deadbeef",
+      kind: "bitwarden",
+      operation: "sync",
+      outcome: "failure",
+      code: "authentication",
+      status: 401,
+      retryable: false,
+      attempts: 1,
+      durationMs: 42,
+      message: "token=must-not-export https://private.example/path"
+    });
+
+    const exported = await service.exportProviderDiagnostics();
+    expect(exported).toMatchObject({ magic: "MONICA_PROVIDER_DIAGNOSTICS", version: 1, diagnostics: [expect.objectContaining({ providerRef: "provider-deadbeef", status: 401, durationMs: 42 })] });
+    expect(JSON.stringify(exported)).not.toMatch(/must-not-export|private\.example/);
+    expect(JSON.stringify(storage.envelope)).not.toContain("provider-deadbeef");
+  });
+
   it("restores the local default and removes provider-only cache when disconnecting", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await service.setup("disconnect master password");
@@ -94,10 +129,11 @@ describe("encrypted vault", () => {
     const state = await new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore()).setup("legacy schema password");
     const legacy = structuredClone(state) as Partial<VaultState>;
     delete legacy.providerConflicts;
+    delete legacy.providerDiagnostics;
     const { key, kdf } = await deriveVaultKey("legacy schema password");
     const envelope = await encryptVaultState(legacy as VaultState, key, kdf);
 
-    await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ providerConflicts: [] });
+    await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ providerConflicts: [], providerDiagnostics: [] });
   });
 
   it("queues external mutations, caps failed attempts, and clears them after sync", async () => {

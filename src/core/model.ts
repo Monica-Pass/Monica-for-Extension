@@ -172,6 +172,37 @@ export interface ProviderConflict extends ProviderConflictInput {
 
 export type ProviderConflictResolution = "keep-local" | "use-remote";
 
+export interface ProviderDiagnostic {
+  at: string;
+  providerRef: string;
+  kind: ProviderKind;
+  operation: string;
+  outcome: "success" | "conflict" | "failure" | "cancelled";
+  code: string;
+  status?: number;
+  retryable: boolean;
+  attempts: number;
+  retryAfterMs?: number;
+  durationMs?: number;
+  conflicts?: number;
+  warnings?: number;
+  message: string;
+}
+
+export interface ProviderDiagnosticExport {
+  magic: "MONICA_PROVIDER_DIAGNOSTICS";
+  version: 1;
+  generatedAt: string;
+  summary: {
+    total: number;
+    successes: number;
+    conflicts: number;
+    failures: number;
+    cancellations: number;
+  };
+  diagnostics: ProviderDiagnostic[];
+}
+
 export interface VaultState {
   magic: "MONICA_EXTENSION_VAULT";
   schemaVersion: 1;
@@ -181,6 +212,7 @@ export interface VaultState {
   providers: ProviderAccount[];
   mutationQueue: PendingMutation[];
   providerConflicts: ProviderConflict[];
+  providerDiagnostics: ProviderDiagnostic[];
   settings: {
     autoLockMinutes: number;
     defaultProviderId: string;
@@ -207,6 +239,7 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
     ],
     mutationQueue: [],
     providerConflicts: [],
+    providerDiagnostics: [],
     settings: {
       autoLockMinutes: 15,
       defaultProviderId: localProviderId

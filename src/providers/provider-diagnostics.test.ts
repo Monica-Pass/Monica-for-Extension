@@ -41,6 +41,7 @@ describe("provider diagnostic redaction", () => {
       providerRef: expect.stringMatching(/^provider-[a-f0-9]{8}$/),
       kind: "bitwarden",
       operation: "sync",
+      outcome: "failure",
       code: "rate-limited",
       status: 429,
       retryable: true,

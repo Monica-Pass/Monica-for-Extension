@@ -1,4 +1,4 @@
-import type { LoginItem, ProviderAccount, VaultItem } from "../core/model";
+import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/secure-vault-service";
 
@@ -116,6 +116,9 @@ export type ExtensionRequest =
   | { type: "PASSKEY_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }
   | { type: "PROVIDER_QUEUE_STATUS" }
+  | { type: "PROVIDER_CONFLICT_LIST"; providerId?: string }
+  | { type: "PROVIDER_CONFLICT_RESOLVE"; conflictId: string; resolution: ProviderConflictResolution }
+  | { type: "PROVIDER_DIAGNOSTIC_EXPORT" }
   | { type: "WEBDAV_TEST"; config: MonicaWebDavConfig }
   | { type: "WEBDAV_SAVE"; providerId?: string; name: string; config: MonicaWebDavConfig; isDefaultSaveTarget?: boolean }
   | {
@@ -132,6 +135,7 @@ export type ExtensionRequest =
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
   | { type: "PROVIDER_SYNC"; providerId: string }
+  | { type: "PROVIDER_SYNC_CANCEL"; providerId: string }
   | { type: "PROVIDER_REMOVE"; providerId: string };
 
 export type ExtensionResponse<T = unknown> = { ok: true; data: T } | { ok: false; error: string; code?: string };
@@ -139,4 +143,4 @@ export type ExtensionResponse<T = unknown> = { ok: true; data: T } | { ok: false
 export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
-export type { LoginItem, ProviderAccount, VaultItem };
+export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };

@@ -8,7 +8,7 @@ import "@m3e/web/icon-button";
 import { computed, onMounted, reactive, ref } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
-import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type VaultItem } from "./core/model";
+import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type VaultItem } from "./core/model";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { normalizeImportedVaultItem } from "./manager/import-items";
@@ -21,6 +21,7 @@ type Section = "overview" | VaultManagerSection | "providers" | "settings";
 const vaultItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>([]);
+const providerConflicts = ref<ProviderConflict[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
 const query = ref("");
@@ -37,6 +38,8 @@ const revealPassword = ref(false);
 const formError = ref("");
 const notice = ref("");
 const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove">("");
+const activeSyncProviderId = ref("");
+const diagnosticBusy = ref(false);
 const webDavError = ref("");
 const editingWebDavId = ref<string | undefined>();
 const webDavDialogOpen = ref(false);
@@ -147,11 +150,23 @@ async function refreshItems() {
 }
 
 async function refreshProviders() {
-  [providers.value, providerQueues.value] = await Promise.all([vaultClient.listProviders(), vaultClient.providerQueueStatus()]);
+  [providers.value, providerQueues.value, providerConflicts.value] = await Promise.all([
+    vaultClient.listProviders(),
+    vaultClient.providerQueueStatus(),
+    vaultClient.listProviderConflicts()
+  ]);
 }
 
 function queueFor(providerId: string) {
   return providerQueues.value.find((queue) => queue.providerId === providerId);
+}
+
+function conflictsFor(providerId: string) {
+  return providerConflicts.value.filter((conflict) => conflict.providerId === providerId);
+}
+
+function conflictTitle(conflict: ProviderConflict) {
+  return conflict.local?.title || conflict.remote?.title || "密码源级冲突";
 }
 
 function navigate(section: Section) {
@@ -307,6 +322,7 @@ async function saveWebDav() {
 }
 
 async function syncProvider(provider: ProviderAccount) {
+  activeSyncProviderId.value = provider.id;
   await runWebDavAction("sync", async () => {
     let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
     try {
@@ -318,6 +334,33 @@ async function syncProvider(provider: ProviderAccount) {
     const details = result.conflicts ? `发现 ${result.conflicts} 个冲突，未覆盖远端数据。` : result.warnings[0] || "同步完成。";
     showNotice(details);
   });
+  activeSyncProviderId.value = "";
+}
+
+async function cancelProviderSync(provider: ProviderAccount) {
+  const result = await vaultClient.cancelProviderSync(provider.id);
+  if (result.cancelled) showNotice(`正在取消 ${provider.name} 同步…`);
+}
+
+async function resolveProviderConflict(conflict: ProviderConflict, resolution: ProviderConflictResolution) {
+  const action = resolution === "keep-local" ? "保留浏览器版本并在下次同步写回" : conflict.remote ? "采用远端版本并丢弃浏览器修改" : "接受远端删除";
+  if (!window.confirm(`确定${action}“${conflictTitle(conflict)}”吗？`)) return;
+  await vaultClient.resolveProviderConflict(conflict.id, resolution);
+  await Promise.all([refreshItems(), refreshProviders()]);
+  showNotice("同步冲突已原子解决。");
+}
+
+async function exportProviderDiagnostics() {
+  diagnosticBusy.value = true;
+  try {
+    const diagnostics = await vaultClient.exportProviderDiagnostics();
+    downloadJsonFile(`monica-provider-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, diagnostics);
+    showNotice(`已导出 ${diagnostics.summary.total} 条脱敏诊断；文件不包含凭据或密码库内容。`);
+  } catch (error) {
+    webDavError.value = errorMessage(error);
+  } finally {
+    diagnosticBusy.value = false;
+  }
 }
 
 async function removeProvider(provider: ProviderAccount) {
@@ -660,9 +703,25 @@ function errorMessage(error: unknown) {
           </div>
 
           <div class="provider-list" aria-label="已连接的密码源">
-            <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="folder_copy"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div><span class="state" :class="provider.lastError ? 'state-attention' : 'state-healthy'">{{ provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span><p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p><p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p><p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : '尚未同步；首次同步会导入最新 Android 快照。' }}</p><div class="source-actions"><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ webDavBusy === 'sync' ? '同步中…' : queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="编辑 WebDAV" @click="editWebDav(provider)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 WebDAV" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div></m3e-card>
-            <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div><span class="state" :class="provider.lastError ? 'state-attention' : 'state-healthy'">{{ provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span><p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p><p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p><p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><div class="source-actions"><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div></m3e-card>
-            <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span></div></m3e-card>
+            <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
+              <div class="source-title"><span class="source-icon"><m3e-icon name="folder_copy"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div>
+              <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
+              <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
+              <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Android 版本' : '接受远端删除' }}</m3e-button></div></div>
+              <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : '尚未同步；首次同步会导入最新 Android 快照。' }}</p>
+              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="编辑 WebDAV" @click="editWebDav(provider)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 WebDAV" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
+            </div></m3e-card>
+            <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
+              <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
+              <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
+              <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
+              <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button></div></div>
+              <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p>
+              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
+            </div></m3e-card>
+            <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span><div class="source-actions"><m3e-button variant="tonal" :disabled="diagnosticBusy" @click="exportProviderDiagnostics"><m3e-icon slot="icon" name="download"></m3e-icon>{{ diagnosticBusy ? '正在导出…' : '导出脱敏诊断' }}</m3e-button></div></div></m3e-card>
           </div>
         </section>
 
@@ -722,7 +781,7 @@ function errorMessage(error: unknown) {
       <template v-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
       <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
       <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
-      <div class="boundary-row warning"><m3e-icon name="info"></m3e-icon><span>本阶段支持个人 Cipher；组织共享 Cipher 会跳过并在同步结果中提示。</span></div>
+      <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。</span></div>
       <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
     </form></section></div>
   </m3e-theme>

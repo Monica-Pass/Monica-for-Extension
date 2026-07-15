@@ -1,4 +1,5 @@
-import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
+import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
@@ -182,11 +183,12 @@ export class SecureVaultService {
   }
 
   async listProviders(): Promise<ProviderAccount[]> {
-    return (await this.readState()).providers;
+    return (await this.readState()).providers.map(safeProviderAccount);
   }
 
   async getProvider(providerId: string): Promise<ProviderAccount | undefined> {
-    return (await this.readState()).providers.find((provider) => provider.id === providerId);
+    const provider = (await this.readState()).providers.find((candidate) => candidate.id === providerId);
+    return provider ? safeProviderAccount(provider) : undefined;
   }
 
   async upsertProvider(provider: ProviderAccount): Promise<ProviderAccount> {
@@ -264,6 +266,34 @@ export class SecureVaultService {
       const current = state.items.find((item) => item.id === conflict.itemId);
       return structuredClone({ ...conflict, local: current || conflict.local });
     });
+  }
+
+  async recordProviderDiagnostic(diagnostic: ProviderDiagnostic): Promise<void> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const safe = redactProviderDiagnostic(structuredClone(diagnostic));
+      state.providerDiagnostics = [...state.providerDiagnostics, safe].slice(-100);
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+    });
+  }
+
+  async exportProviderDiagnostics(): Promise<ProviderDiagnosticExport> {
+    const state = await this.readState();
+    const diagnostics = redactProviderDiagnostic(structuredClone(state.providerDiagnostics));
+    return {
+      magic: "MONICA_PROVIDER_DIAGNOSTICS",
+      version: 1,
+      generatedAt: new Date(this.now()).toISOString(),
+      summary: {
+        total: diagnostics.length,
+        successes: diagnostics.filter((entry) => entry.outcome === "success").length,
+        conflicts: diagnostics.filter((entry) => entry.outcome === "conflict").length,
+        failures: diagnostics.filter((entry) => entry.outcome === "failure").length,
+        cancellations: diagnostics.filter((entry) => entry.outcome === "cancelled").length
+      },
+      diagnostics
+    };
   }
 
   async resolveProviderConflict(conflictId: string, resolution: ProviderConflictResolution): Promise<void> {
@@ -437,6 +467,10 @@ export class SecureVaultService {
     const now = this.now();
     await this.sessions.write({ ...session, lastActivityAt: now, expiresAt: now + autoLockMinutes * 60_000 });
   }
+}
+
+function safeProviderAccount(provider: ProviderAccount): ProviderAccount {
+  return provider.lastError ? { ...provider, lastError: redactProviderMessage(provider.lastError) } : provider;
 }
 
 function queueProviderMutations(state: VaultState, item: VaultItem, operation: PendingMutation["operation"], now: string): void {

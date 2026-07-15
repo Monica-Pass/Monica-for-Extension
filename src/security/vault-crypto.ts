@@ -70,6 +70,7 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
   );
   const state = JSON.parse(new TextDecoder().decode(decrypted)) as VaultState;
   if ((state as Partial<VaultState>).providerConflicts === undefined) state.providerConflicts = [];
+  if ((state as Partial<VaultState>).providerDiagnostics === undefined) state.providerDiagnostics = [];
   if (
     state.magic !== "MONICA_EXTENSION_VAULT" ||
     state.schemaVersion !== 1 ||
@@ -79,6 +80,9 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     !Array.isArray(state.providerConflicts) ||
     state.providerConflicts.length > 1_000 ||
     !state.providerConflicts.every(validProviderConflict) ||
+    !Array.isArray(state.providerDiagnostics) ||
+    state.providerDiagnostics.length > 100 ||
+    !state.providerDiagnostics.every(validProviderDiagnostic) ||
     !state.settings ||
     typeof state.settings.defaultProviderId !== "string" ||
     !Number.isInteger(state.settings.autoLockMinutes) ||
@@ -89,6 +93,14 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
+}
+
+function validProviderDiagnostic(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const diagnostic = value as Record<string, unknown>;
+  return typeof diagnostic.at === "string" && typeof diagnostic.providerRef === "string" && typeof diagnostic.kind === "string"
+    && typeof diagnostic.operation === "string" && typeof diagnostic.outcome === "string" && typeof diagnostic.code === "string"
+    && typeof diagnostic.retryable === "boolean" && Number.isInteger(diagnostic.attempts) && typeof diagnostic.message === "string";
 }
 
 function validProviderConflict(value: unknown): boolean {

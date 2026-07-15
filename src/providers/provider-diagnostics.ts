@@ -1,17 +1,16 @@
-import type { ProviderKind } from "../core/model";
+import type { ProviderDiagnostic, ProviderKind } from "../core/model";
 import { ProviderTransportError } from "./provider-transport";
 
-export interface ProviderDiagnostic {
-  at: string;
-  providerRef: string;
-  kind: ProviderKind;
-  operation: string;
-  code: string;
-  status?: number;
-  retryable: boolean;
-  attempts: number;
-  retryAfterMs?: number;
-  message: string;
+export type { ProviderDiagnostic } from "../core/model";
+
+export interface ProviderDiagnosticDetails {
+  operation?: string;
+  outcome?: ProviderDiagnostic["outcome"];
+  code?: string;
+  durationMs?: number;
+  conflicts?: number;
+  warnings?: number;
+  message?: string;
 }
 
 const SENSITIVE_KEY = /(?:pass(?:word)?|token|secret|key|authorization|cookie|credential|session|email|user(?:name)?|url|endpoint|host|account|providerId)/i;
@@ -20,19 +19,33 @@ export function redactProviderDiagnostic<T>(value: T): T {
   return redactValue(value, new WeakSet()) as T;
 }
 
-export function createProviderDiagnostic(providerId: string, kind: ProviderKind, error: unknown, at = new Date().toISOString()): ProviderDiagnostic {
+export function redactProviderMessage(value: string): string {
+  return sanitizeText(value);
+}
+
+export function createProviderDiagnostic(
+  providerId: string,
+  kind: ProviderKind,
+  error: unknown,
+  at = new Date().toISOString(),
+  details: ProviderDiagnosticDetails = {}
+): ProviderDiagnostic {
   const transport = error instanceof ProviderTransportError ? error : undefined;
   return {
     at,
     providerRef: `provider-${fnv1a(providerId)}`,
     kind,
-    operation: transport?.operation || "sync",
-    code: transport?.code || "unknown",
+    operation: details.operation || transport?.operation || "sync",
+    outcome: details.outcome || (transport?.code === "cancelled" ? "cancelled" : error ? "failure" : "success"),
+    code: details.code || transport?.code || (error ? "unknown" : "ok"),
     status: transport?.status,
     retryable: transport?.retryable || false,
     attempts: transport?.attempts || 1,
     retryAfterMs: transport?.retryAfterMs,
-    message: sanitizeText(error instanceof Error ? error.message : "Provider 操作失败。")
+    durationMs: details.durationMs,
+    conflicts: details.conflicts,
+    warnings: details.warnings,
+    message: sanitizeText(details.message || (error instanceof Error ? error.message : error ? "Provider 操作失败。" : "Provider 操作完成。"))
   };
 }
 

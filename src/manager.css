@@ -324,6 +324,28 @@
   justify-content: flex-end;
 }
 
+.provider-conflict {
+  display: grid;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, #b26a00 38%, transparent);
+  border-radius: 18px;
+  padding: 12px;
+  background: color-mix(in srgb, #ffe1a6 58%, transparent);
+}
+
+.provider-conflict p,
+.provider-conflict small {
+  color: var(--app-muted);
+}
+
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .connect-source-card {
   overflow: hidden;
 }
