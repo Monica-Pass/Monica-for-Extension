@@ -378,5 +378,5 @@ body.popup-body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner { animation-duration: 1.6s !important; }
+  .spinner { animation: none !important; }
 }

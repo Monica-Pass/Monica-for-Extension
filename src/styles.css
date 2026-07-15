@@ -43,6 +43,32 @@ body {
   box-sizing: border-box;
 }
 
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1000;
+  padding: 10px 14px;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--app-primary);
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--app-primary);
+  outline-offset: 3px;
+}
+
 button,
 input,
 select {
@@ -1003,12 +1029,20 @@ tbody tr:hover td {
   }
 
   .appbar-trailing {
+    width: auto;
+    min-width: 0;
     gap: 6px;
   }
 
   .search {
+    width: min(52vw, 220px);
+    max-width: 100%;
     min-height: 52px;
     padding-inline: 16px;
+  }
+
+  .search input {
+    width: 100%;
   }
 
   .search input::placeholder {

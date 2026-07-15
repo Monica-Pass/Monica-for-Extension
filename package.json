@@ -34,6 +34,7 @@
     "vue": "^3.5.35"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
     "@types/chrome": "^0.2.2",
     "@types/jsdom": "^28.0.3",

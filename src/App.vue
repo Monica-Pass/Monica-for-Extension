@@ -5,7 +5,7 @@ import "@m3e/web/button";
 import "@m3e/web/card";
 import "@m3e/web/icon";
 import "@m3e/web/icon-button";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
 import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type VaultItem } from "./core/model";
@@ -84,6 +84,63 @@ const externalProviders = computed(() => providers.value.filter((provider) => pr
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 
 onMounted(initialize);
+
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value);
+let dialogTrigger: HTMLElement | null = null;
+
+watch(hasOpenDialog, async (open, wasOpen) => {
+  if (open && !wasOpen) {
+    dialogTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.addEventListener("keydown", handleDialogKeydown, true);
+    await nextTick();
+    const dialog = activeDialog();
+    const target = dialog?.querySelector<HTMLElement>("[autofocus]") || focusableDialogElements(dialog)[0];
+    target?.focus();
+  } else if (!open && wasOpen) {
+    document.removeEventListener("keydown", handleDialogKeydown, true);
+    await nextTick();
+    dialogTrigger?.focus();
+    dialogTrigger = null;
+  }
+});
+
+onBeforeUnmount(() => document.removeEventListener("keydown", handleDialogKeydown, true));
+
+function activeDialog(): HTMLElement | null {
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'));
+  return dialogs.at(-1) || null;
+}
+
+function focusableDialogElements(dialog: HTMLElement | null): HTMLElement[] {
+  if (!dialog) return [];
+  const selector = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),m3e-button:not([disabled]),m3e-icon-button:not([disabled])';
+  return Array.from(dialog.querySelectorAll<HTMLElement>(selector)).filter((element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true");
+}
+
+function handleDialogKeydown(event: KeyboardEvent) {
+  const dialog = activeDialog();
+  if (!dialog) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    if (bitwardenDialogOpen.value) closeBitwardenDialog();
+    else if (webDavDialogOpen.value) closeWebDavDialog();
+    else if (vaultEditorOpen.value) vaultEditorOpen.value = false;
+    else editorOpen.value = false;
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = focusableDialogElements(dialog);
+  if (!focusable.length) return void event.preventDefault();
+  const active = document.activeElement as HTMLElement | null;
+  const index = active ? focusable.indexOf(active) : -1;
+  if (event.shiftKey && index <= 0) {
+    event.preventDefault();
+    focusable.at(-1)?.focus();
+  } else if (!event.shiftKey && (index < 0 || index === focusable.length - 1)) {
+    event.preventDefault();
+    focusable[0].focus();
+  }
+}
 
 async function initialize() {
   loading.value = true;
@@ -631,21 +688,22 @@ function errorMessage(error: unknown) {
     </form>
 
     <div v-else class="shell" :class="{ 'nav-open': mobileNavOpen }">
-      <aside class="sidebar">
+      <a class="skip-link" href="#main-content">跳到主内容</a>
+      <aside id="primary-navigation" class="sidebar">
         <div class="brand sidebar-brand"><img src="/monica-logo.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
         <nav aria-label="主导航">
           <section>
             <p class="nav-title">密码库</p>
-            <button class="nav-item" :class="{ selected: activeSection === 'overview' }" type="button" @click="navigate('overview')"><m3e-icon name="dashboard"></m3e-icon><span>概览</span></button>
-            <button class="nav-item" :class="{ selected: activeSection === 'passwords' }" type="button" @click="navigate('passwords')"><m3e-icon name="password"></m3e-icon><span>登录项</span><span class="nav-count">{{ credentials.length }}</span></button>
-            <button class="nav-item" :class="{ selected: activeSection === 'wallet' }" type="button" @click="navigate('wallet')"><m3e-icon name="wallet"></m3e-icon><span>钱包与身份</span><span class="nav-count">{{ walletItems.length }}</span></button>
-            <button class="nav-item" :class="{ selected: activeSection === 'notes' }" type="button" @click="navigate('notes')"><m3e-icon name="note_stack"></m3e-icon><span>笔记与验证码</span><span class="nav-count">{{ noteItems.length }}</span></button>
-            <button class="nav-item" :class="{ selected: activeSection === 'passkeys' }" type="button" @click="navigate('passkeys')"><m3e-icon name="key_vertical"></m3e-icon><span>Passkey</span><span class="nav-count">{{ passkeyItems.length }}</span></button>
-            <button class="nav-item" :class="{ selected: activeSection === 'providers' }" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'overview' }" :aria-current="activeSection === 'overview' ? 'page' : undefined" type="button" @click="navigate('overview')"><m3e-icon name="dashboard"></m3e-icon><span>概览</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'passwords' }" :aria-current="activeSection === 'passwords' ? 'page' : undefined" type="button" @click="navigate('passwords')"><m3e-icon name="password"></m3e-icon><span>登录项</span><span class="nav-count">{{ credentials.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'wallet' }" :aria-current="activeSection === 'wallet' ? 'page' : undefined" type="button" @click="navigate('wallet')"><m3e-icon name="wallet"></m3e-icon><span>钱包与身份</span><span class="nav-count">{{ walletItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'notes' }" :aria-current="activeSection === 'notes' ? 'page' : undefined" type="button" @click="navigate('notes')"><m3e-icon name="note_stack"></m3e-icon><span>笔记与验证码</span><span class="nav-count">{{ noteItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'passkeys' }" :aria-current="activeSection === 'passkeys' ? 'page' : undefined" type="button" @click="navigate('passkeys')"><m3e-icon name="key_vertical"></m3e-icon><span>Passkey</span><span class="nav-count">{{ passkeyItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'providers' }" :aria-current="activeSection === 'providers' ? 'page' : undefined" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
           </section>
           <section>
             <p class="nav-title">插件</p>
-            <button class="nav-item" :class="{ selected: activeSection === 'settings' }" type="button" @click="navigate('settings')"><m3e-icon name="settings"></m3e-icon><span>设置与备份</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'settings' }" :aria-current="activeSection === 'settings' ? 'page' : undefined" type="button" @click="navigate('settings')"><m3e-icon name="settings"></m3e-icon><span>设置与备份</span></button>
           </section>
         </nav>
         <div class="sidebar-footer">
@@ -654,9 +712,9 @@ function errorMessage(error: unknown) {
         </div>
       </aside>
 
-      <main>
+      <main id="main-content" tabindex="-1">
         <m3e-app-bar size="small" class="page-appbar">
-          <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
+          <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
           <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label></div>
         </m3e-app-bar>
 
