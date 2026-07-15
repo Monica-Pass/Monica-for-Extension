@@ -45,11 +45,17 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
 });
 
 async function expectCentered(container: Locator, glyph: Locator): Promise<void> {
-  const [outer, inner] = await Promise.all([container.boundingBox(), glyph.boundingBox()]);
-  expect(outer).not.toBeNull();
-  expect(inner).not.toBeNull();
-  const outerCenter = { x: outer!.x + outer!.width / 2, y: outer!.y + outer!.height / 2 };
-  const innerCenter = { x: inner!.x + inner!.width / 2, y: inner!.y + inner!.height / 2 };
-  expect(Math.abs(outerCenter.x - innerCenter.x)).toBeLessThanOrEqual(1);
-  expect(Math.abs(outerCenter.y - innerCenter.y)).toBeLessThanOrEqual(1);
+  const label = await container.evaluate((element) => `${element.tagName.toLowerCase()}.${element.className}`);
+  const glyphElement = await glyph.elementHandle();
+  expect(glyphElement).not.toBeNull();
+  const { outerCenter, innerCenter } = await container.evaluate((outer, inner) => {
+    const outerBox = outer.getBoundingClientRect();
+    const innerBox = (inner as Element).getBoundingClientRect();
+    return {
+      outerCenter: { x: outerBox.x + outerBox.width / 2, y: outerBox.y + outerBox.height / 2 },
+      innerCenter: { x: innerBox.x + innerBox.width / 2, y: innerBox.y + innerBox.height / 2 }
+    };
+  }, glyphElement);
+  expect(Math.abs(outerCenter.x - innerCenter.x), `${label} horizontal center`).toBeLessThanOrEqual(1);
+  expect(Math.abs(outerCenter.y - innerCenter.y), `${label} vertical center`).toBeLessThanOrEqual(1);
 }
