@@ -1,4 +1,5 @@
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
+import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
 import {
   decryptBitwardenSymmetricKey,
   deriveBitwardenMasterKey,
@@ -48,7 +49,10 @@ const CLIENT_VERSION = "2026.7.0";
 const DEVICE_TYPE = "2";
 
 export class BitwardenClient {
-  constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  constructor(
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
+    private readonly transportPolicy: ProviderTransportPolicy = {}
+  ) {}
 
   async prelogin(vaultUrl: string, email: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; email: string; kdf: BitwardenKdfConfig }> {
     const urls = inferBitwardenServerUrls(vaultUrl);
@@ -58,7 +62,7 @@ export class BitwardenClient {
       headers: jsonHeaders(),
       body: JSON.stringify({ email: normalizedEmail }),
       signal
-    });
+    }, "Bitwarden 预登录", true);
     const body = await responseJson(response);
     if (!response.ok) throw bitwardenHttpError("Bitwarden 预登录失败", response, body);
     return { urls, email: normalizedEmail, kdf: parseKdf(body) };
@@ -89,7 +93,7 @@ export class BitwardenClient {
       headers: tokenHeaders(email),
       body: form,
       signal
-    });
+    }, "Bitwarden 登录", false);
     const body = await responseJson(response);
     if (!response.ok) {
       const providers = parseTwoFactorProviders(body);
@@ -123,7 +127,7 @@ export class BitwardenClient {
   async refresh(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<BitwardenSessionConfig> {
     if (!session.refreshToken) throw new Error("Bitwarden 会话没有刷新令牌，请重新登录。");
     const form = new URLSearchParams({ grant_type: "refresh_token", refresh_token: session.refreshToken, client_id: "browser" });
-    const response = await this.request(`${session.identityUrl}/connect/token`, { method: "POST", headers: tokenHeaders(session.email, false), body: form, signal });
+    const response = await this.request(`${session.identityUrl}/connect/token`, { method: "POST", headers: tokenHeaders(session.email, false), body: form, signal }, "Bitwarden 刷新会话", false);
     const body = await responseJson(response);
     if (!response.ok) throw bitwardenHttpError("刷新 Bitwarden 会话失败", response, body);
     const accessToken = stringValue(body, "access_token");
@@ -145,7 +149,7 @@ export class BitwardenClient {
       headers: jsonHeaders(),
       body: JSON.stringify({ deviceIdentifier: input.deviceId, email, masterPasswordHash }),
       signal
-    });
+    }, "Bitwarden 发送邮箱验证码", false);
     if (!response.ok) throw bitwardenHttpError("发送 Bitwarden 邮箱验证码失败", response, await responseJson(response));
   }
 
@@ -167,7 +171,7 @@ export class BitwardenClient {
       method: "DELETE",
       headers: authorizedHeaders(active.accessToken),
       signal
-    });
+    }, "Bitwarden 删除项目", true);
     if (!response.ok) throw bitwardenHttpError("删除 Bitwarden 项目失败", response, await responseJson(response));
     return active;
   }
@@ -184,7 +188,7 @@ export class BitwardenClient {
     const response = await this.request(`${active.apiUrl}${path}`, {
       ...init,
       headers
-    });
+    }, errorPrefix);
     const payload = await responseJson(response);
     if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
     return { session: active, payload };
@@ -202,8 +206,13 @@ export class BitwardenClient {
     return encryptBitwardenBytes(raw, stretchedKey, () => iv);
   }
 
-  private request(url: string, init: RequestInit): Promise<Response> {
-    return this.fetcher(url, { ...init, cache: "no-store", credentials: "omit", redirect: "error" });
+  private request(url: string, init: RequestInit, operation: string, idempotent?: boolean): Promise<Response> {
+    return resilientFetch(url, { ...init, cache: "no-store", credentials: "omit", redirect: "error" }, {
+      ...this.transportPolicy,
+      operation,
+      fetcher: this.fetcher,
+      idempotent
+    });
   }
 }
 
@@ -275,9 +284,8 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
   }
 }
 
-function bitwardenHttpError(prefix: string, response: Response, body: Record<string, unknown>): Error {
-  const message = stringValue(body, "error_description") || stringValue(recordValue(body, "ErrorModel", "errorModel") || {}, "Message", "message") || stringValue(body, "message", "Message");
-  return new Error(`${prefix}（HTTP ${response.status}）${message ? `：${message.slice(0, 240)}` : ""}`);
+function bitwardenHttpError(prefix: string, response: Response, _body?: Record<string, unknown>): Error {
+  return providerHttpError(prefix, response);
 }
 
 function stringValue(body: Record<string, unknown>, ...keys: string[]): string {

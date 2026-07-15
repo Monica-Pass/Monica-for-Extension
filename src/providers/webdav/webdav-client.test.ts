@@ -27,4 +27,38 @@ describe("WebDAV client", () => {
     const files = await client.listBackups();
     expect(files.map((file) => file.name)).toEqual(["monica_backup_20260715_020202.enc.zip", "monica_backup_20260715_010101.zip"]);
   });
+
+  it("retries a transient idempotent WebDAV list without exposing credentials", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("temporary password=server-echo", { status: 503 }))
+      .mockResolvedValueOnce(new Response(MULTISTATUS, { status: 207 })) as unknown as typeof fetch;
+    const client = new WebDavClient(
+      { baseUrl: "https://cloud.example.com/dav", username: "joy", password: "client-secret" },
+      fetcher,
+      { baseDelayMs: 0, jitterRatio: 0 }
+    );
+
+    await expect(client.listBackups()).resolves.toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a typed safe WebDAV error without the untrusted response body", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("password=hunter2 token=server-secret https://private.example", { status: 401 })) as unknown as typeof fetch;
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "joy", password: "client-secret" }, fetcher, { baseDelayMs: 0 });
+
+    const error = await client.listBackups().catch((cause) => cause);
+    expect(error).toMatchObject({ name: "ProviderTransportError", code: "authentication", status: 401, retryable: false });
+    expect(error.message).toBe("读取 Monica_Backups 失败（HTTP 401）。");
+    expect(JSON.stringify(error)).not.toMatch(/hunter2|server-secret|private\.example|client-secret/);
+  });
+
+  it("honors cancellation before starting a WebDAV request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetcher = vi.fn() as unknown as typeof fetch;
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "joy", password: "secret" }, fetcher);
+
+    await expect(client.listBackups(controller.signal)).rejects.toMatchObject({ code: "cancelled", retryable: false });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

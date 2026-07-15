@@ -1,4 +1,4 @@
-export type ProviderTransportCode = "cancelled" | "timeout" | "network" | "rate-limited" | "server";
+export type ProviderTransportCode = "cancelled" | "timeout" | "network" | "rate-limited" | "server" | "authentication" | "permission" | "not-found" | "conflict" | "client";
 
 export interface ProviderTransportErrorDetails {
   retryable: boolean;
@@ -54,9 +54,12 @@ export interface ResilientFetchOptions {
   onEvent?: (event: ProviderTransportEvent) => void;
 }
 
+export type ProviderTransportPolicy = Omit<ResilientFetchOptions, "operation" | "fetcher" | "idempotent">;
+
 const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PROPFIND", "MKCOL", "PUT", "DELETE"]);
 const NEVER_ABORTED = new AbortController().signal;
+const RESPONSE_METADATA = new WeakMap<Response, { attempts: number; retryAfterMs?: number }>();
 
 export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, options: ResilientFetchOptions): Promise<Response> {
   const fetcher = options.fetcher || globalThis.fetch.bind(globalThis);
@@ -84,6 +87,10 @@ export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, 
         await sleepOrCancel(retryDelayMs, externalSignal, sleep, options.operation, attempt);
         continue;
       }
+      RESPONSE_METADATA.set(response, {
+        attempts: attempt,
+        retryAfterMs: response.status === 429 ? parseRetryAfter(response.headers.get("retry-after"), now(), options.maxRetryAfterMs ?? 30_000) : undefined
+      });
       options.onEvent?.({ operation: options.operation, attempt, outcome: response.ok ? "success" : "failure", status: response.status, durationMs });
       return response;
     } catch (cause) {
@@ -111,6 +118,29 @@ export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, 
     }
   }
   throw new ProviderTransportError("network", `${options.operation} 网络请求失败。`, { retryable: idempotent, operation: options.operation, attempts: maxAttempts });
+}
+
+export function providerHttpError(prefix: string, response: Response): ProviderTransportError {
+  const metadata = RESPONSE_METADATA.get(response) || { attempts: 1 };
+  const classification = classifyHttpStatus(response.status);
+  void response.body?.cancel().catch(() => undefined);
+  return new ProviderTransportError(classification.code, `${prefix}（HTTP ${response.status}）。`, {
+    retryable: classification.retryable,
+    operation: prefix,
+    attempts: metadata.attempts,
+    status: response.status,
+    retryAfterMs: metadata.retryAfterMs
+  });
+}
+
+function classifyHttpStatus(status: number): { code: ProviderTransportCode; retryable: boolean } {
+  if (status === 401) return { code: "authentication", retryable: false };
+  if (status === 403) return { code: "permission", retryable: false };
+  if (status === 404) return { code: "not-found", retryable: false };
+  if (status === 409 || status === 412) return { code: "conflict", retryable: false };
+  if (status === 429) return { code: "rate-limited", retryable: true };
+  if (TRANSIENT_STATUSES.has(status)) return { code: "server", retryable: true };
+  return { code: "client", retryable: false };
 }
 
 function createAttemptControl(externalSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; timedOut(): boolean; dispose(): void } {

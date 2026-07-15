@@ -1,4 +1,5 @@
 import { bytesToBase64 } from "../../security/encoding";
+import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
 
 export interface WebDavCredentials {
   baseUrl: string;
@@ -18,30 +19,31 @@ export interface WebDavBackupFile {
 export class WebDavClient {
   constructor(
     private readonly credentials: WebDavCredentials,
-    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
+    private readonly transportPolicy: ProviderTransportPolicy = {}
   ) {}
 
   async testConnection(signal?: AbortSignal): Promise<void> {
-    const response = await this.request(normalizeServerUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal });
-    if (!response.ok && response.status !== 207) throw await webDavError("连接 WebDAV 失败", response);
+    const response = await this.request(normalizeServerUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 连接");
+    if (!response.ok && response.status !== 207) throw webDavError("连接 WebDAV 失败", response);
   }
 
   async listBackups(signal?: AbortSignal): Promise<WebDavBackupFile[]> {
     const folderUrl = backupFolderUrl(this.credentials.baseUrl);
-    let response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal });
+    let response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份");
     if (response.status === 404) {
       await this.ensureBackupFolder(signal);
-      response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal });
+      response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份");
     }
-    if (!response.ok && response.status !== 207) throw await webDavError("读取 Monica_Backups 失败", response);
+    if (!response.ok && response.status !== 207) throw webDavError("读取 Monica_Backups 失败", response);
     return parseMultiStatus(await response.text(), folderUrl)
       .filter((file) => /\.zip$/i.test(file.name))
       .sort((left, right) => compareBackups(right, left));
   }
 
   async download(file: WebDavBackupFile, signal?: AbortSignal): Promise<Uint8Array> {
-    const response = await this.request(file.url, { method: "GET", signal });
-    if (!response.ok) throw await webDavError(`下载备份 ${file.name} 失败`, response);
+    const response = await this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份");
+    if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
     return new Uint8Array(await response.arrayBuffer());
   }
 
@@ -55,25 +57,25 @@ export class WebDavClient {
       headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
       body: bytes as BodyInit,
       signal
-    });
-    if (!response.ok) throw await webDavError(`上传备份 ${name} 失败`, response);
+    }, "WebDAV 上传备份");
+    if (!response.ok) throw webDavError(`上传备份 ${name} 失败`, response);
     return { name, url, etag: response.headers.get("etag") || undefined, size: bytes.length, lastModified: now.toISOString(), encrypted };
   }
 
   private async ensureBackupFolder(signal?: AbortSignal): Promise<void> {
     const folderUrl = backupFolderUrl(this.credentials.baseUrl);
-    const check = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "0" }, signal });
+    const check = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 检查目录");
     if (check.ok || check.status === 207) return;
-    if (check.status !== 404) throw await webDavError("检查 Monica_Backups 目录失败", check);
-    const create = await this.request(folderUrl, { method: "MKCOL", signal });
-    if (!create.ok && create.status !== 405) throw await webDavError("创建 Monica_Backups 目录失败", create);
+    if (check.status !== 404) throw webDavError("检查 Monica_Backups 目录失败", check);
+    const create = await this.request(folderUrl, { method: "MKCOL", signal }, "WebDAV 创建目录");
+    if (!create.ok && create.status !== 405) throw webDavError("创建 Monica_Backups 目录失败", create);
   }
 
-  private request(url: string, init: RequestInit): Promise<Response> {
+  private request(url: string, init: RequestInit, operation: string): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Basic ${bytesToBase64(new TextEncoder().encode(`${this.credentials.username}:${this.credentials.password}`))}`);
     headers.set("Accept", "*/*");
-    return this.fetcher(url, { ...init, headers, cache: "no-store", credentials: "omit" });
+    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit" }, { ...this.transportPolicy, operation, fetcher: this.fetcher });
   }
 }
 
@@ -147,7 +149,6 @@ function formatTimestamp(date: Date): string {
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}_${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}_${pad(date.getUTCMilliseconds(), 3)}`;
 }
 
-async function webDavError(prefix: string, response: Response): Promise<Error> {
-  const body = await response.text().catch(() => "");
-  return new Error(`${prefix}（HTTP ${response.status}）${body ? `: ${body.slice(0, 240)}` : ""}`);
+function webDavError(prefix: string, response: Response): Error {
+  return providerHttpError(prefix, response);
 }
