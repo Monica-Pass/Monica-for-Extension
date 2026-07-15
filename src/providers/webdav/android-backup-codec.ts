@@ -86,7 +86,8 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
   }
 
   if (kindFolder === "notes") {
-    return { ...base, kind: "secure-note", content: stringValue(raw.itemData) || stringValue(raw.notes) } satisfies SecureNoteItem;
+    const data = parseNestedJson(raw.itemData);
+    return { ...base, kind: "secure-note", content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes) } satisfies SecureNoteItem;
   }
 
   if (kindFolder === "authenticators") {
@@ -94,9 +95,9 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
     return {
       ...base,
       kind: "totp",
-      secret: stringValue(data.secret) || stringValue(data.authenticatorKey),
-      issuer: stringValue(data.issuer) || undefined,
-      accountName: stringValue(data.accountName) || undefined,
+      secret: firstString(data, "secret", "authenticatorKey"),
+      issuer: firstString(data, "issuer") || undefined,
+      accountName: firstString(data, "accountName") || undefined,
       algorithm: normalizeTotpAlgorithm(data.algorithm),
       digits: numberValue(data.digits, 6),
       period: numberValue(data.period, 30)
@@ -126,38 +127,42 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
     return {
       ...base,
       kind: "card",
-      cardholderName: stringValue(data.cardholderName),
-      number: stringValue(data.cardNumber),
-      expiryMonth: stringValue(data.expiryMonth),
-      expiryYear: stringValue(data.expiryYear),
-      securityCode: stringValue(data.cvv),
-      brand: stringValue(data.brand) || stringValue(data.bankName) || undefined
+      cardholderName: firstString(data, "cardholderName"),
+      number: firstString(data, "cardNumber", "number"),
+      expiryMonth: firstString(data, "expiryMonth", "expMonth"),
+      expiryYear: firstString(data, "expiryYear", "expYear"),
+      securityCode: firstString(data, "cvv", "code"),
+      brand: firstString(data, "brand", "bankName") || undefined
     } satisfies CardItem;
   }
   if (kindFolder === "documents") {
+    const firstName = firstString(data, "firstName");
+    const middleName = firstString(data, "middleName");
+    const lastName = firstString(data, "lastName");
+    const nameFromParts = [firstName, middleName, lastName].filter(Boolean).join(" ");
     return {
       ...base,
       kind: "identity",
-      documentType: normalizeDocumentType(data.documentType),
-      documentNumber: stringValue(data.documentNumber),
-      firstName: stringValue(data.firstName),
-      middleName: stringValue(data.middleName),
-      lastName: stringValue(data.lastName),
-      fullName: stringValue(data.fullName),
-      birthDate: optionalString(data.birthDate),
-      issuedDate: optionalString(data.issuedDate),
-      expiryDate: optionalString(data.expiryDate),
-      issuedBy: optionalString(data.issuedBy),
-      nationality: optionalString(data.nationality),
-      email: optionalString(data.email),
-      phone: optionalString(data.phone),
+      documentType: normalizeDocumentType(firstString(data, "documentType", "type")),
+      documentNumber: firstString(data, "documentNumber", "number", "passportNumber", "licenseNumber", "driverLicense", "ssn"),
+      firstName,
+      middleName,
+      lastName,
+      fullName: nameFromParts || firstString(data, "fullName", "name"),
+      birthDate: optionalString(firstString(data, "birthDate")),
+      issuedDate: optionalString(firstString(data, "issuedDate", "issueDate")),
+      expiryDate: optionalString(firstString(data, "expiryDate")),
+      issuedBy: optionalString(firstString(data, "issuedBy", "issuingAuthority")),
+      nationality: optionalString(firstString(data, "nationality")),
+      email: optionalString(firstString(data, "email")),
+      phone: optionalString(firstString(data, "phone", "phoneNumber")),
       address: {
-        streetAddress: stringValue(data.address1),
-        apartment: stringValue(data.address2),
-        city: stringValue(data.city),
-        stateProvince: stringValue(data.stateProvince),
-        postalCode: stringValue(data.postalCode),
-        country: stringValue(data.country)
+        streetAddress: firstString(data, "address1", "streetAddress", "addressLine1"),
+        apartment: firstString(data, "address2", "apartment", "addressLine2"),
+        city: firstString(data, "city"),
+        stateProvince: firstString(data, "stateProvince", "state", "province", "region"),
+        postalCode: firstString(data, "postalCode", "zip", "zipCode"),
+        country: firstString(data, "country")
       }
     } satisfies IdentityItem;
   }
@@ -165,36 +170,36 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
     return {
       ...base,
       kind: "billing-address",
-      fullName: stringValue(data.fullName),
-      company: stringValue(data.company),
-      streetAddress: stringValue(data.streetAddress),
-      apartment: stringValue(data.apartment),
-      city: stringValue(data.city),
-      stateProvince: stringValue(data.stateProvince),
-      postalCode: stringValue(data.postalCode),
-      country: stringValue(data.country),
-      phone: stringValue(data.phone),
-      email: stringValue(data.email)
+      fullName: firstString(data, "fullName", "name"),
+      company: firstString(data, "company", "organization"),
+      streetAddress: firstString(data, "streetAddress", "address1", "addressLine1"),
+      apartment: firstString(data, "apartment", "address2", "addressLine2"),
+      city: firstString(data, "city"),
+      stateProvince: firstString(data, "stateProvince", "state", "province", "region"),
+      postalCode: firstString(data, "postalCode", "zip", "zipCode"),
+      country: firstString(data, "country"),
+      phone: firstString(data, "phone", "phoneNumber"),
+      email: firstString(data, "email")
     } satisfies BillingAddressItem;
   }
   if (kindFolder === "payment_accounts") {
     return {
       ...base,
       kind: "payment-account",
-      paymentType: stringValue(data.paymentType),
-      provider: stringValue(data.provider),
-      accountName: stringValue(data.accountName),
-      accountHolderName: stringValue(data.accountHolderName),
-      email: stringValue(data.email),
-      phone: stringValue(data.phone),
-      username: stringValue(data.username),
-      accountId: stringValue(data.accountId),
-      maskedAccountNumber: stringValue(data.maskedAccountNumber),
-      routingNumber: stringValue(data.routingNumber),
-      iban: stringValue(data.iban),
-      swiftBic: stringValue(data.swiftBic),
-      website: stringValue(data.website),
-      currency: stringValue(data.currency)
+      paymentType: normalizePaymentAccountType(firstString(data, "paymentType", "accountType", "type")),
+      provider: firstString(data, "provider", "service", "brand", "network"),
+      accountName: firstString(data, "accountName", "name", "nickname", "title"),
+      accountHolderName: firstString(data, "accountHolderName", "holderName", "fullName", "nameOnAccount"),
+      email: firstString(data, "email"),
+      phone: firstString(data, "phone", "phoneNumber"),
+      username: firstString(data, "username", "userName", "login"),
+      accountId: firstString(data, "accountId", "accountIdentifier", "id"),
+      maskedAccountNumber: firstString(data, "maskedAccountNumber", "maskedNumber", "accountNumber"),
+      routingNumber: firstString(data, "routingNumber"),
+      iban: firstString(data, "iban"),
+      swiftBic: firstString(data, "swiftBic", "swift", "bic"),
+      website: firstString(data, "website", "url", "uri"),
+      currency: firstString(data, "currency")
     } satisfies PaymentAccountItem;
   }
   return null;
@@ -229,7 +234,7 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     case "login":
       return { id, raw: { ...base, username: item.username, password: item.password, website: item.uris.join("\n"), authenticatorKey: item.totpSecret || "", customFields: item.customFields.map((field) => ({ title: field.name, value: field.value, isProtected: field.protected })) } };
     case "secure-note":
-      return { id, raw: { ...base, itemType: "NOTE", itemData: item.content } };
+      return { id, raw: { ...base, itemType: "NOTE", itemData: mergeNestedItemData(original?.itemData, { content: item.content }) } };
     case "totp":
       return { id, raw: { ...base, itemType: "TOTP", itemData: mergeNestedItemData(original?.itemData, { secret: item.secret, issuer: item.issuer || "", accountName: item.accountName || "", algorithm: item.algorithm, digits: item.digits, period: item.period }) } };
     case "card":
@@ -291,6 +296,14 @@ function mergeNestedItemData(original: unknown, updates: Record<string, unknown>
   return JSON.stringify({ ...parseNestedJson(original), ...updates });
 }
 
+function firstString(data: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = stringValue(data[key]);
+    if (value) return value;
+  }
+  return "";
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -316,6 +329,19 @@ function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {
   return algorithm === -257 || algorithm === -37 || algorithm === -8 ? algorithm : -7;
 }
 function normalizeDocumentType(value: unknown): IdentityItem["documentType"] {
-  const normalized = stringValue(value).toUpperCase();
-  return normalized === "ID_CARD" || normalized === "PASSPORT" || normalized === "DRIVER_LICENSE" || normalized === "SOCIAL_SECURITY" ? normalized : "OTHER";
+  const normalized = stringValue(value).trim().toUpperCase().replace(/[ -]/g, "_");
+  if (normalized === "PASSPORT") return "PASSPORT";
+  if (normalized === "DRIVER_LICENSE" || normalized === "DRIVERLICENSE" || normalized === "LICENSE") return "DRIVER_LICENSE";
+  if (normalized === "SOCIAL_SECURITY" || normalized === "SOCIALSECURITY" || normalized === "SSN") return "SOCIAL_SECURITY";
+  if (normalized === "ID_CARD" || normalized === "IDCARD" || normalized === "IDENTITY") return "ID_CARD";
+  return "OTHER";
+}
+function normalizePaymentAccountType(value: unknown): string {
+  const normalized = stringValue(value).trim().toLowerCase().replace(/[ -]/g, "_");
+  if (normalized === "bank" || normalized === "bank_account" || normalized === "account") return "BANK_ACCOUNT";
+  if (normalized === "payment_app" || normalized === "app" || normalized === "mobile_payment" || normalized === "mobile_wallet") return "PAYMENT_APP";
+  if (normalized === "bnpl" || normalized === "buy_now_pay_later" || normalized === "pay_later") return "BUY_NOW_PAY_LATER";
+  if (normalized === "crypto" || normalized === "crypto_wallet" || normalized === "wallet_crypto") return "CRYPTO_WALLET";
+  if (normalized === "other") return "OTHER";
+  return "DIGITAL_WALLET";
 }
