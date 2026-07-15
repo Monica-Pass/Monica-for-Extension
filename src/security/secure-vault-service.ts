@@ -1,4 +1,4 @@
-import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
@@ -215,6 +215,7 @@ export class SecureVaultService {
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider || provider.kind === "local") throw new Error("本地密码源不能删除。");
     state.providers = state.providers.filter((candidate) => candidate.id !== providerId);
+    state.providerConflicts = state.providerConflicts.filter((conflict) => conflict.providerId !== providerId);
     state.items = state.items.flatMap((item): VaultItem[] => {
       if (!item.providerRefs.some((reference) => reference.providerId === providerId)) return [item];
       const providerRefs = item.providerRefs.filter((reference) => reference.providerId !== providerId);
@@ -231,16 +232,93 @@ export class SecureVaultService {
     });
   }
 
-  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>): Promise<void> {
+  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>, conflicts: ProviderConflictInput[] = []): Promise<void> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
+    const detectedAt = new Date(this.now()).toISOString();
+    const persistedConflicts: ProviderConflict[] = conflicts.slice(0, 500).map((conflict) => ({
+      ...structuredClone(conflict),
+      id: crypto.randomUUID(),
+      providerId,
+      detectedAt
+    }));
+    const globalConflict = persistedConflicts.find((conflict) => conflict.itemId === providerId || !conflict.local && !conflict.remote);
     state.items = items;
-    state.mutationQueue = state.mutationQueue.filter((mutation) => mutation.providerId !== providerId);
+    state.mutationQueue = state.mutationQueue.flatMap((mutation): PendingMutation[] => {
+      if (mutation.providerId !== providerId) return [mutation];
+      const conflict = globalConflict || persistedConflicts.find((candidate) => candidate.itemId === mutation.itemId);
+      return conflict ? [{ ...mutation, lastError: conflict.reason }] : [];
+    });
+    state.providerConflicts = [...state.providerConflicts.filter((conflict) => conflict.providerId !== providerId), ...persistedConflicts];
     state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
+    });
+  }
+
+  async listProviderConflicts(providerId?: string): Promise<ProviderConflict[]> {
+    const state = await this.readState();
+    return state.providerConflicts.filter((conflict) => !providerId || conflict.providerId === providerId).map((conflict) => {
+      const current = state.items.find((item) => item.id === conflict.itemId);
+      return structuredClone({ ...conflict, local: current || conflict.local });
+    });
+  }
+
+  async resolveProviderConflict(conflictId: string, resolution: ProviderConflictResolution): Promise<void> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const conflict = state.providerConflicts.find((candidate) => candidate.id === conflictId);
+      if (!conflict) throw new Error("同步冲突不存在或已经解决。");
+      const provider = state.providers.find((candidate) => candidate.id === conflict.providerId);
+      if (!provider) throw new Error("冲突对应的密码源不存在。");
+      const now = new Date(this.now()).toISOString();
+
+      if (resolution === "keep-local") {
+        const current = state.items.find((item) => item.id === conflict.itemId) || conflict.local;
+        if (!current) throw new Error("此冲突没有可保留的本地版本。");
+        const reference = current.providerRefs.find((candidate) => candidate.providerId === conflict.providerId);
+        const remoteReference = conflict.remote?.providerRefs.find((candidate) => candidate.providerId === conflict.providerId);
+        const resolvedReference: ProviderReference = conflict.remote
+          ? {
+              ...reference,
+              ...remoteReference,
+              providerId: conflict.providerId,
+              remoteId: remoteReference?.remoteId || reference?.remoteId,
+              revision: conflict.remote.updatedAt,
+              etag: remoteReference?.etag
+            }
+          : { providerId: conflict.providerId };
+        const resolved = {
+          ...current,
+          providerRefs: [...current.providerRefs.filter((candidate) => candidate.providerId !== conflict.providerId), resolvedReference]
+        } as VaultItem;
+        state.items = state.items.some((item) => item.id === resolved.id)
+          ? state.items.map((item) => item.id === resolved.id ? resolved : item)
+          : [resolved, ...state.items];
+        queueProviderMutations(state, resolved, conflict.remote ? "update" : "create", now);
+        state.mutationQueue = state.mutationQueue.map((mutation) => mutation.providerId === conflict.providerId && mutation.itemId === conflict.itemId
+          ? { ...mutation, attempts: 0, lastError: undefined }
+          : mutation);
+      } else if (resolution === "use-remote") {
+        state.items = conflict.remote
+          ? state.items.some((item) => item.id === conflict.itemId)
+            ? state.items.map((item) => item.id === conflict.itemId ? structuredClone(conflict.remote!) : item)
+            : [structuredClone(conflict.remote), ...state.items]
+          : state.items.filter((item) => item.id !== conflict.itemId);
+        state.mutationQueue = state.mutationQueue.filter((mutation) => mutation.providerId !== conflict.providerId || mutation.itemId !== conflict.itemId);
+      } else {
+        throw new Error("不支持的同步冲突解决方式。");
+      }
+
+      state.providerConflicts = state.providerConflicts.filter((candidate) => candidate.id !== conflict.id);
+      const remaining = state.providerConflicts.filter((candidate) => candidate.providerId === conflict.providerId).length;
+      state.providers = state.providers.map((candidate) => candidate.id === conflict.providerId
+        ? { ...candidate, lastError: remaining ? `仍有 ${remaining} 个同步冲突待处理。` : undefined }
+        : candidate);
+      state.updatedAt = now;
+      await this.persist(state, key, envelope.kdf);
     });
   }
 

@@ -69,12 +69,16 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     base64ToBytes(envelope.ciphertext) as BufferSource
   );
   const state = JSON.parse(new TextDecoder().decode(decrypted)) as VaultState;
+  if ((state as Partial<VaultState>).providerConflicts === undefined) state.providerConflicts = [];
   if (
     state.magic !== "MONICA_EXTENSION_VAULT" ||
     state.schemaVersion !== 1 ||
     !Array.isArray(state.items) ||
     !Array.isArray(state.providers) ||
     !Array.isArray(state.mutationQueue) ||
+    !Array.isArray(state.providerConflicts) ||
+    state.providerConflicts.length > 1_000 ||
+    !state.providerConflicts.every(validProviderConflict) ||
     !state.settings ||
     typeof state.settings.defaultProviderId !== "string" ||
     !Number.isInteger(state.settings.autoLockMinutes) ||
@@ -85,6 +89,15 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
+}
+
+function validProviderConflict(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const conflict = value as Record<string, unknown>;
+  return typeof conflict.id === "string" && typeof conflict.providerId === "string" && typeof conflict.itemId === "string"
+    && typeof conflict.reason === "string" && typeof conflict.detectedAt === "string"
+    && (conflict.local === undefined || Boolean(conflict.local) && typeof conflict.local === "object" && !Array.isArray(conflict.local))
+    && (conflict.remote === undefined || Boolean(conflict.remote) && typeof conflict.remote === "object" && !Array.isArray(conflict.remote));
 }
 
 export async function exportVaultKey(key: CryptoKey): Promise<string> {

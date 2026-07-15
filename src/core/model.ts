@@ -157,6 +157,21 @@ export interface PendingMutation {
   lastError?: string;
 }
 
+export interface ProviderConflictInput {
+  itemId: string;
+  reason: string;
+  local?: VaultItem;
+  remote?: VaultItem;
+}
+
+export interface ProviderConflict extends ProviderConflictInput {
+  id: string;
+  providerId: string;
+  detectedAt: string;
+}
+
+export type ProviderConflictResolution = "keep-local" | "use-remote";
+
 export interface VaultState {
   magic: "MONICA_EXTENSION_VAULT";
   schemaVersion: 1;
@@ -165,6 +180,7 @@ export interface VaultState {
   items: VaultItem[];
   providers: ProviderAccount[];
   mutationQueue: PendingMutation[];
+  providerConflicts: ProviderConflict[];
   settings: {
     autoLockMinutes: number;
     defaultProviderId: string;
@@ -190,6 +206,7 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
       }
     ],
     mutationQueue: [],
+    providerConflicts: [],
     settings: {
       autoLockMinutes: 15,
       defaultProviderId: localProviderId

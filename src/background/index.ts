@@ -231,7 +231,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (account.kind === "local") throw new Error("本地密码源不需要同步。");
       try {
         const result = await providers.get(account.kind).sync(account, { now: new Date().toISOString(), localItems: (await service.readState()).items });
-        await service.applyProviderSync(account.id, result.items, result.accountPatch);
+        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts);
         return { warnings: result.warnings, conflicts: result.conflicts.length };
       } catch (error) {
         await service.markProviderSyncFailure(account.id, error instanceof Error ? error.message : "同步失败");

@@ -1,4 +1,4 @@
-import type { ProviderAccount, ProviderKind, VaultItem } from "./model";
+import type { ProviderAccount, ProviderConflictInput, ProviderKind, VaultItem } from "./model";
 
 export interface ProviderSyncContext {
   signal?: AbortSignal;
@@ -9,12 +9,7 @@ export interface ProviderSyncContext {
 export interface ProviderSyncResult {
   items: VaultItem[];
   accountPatch?: Partial<ProviderAccount>;
-  conflicts: Array<{
-    itemId: string;
-    reason: string;
-    local?: VaultItem;
-    remote?: VaultItem;
-  }>;
+  conflicts: ProviderConflictInput[];
   warnings: string[];
 }
 

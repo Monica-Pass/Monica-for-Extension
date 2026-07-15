@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLoginItem, type VaultItem } from "../core/model";
+import { createLoginItem, type VaultItem, type VaultState } from "../core/model";
 import { decryptVaultState, deriveVaultKey, encryptVaultState } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
 import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
@@ -90,6 +90,16 @@ describe("encrypted vault", () => {
     await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT", schemaVersion: 1 });
   });
 
+  it("migrates a pre-conflict schema-v1 envelope without weakening validation", async () => {
+    const state = await new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore()).setup("legacy schema password");
+    const legacy = structuredClone(state) as Partial<VaultState>;
+    delete legacy.providerConflicts;
+    const { key, kdf } = await deriveVaultKey("legacy schema password");
+    const envelope = await encryptVaultState(legacy as VaultState, key, kdf);
+
+    await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ providerConflicts: [] });
+  });
+
   it("queues external mutations, caps failed attempts, and clears them after sync", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await service.setup("mutation queue password");
@@ -101,6 +111,77 @@ describe("encrypted vault", () => {
     expect((await service.readState()).mutationQueue[0]).toMatchObject({ attempts: 5, lastError: "offline" });
     await service.applyProviderSync("bw", [login], { lastSyncAt: new Date().toISOString(), lastError: undefined });
     expect((await service.readState()).mutationQueue).toEqual([]);
+  });
+
+  it("keeps conflicted mutations and both encrypted versions until explicit resolution", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("conflict retention password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const baseline = createLoginItem({ title: "Conflict", password: "baseline-secret", uris: ["example.com"], providerRefs: [{ providerId: "bw", remoteId: "cipher-1", revision: "2026-07-15T01:00:00.000Z" }] });
+    const local = await service.upsertItem({ ...baseline, password: "local-conflict-secret" });
+    const remote = { ...local, password: "remote-conflict-secret", updatedAt: "2026-07-15T02:00:00.000Z" };
+
+    await service.applyProviderSync("bw", [local], { lastError: "发现冲突" }, [{ itemId: local.id, reason: "双方均已修改", local, remote }]);
+
+    const state = await service.readState();
+    expect(state.mutationQueue).toEqual([expect.objectContaining({ providerId: "bw", itemId: local.id, lastError: "双方均已修改" })]);
+    expect(state.providerConflicts).toEqual([expect.objectContaining({ providerId: "bw", itemId: local.id, local: expect.objectContaining({ password: "local-conflict-secret" }), remote: expect.objectContaining({ password: "remote-conflict-secret" }) })]);
+    expect(JSON.stringify(storage.envelope)).not.toMatch(/local-conflict-secret|remote-conflict-secret/);
+  });
+
+  it("atomically resolves a conflict by keeping the latest local copy", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("keep local conflict password");
+    await service.upsertProvider({ id: "webdav", kind: "monica-webdav", name: "WebDAV", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const baseline = createLoginItem({ title: "Conflict", password: "baseline", uris: ["example.com"], providerRefs: [{ providerId: "webdav", remoteId: "42", revision: "2026-07-15T01:00:00.000Z" }] });
+    const local = await service.upsertItem({ ...baseline, password: "local-newer" });
+    const remote = { ...local, password: "remote-newer", updatedAt: "2026-07-15T02:00:00.000Z" };
+    await service.applyProviderSync("webdav", [local], { lastError: "发现冲突" }, [{ itemId: local.id, reason: "双方均已修改", local, remote }]);
+    const conflict = (await service.listProviderConflicts("webdav"))[0];
+
+    await service.resolveProviderConflict(conflict.id, "keep-local");
+
+    const state = await service.readState();
+    expect(state.providerConflicts).toEqual([]);
+    expect(state.items[0]).toMatchObject({ password: "local-newer", providerRefs: [expect.objectContaining({ remoteId: "42", revision: remote.updatedAt })] });
+    expect(state.mutationQueue).toEqual([expect.objectContaining({ itemId: local.id, operation: "update", attempts: 0 })]);
+    expect(state.mutationQueue[0]).not.toHaveProperty("lastError");
+    expect(state.providers.find((provider) => provider.id === "webdav")?.lastError).toBeUndefined();
+  });
+
+  it("atomically resolves a conflict by accepting the remote copy", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("use remote conflict password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const baseline = createLoginItem({ title: "Conflict", password: "baseline", uris: ["example.com"], providerRefs: [{ providerId: "bw", remoteId: "cipher-1", revision: "2026-07-15T01:00:00.000Z" }] });
+    const local = await service.upsertItem({ ...baseline, password: "local-newer" });
+    const remote = { ...local, password: "remote-winner", updatedAt: "2026-07-15T02:00:00.000Z" };
+    await service.applyProviderSync("bw", [local], { lastError: "发现冲突" }, [{ itemId: local.id, reason: "双方均已修改", local, remote }]);
+    const conflict = (await service.listProviderConflicts("bw"))[0];
+
+    await service.resolveProviderConflict(conflict.id, "use-remote");
+
+    const state = await service.readState();
+    expect(state.providerConflicts).toEqual([]);
+    expect(state.items[0]).toMatchObject({ password: "remote-winner", updatedAt: remote.updatedAt });
+    expect(state.mutationQueue).toEqual([]);
+  });
+
+  it("turns keep-local after a remote deletion into a safe create", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("remote deletion conflict password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const baseline = createLoginItem({ title: "Deleted remotely", password: "local", uris: ["example.com"], providerRefs: [{ providerId: "bw", remoteId: "deleted-cipher", revision: "2026-07-15T01:00:00.000Z" }] });
+    const local = await service.upsertItem({ ...baseline, password: "local-newer" });
+    await service.applyProviderSync("bw", [local], { lastError: "发现冲突" }, [{ itemId: local.id, reason: "远端已删除", local }]);
+    const conflict = (await service.listProviderConflicts("bw"))[0];
+
+    await service.resolveProviderConflict(conflict.id, "keep-local");
+
+    const state = await service.readState();
+    expect(state.items[0].providerRefs[0]).toEqual({ providerId: "bw" });
+    expect(state.mutationQueue).toEqual([expect.objectContaining({ operation: "create", itemId: local.id })]);
   });
 
   it("serializes concurrent mutations so accepted updates cannot overwrite each other", async () => {
