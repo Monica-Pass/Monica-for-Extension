@@ -22,6 +22,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 const KEY_BYTES = 32;
 const IV_BYTES = 16;
 const MAX_CIPHER_STRING_LENGTH = 1024 * 1024;
+const MAX_RSA_PRIVATE_KEY_BYTES = 64 * 1024;
 
 export async function deriveBitwardenMasterKey(password: string, email: string, kdf: BitwardenKdfConfig): Promise<Uint8Array> {
   const normalizedEmail = normalizeBitwardenEmail(email);
@@ -94,6 +95,25 @@ export async function decryptBitwardenSymmetricKey(value: string, wrappingKey: B
   const bytes = await decryptBitwardenBytes(value, wrappingKey);
   if (bytes.length !== 64) throw new Error(`Bitwarden 对称密钥长度无效：${bytes.length}`);
   return { encKey: bytes.slice(0, 32), macKey: bytes.slice(32) };
+}
+
+export async function decryptBitwardenRsaBytes(value: string, privateKeyPkcs8: Uint8Array): Promise<Uint8Array> {
+  if (!value || value.length > MAX_CIPHER_STRING_LENGTH) throw new Error("Bitwarden RSA CipherString 为空或过大。");
+  if (privateKeyPkcs8.length < 64 || privateKeyPkcs8.length > MAX_RSA_PRIVATE_KEY_BYTES) throw new Error("Bitwarden RSA 私钥长度无效。");
+  const dot = value.indexOf(".");
+  const type = dot < 0 ? Number.NaN : Number(value.slice(0, dot));
+  if (type !== 3 && type !== 4) throw new Error(`不支持的 Bitwarden RSA CipherString 类型：${Number.isFinite(type) ? type : "unknown"}`);
+  const payload = value.slice(dot + 1);
+  if (!payload || payload.includes("|")) throw new Error("Bitwarden RSA CipherString 结构不完整。");
+  try {
+    const encrypted = decodeCipherPart(payload);
+    if (encrypted.length < 128 || encrypted.length > 1024) throw new Error("invalid RSA ciphertext length");
+    const algorithm = { name: "RSA-OAEP", hash: type === 3 ? "SHA-256" : "SHA-1" } as const;
+    const privateKey = await crypto.subtle.importKey("pkcs8", privateKeyPkcs8 as BufferSource, algorithm, false, ["decrypt"]);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, encrypted as BufferSource));
+  } catch {
+    throw new Error("Bitwarden RSA CipherString 解密失败。");
+  }
 }
 
 export async function encryptBitwardenBytes(

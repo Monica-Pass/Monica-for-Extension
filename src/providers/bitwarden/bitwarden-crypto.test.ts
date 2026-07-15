@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 import {
   decryptBitwardenString,
+  decryptBitwardenRsaBytes,
   deriveBitwardenMasterKey,
   deriveBitwardenMasterPasswordHash,
   encryptBitwardenString,
@@ -45,5 +46,22 @@ describe("Bitwarden cryptography", () => {
     mac[0] ^= 1;
     const tampered = `${parts[0]}|${parts[1]}|${bytesToBase64(mac)}`;
     await expect(decryptBitwardenString(tampered, key)).rejects.toThrow("MAC");
+  });
+
+  it("decrypts Bitwarden RSA-OAEP organization-key CipherStrings", async () => {
+    const plaintext = Uint8Array.from({ length: 64 }, (_, index) => index + 1);
+    for (const [type, hash] of [[3, "SHA-256"], [4, "SHA-1"]] as const) {
+      const pair = await crypto.subtle.generateKey({ name: "RSA-OAEP", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash }, true, ["encrypt", "decrypt"]);
+      const privateKey = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+      const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pair.publicKey, plaintext));
+      await expect(decryptBitwardenRsaBytes(`${type}.${bytesToBase64(encrypted)}`, privateKey)).resolves.toEqual(plaintext);
+    }
+  });
+
+  it("rejects malformed or unsupported RSA CipherStrings", async () => {
+    const pair = await crypto.subtle.generateKey({ name: "RSA-OAEP", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: "SHA-256" }, true, ["encrypt", "decrypt"]);
+    const privateKey = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+    await expect(decryptBitwardenRsaBytes("2.invalid", privateKey)).rejects.toThrow("RSA");
+    await expect(decryptBitwardenRsaBytes("3.AA==", privateKey)).rejects.toThrow("RSA");
   });
 });

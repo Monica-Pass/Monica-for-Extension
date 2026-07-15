@@ -23,7 +23,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - 浏览器修改和删除会写入新的 Android 快照，未知文件和未来 JSON 字段原样保留。
 - 基于远端文件、ETag 和项目 revision 的三方冲突检测；冲突时停止覆盖。
 - Bitwarden US、EU 和标准路径自托管服务登录，支持 PBKDF2、Argon2id、身份验证器/邮箱/YubiKey 代码 2FA 和 Token 刷新。
-- Bitwarden 个人登录、TOTP、银行卡、身份与安全笔记 Cipher 的导入、创建、更新和删除。
+- Bitwarden 个人及组织共享的登录、TOTP、银行卡、身份与安全笔记 Cipher 导入；个人 Cipher 可创建，个人和有权限的组织 Cipher 可更新、删除。
 - 支持浏览器本地 ES256 Passkey 注册和登录；Bitwarden 可作为新 Passkey 的默认保存目标，并同步 FIDO2 创建、签名计数器与单凭据删除。
 - Bitwarden revision 冲突检测和异常空密码库防误删保护。
 - 外部源修改进入加密 mutation queue；管理页显示待同步、失败次数和显式重试入口。
@@ -55,7 +55,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 4. 如需把网站新建的 Passkey 保存到 Bitwarden，请勾选“设为新项目的默认保存目标”；创建、使用或删除后执行“立即同步”。
 5. 主密码不会保存；Token、Vault Key、FIDO2 私钥和缓存项目只存在于 Monica 加密信封中。
 
-当前版本支持个人 Cipher。组织共享 Cipher 需要用用户 RSA 私钥解包组织密钥，插件会明确跳过并显示警告，不会将其误报为已导入。Bitwarden FIDO2 的 base64 PKCS#8 密钥可用于登录；计数器更新和单凭据删除会合并回父登录 Cipher，不会删除父登录或其他 Passkey。没有可导出密钥的引用只显示元数据。
+当前版本会从同步资料中解密用户 RSA 私钥，并分别解包可访问组织的对称密钥；共享 Cipher 按组织/集合归属读取，更新时保留 `organizationId` 和 `collectionIds`。缺失或损坏的组织密钥只会跳过对应共享项并保留本地缓存，不会影响个人库。新建项目目前仍创建为个人 Cipher，集合成员管理继续由 Bitwarden 官方客户端负责。Bitwarden FIDO2 的 base64 PKCS#8 密钥可用于登录；计数器更新和单凭据删除会合并回父登录 Cipher，不会删除父登录或其他 Passkey。没有可导出密钥的引用只显示元数据。
 
 ## 开发
 
@@ -86,7 +86,7 @@ npm run package:release
 - 自动填充要求用户在 Popup 或页面选择器中明确操作。
 - 当前 JSON 导出是用户主动触发的明文导出，必须保存在可信位置。
 - Android WebDAV 的设备绑定 Passkey 只有密钥别名，浏览器中保持只读元数据，不能签名。
-- Bitwarden 组织共享 Cipher 暂不支持；同步时会跳过并给出警告。
+- Bitwarden 组织密钥无法解包时，相关共享 Cipher 会保持本地缓存并给出警告，不会以空结果覆盖。
 
 详见 [架构说明](docs/ARCHITECTURE.md)。
 

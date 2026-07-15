@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem } from "../../core/model";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "./bitwarden-cipher-codec";
-import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { decryptBitwardenString, encryptBitwardenBytes, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
 const KEY: BitwardenSymmetricKey = {
   encKey: Uint8Array.from({ length: 32 }, (_, index) => index),
@@ -48,7 +48,7 @@ describe("Bitwarden Cipher codec", () => {
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
 
-  it("round-trips supported personal Cipher types", async () => {
+  it("round-trips supported personal and organization Cipher types", async () => {
     const base = { favorite: false, notes: "notes", createdAt: REVISION, updatedAt: REVISION, providerRefs: [{ providerId: "provider-1" }] };
     const items: Array<LoginItem | CardItem | IdentityItem | SecureNoteItem> = [
       { ...base, id: "login", kind: "login", title: "Login", username: "user", password: "pass", uris: ["https://example.com"], totpSecret: "OTP", customFields: [] },
@@ -58,7 +58,7 @@ describe("Bitwarden Cipher codec", () => {
     ];
     for (const [index, item] of items.entries()) {
       const encoded = await encodeBitwardenCipher(item, KEY);
-      const decoded = await decodeBitwardenCipher({ ...encoded, id: `cipher-${index}`, revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+      const decoded = await decodeBitwardenCipher({ ...encoded, id: `cipher-${index}`, organizationId: "org-1", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
       expect(decoded.items[0]).toMatchObject({ kind: item.kind, title: item.title });
     }
   });
@@ -82,6 +82,38 @@ describe("Bitwarden Cipher codec", () => {
     const encoded = await encodeBitwardenCipher(item, KEY, { Key: null, Login: { Fido2Credentials: preservedFido } });
     expect((encoded.login as Record<string, unknown>).fido2Credentials).toEqual(preservedFido);
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
+  });
+
+  it("decodes organization Ciphers with item keys and preserves shared ownership metadata", async () => {
+    const itemKey: BitwardenSymmetricKey = {
+      encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 64),
+      macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 96)
+    };
+    const rawItemKey = new Uint8Array(64);
+    rawItemKey.set(itemKey.encKey);
+    rawItemKey.set(itemKey.macKey, 32);
+    const raw = {
+      Id: "shared-cipher",
+      OrganizationId: "org-1",
+      CollectionIds: ["collection-1"],
+      Key: await encryptBitwardenBytes(rawItemKey, KEY),
+      Type: 1,
+      Name: await encryptBitwardenString("Shared Login", itemKey),
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: {
+        Username: await encryptBitwardenString("shared-user", itemKey),
+        Password: await encryptBitwardenString("shared-secret", itemKey),
+        Uris: []
+      }
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    expect(decoded.warning).toBeUndefined();
+    expect(decoded.items[0]).toMatchObject({ kind: "login", title: "Shared Login", username: "shared-user", password: "shared-secret" });
+    const encoded = await encodeBitwardenCipher({ ...(decoded.items[0] as LoginItem), password: "updated" }, itemKey, raw);
+    expect(encoded).toMatchObject({ organizationId: "org-1", collectionIds: ["collection-1"] });
+    await expect(decryptBitwardenString((encoded.login as Record<string, string>).password, itemKey)).resolves.toBe("updated");
   });
 
   it("creates a login Cipher containing a Bitwarden-compatible FIDO2 credential", async () => {

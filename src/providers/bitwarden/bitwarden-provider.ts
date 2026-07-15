@@ -2,6 +2,8 @@ import type { ProviderAccount, ProviderReference, VaultItem } from "../../core/m
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
+import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
@@ -34,15 +36,22 @@ export class BitwardenProvider implements ProviderAdapter {
     }
 
     const vaultKey = this.client.vaultKey(session);
+    const organizations = await resolveBitwardenOrganizationKeys(synced.payload, vaultKey);
     const remoteItems: VaultItem[] = [];
     const rawByCipherId = new Map<string, Record<string, unknown>>();
     const skippedCipherIds = new Set<string>();
-    const warnings: string[] = [];
+    const warnings: string[] = [...organizations.warnings];
     for (const rawCipher of rawCiphers) {
       const cipherId = stringValue(rawCipher, "Id", "id");
       if (cipherId) rawByCipherId.set(cipherId, rawCipher);
       try {
-        const decoded = await decodeBitwardenCipher(rawCipher, account.id, vaultKey);
+        const ownerKey = cipherOwnerKey(rawCipher, vaultKey, organizations.keys);
+        if (!ownerKey) {
+          warnings.push(missingOrganizationKeyWarning(rawCipher, cipherId));
+          if (cipherId) skippedCipherIds.add(cipherId);
+          continue;
+        }
+        const decoded = await decodeBitwardenCipher(rawCipher, account.id, ownerKey);
         remoteItems.push(...decoded.items);
         if (decoded.warning) {
           warnings.push(decoded.warning);
@@ -101,14 +110,15 @@ export class BitwardenProvider implements ProviderAdapter {
           session = await this.client.deleteCipher(session, cipherId, context.signal);
           continue;
         }
-        const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
+        const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
+        const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
         let payload = primary ? await encodeBitwardenCipher(primary, cipherKey, raw) : raw;
         for (const passkey of changes.filter((item): item is Extract<VaultItem, { kind: "passkey" }> => item.kind === "passkey")) {
           payload = await encodeBitwardenPasskeyCipher(passkey, cipherKey, payload, passkey.deletedAt ? "delete" : "upsert");
         }
         const updated = await this.client.updateCipher(session, cipherId, payload, context.signal);
         session = updated.session;
-        const decoded = await decodeBitwardenCipher(updated.payload, account.id, vaultKey);
+        const decoded = await decodeBitwardenCipher(updated.payload, account.id, ownerKey);
         if (!decoded.items.length) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
         merged.push(...decoded.items);
       } catch (error) {
@@ -150,10 +160,12 @@ export class BitwardenProvider implements ProviderAdapter {
     const raw = arrayValue(current.payload, "Ciphers", "ciphers").map(record).find((cipher) => stringValue(cipher, "Id", "id") === cipherId);
     if (!raw) throw new Error("Bitwarden 远端 Cipher 不存在。");
     const vaultKey = this.client.vaultKey(current.session);
-    const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
+    const organizations = await resolveBitwardenOrganizationKeys(current.payload, vaultKey);
+    const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
+    const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
     const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, cipherKey, raw) : await encodeBitwardenCipher(item, cipherKey, raw);
     const response = await this.client.updateCipher(current.session, cipherId, payload, signal);
-    const decoded = await decodeBitwardenCipher(response.payload, account.id, vaultKey);
+    const decoded = await decodeBitwardenCipher(response.payload, account.id, ownerKey);
     return item.kind === "passkey"
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId) || item
       : decoded.items.find((candidate) => candidate.kind === item.kind) || item;
@@ -170,7 +182,9 @@ export class BitwardenProvider implements ProviderAdapter {
     const raw = arrayValue(current.payload, "Ciphers", "ciphers").map(record).find((cipher) => stringValue(cipher, "Id", "id") === cipherId);
     if (!raw) return;
     const vaultKey = this.client.vaultKey(current.session);
-    const cipherKey = await resolveBitwardenCipherKey(raw, vaultKey);
+    const organizations = await resolveBitwardenOrganizationKeys(current.payload, vaultKey);
+    const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
+    const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
     await this.client.updateCipher(current.session, cipherId, await encodeBitwardenPasskeyCipher(item, cipherKey, raw, "delete"), signal);
   }
 
@@ -231,6 +245,30 @@ function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {
   const { providerRefs: _leftRefs, updatedAt: _leftUpdated, deletedAt: _leftDeleted, ...leftPayload } = left;
   const { providerRefs: _rightRefs, updatedAt: _rightUpdated, deletedAt: _rightDeleted, ...rightPayload } = right;
   return JSON.stringify(leftPayload) === JSON.stringify(rightPayload);
+}
+
+function cipherOwnerKey(
+  raw: Record<string, unknown>,
+  personalVaultKey: BitwardenSymmetricKey,
+  organizationKeys: Map<string, BitwardenSymmetricKey>
+): BitwardenSymmetricKey | undefined {
+  const organizationId = stringValue(raw, "OrganizationId", "organizationId");
+  return organizationId ? organizationKeys.get(organizationId) : personalVaultKey;
+}
+
+function requireCipherOwnerKey(
+  raw: Record<string, unknown>,
+  personalVaultKey: BitwardenSymmetricKey,
+  organizationKeys: Map<string, BitwardenSymmetricKey>
+): BitwardenSymmetricKey {
+  const key = cipherOwnerKey(raw, personalVaultKey, organizationKeys);
+  if (!key) throw new Error(missingOrganizationKeyWarning(raw, stringValue(raw, "Id", "id")));
+  return key;
+}
+
+function missingOrganizationKeyWarning(raw: Record<string, unknown>, cipherId: string): string {
+  const organizationId = stringValue(raw, "OrganizationId", "organizationId") || "unknown";
+  return `Bitwarden 组织项目 ${cipherId || "unknown"} 的组织密钥 ${organizationId} 不可用，已保留本地缓存。`;
 }
 
 function value(raw: Record<string, unknown>, ...names: string[]): unknown {

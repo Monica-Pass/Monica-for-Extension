@@ -9,7 +9,6 @@ export interface DecodedBitwardenCipher {
 export async function decodeBitwardenCipher(raw: Record<string, unknown>, providerId: string, vaultKey: BitwardenSymmetricKey): Promise<DecodedBitwardenCipher> {
   const cipherId = stringValue(raw, "Id", "id");
   if (!cipherId) return { items: [], warning: "Bitwarden Cipher 缺少 ID，已跳过。" };
-  if (stringValue(raw, "OrganizationId", "organizationId")) return { items: [], warning: `Bitwarden 组织项目 ${cipherId} 需要组织密钥，当前版本未导入。` };
   const key = await resolveBitwardenCipherKey(raw, vaultKey);
   const type = numberValue(raw, "Type", "type");
   const revision = dateValue(value(raw, "RevisionDate", "revisionDate"));
@@ -104,6 +103,8 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
     favorite: item.favorite,
     reprompt: 0,
     key: stringValue(preservedRaw || {}, "Key", "key") || null,
+    organizationId: value(preservedRaw || {}, "OrganizationId", "organizationId") ?? null,
+    collectionIds: value(preservedRaw || {}, "CollectionIds", "collectionIds") ?? null,
     folderId: item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null,
     fields: null
   };
@@ -206,6 +207,8 @@ export async function encodeBitwardenPasskeyCipher(
     favorite: value(preservedRaw, "Favorite", "favorite") === true,
     reprompt: numberValue(preservedRaw, "Reprompt", "reprompt"),
     key: value(preservedRaw, "Key", "key") ?? null,
+    organizationId: value(preservedRaw, "OrganizationId", "organizationId") ?? null,
+    collectionIds: value(preservedRaw, "CollectionIds", "collectionIds") ?? null,
     folderId: value(preservedRaw, "FolderId", "folderId") ?? null,
     fields: value(preservedRaw, "Fields", "fields") ?? null,
     login: {

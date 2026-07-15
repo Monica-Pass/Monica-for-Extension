@@ -56,8 +56,9 @@ WebDAV is treated as a timestamped snapshot source rather than a record API. The
 - Type 2 AES-256-CBC + HMAC-SHA256 CipherStrings with MAC-before-decrypt and independent vectors.
 - Password login, explicit authenticator/email/YubiKey-code 2FA continuation, refresh token rotation, personal Cipher sync and CRUD.
 - Revision-based concurrent edit detection and empty-vault deletion protection.
+- Organization keys are unwrapped from the sync profile with the user's encrypted PKCS#8 RSA private key. RSA-OAEP SHA-1/SHA-256 CipherStrings are bounded and validated before decryption.
 
-The Bitwarden master password is ephemeral. The derived user Vault Key, access/refresh tokens, and decrypted provider cache are persisted only as fields inside Monica's AES-GCM envelope. Organization Ciphers are currently skipped with warnings until RSA organization-key unwrap is implemented; personal Cipher support is not presented as organization support.
+The Bitwarden master password is ephemeral. The derived user Vault Key, access/refresh tokens, and decrypted provider cache are persisted only as fields inside Monica's AES-GCM envelope. Personal Ciphers use the user Vault Key; shared Ciphers use their organization key, followed by an optional per-Cipher key. Updates preserve organization and collection ownership. A missing or malformed organization key fails closed for only that organization and retains any local baseline.
 
 ## Passkey boundary
 

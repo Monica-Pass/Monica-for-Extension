@@ -5,6 +5,7 @@ import { encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-
 import { BitwardenProvider } from "./bitwarden-provider";
 
 const KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32) };
+const ORGANIZATION_KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 64), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 96) };
 const OLD_REVISION = "2026-07-15T03:00:00.000Z";
 
 describe("Bitwarden provider", () => {
@@ -32,6 +33,56 @@ describe("Bitwarden provider", () => {
     expect(second.conflicts).toEqual([]);
     expect(second.items[0]).toMatchObject({ password: "browser-secret", updatedAt: "2026-07-15T03:05:00.000Z" });
     expect(putCount).toBe(1);
+  });
+
+  it("imports and updates an organization-shared login Cipher", async () => {
+    const profile = await organizationProfile();
+    let remote = await organizationLoginCipher("shared-secret", OLD_REVISION);
+    let putCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: profile, Ciphers: [remote] });
+      if (init?.method === "PUT") {
+        putCount += 1;
+        const request = JSON.parse(String(init.body)) as Record<string, unknown>;
+        expect(request).toMatchObject({ organizationId: "org-1", collectionIds: ["collection-1"] });
+        remote = { ...request, Id: "shared-cipher", RevisionDate: "2026-07-15T03:05:00.000Z", CreationDate: OLD_REVISION } as typeof remote;
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const first = await provider.sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [] });
+    const imported = first.items[0] as LoginItem;
+    expect(first.warnings).toEqual([]);
+    expect(imported).toMatchObject({ kind: "login", password: "shared-secret" });
+
+    const result = await provider.sync(account(), { now: "2026-07-15T03:06:00.000Z", localItems: [{ ...imported, password: "updated-shared-secret", updatedAt: "2026-07-15T03:04:00.000Z" }] });
+    expect(result.conflicts).toEqual([]);
+    expect(result.items[0]).toMatchObject({ password: "updated-shared-secret" });
+    expect(putCount).toBe(1);
+  });
+
+  it("retains cached organization items when the organization key is unavailable", async () => {
+    const remote = await organizationLoginCipher("remote-secret", OLD_REVISION);
+    const cached: LoginItem = {
+      id: "bitwarden:provider-1:shared-cipher",
+      kind: "login",
+      title: "Cached shared login",
+      username: "cached",
+      password: "cached-secret",
+      uris: [],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "shared-cipher", revision: OLD_REVISION }]
+    };
+    const fetcher = vi.fn(async () => json({ Profile: { Id: "user", Organizations: [{ Id: "org-1", Key: "4.AA==" }] }, Ciphers: [remote] })) as unknown as typeof fetch;
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:06:00.000Z", localItems: [cached] });
+    expect(result.items).toEqual([cached]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.warnings.join(" ")).toContain("私钥");
   });
 
   it("does not overwrite concurrent browser and server changes", async () => {
@@ -255,6 +306,39 @@ async function loginCipher(password: string, revisionDate: string, fido2Credenti
       Password: await encryptBitwardenString(password, KEY),
       Uris: [{ Uri: await encryptBitwardenString("https://example.com", KEY) }],
       Fido2Credentials: fido2Credentials
+    }
+  };
+}
+
+async function organizationProfile() {
+  const pair = await crypto.subtle.generateKey({ name: "RSA-OAEP", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: "SHA-1" }, true, ["encrypt", "decrypt"]);
+  const privateKey = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  const rawOrganizationKey = new Uint8Array(64);
+  rawOrganizationKey.set(ORGANIZATION_KEY.encKey);
+  rawOrganizationKey.set(ORGANIZATION_KEY.macKey, 32);
+  const encryptedOrganizationKey = new Uint8Array(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pair.publicKey, rawOrganizationKey));
+  return {
+    Id: "user",
+    PrivateKey: await encryptBitwardenString(bytesToBase64(privateKey), KEY),
+    Organizations: [{ Id: "org-1", Key: `4.${bytesToBase64(encryptedOrganizationKey)}` }]
+  };
+}
+
+async function organizationLoginCipher(password: string, revisionDate: string) {
+  return {
+    Id: "shared-cipher",
+    OrganizationId: "org-1",
+    CollectionIds: ["collection-1"],
+    Type: 1,
+    Name: await encryptBitwardenString("Shared Example", ORGANIZATION_KEY),
+    Notes: null,
+    Favorite: false,
+    RevisionDate: revisionDate,
+    CreationDate: OLD_REVISION,
+    Login: {
+      Username: await encryptBitwardenString("shared-user", ORGANIZATION_KEY),
+      Password: await encryptBitwardenString(password, ORGANIZATION_KEY),
+      Uris: [{ Uri: await encryptBitwardenString("https://shared.example.com", ORGANIZATION_KEY) }]
     }
   };
 }
