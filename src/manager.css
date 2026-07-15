@@ -52,6 +52,7 @@
 }
 
 .metric > m3e-icon {
+  --m3e-icon-size: 24px;
   position: absolute;
   top: 0;
   right: 0;
@@ -70,7 +71,7 @@
   align-items: center;
 }
 
-.getting-started > m3e-icon {
+.feature-icon {
   width: 56px;
   height: 56px;
   display: grid;
@@ -78,6 +79,10 @@
   border-radius: 20px;
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.feature-icon m3e-icon {
+  --m3e-icon-size: 24px;
 }
 
 .getting-started p,
@@ -115,7 +120,7 @@
 }
 
 .empty-state > m3e-icon {
-  font-size: 52px;
+  --m3e-icon-size: 52px;
   color: var(--app-primary);
 }
 
@@ -225,28 +230,21 @@
   box-shadow: inset 0 0 0 2px var(--app-primary);
 }
 
-.provider-layout {
+.provider-page {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
   gap: 20px;
-  align-items: start;
+  max-width: 1240px;
 }
 
-.provider-config-card,
 .source-card {
   min-width: 0;
 }
 
-.provider-card-head,
 .source-title,
 .source-actions {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.provider-card-head {
-  justify-content: space-between;
 }
 
 .provider-form {
@@ -267,6 +265,14 @@
 
 .provider-list {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
+  gap: 16px;
+  justify-content: start;
+}
+
+.provider-connect-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -274,7 +280,7 @@
   align-items: flex-start;
 }
 
-.source-title > m3e-icon {
+.source-icon {
   width: 48px;
   height: 48px;
   flex: 0 0 48px;
@@ -283,6 +289,17 @@
   border-radius: 18px;
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.source-icon m3e-icon {
+  --m3e-icon-size: 24px;
+}
+
+.security-note m3e-icon,
+.local-badge m3e-icon,
+.boundary-row m3e-icon {
+  --m3e-icon-size: 20px;
+  flex: 0 0 auto;
 }
 
 .source-title p {
@@ -304,13 +321,13 @@
 
 .connect-source {
   width: 100%;
-  min-height: 120px;
+  min-height: 104px;
   border: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
   align-items: center;
-  justify-content: center;
   gap: 14px;
-  padding: 24px;
+  padding: 20px;
   color: var(--app-primary);
   background: transparent;
   cursor: pointer;
@@ -322,8 +339,28 @@
   background: color-mix(in srgb, var(--app-selected) 45%, transparent);
 }
 
-.connect-source > m3e-icon {
-  font-size: 34px;
+.connect-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.connect-icon m3e-icon,
+.connect-arrow {
+  --m3e-icon-size: 24px;
+}
+
+.connect-arrow {
+  justify-self: end;
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+.connect-source:hover .connect-arrow {
+  transform: translateX(2px);
 }
 
 .connect-source span {
@@ -333,6 +370,10 @@
 
 .connect-source small {
   color: var(--app-muted);
+}
+
+.provider-dialog {
+  width: min(100%, 760px);
 }
 
 .field textarea:focus {
@@ -406,7 +447,8 @@
 }
 
 @media (max-width: 700px) {
-  .provider-layout,
+  .provider-connect-grid,
+  .provider-list,
   .provider-form {
     grid-template-columns: 1fr;
   }

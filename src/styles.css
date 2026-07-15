@@ -151,16 +151,6 @@ m3e-button {
   gap: 16px;
 }
 
-.avatar-icon {
-  inline-size: 52px;
-  block-size: 52px;
-  border-radius: 18px;
-  display: grid;
-  place-items: center;
-  color: var(--md-sys-color-on-primary, #fff);
-  background: linear-gradient(135deg, var(--app-primary), color-mix(in srgb, var(--app-primary), var(--app-accent) 36%));
-}
-
 .field {
   display: grid;
   gap: 8px;
@@ -303,6 +293,11 @@ m3e-button {
 .nav-item.selected m3e-icon {
   color: var(--md-sys-color-primary, var(--app-primary));
   font-variation-settings: "FILL" 1;
+}
+
+.nav-item > m3e-icon {
+  --m3e-icon-size: 24px;
+  justify-self: center;
 }
 
 .nav-item span {
@@ -574,7 +569,7 @@ tbody tr:hover td {
   align-items: center;
 }
 
-.row-title > m3e-icon {
+.row-icon {
   width: 44px;
   height: 44px;
   border-radius: 16px;
@@ -582,6 +577,10 @@ tbody tr:hover td {
   place-items: center;
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.row-icon m3e-icon {
+  --m3e-icon-size: 24px;
   font-variation-settings: "FILL" 1;
 }
 
