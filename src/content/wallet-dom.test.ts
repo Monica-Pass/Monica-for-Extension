@@ -10,6 +10,10 @@ function page(html: string) {
   return dom;
 }
 
+function show(control: HTMLElement): void {
+  control.getBoundingClientRect = () => ({ x: 0, y: 0, width: 220, height: 40, top: 0, right: 220, bottom: 40, left: 0, toJSON: () => ({}) });
+}
+
 describe("wallet DOM filling", () => {
   it("discovers and fills standard identity and address autocomplete fields", () => {
     const dom = page('<input autocomplete="given-name"><input autocomplete="family-name"><input autocomplete="street-address"><input autocomplete="postal-code">');
@@ -52,5 +56,21 @@ describe("wallet DOM filling", () => {
     const dom = page('<label>银行名称<input></label><label>账户名称<input></label><label>账户持有人<input></label><label>银行账号<input></label><label>路由号码<input></label><label>国际银行账号<input></label><label>SWIFT代码<input></label><label>币种<input></label>');
     expect(scanWalletKinds(dom.window.document)).toEqual(["payment-account"]);
     expect(fillWallet({ kind: "payment-account", fields: { paymentProvider: "Example Bank", paymentAccountName: "Daily", paymentAccountHolder: "Joy Lin", paymentAccountNumber: "0042", routingNumber: "021000021", iban: "DE89370400440532013000", swiftBic: "EXAMPLEBIC", currency: "CNY" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 8 });
+  });
+
+  it("discovers and fills wallet controls in nested open shadow roots", () => {
+    const dom = page('<payment-shell id="payment"></payment-shell>');
+    const outer = dom.window.document.querySelector("#payment")!.attachShadow({ mode: "open" });
+    const innerHost = dom.window.document.createElement("section");
+    outer.append(innerHost);
+    const inner = innerHost.attachShadow({ mode: "open" });
+    inner.innerHTML = '<input id="number" autocomplete="cc-number"><input id="csc" autocomplete="cc-csc"><input id="generic" name="number">';
+    for (const control of Array.from(inner.querySelectorAll<HTMLElement>("input"))) show(control);
+
+    expect(scanWalletKinds(dom.window.document)).toEqual(["card"]);
+    expect(fillWallet({ kind: "card", fields: { cardNumber: "4111111111111111", cardSecurityCode: "123" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 2 });
+    expect(inner.querySelector<HTMLInputElement>("#number")!.value).toBe("4111111111111111");
+    expect(inner.querySelector<HTMLInputElement>("#csc")!.value).toBe("123");
+    expect(inner.querySelector<HTMLInputElement>("#generic")!.value).toBe("");
   });
 });

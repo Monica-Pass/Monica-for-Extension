@@ -4,20 +4,28 @@ import { fillCredential, scanPage } from "./dom";
 
 function page(html: string) {
   const dom = new JSDOM(html, { url: "https://accounts.example.com/login", pretendToBeVisual: true });
-  for (const input of Array.from(dom.window.document.querySelectorAll<HTMLInputElement>("input"))) {
-    input.getBoundingClientRect = () => ({ x: 0, y: 0, width: 240, height: 44, top: 0, right: 240, bottom: 44, left: 0, toJSON: () => ({}) });
-  }
   return dom;
+}
+
+function show(input: HTMLInputElement): HTMLInputElement {
+  input.getBoundingClientRect = () => ({ x: 0, y: 0, width: 240, height: 44, top: 0, right: 240, bottom: 44, left: 0, toJSON: () => ({}) });
+  return input;
+}
+
+function showLightInputs(dom: JSDOM): void {
+  for (const input of Array.from(dom.window.document.querySelectorAll<HTMLInputElement>("input"))) show(input);
 }
 
 describe("content autofill DOM engine", () => {
   it("scans a login form", () => {
     const dom = page('<form><input type="email"><input type="password"></form>');
+    showLightInputs(dom);
     expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ host: "accounts.example.com", hasUsernameField: true, hasPasswordField: true });
   });
 
   it("fills only after an explicit invocation", () => {
     const dom = page('<form><input id="username" autocomplete="username"><input id="password" type="password"></form>');
+    showLightInputs(dom);
     const username = dom.window.document.querySelector<HTMLInputElement>("#username")!;
     const password = dom.window.document.querySelector<HTMLInputElement>("#password")!;
     expect([username.value, password.value]).toEqual(["", ""]);
@@ -27,11 +35,13 @@ describe("content autofill DOM engine", () => {
 
   it("returns a recoverable error without a password field", () => {
     const dom = page('<form><input type="search"></form>');
+    showLightInputs(dom);
     expect(fillCredential({ username: "joy@example.com", password: "secret" }, dom.window.document)).toMatchObject({ ok: false });
   });
 
   it("fills a one-time-code step without requiring a password field", () => {
     const dom = page('<form><input id="otp" autocomplete="one-time-code" inputmode="numeric"></form>');
+    showLightInputs(dom);
     const otp = dom.window.document.querySelector<HTMLInputElement>("#otp")!;
     expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasPasswordField: false, hasTotpField: true });
     expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: true, filledTotp: true, filledPassword: false });
@@ -40,6 +50,7 @@ describe("content autofill DOM engine", () => {
 
   it("recognizes phone-number usernames and explicit 2FA labels", () => {
     const dom = page('<form><label>手机号码<input type="tel"></label><label>2FA 验证码<input aria-label="2FA code"></label></form>');
+    showLightInputs(dom);
     const inputs = dom.window.document.querySelectorAll<HTMLInputElement>("input");
     expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: true, hasTotpField: true });
     expect(fillCredential({ username: "13800000000", totpCode: "654321" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledTotp: true });
@@ -48,7 +59,53 @@ describe("content autofill DOM engine", () => {
 
   it("does not treat a generic code field as TOTP", () => {
     const dom = page('<form><label>验证码<input name="code"></label></form>');
+    showLightInputs(dom);
     expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasTotpField: false });
     expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: false });
+  });
+
+  it("rescans late SPA fields and fills username and password steps independently", () => {
+    const dom = page('<main id="app"></main>');
+    const app = dom.window.document.querySelector("#app")!;
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: false, hasPasswordField: false });
+
+    app.innerHTML = '<form><input id="username" autocomplete="username"></form>';
+    const username = show(dom.window.document.querySelector<HTMLInputElement>("#username")!);
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: true, hasPasswordField: false });
+    expect(fillCredential({ username: "spa-user" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: false });
+    expect(username.value).toBe("spa-user");
+
+    app.innerHTML = '<form><input id="password" type="password" autocomplete="current-password"></form>';
+    const password = show(dom.window.document.querySelector<HTMLInputElement>("#password")!);
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: false, hasPasswordField: true });
+    expect(fillCredential({ password: "spa-secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: false, filledPassword: true });
+    expect(password.value).toBe("spa-secret");
+  });
+
+  it("discovers and fills login fields in nested open shadow roots", () => {
+    const dom = page('<div id="outer"></div>');
+    const outer = dom.window.document.querySelector("#outer")!.attachShadow({ mode: "open" });
+    const innerHost = dom.window.document.createElement("div");
+    outer.append(innerHost);
+    const inner = innerHost.attachShadow({ mode: "open" });
+    inner.innerHTML = '<form><input id="username" autocomplete="username"><input id="password" type="password"><input id="otp" autocomplete="one-time-code"></form>';
+    const username = show(inner.querySelector<HTMLInputElement>("#username")!);
+    const password = show(inner.querySelector<HTMLInputElement>("#password")!);
+    const otp = show(inner.querySelector<HTMLInputElement>("#otp")!);
+
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: true, hasPasswordField: true, hasTotpField: true });
+    expect(fillCredential({ username: "shadow-user", password: "shadow-secret", totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: true, filledTotp: true });
+    expect([username.value, password.value, otp.value]).toEqual(["shadow-user", "shadow-secret", "123456"]);
+  });
+
+  it("does not claim access to a closed shadow root", () => {
+    const dom = page('<div id="closed-host"></div>');
+    const closed = dom.window.document.querySelector("#closed-host")!.attachShadow({ mode: "closed" });
+    closed.innerHTML = '<input id="password" type="password">';
+    show(closed.querySelector<HTMLInputElement>("#password")!);
+
+    expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasUsernameField: false, hasPasswordField: false, hasTotpField: false });
+    expect(fillCredential({ password: "must-not-cross-boundary" }, dom.window.document)).toMatchObject({ ok: false });
+    expect(closed.querySelector<HTMLInputElement>("#password")!.value).toBe("");
   });
 });

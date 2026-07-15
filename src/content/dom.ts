@@ -1,4 +1,5 @@
 import type { WalletFillKind } from "../runtime/messages";
+import { elementByIdInRoot, queryComposedAll } from "./composed-dom";
 import { scanWalletKinds } from "./wallet-dom";
 
 export interface PageScan {
@@ -83,7 +84,7 @@ export function fillCredential(credential: FillCredentialInput, rootDocument: Do
 }
 
 function firstVisible(selector: string, root: ParentNode): HTMLInputElement | undefined {
-  return Array.from(root.querySelectorAll<HTMLInputElement>(selector)).find(visibleInput);
+  return queryComposedAll<HTMLInputElement>(root, selector).find(visibleInput);
 }
 
 function firstVisibleFrom(selectors: string[], root: ParentNode): HTMLInputElement | undefined {
@@ -95,7 +96,7 @@ function firstVisibleFrom(selectors: string[], root: ParentNode): HTMLInputEleme
 }
 
 function findExplicitTotp(root: ParentNode): HTMLInputElement | undefined {
-  return Array.from(root.querySelectorAll<HTMLInputElement>("input")).find((input) => {
+  return queryComposedAll<HTMLInputElement>(root, "input").find((input) => {
     if (!visibleInput(input)) return false;
     return inputHints(input).some((hint) => /^(totp|otp|2fa|twofa)(code|token|input|field)?$|^(code|token)(totp|otp|2fa|twofa)$/.test(hint));
   });
@@ -103,7 +104,7 @@ function findExplicitTotp(root: ParentNode): HTMLInputElement | undefined {
 
 function inputHints(input: HTMLInputElement): string[] {
   const labelledBy = (input.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
-    .map((id) => input.ownerDocument.getElementById(id)?.textContent);
+    .map((id) => elementByIdInRoot(input, id)?.textContent);
   return [input.id, input.name, input.getAttribute("aria-label"), input.placeholder, ...labelledBy, ...Array.from(input.labels || []).map((label) => label.textContent)]
     .map((value) => (value || "").toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, ""))
     .filter(Boolean);

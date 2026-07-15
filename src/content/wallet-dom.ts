@@ -1,4 +1,5 @@
 import type { WalletFieldName, WalletFillKind, WalletFillPayload, WalletFillResult } from "../runtime/messages";
+import { elementByIdInRoot, queryComposedAll } from "./composed-dom";
 
 type WalletControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
@@ -93,7 +94,7 @@ export function fillWallet(payload: WalletFillPayload, rootDocument: Document = 
 }
 
 function findWalletFields(rootDocument: Document): WalletField[] {
-  return Array.from(rootDocument.querySelectorAll<WalletControl>("input,select,textarea")).flatMap((element) => {
+  return queryComposedAll<WalletControl>(rootDocument, "input,select,textarea").flatMap((element) => {
     if (!visibleControl(element)) return [];
     const autocomplete = element.autocomplete.toLowerCase().split(/\s+/).reverse().find((token) => AUTOCOMPLETE_FIELDS[token]);
     const name = autocomplete ? AUTOCOMPLETE_FIELDS[autocomplete] : heuristicField(element);
@@ -103,7 +104,7 @@ function findWalletFields(rootDocument: Document): WalletField[] {
 
 function heuristicField(element: WalletControl): WalletFieldName | undefined {
   const labelledBy = (element.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
-    .map((id) => element.ownerDocument.getElementById(id)?.textContent);
+    .map((id) => elementByIdInRoot(element, id)?.textContent);
   const hints = [element.id, element.getAttribute("name"), element.getAttribute("aria-label"), element.getAttribute("placeholder"), ...labelledBy, ...Array.from(element.labels || []).map((label) => label.textContent)]
     .map((value) => normalizeHint(value || "")).filter(Boolean);
   return HEURISTICS.find(([, pattern]) => hints.some((hint) => pattern.test(hint)))?.[0];
