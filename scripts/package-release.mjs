@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { zipSync } from "fflate";
@@ -14,6 +15,9 @@ const version = packageJson.version;
 const prefix = `monica-extension-${version}`;
 const fixedTimestamp = "1980-01-01T00:00:00.000Z";
 const fixedZipTime = new Date(1980, 0, 1, 0, 0, 0);
+const sourceCommit = git("rev-parse", "HEAD");
+const sourceTreeClean = git("status", "--porcelain", "--untracked-files=no") === "";
+if (!sourceTreeClean && !process.argv.includes("--allow-dirty")) throw new Error("Refusing to create a trusted release from a dirty tracked worktree.");
 
 const distEntries = await readDistEntries();
 for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html"]) {
@@ -26,6 +30,7 @@ const inventory = productionPackageInventory(packageLock);
 const lockfileSha256 = sha256(packageLockBytes);
 const sbomName = `${prefix}.sbom.cdx.json`;
 const licensesName = `${prefix}.third-party-licenses.json`;
+const evidenceName = `${prefix}.security-evidence.json`;
 const sbomBytes = jsonBytes(cycloneDxBom(packageJson, inventory, lockfileSha256, fixedTimestamp));
 const licensesBytes = jsonBytes({
   schemaVersion: 1,
@@ -35,11 +40,37 @@ const licensesBytes = jsonBytes({
   packageLockSha256: lockfileSha256,
   packages: inventory
 });
+const evidenceBytes = jsonBytes({
+  schemaVersion: 1,
+  product: packageJson.name,
+  version,
+  source: {
+    repository: packageJson.repository?.url,
+    commit: sourceCommit,
+    trackedWorktreeClean: sourceTreeClean
+  },
+  requiredToolchain: {
+    node: packageJson.engines?.node,
+    npm: packageJson.engines?.npm,
+    packageManager: packageJson.packageManager
+  },
+  inputs: {
+    packageLockSha256: lockfileSha256
+  },
+  embeddedEvidence: {
+    sbomSha256: sha256(sbomBytes),
+    thirdPartyLicensesSha256: sha256(licensesBytes)
+  },
+  policyDocuments: ["SECURITY.md", "docs/SECURITY_ARCHITECTURE.md"],
+  releaseGate: "npm run release:check",
+  externalAttestation: "GitHub Actions attest-build-provenance on push builds"
+});
 
 const packagedEntries = new Map(distEntries);
 packagedEntries.set("LICENSE", licenseBytes);
 packagedEntries.set("SBOM.cdx.json", sbomBytes);
 packagedEntries.set("THIRD-PARTY-LICENSES.json", licensesBytes);
+packagedEntries.set("SECURITY-EVIDENCE.json", evidenceBytes);
 const fileManifest = [...packagedEntries.entries()]
   .sort(([left], [right]) => compareText(left, right))
   .map(([path, bytes]) => ({ path, size: bytes.length, sha256: sha256(bytes), source: distEntries.has(path) ? "dist" : path === "LICENSE" ? "root" : "generated" }));
@@ -54,7 +85,8 @@ const metadata = {
   files: fileManifest,
   sidecars: {
     sbom: { file: sbomName, archivePath: "SBOM.cdx.json", size: sbomBytes.length, sha256: sha256(sbomBytes) },
-    licenses: { file: licensesName, archivePath: "THIRD-PARTY-LICENSES.json", size: licensesBytes.length, sha256: sha256(licensesBytes) }
+    licenses: { file: licensesName, archivePath: "THIRD-PARTY-LICENSES.json", size: licensesBytes.length, sha256: sha256(licensesBytes) },
+    securityEvidence: { file: evidenceName, archivePath: "SECURITY-EVIDENCE.json", size: evidenceBytes.length, sha256: sha256(evidenceBytes) }
   }
 };
 packagedEntries.set("RELEASE-METADATA.json", jsonBytes(metadata));
@@ -72,7 +104,8 @@ await Promise.all([
   writeFile(resolve(outputDir, archiveName), archiveBytes),
   writeFile(resolve(outputDir, `${archiveName}.sha256`), `${archiveSha256}  ${archiveName}\n`, "utf8"),
   writeFile(resolve(outputDir, sbomName), sbomBytes),
-  writeFile(resolve(outputDir, licensesName), licensesBytes)
+  writeFile(resolve(outputDir, licensesName), licensesBytes),
+  writeFile(resolve(outputDir, evidenceName), evidenceBytes)
 ]);
 console.log(`Created ${resolve(outputDir, archiveName)} with ${packagedEntries.size} files (SHA-256 ${archiveSha256}).`);
 
@@ -147,4 +180,8 @@ function argumentValue(name) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function git(...args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 }

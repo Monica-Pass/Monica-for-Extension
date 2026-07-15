@@ -2,6 +2,11 @@
   "name": "monica-browser-extension",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": "22.14.0",
+    "npm": "10.9.2"
+  },
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
@@ -22,7 +27,10 @@
     "package:release": "npm run build && node scripts/package-release.mjs",
     "package:verify": "node scripts/verify-release.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org",
-    "release:check": "npm run audit:production && npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
+    "verify:toolchain": "node scripts/verify-toolchain.mjs",
+    "verify:workflows": "node scripts/verify-workflows.mjs",
+    "verify:supply-chain": "npm run verify:toolchain && npm run verify:workflows",
+    "release:check": "npm run verify:supply-chain && npm run audit:production && npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

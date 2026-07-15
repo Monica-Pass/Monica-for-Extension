@@ -38,7 +38,7 @@ async function verifyArtifacts(directory) {
 
   const entries = unzipSync(archiveBytes);
   for (const path of Object.keys(entries)) assert(!path.includes("\\") && !path.startsWith("/") && !path.split("/").includes(".."), `Unsafe ZIP path: ${path}`);
-  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json"]) {
+  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json", "SECURITY-EVIDENCE.json"]) {
     assert(entries[required], `ZIP is missing ${required}.`);
   }
 
@@ -62,14 +62,22 @@ async function verifyArtifacts(directory) {
 
   const sbomSidecar = await readFile(resolve(directory, metadata.sidecars.sbom.file));
   const licensesSidecar = await readFile(resolve(directory, metadata.sidecars.licenses.file));
+  const evidenceSidecar = await readFile(resolve(directory, metadata.sidecars.securityEvidence.file));
   assert(metadata.sidecars.sbom.size === sbomSidecar.length && metadata.sidecars.sbom.sha256 === sha256(sbomSidecar), "SBOM sidecar metadata mismatch.");
   assert(metadata.sidecars.licenses.size === licensesSidecar.length && metadata.sidecars.licenses.sha256 === sha256(licensesSidecar), "License sidecar metadata mismatch.");
+  assert(metadata.sidecars.securityEvidence.size === evidenceSidecar.length && metadata.sidecars.securityEvidence.sha256 === sha256(evidenceSidecar), "Security evidence sidecar metadata mismatch.");
   assert(equalBytes(sbomSidecar, entries[metadata.sidecars.sbom.archivePath]), "SBOM sidecar differs from embedded SBOM.");
   assert(equalBytes(licensesSidecar, entries[metadata.sidecars.licenses.archivePath]), "License sidecar differs from embedded inventory.");
+  assert(equalBytes(evidenceSidecar, entries[metadata.sidecars.securityEvidence.archivePath]), "Security evidence sidecar differs from embedded evidence.");
   const sbom = parseJson(sbomSidecar, "SBOM");
   const licenses = parseJson(licensesSidecar, "license inventory");
+  const evidence = parseJson(evidenceSidecar, "security evidence");
   assert(sbom.bomFormat === "CycloneDX" && sbom.specVersion === "1.5", "SBOM format mismatch.");
   assert(licenses.packageLockSha256 === sha256(packageLockBytes), "License inventory lockfile hash mismatch.");
+  assert(evidence.source?.trackedWorktreeClean === true, "Trusted release evidence reports a dirty source tree.");
+  assert(evidence.source?.commit === git("rev-parse", "HEAD"), "Security evidence source commit mismatch.");
+  assert(evidence.inputs?.packageLockSha256 === sha256(packageLockBytes), "Security evidence lockfile hash mismatch.");
+  assert(evidence.embeddedEvidence?.sbomSha256 === sha256(sbomSidecar) && evidence.embeddedEvidence?.thirdPartyLicensesSha256 === sha256(licensesSidecar), "Security evidence embedded hashes mismatch.");
 
   const expectedPackages = productionPackages(packageLock);
   const sbomPackages = new Set(sbom.components.map((component) => `${component.name}@${component.version}`));
@@ -80,7 +88,7 @@ async function verifyArtifacts(directory) {
 }
 
 async function compareArtifactSets(leftDirectory, rightDirectory) {
-  const names = [`${prefix}.zip`, `${prefix}.zip.sha256`, `${prefix}.sbom.cdx.json`, `${prefix}.third-party-licenses.json`];
+  const names = [`${prefix}.zip`, `${prefix}.zip.sha256`, `${prefix}.sbom.cdx.json`, `${prefix}.third-party-licenses.json`, `${prefix}.security-evidence.json`];
   for (const name of names) {
     const [left, right] = await Promise.all([readFile(resolve(leftDirectory, name)), readFile(resolve(rightDirectory, name))]);
     assert(equalBytes(left, right), `${name} is not byte-reproducible.`);
@@ -138,4 +146,8 @@ function assert(condition, message) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function git(...args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 }

@@ -4,31 +4,33 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.14.0
           cache: npm
-      - run: npm ci
-      - run: npm run validate
-      - run: npm run test:security
+      - run: npm run verify:toolchain
+      - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - name: Verify extension output
-        run: |
-          test -f dist/manifest.json
-          test -f dist/background.js
-          test -f dist/content.js
-          test -f dist/main-world.js
-          test -f dist/index.html
-          test -f dist/popup.html
-      - run: npm run package:release
-      - run: npm run package:verify
-      - uses: actions/upload-artifact@v4
+      - run: npm run release:check
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monica-extension
           path: release/*
+          if-no-files-found: error
+      - name: Attest release package provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: release/monica-extension-*.zip
