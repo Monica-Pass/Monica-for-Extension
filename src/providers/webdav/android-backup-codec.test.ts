@@ -19,7 +19,16 @@ function fixtureZip() {
     id: 7,
     itemType: "BANK_CARD",
     title: "Visa",
-    itemData: JSON.stringify({ cardholderName: "Joy", cardNumber: "4111111111111111", expiryMonth: "12", expiryYear: "2030", cvv: "123", brand: "Visa" }),
+    itemData: JSON.stringify({
+      cardholderName: "Joy",
+      cardNumber: "4111111111111111",
+      expiryMonth: "12",
+      expiryYear: "2030",
+      cvv: "123",
+      brand: "Visa",
+      pin: "9876",
+      futureNestedField: { preserve: true }
+    }),
     notes: "",
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_000_000
@@ -67,6 +76,10 @@ describe("Android backup ZIP codec", () => {
     expect(strFromU8(entries["monica_config/future.json"])).toBe('{"must":"survive"}');
     const passwordRaw = JSON.parse(strFromU8(entries["folders/_root/passwords/password_42_1700000000000.json"]));
     expect(passwordRaw).toMatchObject({ password: "updated-secret", futureAndroidField: { preserve: true } });
+    const cardRaw = JSON.parse(strFromU8(entries["folders/_root/bank_cards/bank_card_7_1700000000000.json"]));
+    expect(JSON.parse(cardRaw.itemData)).toMatchObject({ pin: "9876", futureNestedField: { preserve: true } });
+    const passkeyRaw = JSON.parse(strFromU8(entries["folders/_root/passkeys/passkey_cred-id.json"]));
+    expect(passkeyRaw.privateKeyAlias).toBe("monica-passkey-key-ref-v1:device-only");
     expect(readAndroidBackup(written, "provider-1").items.find((item) => item.kind === "login")).toMatchObject({ password: "updated-secret" });
   });
 });

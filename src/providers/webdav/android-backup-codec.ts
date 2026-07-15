@@ -231,17 +231,17 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     case "secure-note":
       return { id, raw: { ...base, itemType: "NOTE", itemData: item.content } };
     case "totp":
-      return { id, raw: { ...base, itemType: "TOTP", itemData: JSON.stringify({ secret: item.secret, issuer: item.issuer || "", accountName: item.accountName || "", algorithm: item.algorithm, digits: item.digits, period: item.period }) } };
+      return { id, raw: { ...base, itemType: "TOTP", itemData: mergeNestedItemData(original?.itemData, { secret: item.secret, issuer: item.issuer || "", accountName: item.accountName || "", algorithm: item.algorithm, digits: item.digits, period: item.period }) } };
     case "card":
-      return { id, raw: { ...base, itemType: "BANK_CARD", itemData: JSON.stringify({ cardholderName: item.cardholderName, cardNumber: item.number, expiryMonth: item.expiryMonth, expiryYear: item.expiryYear, cvv: item.securityCode, brand: item.brand || "" }) } };
+      return { id, raw: { ...base, itemType: "BANK_CARD", itemData: mergeNestedItemData(original?.itemData, { cardholderName: item.cardholderName, cardNumber: item.number, expiryMonth: item.expiryMonth, expiryYear: item.expiryYear, cvv: item.securityCode, brand: item.brand || "" }) } };
     case "identity":
-      return { id, raw: { ...base, itemType: "DOCUMENT", itemData: JSON.stringify({ documentType: item.documentType, documentNumber: item.documentNumber, firstName: item.firstName, middleName: item.middleName, lastName: item.lastName, fullName: item.fullName, birthDate: item.birthDate || "", issuedDate: item.issuedDate || "", expiryDate: item.expiryDate || "", issuedBy: item.issuedBy || "", nationality: item.nationality || "", email: item.email || "", phone: item.phone || "", address1: item.address?.streetAddress || "", address2: item.address?.apartment || "", city: item.address?.city || "", stateProvince: item.address?.stateProvince || "", postalCode: item.address?.postalCode || "", country: item.address?.country || "" }) } };
+      return { id, raw: { ...base, itemType: "DOCUMENT", itemData: mergeNestedItemData(original?.itemData, { documentType: item.documentType, documentNumber: item.documentNumber, firstName: item.firstName, middleName: item.middleName, lastName: item.lastName, fullName: item.fullName, birthDate: item.birthDate || "", issuedDate: item.issuedDate || "", expiryDate: item.expiryDate || "", issuedBy: item.issuedBy || "", nationality: item.nationality || "", email: item.email || "", phone: item.phone || "", address1: item.address?.streetAddress || "", address2: item.address?.apartment || "", city: item.address?.city || "", stateProvince: item.address?.stateProvince || "", postalCode: item.address?.postalCode || "", country: item.address?.country || "" }) } };
     case "billing-address":
-      return { id, raw: { ...base, itemType: "BILLING_ADDRESS", itemData: JSON.stringify(item) } };
+      return { id, raw: { ...base, itemType: "BILLING_ADDRESS", itemData: mergeNestedItemData(original?.itemData, { fullName: item.fullName, company: item.company, streetAddress: item.streetAddress, apartment: item.apartment, city: item.city, stateProvince: item.stateProvince, postalCode: item.postalCode, country: item.country, phone: item.phone, email: item.email }) } };
     case "payment-account":
-      return { id, raw: { ...base, itemType: "PAYMENT_ACCOUNT", itemData: JSON.stringify(item) } };
+      return { id, raw: { ...base, itemType: "PAYMENT_ACCOUNT", itemData: mergeNestedItemData(original?.itemData, { paymentType: item.paymentType, provider: item.provider, accountName: item.accountName, accountHolderName: item.accountHolderName, email: item.email, phone: item.phone, username: item.username, accountId: item.accountId, maskedAccountNumber: item.maskedAccountNumber, routingNumber: item.routingNumber, iban: item.iban, swiftBic: item.swiftBic, website: item.website, currency: item.currency }) } };
     case "passkey":
-      return { id: item.credentialId, raw: { ...base, credentialId: item.credentialId, rpId: item.rpId, rpName: item.rpName, userId: item.userHandle, userName: item.userName, userDisplayName: item.userDisplayName, publicKeyAlgorithm: item.algorithm, publicKey: item.publicKey, privateKeyAlias: "", signCount: item.signCount, isDiscoverable: item.discoverable, passkeyMode: item.sourceMode === "bitwarden" ? "BW_COMPAT" : "LEGACY" } };
+      return { id: item.credentialId, raw: { ...base, credentialId: item.credentialId, rpId: item.rpId, rpName: item.rpName, userId: item.userHandle, userName: item.userName, userDisplayName: item.userDisplayName, publicKeyAlgorithm: item.algorithm, publicKey: item.publicKey, privateKeyAlias: stringValue(original?.privateKeyAlias), signCount: item.signCount, isDiscoverable: item.discoverable, passkeyMode: item.sourceMode === "bitwarden" ? "BW_COMPAT" : "LEGACY" } };
   }
 }
 
@@ -285,6 +285,10 @@ function parseNestedJson(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function mergeNestedItemData(original: unknown, updates: Record<string, unknown>): string {
+  return JSON.stringify({ ...parseNestedJson(original), ...updates });
 }
 
 function stringValue(value: unknown): string {
