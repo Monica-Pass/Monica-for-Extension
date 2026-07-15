@@ -27,6 +27,7 @@ The auditor must record the exact commit SHA reviewed. Findings against another 
 8. Untrusted import/provider data validation, prototype pollution, parser confusion, memory exhaustion and persistence abuse.
 9. Manifest permissions, CSP, web-accessible resources, remote-code prohibition and extension fingerprinting.
 10. Build/CI dependency integrity, immutable actions, release reproducibility, SBOM/license accuracy and secret leakage.
+11. Repository governance: Action allowlist/SHA enforcement, vulnerability alerts, disclosure routing, unsigned commits, missing branch protection and private-plan scanning limitations.
 
 ## Required attack testing
 
@@ -46,6 +47,8 @@ The auditor must record the exact commit SHA reviewed. Findings against another 
 - explicit statement of untested/out-of-scope surfaces;
 - retest letter confirming resolution of critical/high findings;
 - permission to publish at least the executive summary and retest status.
+
+The handoff procedure and evidence inventory are maintained in [`SECURITY_AUDIT_HANDOFF.md`](SECURITY_AUDIT_HANDOFF.md). The auditor must independently obtain or reproduce the artifacts described there.
 
 ## Acceptance criteria
 

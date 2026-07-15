@@ -33,7 +33,7 @@
 - 本地密码库：PBKDF2-HMAC-SHA256（600,000 次）和 AES-256-GCM。
 - 解锁会话：`chrome.storage.session`，仅可信扩展上下文可访问，并自动过期。
 - Provider 凭据、Token、Vault Key、缓存项目和可导出 Passkey 私钥：只持久化于本地加密信封。
-- WebDAV：建议且默认补全 HTTPS，但用户可明确填写 HTTP；Basic Auth 在 HTTP 上不安全。
+- WebDAV：远程地址强制 HTTPS；只有精确的 localhost、127.0.0.0/8 或 `[::1]` 回环开发地址允许 HTTP。凭据请求禁止重定向。
 - Bitwarden：远程地址强制 HTTPS，仅 localhost/127.0.0.1 允许 HTTP。
 - 不执行远程代码；运行时代码、WASM、字体和资源全部包含在发布包内。
 - 不自动上传日志或崩溃报告；脱敏诊断由用户主动下载并自行决定是否分享。

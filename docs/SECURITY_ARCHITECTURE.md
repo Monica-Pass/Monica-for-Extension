@@ -53,9 +53,9 @@ This is an engineering security claim, not a claim of formal verification. The r
 | ZIP path traversal or archive confusion | Canonical safe-entry validation; ZIP64/multi-disk rejection; post-unzip size verification | Unknown safe entries remain opaque for Android compatibility |
 | Offline vault cracking | PBKDF2-SHA256 600,000 iterations, 32-byte random salt, AES-256-GCM | Master-password strength remains user-dependent; memory-hard KDF migration is desirable |
 | Android backup cracking | Android-compatible PBKDF2-SHA256 100,000 and AES-256-GCM | Iteration count is format-controlled; recommend a strong independent backup password |
-| Secret leakage in build/logs | Redacted provider errors, fixture-token scan, no source maps, package inventory verification | Independent secret scanning and audit are still required |
-| Dependency compromise | Lockfile, `npm ci`, production audit, CodeQL, dependency review, SBOM and Dependabot | Registry and CI platform remain supply-chain trust anchors |
-| Malicious extension update | Store/repository release governance and reproducible package evidence | Store signing/account security are external operational controls |
+| Secret leakage in build/logs | Redacted provider errors, TruffleHog, fixture-token scan, no source maps, package inventory verification | Native GitHub Secret Scanning is unavailable while this private plan lacks the feature; independent audit remains required |
+| Dependency compromise | Official-registry lockfile integrity, install scripts disabled by default, `npm ci`, production audit, CodeQL, dependency review, SBOM and Dependabot alerts | Registry and CI platform remain supply-chain trust anchors; npm registry signature-key availability is external |
+| Malicious extension update | Action allowlist, platform SHA pinning, web commit sign-off and reproducible package evidence | Branch protection, signed commit/tag chain, store signing and maintainer account security remain external/plan-dependent controls |
 
 ## Permission rationale
 
@@ -70,6 +70,8 @@ This is an engineering security claim, not a claim of formal verification. The r
 Broad site access is intrinsic to cross-site autofill. Removing it would materially remove the password-manager function, so the compensating control is strict background authorization and minimal page payloads.
 
 For private repositories without GitHub Advanced Security, CodeQL still runs the `security-extended` suite and retains its SARIF as a workflow artifact for review. GitHub blocks publication to the Security tab in that configuration; publication switches on automatically when the repository is public or Advanced Security is enabled. OpenSSF Scorecard likewise runs only after the repository is public.
+
+Repository Actions are restricted to GitHub-owned actions plus the explicitly used TruffleHog and OpenSSF repositories. GitHub and the repository workflow verifier both require immutable commit SHAs. Dependabot vulnerability alerts and web commit sign-off are enabled. Current private-plan limits prevent Ruleset/main-branch protection and native Secret Scanning; current commits are also unsigned. These remain visible operational risks rather than being represented as completed controls.
 
 ## Cryptography
 
@@ -97,8 +99,8 @@ Automated evidence currently includes unit tests, security-boundary tests, Chrom
 Not yet complete:
 
 - independent third-party source review and penetration test;
-- published SBOM and signed provenance/attestation;
-- formal browser-store operational controls and maintainer account-security evidence;
+- public SBOM publication and a signed provenance/attestation chain;
+- Ruleset/main-branch protection, signed commits/tags and maintainer account-security evidence;
 - formal verification of the cryptographic state machine.
 
 These limitations must remain visible until evidence exists. Security issues should be reported according to [SECURITY.md](../SECURITY.md).

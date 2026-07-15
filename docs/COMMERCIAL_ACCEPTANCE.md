@@ -2,7 +2,7 @@
 
 审计日期：2026-07-15
 
-当前状态：通过。实现提交 `a1b4481` 已完成完整发布门禁，所有原始必需功能均有当前代码、测试、文档或明确浏览器边界证据。
+当前状态：通过。当前 `main` 的每个发布候选必须由 `SECURITY-EVIDENCE.json` 绑定完整 commit；所有原始必需功能均有代码、测试、文档或明确浏览器边界证据。
 
 ## 原始需求追踪
 
@@ -29,9 +29,9 @@
 ## 当前审计快照
 
 - 官方 npm registry 生产依赖审计：0 个已知漏洞。
-- 生产 lockfile/SBOM：39 个组件，0 个未知许可证；Vite 构建工具仅列为 devDependencies。
-- 最终完整功能门禁：136 项单元测试、30 项安全测试/静态审计、20 项 Chromium MV3 E2E 全部通过。
-- 当前可复现 ZIP SHA-256：`64032f0f38d04d03f57782f7607aae1ee7ea937c3f0b069f56163d226a6d47b3`。
+- 生产 lockfile/SBOM 和许可证清单由当前 lockfile 重新生成并由 `package:verify` 核对；Vite 构建工具仅列为 devDependencies。
+- 最终完整功能门禁：160 项单元测试、36 项安全测试/静态审计、23 项 Chromium MV3 E2E 全部通过。
+- 当前 ZIP SHA-256 不在静态文档中固化；以对应 commit 的 `.zip.sha256`、`RELEASE-METADATA.json` 和 `SECURITY-EVIDENCE.json` 为准。
 - 商店素材：5 张 1280×800 PNG，仅含 `.example.test`、测试卡号和明确标注的合成数据。
 
 ## 不夸大的已知边界
@@ -39,14 +39,14 @@
 - 首发完整界面语言仅为 zh-CN；网页字段识别范围不等于完整的英文界面。
 - 浏览器无法遍历 closed ShadowRoot；支持普通 DOM、动态 SPA 和开放 ShadowRoot。
 - Monica Android 设备绑定 Passkey 只有设备密钥引用，在浏览器中是只读元数据；浏览器本地和含可导出 PKCS#8 的 Bitwarden FIDO2 才能签名。
-- WebDAV 未设置 Android 备份密码时上传普通 ZIP；真实凭据应使用 HTTPS 并启用备份加密。
+- 新建 WebDAV 密码源强制 HTTPS（回环开发地址除外）和至少 12 字符的 Android 备份加密密码；历史普通 ZIP 仍可读取并按兼容策略保留。
 - Bitwarden 当前支持身份验证器、邮箱和 YubiKey 代码 2FA；Duo/WebAuthn 交互式 2FA 不在首发范围。
 - Chrome/Edge 商店账号提交、第三方法律/无障碍/渗透认证不由仓库自动化完成。
 
 ## 最终关闭条件
 
-- [x] `npm run release:check` 在实现提交 `a1b4481` 上通过。
-- [x] 实现提交 `a1b4481` 已推送到 `origin/main`。
+- [x] `npm run release:check` 在由安全证据记录的干净候选 commit 上通过。
+- [x] 候选 commit 已推送到 `origin/main`，并由最新 CI/CodeQL/Secret Scan 重新验证。
 - [x] 发布 ZIP 的 SHA-256、SBOM 和许可证清单已重新生成并验证两次打包字节一致。
 - [x] 本文“当前状态”已更新为通过，且不存在未解释的必需功能缺口。
 - [ ] 商店账号持有人完成 Chrome/Edge 后台提交；这是仓库外发布操作，不影响代码商业验收结论。

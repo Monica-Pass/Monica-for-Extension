@@ -1,0 +1,50 @@
+name: Bug 报告
+description: 报告不包含秘密或未修复漏洞细节的可复现问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不要粘贴真实密码、Token、私钥、备份文件或可利用的安全漏洞。安全问题请使用私密 Security Advisory。
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本或 commit
+      placeholder: 例如 0.1.0 或完整 commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 浏览器与操作系统
+      placeholder: 例如 Chrome 140 / Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 使用合成数据的复现步骤
+      description: 请使用 `.example.test`、虚构账号和不可用测试密码。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 数据安全确认
+      options:
+        - label: 我已移除所有真实秘密、个人数据和未公开漏洞细节。
+          required: true

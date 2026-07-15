@@ -42,7 +42,9 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 - [数据安全申报底稿](docs/DATA_SAFETY.md)
 - [zh-CN 商店文案](docs/STORE_LISTING.zh-CN.md)
 - [安全漏洞报告政策](SECURITY.md)
+- [独立安全审计交付说明](docs/SECURITY_AUDIT_HANDOFF.md)
 - [可复现发布流程](docs/RELEASE.md)
+- [参与贡献](CONTRIBUTING.md)
 
 ## 日常使用
 

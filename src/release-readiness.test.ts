@@ -73,6 +73,7 @@ describe("reproducible release contract", () => {
     ]);
     expect(pkg.scripts["package:verify"]).toContain("verify-release.mjs");
     expect(pkg.scripts["release:check"]).toContain("package:verify");
+    expect(pkg.scripts["verify:supply-chain"]).toContain("verify:lockfile");
     expect(workflow).toContain("npm run package:verify");
     for (const term of ["SHA-256", "CycloneDX", "1980-01-01", "逐字节相同"]) expect(releaseGuide).toContain(term);
     expect(packager).toContain("RELEASE-METADATA.json");

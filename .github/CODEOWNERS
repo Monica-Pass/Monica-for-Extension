@@ -1,0 +1,13 @@
+* @JoyinJoester
+
+# Security-sensitive boundaries
+/public/manifest.json @JoyinJoester
+/src/background/ @JoyinJoester
+/src/passkey/ @JoyinJoester
+/src/providers/ @JoyinJoester
+/src/runtime/ @JoyinJoester
+/src/security/ @JoyinJoester
+/scripts/ @JoyinJoester
+/.github/workflows/ @JoyinJoester
+/SECURITY.md @JoyinJoester
+/docs/SECURITY_* @JoyinJoester

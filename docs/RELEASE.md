@@ -15,6 +15,8 @@ npm run release:check
 
 `release:check` 依次通过官方 npm registry 审计生产依赖，再执行单元测试、TypeScript/生产构建、安全测试与审计、Chromium MV3 E2E、正式打包和独立发布验证。
 
+供应链预检还要求 `.npmrc` 默认禁用依赖生命周期脚本、固定官方 npm registry，并验证 lockfile 中每个 registry 包都有官方来源 URL 和 SHA-512 integrity。
+
 ## 发布产物
 
 对版本 `X.Y.Z`，`release/` 中生成：
@@ -23,12 +25,14 @@ npm run release:check
 - `monica-extension-X.Y.Z.zip.sha256`：ZIP 的 SHA-256 校验值。
 - `monica-extension-X.Y.Z.sbom.cdx.json`：CycloneDX 1.5 SBOM。
 - `monica-extension-X.Y.Z.third-party-licenses.json`：生产依赖版本、完整性值和许可证清单。
+- `monica-extension-X.Y.Z.security-evidence.json`：源 commit、干净工作树、工具链和嵌入证据哈希。
 
 ZIP 内额外包含：
 
 - `RELEASE-METADATA.json`：版本、固定时间、lockfile 哈希和每个归档文件的大小/SHA-256。
 - `SBOM.cdx.json`：与外部 SBOM 字节一致。
 - `THIRD-PARTY-LICENSES.json`：与外部许可证清单字节一致。
+- `SECURITY-EVIDENCE.json`：与外部安全证据字节一致，并绑定源 commit 与 lockfile/SBOM 哈希。
 - `LICENSE`：项目的 GNU GPL v3 完整许可证文本。
 
 ZIP 自身的哈希不能嵌入 ZIP（会形成循环依赖），因此由并列的 `.zip.sha256` 文件提供。
@@ -37,8 +41,8 @@ ZIP 自身的哈希不能嵌入 ZIP（会形成循环依赖），因此由并列
 
 - `dist/` 路径按稳定字典序加入归档。
 - 所有 ZIP 条目的 DOS 时间固定为 1980-01-01 00:00:00；ZIP 格式本身不保存时区。
-- 元数据、SBOM 和许可证清单按稳定顺序生成，不包含当前时间、绝对路径或机器信息。
-- `package:verify` 在两个独立临时目录中重新打包，并要求 ZIP、checksum、SBOM 和许可证清单逐字节相同，同时与 `release/` 中的正式产物相同。
+- 元数据、SBOM、许可证清单和安全证据按稳定顺序生成，不包含当前时间、绝对路径或机器信息。
+- `package:verify` 在两个独立临时目录中重新打包，并要求 ZIP、checksum、SBOM、许可证清单和安全证据逐字节相同，同时与 `release/` 中的正式产物相同。
 
 ## 手工校验
 

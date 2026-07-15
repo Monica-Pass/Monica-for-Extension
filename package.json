@@ -28,8 +28,9 @@
     "package:verify": "node scripts/verify-release.mjs",
     "audit:production": "npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org",
     "verify:toolchain": "node scripts/verify-toolchain.mjs",
+    "verify:lockfile": "node scripts/verify-lockfile.mjs",
     "verify:workflows": "node scripts/verify-workflows.mjs",
-    "verify:supply-chain": "npm run verify:toolchain && npm run verify:workflows",
+    "verify:supply-chain": "npm run verify:toolchain && npm run verify:lockfile && npm run verify:workflows",
     "release:check": "npm run verify:supply-chain && npm run audit:production && npm run validate && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "preview": "vite preview --host 127.0.0.1"
   },

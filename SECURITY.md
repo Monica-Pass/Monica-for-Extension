@@ -58,6 +58,8 @@ Run `npm run release:check` from a clean tracked worktree to reproduce and verif
 
 CodeQL uses the `security-extended` query suite. While this repository is private without GitHub Advanced Security, the workflow retains SARIF as a downloadable build artifact instead of claiming Security-tab publication; public repositories and private repositories with Advanced Security upload results normally. GitHub-hosted provenance persistence and OpenSSF Scorecard evidence are available only after the repository is public or the organization plan supports the corresponding feature; the private build still publishes deterministic package metadata, hashes and embedded security evidence.
 
+Repository Actions are restricted to GitHub-owned actions plus explicitly approved TruffleHog/OpenSSF actions, and the platform requires immutable SHA references. Dependabot vulnerability alerts and web commit sign-off are enabled. Current private-plan limits prevent enforcing Ruleset/main-branch protection and native Secret Scanning; current commits do not yet form a verifiable signature chain. These are known operational limitations for an eventual public release, not completed controls.
+
 The full engineering threat model is in [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md). Independent third-party audit completion will be reported there only after an actual report exists.
 
 General support and non-sensitive bugs belong in [GitHub Issues](https://github.com/Monica-Pass/Monica-for-Extension/issues).
