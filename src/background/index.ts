@@ -13,6 +13,7 @@ import { validatePasskeyRequest } from "../passkey/request-policy";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
+import { configureSessionStorageAccess } from "./startup";
 
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
 const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
@@ -47,7 +48,7 @@ const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
   "PASSKEY_DISMISS"
 ]);
 
-void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+void configureSessionStorageAccess(chrome.storage.session.setAccessLevel?.bind(chrome.storage.session));
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create(AUTO_LOCK_ALARM, { periodInMinutes: 1 });

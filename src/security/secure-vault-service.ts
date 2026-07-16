@@ -1,6 +1,7 @@
 import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
+import { validateMasterPassword } from "./master-password-policy";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
 
@@ -536,11 +537,6 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
     const queued: PendingMutation = { id: existing?.id || crypto.randomUUID(), providerId: provider.id, itemId: item.id, operation: nextOperation, createdAt: existing?.createdAt || now, attempts: existing?.attempts || 0 };
     state.mutationQueue = existing ? state.mutationQueue.map((mutation) => mutation === existing ? queued : mutation) : [...state.mutationQueue, queued];
   }
-}
-
-function validateMasterPassword(value: string): void {
-  if (value.length < 15) throw new Error("主密码至少需要 15 个字符。");
-  if (value.length > 1_024) throw new Error("主密码不能超过 1024 个字符。");
 }
 
 function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {

@@ -14,6 +14,7 @@ import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, 
 import { normalizeImportedVaultItem } from "./manager/import-items";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { vaultClient } from "./runtime/client";
+import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
 type Section = "overview" | VaultManagerSection | "providers" | "settings";
@@ -156,8 +157,8 @@ async function initialize() {
 
 async function setupVault() {
   authError.value = "";
-  if (auth.masterPassword.length < 10) {
-    authError.value = "主密码至少需要 15 个字符。";
+  if (auth.masterPassword.length < MIN_MASTER_PASSWORD_LENGTH) {
+    authError.value = `主密码至少需要 ${MIN_MASTER_PASSWORD_LENGTH} 个字符。`;
     return;
   }
   if (auth.masterPassword !== auth.confirmation) {
@@ -605,7 +606,7 @@ async function restoreEncryptedVault() {
 async function changeMasterPassword() {
   securityError.value = "";
   if (!passwordChange.currentPassword) return void (securityError.value = "请输入当前主密码。");
-  if (passwordChange.newPassword.length < 15) return void (securityError.value = "新主密码至少需要 15 个字符。");
+  if (passwordChange.newPassword.length < MIN_MASTER_PASSWORD_LENGTH) return void (securityError.value = `新主密码至少需要 ${MIN_MASTER_PASSWORD_LENGTH} 个字符。`);
   if (passwordChange.newPassword !== passwordChange.confirmation) return void (securityError.value = "两次输入的新主密码不一致。");
   securityBusy.value = "password";
   try {
@@ -670,8 +671,8 @@ function errorMessage(error: unknown) {
       <m3e-card variant="outlined" class="login-card">
         <div slot="content" class="stack">
           <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码仅用于本机派生加密密钥，Monica 不会保存它。' : '输入主密码以解密本地缓存并连接密码源。' }}</p></div>
-          <label class="field"><span>主密码</span><input v-model="auth.masterPassword" type="password" autocomplete="current-password" autofocus /></label>
-          <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" autocomplete="new-password" /></label>
+          <label class="field"><span>主密码</span><input v-model="auth.masterPassword" type="password" :minlength="MIN_MASTER_PASSWORD_LENGTH" autocomplete="current-password" autofocus /></label>
+          <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" :minlength="MIN_MASTER_PASSWORD_LENGTH" autocomplete="new-password" /></label>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
           <div v-if="lifecycle === 'uninitialized'" class="recovery-panel stack">
@@ -803,8 +804,8 @@ function errorMessage(error: unknown) {
             <h2>更改主密码</h2>
             <p class="supporting">验证当前主密码后，使用新盐重新加密完整密码库。</p>
             <label class="field"><span>当前主密码</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
-            <label class="field"><span>新主密码</span><input v-model="passwordChange.newPassword" type="password" autocomplete="new-password" /></label>
-            <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" autocomplete="new-password" /></label>
+            <label class="field"><span>新主密码</span><input v-model="passwordChange.newPassword" type="password" :minlength="MIN_MASTER_PASSWORD_LENGTH" autocomplete="new-password" /></label>
+            <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" :minlength="MIN_MASTER_PASSWORD_LENGTH" autocomplete="new-password" /></label>
             <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? '正在重新加密…' : '更改主密码' }}</m3e-button>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出明文 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON</span><input type="file" accept="application/json,.json" @change="importVault" /></label></div></m3e-card>

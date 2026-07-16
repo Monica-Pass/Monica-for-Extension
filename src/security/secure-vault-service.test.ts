@@ -86,10 +86,11 @@ describe("encrypted vault", () => {
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/bitwarden-access-secret|bitwarden-refresh-secret|vault-key-secret/);
   });
 
-  it("requires a modern minimum length for newly created master passwords", async () => {
+  it("accepts four-character master passwords and rejects shorter values", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
-    await expect(service.setup("fourteen-chars!".slice(0, 14))).rejects.toThrow("至少需要 15 个字符");
-    await expect(service.setup("x".repeat(1_025))).rejects.toThrow("不能超过 1024 个字符");
+    await expect(service.setup("abc")).rejects.toThrow("至少需要 4 个字符");
+    await expect(service.setup("abcd")).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT" });
+    await expect(new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore()).setup("x".repeat(1_025))).rejects.toThrow("不能超过 1024 个字符");
   });
 
   it("stores support diagnostics encrypted and exports a redacted bounded document", async () => {

@@ -1,6 +1,6 @@
 .vault-auth {
   align-content: center;
-  background: radial-gradient(circle at top, color-mix(in srgb, var(--app-selected) 76%, transparent), transparent 48%);
+  background: var(--app-bg);
 }
 
 .vault-auth h1 {

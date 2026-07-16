@@ -13,6 +13,7 @@ body.popup-body {
 }
 
 .popup-shell {
+  --popup-action-color: var(--app-primary);
   width: 390px;
   min-height: 520px;
   padding: 14px;
@@ -20,7 +21,11 @@ body.popup-body {
   flex-direction: column;
   gap: 14px;
   color: var(--app-text);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--app-selected) 52%, var(--app-bg)) 0, var(--app-bg) 180px);
+  background: var(--app-bg);
+}
+
+:root[data-theme="dark"] .popup-shell {
+  --popup-action-color: #8de8dc;
 }
 
 .popup-header,
@@ -333,7 +338,7 @@ body.popup-body {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  color: var(--app-primary);
+  color: var(--popup-action-color);
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -344,7 +349,7 @@ body.popup-body {
 
 .popup-status {
   min-height: 20px;
-  color: var(--app-primary);
+  color: var(--popup-action-color);
   text-align: center;
   font-size: 0.8rem;
   font-weight: 600;
@@ -363,7 +368,7 @@ body.popup-body {
   border: 0;
   border-radius: 22px;
   padding: 0 12px;
-  color: var(--app-primary);
+  color: var(--popup-action-color);
   background: transparent;
   cursor: pointer;
   font-weight: 700;

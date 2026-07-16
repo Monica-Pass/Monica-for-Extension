@@ -82,6 +82,18 @@ describe("reproducible release contract", () => {
   });
 });
 
+describe("visual design contract", () => {
+  it("uses solid Material surfaces without CSS gradients", async () => {
+    const sources = await Promise.all([
+      read("src/styles.css"),
+      read("src/manager.css"),
+      read("src/popup/popup.css"),
+      read("scripts/capture-store-assets.mjs")
+    ]);
+    expect(sources.join("\n")).not.toMatch(/(?:linear|radial|conic|repeating-linear|repeating-radial)-gradient\s*\(/i);
+  });
+});
+
 async function read(path: string): Promise<string> {
   return readFile(new URL(path, root), "utf8");
 }
