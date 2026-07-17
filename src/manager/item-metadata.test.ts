@@ -17,7 +17,7 @@ const items: VaultItem[] = [
 
 describe("manager item metadata", () => {
   it("maps every vault kind to a usable category label and icon", () => {
-    expect(items.map((item) => itemSection(item))).toEqual(["passwords", "wallet", "wallet", "wallet", "wallet", "notes", "notes", "passkeys"]);
+    expect(items.map((item) => itemSection(item))).toEqual(["passwords", "wallet", "wallet", "wallet", "wallet", "notes", "totp", "passkeys"]);
     for (const item of items) { expect(itemKindLabel(item.kind)).not.toBe(""); expect(itemIcon(item.kind)).not.toBe(""); }
   });
 

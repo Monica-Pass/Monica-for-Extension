@@ -18,7 +18,35 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
   switch (kind) {
     case "login": return { ...base, kind, username: string(raw.username), password: string(raw.password), uris: strings(raw.uris), totpSecret: optional(raw.totpSecret), customFields: Array.isArray(raw.customFields) ? raw.customFields.flatMap((value) => value && typeof value === "object" ? [{ name: string((value as Record<string, unknown>).name), value: string((value as Record<string, unknown>).value), protected: Boolean((value as Record<string, unknown>).protected) }] : []) : [] };
     case "secure-note": return { ...base, kind, content: string(raw.content) };
-    case "totp": return { ...base, kind, secret: string(raw.secret), issuer: optional(raw.issuer), accountName: optional(raw.accountName), algorithm: totpAlgorithm(raw.algorithm), digits: number(raw.digits, 6), period: number(raw.period, 30) };
+    case "totp": return {
+      ...base,
+      kind,
+      secret: string(raw.secret),
+      issuer: optional(raw.issuer),
+      accountName: optional(raw.accountName),
+      otpType: otpType(raw.otpType),
+      counter: optionalNumber(raw.counter),
+      pin: optional(raw.pin),
+      link: optional(raw.link),
+      associatedApp: optional(raw.associatedApp),
+      customIconType: optional(raw.customIconType),
+      customIconValue: optional(raw.customIconValue),
+      customIconUpdatedAt: optionalNumber(raw.customIconUpdatedAt),
+      boundPasswordId: optionalNumber(raw.boundPasswordId),
+      categoryId: optionalNumber(raw.categoryId),
+      keepassDatabaseId: optionalNumber(raw.keepassDatabaseId),
+      steamFingerprint: optional(raw.steamFingerprint),
+      steamDeviceId: optional(raw.steamDeviceId),
+      steamSerialNumber: optional(raw.steamSerialNumber),
+      steamSharedSecretBase64: optional(raw.steamSharedSecretBase64),
+      steamRevocationCode: optional(raw.steamRevocationCode),
+      steamIdentitySecret: optional(raw.steamIdentitySecret),
+      steamTokenGid: optional(raw.steamTokenGid),
+      steamRawJson: optional(raw.steamRawJson),
+      algorithm: totpAlgorithm(raw.algorithm),
+      digits: number(raw.digits, 6),
+      period: number(raw.period, 30)
+    };
     case "card": return { ...base, kind, cardholderName: string(raw.cardholderName), number: string(raw.number), expiryMonth: string(raw.expiryMonth), expiryYear: string(raw.expiryYear), securityCode: string(raw.securityCode), brand: optional(raw.brand), billingAddressId: optional(raw.billingAddressId) };
     case "identity": {
       const address = raw.address && typeof raw.address === "object" ? raw.address as Record<string, unknown> : {};
@@ -34,8 +62,10 @@ function string(value: unknown): string { return typeof value === "string" ? val
 function optional(value: unknown): string | undefined { return string(value).trim() || undefined; }
 function strings(value: unknown): string[] { return Array.isArray(value) ? value.map(string).filter(Boolean) : []; }
 function number(value: unknown, fallback: number): number { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function optionalNumber(value: unknown): number | undefined { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : undefined; }
 function date(value: unknown, fallback: string): string { const parsed = Date.parse(string(value)); return Number.isNaN(parsed) ? fallback : new Date(parsed).toISOString(); }
 function totpAlgorithm(value: unknown): TotpItem["algorithm"] { const result = string(value).toUpperCase(); return result === "SHA256" || result === "SHA512" ? result : "SHA1"; }
+function otpType(value: unknown): NonNullable<TotpItem["otpType"]> { const result = string(value).toUpperCase(); return result === "HOTP" || result === "STEAM" || result === "YANDEX" || result === "MOTP" ? result : "TOTP"; }
 function documentType(value: unknown): IdentityItem["documentType"] { const result = string(value).toUpperCase(); return result === "ID_CARD" || result === "PASSPORT" || result === "DRIVER_LICENSE" || result === "SOCIAL_SECURITY" ? result : "OTHER"; }
 function passkeyAlgorithm(value: unknown): PasskeyItem["algorithm"] { const result = number(value, -7); return result === -257 || result === -37 || result === -8 ? result : -7; }
 function sourceMode(value: unknown): PasskeyItem["sourceMode"] { const result = string(value); return result === "bitwarden" || result === "android-metadata-only" ? result : "browser-local"; }

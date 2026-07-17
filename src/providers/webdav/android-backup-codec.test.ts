@@ -455,6 +455,18 @@ describe("Android backup ZIP codec", () => {
     const fixture = currentAndroidRecordsFixture();
     const document = readAndroidBackup(fixture.zip, "provider-current");
     expect(document.items).toHaveLength(8);
+    expect(document.items.find((item) => item.kind === "totp")).toMatchObject({
+      otpType: "HOTP",
+      counter: 17,
+      steamFingerprint: "fingerprint",
+      steamDeviceId: "android:device",
+      steamSerialNumber: "serial",
+      steamSharedSecretBase64: "shared",
+      steamRevocationCode: "R12345",
+      steamIdentitySecret: "identity",
+      steamTokenGid: "gid",
+      steamRawJson: "{\"steam\":true}"
+    });
     const changed = document.items.map((item) => {
       if (item.kind === "login") return { ...item, password: "new-password" };
       if (item.kind === "totp") return { ...item, issuer: "GitLab" };

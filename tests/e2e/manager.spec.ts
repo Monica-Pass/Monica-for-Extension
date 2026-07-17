@@ -42,22 +42,23 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByRole("button", { name: "加密保存" }).click();
     await expect(manager.getByText("Daily Visa Updated", { exact: true })).toBeVisible();
 
-    await manager.getByRole("button", { name: /笔记与验证码/ }).click();
-    await manager.getByRole("button", { name: "添加笔记或验证码" }).click();
+    await manager.getByRole("button", { name: /安全笔记/ }).click();
+    await manager.getByRole("button", { name: "添加安全笔记" }).click();
     await manager.getByLabel("名称 *").fill("Private Note");
     await manager.getByLabel("笔记内容 *").fill("Recovery instructions stored safely.");
     await manager.getByRole("button", { name: "加密保存" }).click();
     await expect(manager.getByText("Private Note", { exact: true })).toBeVisible();
 
-    await manager.getByRole("button", { name: "添加笔记或验证码" }).click();
-    await manager.getByLabel("项目类型").selectOption("totp");
+    await manager.getByRole("button", { name: /动态验证码/ }).click();
+    await manager.getByRole("button", { name: "添加验证码" }).click();
     await manager.getByLabel("名称 *").fill("Example OTP");
-    await manager.getByLabel("TOTP 密钥 *").fill("JBSWY3DPEHPK3PXP");
+    await manager.getByLabel("验证码密钥 *").fill("JBSWY3DPEHPK3PXP");
     await manager.getByLabel("签发方").fill("Example");
     await manager.getByLabel("账户").fill("joy@example.com");
     await manager.getByRole("button", { name: "加密保存" }).click();
     await expect(manager.getByText("Example OTP", { exact: true })).toBeVisible();
 
+    await manager.getByRole("button", { name: /安全笔记/ }).click();
     const noteRow = manager.getByRole("row").filter({ hasText: "Private Note" });
     manager.once("dialog", (dialog) => void dialog.accept());
     await noteRow.getByRole("button", { name: "删除安全笔记" }).click();

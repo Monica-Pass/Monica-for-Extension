@@ -98,12 +98,34 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
 
   if (kindFolder === "authenticators") {
     const data = parseNestedJson(raw.itemData);
+    const rawOtpType = stringValue(data.otpType);
+    const otpType = rawOtpType ? normalizeOtpType(rawOtpType) : undefined;
+    const steamSharedSecret = firstString(data, "steamSharedSecretBase64");
     return {
       ...base,
       kind: "totp",
-      secret: firstString(data, "secret", "authenticatorKey"),
+      secret: otpType === "STEAM" || steamSharedSecret ? steamSharedSecret || firstString(data, "secret", "authenticatorKey") : firstString(data, "secret", "authenticatorKey"),
       issuer: firstString(data, "issuer") || undefined,
       accountName: firstString(data, "accountName") || undefined,
+      otpType: otpType || (steamSharedSecret ? "STEAM" : undefined),
+      counter: optionalNumber(data.counter),
+      pin: optionalString(firstString(data, "pin")),
+      link: optionalString(firstString(data, "link")),
+      associatedApp: optionalString(firstString(data, "associatedApp")),
+      customIconType: optionalString(firstString(data, "customIconType")),
+      customIconValue: optionalString(firstString(data, "customIconValue")),
+      customIconUpdatedAt: optionalNumber(data.customIconUpdatedAt),
+      boundPasswordId: optionalNumber(data.boundPasswordId),
+      categoryId: optionalNumber(data.categoryId),
+      keepassDatabaseId: optionalNumber(data.keepassDatabaseId),
+      steamFingerprint: optionalString(firstString(data, "steamFingerprint")),
+      steamDeviceId: optionalString(firstString(data, "steamDeviceId")),
+      steamSerialNumber: optionalString(firstString(data, "steamSerialNumber")),
+      steamSharedSecretBase64: optionalString(steamSharedSecret),
+      steamRevocationCode: optionalString(firstString(data, "steamRevocationCode")),
+      steamIdentitySecret: optionalString(firstString(data, "steamIdentitySecret")),
+      steamTokenGid: optionalString(firstString(data, "steamTokenGid")),
+      steamRawJson: optionalString(firstString(data, "steamRawJson")),
       algorithm: normalizeTotpAlgorithm(data.algorithm),
       digits: numberValue(data.digits, 6),
       period: numberValue(data.period, 30)
@@ -273,9 +295,31 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     case "totp": {
       const previous = applyCommon("totp", "TOTP") as TotpItem | undefined;
       const updates: Record<string, unknown> = {};
+      const setOptionalNested = (key: string, value: unknown, current: unknown, previousValue: unknown) => {
+        if (current !== undefined || previousValue !== undefined) setNested(updates, key, value, current, previousValue);
+      };
       setNested(updates, "secret", item.secret, item.secret, previous?.secret);
       setNested(updates, "issuer", item.issuer || "", item.issuer || "", previous?.issuer || "");
       setNested(updates, "accountName", item.accountName || "", item.accountName || "", previous?.accountName || "");
+      setOptionalNested("otpType", item.otpType, item.otpType, previous?.otpType);
+      setOptionalNested("counter", item.counter, item.counter, previous?.counter);
+      setOptionalNested("pin", item.pin, item.pin, previous?.pin);
+      setOptionalNested("link", item.link, item.link, previous?.link);
+      setOptionalNested("associatedApp", item.associatedApp, item.associatedApp, previous?.associatedApp);
+      setOptionalNested("customIconType", item.customIconType, item.customIconType, previous?.customIconType);
+      setOptionalNested("customIconValue", item.customIconValue, item.customIconValue, previous?.customIconValue);
+      setOptionalNested("customIconUpdatedAt", item.customIconUpdatedAt, item.customIconUpdatedAt, previous?.customIconUpdatedAt);
+      setOptionalNested("boundPasswordId", item.boundPasswordId, item.boundPasswordId, previous?.boundPasswordId);
+      setOptionalNested("categoryId", item.categoryId, item.categoryId, previous?.categoryId);
+      setOptionalNested("keepassDatabaseId", item.keepassDatabaseId, item.keepassDatabaseId, previous?.keepassDatabaseId);
+      setOptionalNested("steamFingerprint", item.steamFingerprint, item.steamFingerprint, previous?.steamFingerprint);
+      setOptionalNested("steamDeviceId", item.steamDeviceId, item.steamDeviceId, previous?.steamDeviceId);
+      setOptionalNested("steamSerialNumber", item.steamSerialNumber, item.steamSerialNumber, previous?.steamSerialNumber);
+      setOptionalNested("steamSharedSecretBase64", item.steamSharedSecretBase64, item.steamSharedSecretBase64, previous?.steamSharedSecretBase64);
+      setOptionalNested("steamRevocationCode", item.steamRevocationCode, item.steamRevocationCode, previous?.steamRevocationCode);
+      setOptionalNested("steamIdentitySecret", item.steamIdentitySecret, item.steamIdentitySecret, previous?.steamIdentitySecret);
+      setOptionalNested("steamTokenGid", item.steamTokenGid, item.steamTokenGid, previous?.steamTokenGid);
+      setOptionalNested("steamRawJson", item.steamRawJson, item.steamRawJson, previous?.steamRawJson);
       setNested(updates, "algorithm", item.algorithm, item.algorithm, previous?.algorithm);
       setNested(updates, "digits", item.digits, item.digits, previous?.digits);
       setNested(updates, "period", item.period, item.period, previous?.period);
@@ -447,6 +491,10 @@ function numberValue(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+function optionalNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 function dateValue(value: unknown, fallback = new Date().toISOString()): string {
   const millis = numberValue(value, Number.NaN);
   if (Number.isFinite(millis) && millis > 0) return new Date(millis).toISOString();
@@ -456,6 +504,10 @@ function dateValue(value: unknown, fallback = new Date().toISOString()): string 
 function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
   const normalized = stringValue(value).toUpperCase();
   return normalized === "SHA256" || normalized === "SHA512" ? normalized : "SHA1";
+}
+function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
+  const normalized = stringValue(value).trim().toUpperCase();
+  return normalized === "HOTP" || normalized === "STEAM" || normalized === "YANDEX" || normalized === "MOTP" ? normalized : "TOTP";
 }
 function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {
   const algorithm = numberValue(value, -7);

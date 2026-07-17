@@ -1,6 +1,6 @@
 import type { IdentityItem, VaultItem, VaultItemKind } from "../core/model";
 
-export type VaultManagerSection = "passwords" | "wallet" | "notes" | "passkeys";
+export type VaultManagerSection = "passwords" | "wallet" | "notes" | "totp" | "passkeys";
 
 const KIND_META: Record<VaultItemKind, { label: string; icon: string; section: VaultManagerSection }> = {
   login: { label: "登录项", icon: "password", section: "passwords" },
@@ -9,7 +9,7 @@ const KIND_META: Record<VaultItemKind, { label: string; icon: string; section: V
   "billing-address": { label: "账单地址", icon: "home_pin", section: "wallet" },
   "payment-account": { label: "支付账号", icon: "account_balance", section: "wallet" },
   "secure-note": { label: "安全笔记", icon: "note", section: "notes" },
-  totp: { label: "动态验证码", icon: "timer", section: "notes" },
+  totp: { label: "动态验证码", icon: "timer", section: "totp" },
   passkey: { label: "Passkey", icon: "key_vertical", section: "passkeys" }
 };
 
@@ -25,7 +25,7 @@ export function itemSafeSummary(item: VaultItem): string {
     case "billing-address": return [item.fullName, item.city, item.country].filter(Boolean).join(" · ") || "地址信息";
     case "payment-account": return [item.provider || item.paymentType, item.accountName || item.accountHolderName, maskedSuffix(item.maskedAccountNumber)].filter(Boolean).join(" · ") || "支付账号";
     case "secure-note": return item.content ? `已加密笔记 · ${item.content.length} 字符` : "空笔记";
-    case "totp": return [item.issuer, item.accountName].filter(Boolean).join(" · ") || `${item.digits} 位 · ${item.period} 秒`;
+    case "totp": return [item.otpType === "STEAM" ? "Steam Guard" : item.issuer, item.accountName].filter(Boolean).join(" · ") || `${item.digits} 位 · ${item.period} 秒`;
     case "passkey": return [item.rpId, item.userName || item.userDisplayName, sourceLabel(item.sourceMode)].filter(Boolean).join(" · ");
   }
 }

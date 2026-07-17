@@ -7,6 +7,10 @@ export interface TotpParameters {
 
 export async function generateTotp(input: string, now = Date.now()): Promise<string> {
   const parameters = parseTotpParameters(input);
+  return generateTotpWithParameters(parameters, now);
+}
+
+export async function generateTotpWithParameters(parameters: TotpParameters, now = Date.now()): Promise<string> {
   const counter = Math.floor(now / 1000 / parameters.period);
   const message = new Uint8Array(8);
   let remaining = counter;

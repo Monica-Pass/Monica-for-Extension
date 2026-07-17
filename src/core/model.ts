@@ -49,6 +49,26 @@ export interface TotpItem extends VaultItemBase {
   secret: string;
   issuer?: string;
   accountName?: string;
+  /** Monica Android's OTP discriminator. STEAM uses the Steam Guard alphabet. */
+  otpType?: "TOTP" | "HOTP" | "STEAM" | "YANDEX" | "MOTP";
+  counter?: number;
+  pin?: string;
+  link?: string;
+  associatedApp?: string;
+  customIconType?: string;
+  customIconValue?: string;
+  customIconUpdatedAt?: number;
+  boundPasswordId?: number;
+  categoryId?: number;
+  keepassDatabaseId?: number;
+  steamFingerprint?: string;
+  steamDeviceId?: string;
+  steamSerialNumber?: string;
+  steamSharedSecretBase64?: string;
+  steamRevocationCode?: string;
+  steamIdentitySecret?: string;
+  steamTokenGid?: string;
+  steamRawJson?: string;
   algorithm: "SHA1" | "SHA256" | "SHA512";
   digits: number;
   period: number;
