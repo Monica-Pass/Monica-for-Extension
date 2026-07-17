@@ -95,7 +95,7 @@ describe("Monica WebDAV provider", () => {
   });
 
   it("imports and writes an encrypted Android snapshot without losing opaque entries", async () => {
-    const backupPassword = "android-backup-password";
+    const backupPassword = "x";
     const encryptedRemote = await encryptAndroidBackup(androidZip(), backupPassword);
     const mock = server(encryptedRemote, multiStatus("monica_backup_20260715_020202.enc.zip", '"remote-encrypted"'));
     const provider = new MonicaWebDavProvider(mock.fetcher);

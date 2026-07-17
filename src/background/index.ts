@@ -200,9 +200,6 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
       const previousConfig = existing?.config || {};
       const effectiveConfig = effectiveWebDavConfig(request.config, previousConfig);
-      if (typeof effectiveConfig.backupPassword !== "string" || effectiveConfig.backupPassword.length < 12) {
-        throw new Error("Android WebDAV 备份加密密码至少需要 12 个字符。");
-      }
       const connectionChanged = ["baseUrl", "username", "password", "backupPassword"].some((key) => previousConfig[key] !== effectiveConfig[key]);
       const config = connectionChanged
         ? effectiveConfig

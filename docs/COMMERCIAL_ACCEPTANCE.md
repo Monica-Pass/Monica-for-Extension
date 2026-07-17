@@ -39,7 +39,7 @@
 - 首发完整界面语言仅为 zh-CN；网页字段识别范围不等于完整的英文界面。
 - 浏览器无法遍历 closed ShadowRoot；支持普通 DOM、动态 SPA 和开放 ShadowRoot。
 - Monica Android 设备绑定 Passkey 只有设备密钥引用，在浏览器中是只读元数据；浏览器本地和含可导出 PKCS#8 的 Bitwarden FIDO2 才能签名。
-- 新建 WebDAV 密码源强制 HTTPS（回环开发地址除外）和至少 12 字符的 Android 备份加密密码；历史普通 ZIP 仍可读取并按兼容策略保留。
+- 新建 WebDAV 密码源强制 HTTPS（回环开发地址除外）；Android 备份加密密码可选且不限制长度，留空时无损读写普通 ZIP，填写后使用 `MONICA_ENC_V1` 加密快照。
 - Bitwarden 当前支持身份验证器、邮箱和 YubiKey 代码 2FA；Duo/WebAuthn 交互式 2FA 不在首发范围。
 - Chrome/Edge 商店账号提交、第三方法律/无障碍/渗透认证不由仓库自动化完成。
 

@@ -114,6 +114,54 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
   }
 });
 
+test("Android WebDAV backup encryption password is optional and has no minimum length", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo);
+    context = launched.context;
+    await context.route("https://optional-dav.example.test/**", async (route) => {
+      if (route.request().method() === "PROPFIND") {
+        await route.fulfill({ status: 207, contentType: "application/xml", body: '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" />' });
+        return;
+      }
+      await route.fulfill({ status: 500, body: "unexpected fixture request" });
+    });
+
+    await launched.manager.getByRole("button", { name: "密码源" }).click();
+    await launched.manager.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
+    const dialog = launched.manager.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    await expect(dialog.getByLabel("Android 备份加密密码（可选）")).toHaveAttribute("placeholder", "留空使用普通 ZIP");
+    await dialog.getByLabel("WebDAV 地址 *").fill("https://optional-dav.example.test/root");
+    await dialog.getByRole("button", { name: "加密保存" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    const plainProviders = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "PROVIDER_LIST" })) as { ok: boolean; data?: Array<{ id: string; config: { backupPasswordConfigured?: boolean } }> };
+    expect(plainProviders.data).toEqual(expect.arrayContaining([expect.objectContaining({ config: expect.objectContaining({ backupPasswordConfigured: false }) })]));
+
+    const short = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
+      type: "WEBDAV_SAVE",
+      name: "Short password WebDAV",
+      config: { baseUrl: "https://optional-dav.example.test/short", username: "", password: "", backupPassword: "x" },
+      isDefaultSaveTarget: false
+    })) as { ok: boolean; data?: { id: string }; error?: string };
+    expect(short, short.error).toMatchObject({ ok: true });
+
+    const preserved = await launched.manager.evaluate(async (providerId) => chrome.runtime.sendMessage({
+      type: "WEBDAV_SAVE",
+      providerId,
+      name: "Short password WebDAV",
+      config: { baseUrl: "https://optional-dav.example.test/short", username: "", password: "" },
+      isDefaultSaveTarget: false
+    }), short.data!.id) as { ok: boolean; error?: string };
+    expect(preserved, preserved.error).toMatchObject({ ok: true });
+
+    const configuredProviders = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "PROVIDER_LIST" })) as { ok: boolean; data?: Array<{ id: string; config: { backupPasswordConfigured?: boolean } }> };
+    expect(configuredProviders.data?.find((provider) => provider.id === short.data!.id)?.config.backupPasswordConfigured).toBe(true);
+  } finally {
+    await context?.close();
+  }
+});
+
 async function sync(page: Page, providerId: string): Promise<{ ok: boolean; data?: { conflicts: number }; error?: string }> {
   return page.evaluate(async (id) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId: id }), providerId);
 }
