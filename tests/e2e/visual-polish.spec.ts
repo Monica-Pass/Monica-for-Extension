@@ -16,7 +16,7 @@ test("auth card omits the decorative avatar", async ({}, testInfo) => {
 test("provider page is compact and decorated icon glyphs are centered", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("provider-polish-profile"), { channel: "chromium", headless: true, viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("provider-polish-profile"), { channel: "chromium", headless: true, colorScheme: "dark", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "visual polish master password" }))).toMatchObject({ ok: true });
@@ -29,6 +29,15 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     expect((await page.locator(".provider-list .source-card").first().boundingBox())!.width).toBeLessThanOrEqual(400);
     await expectCentered(page.locator(".source-icon").first(), page.locator(".source-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").first(), page.locator(".connect-icon m3e-icon").first());
+    await expectRoundedAndClipped(page.locator(".connect-source-card").first());
+    await expectRoundedAndClipped(page.locator(".provider-list .source-card").first());
+    await expectAllRoundedAndClipped(page.locator("main m3e-card"));
+    const connectionShape = await page.locator(".connect-source-card").first().evaluate((host) => ({
+      host: getComputedStyle(host).borderRadius,
+      button: getComputedStyle(host.querySelector(".connect-source")!).borderRadius
+    }));
+    expect(connectionShape.button).toBe(connectionShape.host);
+    await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).hover();
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
     await expect(page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toBeVisible();
@@ -38,8 +47,12 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
 
     await page.getByRole("button", { name: "概览" }).click();
     await expectCentered(page.locator(".feature-icon"), page.locator(".feature-icon m3e-icon"));
+    await expectAllRoundedAndClipped(page.locator("main m3e-card"));
+    await page.getByRole("button", { name: "设置与备份" }).click();
+    await expectAllRoundedAndClipped(page.locator("main m3e-card"));
     await page.getByRole("button", { name: "密码源" }).click();
     await page.waitForTimeout(400);
+    await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).hover();
     await page.screenshot({ path: testInfo.outputPath("provider-page.png"), fullPage: true });
   } finally { await context?.close(); }
 });
@@ -84,4 +97,24 @@ async function expectCentered(container: Locator, glyph: Locator): Promise<void>
   }, glyphElement);
   expect(Math.abs(outerCenter.x - innerCenter.x), `${label} horizontal center`).toBeLessThanOrEqual(1);
   expect(Math.abs(outerCenter.y - innerCenter.y), `${label} vertical center`).toBeLessThanOrEqual(1);
+}
+
+async function expectRoundedAndClipped(card: Locator): Promise<void> {
+  const styles = await card.evaluate((host) => {
+    const base = host.shadowRoot?.querySelector<HTMLElement>(".base");
+    return {
+      hostRadius: getComputedStyle(host).borderRadius,
+      baseRadius: base ? getComputedStyle(base).borderRadius : "missing",
+      overflow: getComputedStyle(host).overflow
+    };
+  });
+  expect(styles.hostRadius).not.toBe("0px");
+  expect(styles.hostRadius).toBe(styles.baseRadius);
+  expect(["hidden", "clip"]).toContain(styles.overflow);
+}
+
+async function expectAllRoundedAndClipped(cards: Locator): Promise<void> {
+  const count = await cards.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) await expectRoundedAndClipped(cards.nth(index));
 }

@@ -121,6 +121,8 @@ m3e-card {
   --m3e-filled-card-hover-container-elevation: var(--md-sys-elevation-level1, 0 1px 3px rgba(0, 0, 0, 0.14));
   --m3e-outlined-card-container-color: color-mix(in srgb, var(--md-sys-color-surface-container-low, var(--app-surface)) 92%, var(--app-bg));
   --m3e-outlined-card-outline-color: color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 54%, transparent);
+  border-radius: var(--m3e-card-shape);
+  overflow: hidden;
 }
 
 m3e-button {
