@@ -101,6 +101,7 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
     const rawOtpType = stringValue(data.otpType);
     const otpType = rawOtpType ? normalizeOtpType(rawOtpType) : undefined;
     const steamSharedSecret = firstString(data, "steamSharedSecretBase64");
+    const steamSession = parseSteamSession(firstString(data, "steamRawJson"));
     return {
       ...base,
       kind: "totp",
@@ -122,6 +123,10 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       steamDeviceId: optionalString(firstString(data, "steamDeviceId")),
       steamSerialNumber: optionalString(firstString(data, "steamSerialNumber")),
       steamSharedSecretBase64: optionalString(steamSharedSecret),
+      steamId: steamSession.steamId,
+      steamAccessToken: steamSession.accessToken,
+      steamRefreshToken: steamSession.refreshToken,
+      steamLoginSecure: steamSession.loginSecure,
       steamRevocationCode: optionalString(firstString(data, "steamRevocationCode")),
       steamIdentitySecret: optionalString(firstString(data, "steamIdentitySecret")),
       steamTokenGid: optionalString(firstString(data, "steamTokenGid")),
@@ -508,6 +513,21 @@ function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
 function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
   return normalized === "HOTP" || normalized === "STEAM" || normalized === "YANDEX" || normalized === "MOTP" ? normalized : "TOTP";
+}
+
+function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: string; refreshToken?: string; loginSecure?: string } {
+  if (!rawJson.trim()) return {};
+  try {
+    const root = JSON.parse(rawJson) as Record<string, unknown>;
+    const session = (root.Session || root.session) as Record<string, unknown> | undefined;
+    const loginSecure = firstString(root, "steamLoginSecure", "steam_login_secure") || firstString(session || {}, "SteamLoginSecure", "steamLoginSecure");
+    const accessToken = firstString(root, "access_token", "accessToken", "oauth_token", "OAuthToken") || firstString(session || {}, "AccessToken", "access_token", "OAuthToken", "oauth_token") || loginSecure.split("||").slice(1).join("||");
+    const refreshToken = firstString(root, "refresh_token", "refreshToken") || firstString(session || {}, "RefreshToken", "refresh_token");
+    const steamId = firstString(root, "steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64") || firstString(session || {}, "SteamID", "steamid", "steam_id") || loginSecure.split("||")[0];
+    return { steamId: optionalString(steamId), accessToken: optionalString(accessToken), refreshToken: optionalString(refreshToken), loginSecure: optionalString(loginSecure) };
+  } catch {
+    return {};
+  }
 }
 function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {
   const algorithm = numberValue(value, -7);

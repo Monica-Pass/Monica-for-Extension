@@ -13,6 +13,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 - browser-local Passkey private keys;
 - WebDAV passwords and Android backup passwords;
 - Bitwarden access/refresh tokens and decrypted account keys;
+- Steam shared/identity secrets, SteamID64 and access/refresh tokens;
 - encrypted vault backups and provider conflict snapshots;
 - fill/save/Passkey request context and diagnostic metadata.
 
@@ -25,7 +26,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Isolated-world content script | Restricted extension code | Field metadata and one explicitly selected fill payload |
 | Main-world Passkey bridge | Hostile page boundary | Public WebAuthn request/result messages only |
 | Web page and frames | Untrusted | No vault listing, provider credential, TOTP seed or private key |
-| WebDAV/Bitwarden server | Untrusted remote peer | Protocol-required requests; encrypted backup bytes where configured |
+| WebDAV/Bitwarden/Steam server | Untrusted remote peer | Protocol-required requests; encrypted backup bytes where configured |
 | Browser profile/OS | Platform trust | Encrypted vault and short-lived trusted session material |
 | Build dependencies/CI | Supply-chain boundary | Source and test fixtures, never production user secrets |
 
@@ -41,6 +42,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 8. Provider data and backup archives are untrusted inputs and must pass size, origin, path and format limits.
 9. WebDAV credentials must not cross an insecure transport, redirect, origin boundary or attacker-controlled path boundary.
 10. Release artifacts must be reproducible from the committed lockfile and accompanied by verifiable inventory and dependency evidence.
+11. Steam confirmation/login messages accept only an item ID and selected request identifiers; secrets and session tokens are loaded from the unlocked vault by the service worker.
 
 ## Threat analysis
 
@@ -56,6 +58,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Secret leakage in build/logs | Redacted provider errors, TruffleHog, fixture-token scan, no source maps, package inventory verification | Native GitHub Secret Scanning is unavailable while this private plan lacks the feature; independent audit remains required |
 | Dependency compromise | Official-registry lockfile integrity, install scripts disabled by default, `npm ci`, production audit, CodeQL, dependency review, SBOM and Dependabot alerts | Registry and CI platform remain supply-chain trust anchors; npm registry signature-key availability is external |
 | Malicious extension update | Action allowlist, platform SHA pinning, web commit sign-off and reproducible package evidence | Branch protection, signed commit/tag chain, store signing and maintainer account security remain external/plan-dependent controls |
+| Steam token or confirmation misuse | Trusted-extension sender checks, unlocked-vault lookup by item ID, Android-compatible HMAC/protobuf signing, temporary Steam cookies restored after each request | Steam private APIs may change; requests can still fail or require re-authentication |
 
 ## Permission rationale
 
@@ -64,6 +67,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | `storage` | Encrypted vault envelope and trusted session state | Never store vault plaintext in `localStorage`/`sessionStorage` |
 | `alarms` | Auto-lock checks | Clear pending sensitive operations when locked |
 | `webNavigation` | Cross-frame matching and safe explicit filling | Do not use browsing history for analytics |
+| `cookies` | Temporarily provide Steam Mobile Confirmation cookies for an explicit user operation | Touch only three `steamcommunity.com` mobile cookies and restore their prior values immediately |
 | HTTP/HTTPS host access | Password-manager field detection, explicit filling and user-configured providers | No remote code; content script receives minimum data; provider URL confinement |
 | Main-world script | WebAuthn API bridge | Public WebAuthn messages only; no vault or provider access |
 
@@ -80,6 +84,7 @@ Repository Actions are restricted to GitHub-owned actions plus the explicitly us
 - Android backup: AES-256-GCM with Android's `MONICA_ENC_V1` envelope and PBKDF2-HMAC-SHA256 at 100,000 iterations.
 - Randomness: Web Crypto random values.
 - Passkeys: ES256 browser-local credentials; Android aliases are non-exportable metadata.
+- Steam Guard: HMAC-SHA1 30-second codes; confirmation hashes use HMAC-SHA1 and mobile login approval signatures use HMAC-SHA256, matching Monica Android.
 
 AES-GCM, legacy PBKDF2 and ECDSA use platform Web Crypto. Argon2id uses the bundled `hash-wasm` implementation under the extension CSP; no cryptographic code is downloaded at runtime. Argon2id output is covered by an independent Python vector.
 

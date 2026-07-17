@@ -9,7 +9,7 @@ const missing = scripts.filter((name) => !manifest.content_scripts?.some((entry)
 if (missing.length || manifest.background?.service_worker !== "background.js") throw new Error(`Missing trusted extension scripts: ${missing.join(", ")}`);
 if (!manifest.content_scripts.some((entry) => entry.world === "MAIN" && entry.js?.includes("main-world.js") && entry.run_at === "document_start")) throw new Error("MAIN-world Passkey bridge is not document_start.");
 if (manifest.externally_connectable || manifest.optional_permissions || manifest.optional_host_permissions) throw new Error("Release manifest exposes an unexpected external or optional privilege surface.");
-if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
+if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "cookies", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
 if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(["http://*/*", "https://*/*"])) throw new Error("Release manifest host access changed without a security review.");
 const csp = manifest.content_security_policy?.extension_pages || "";
 for (const directive of ["script-src 'self' 'wasm-unsafe-eval'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) {

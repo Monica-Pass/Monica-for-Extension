@@ -39,6 +39,25 @@ export interface WalletFillResult {
   filledFields: WalletFieldName[];
 }
 
+export interface SteamConfirmation {
+  id: string;
+  nonce: string;
+  type: string;
+  headline: string;
+  summary: string;
+  imageUrl: string;
+  creationTime: number;
+}
+
+export interface SteamPendingLogin {
+  clientId: number;
+  version: number;
+  ip: string;
+  city: string;
+  country: string;
+  deviceName: string;
+}
+
 export type PasskeyRequest =
   | { operation: "create"; challenge: string; rpId?: string; rpName: string; userId: string; userName: string; userDisplayName: string; algorithms: number[]; excludeCredentialIds: string[] }
   | { operation: "get"; challenge: string; rpId?: string; allowCredentialIds: string[] };
@@ -107,6 +126,10 @@ export type ExtensionRequest =
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number }
   | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[] }
   | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number }
+  | { type: "STEAM_LIST_CONFIRMATIONS"; itemId: string }
+  | { type: "STEAM_RESPOND_CONFIRMATION"; itemId: string; confirmation: SteamConfirmation; accept: boolean }
+  | { type: "STEAM_LIST_PENDING_LOGINS"; itemId: string }
+  | { type: "STEAM_RESPOND_LOGIN"; itemId: string; login: Pick<SteamPendingLogin, "clientId" | "version">; approve: boolean }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }

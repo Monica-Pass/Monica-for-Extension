@@ -65,6 +65,10 @@ export interface TotpItem extends VaultItemBase {
   steamDeviceId?: string;
   steamSerialNumber?: string;
   steamSharedSecretBase64?: string;
+  steamId?: string;
+  steamAccessToken?: string;
+  steamRefreshToken?: string;
+  steamLoginSecure?: string;
   steamRevocationCode?: string;
   steamIdentitySecret?: string;
   steamTokenGid?: string;

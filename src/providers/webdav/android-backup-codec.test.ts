@@ -314,6 +314,16 @@ function currentAndroidRecordsFixture() {
 }
 
 describe("Android backup ZIP codec", () => {
+  it("derives Steam session credentials from Monica Android steamRawJson without flattening them into itemData", () => {
+    const path = "folders/_root/authenticators/totp_steam_1700000000000.json";
+    const steamRawJson = JSON.stringify({ steamid: "76561198000000000", access_token: "access-token", refresh_token: "refresh-token", steamLoginSecure: "76561198000000000||access-token" });
+    const raw = { id: 901, itemType: "TOTP", title: "Steam", itemData: JSON.stringify({ secret: "shared", issuer: "Steam", accountName: "joy", otpType: "STEAM", digits: 5, period: 30, algorithm: "SHA1", steamSharedSecretBase64: "shared", steamIdentitySecret: "identity", steamDeviceId: "android:device", steamRawJson }), notes: "", isFavorite: false, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000 };
+    const document = readAndroidBackup(zipSync({ [path]: strToU8(JSON.stringify(raw)) }), "provider-steam");
+    expect(document.items[0]).toMatchObject({ kind: "totp", otpType: "STEAM", steamId: "76561198000000000", steamAccessToken: "access-token", steamRefreshToken: "refresh-token", steamLoginSecure: "76561198000000000||access-token" });
+    const output = unzipSync(writeAndroidBackup(document, document.items, "provider-steam"));
+    expect(JSON.parse(strFromU8(output[path]))).toEqual(raw);
+  });
+
   it("maps all Android vault record kinds and legacy field aliases", () => {
     const document = readAndroidBackup(fixtureZip(), "provider-1");
     expect(document.warnings).toEqual([]);

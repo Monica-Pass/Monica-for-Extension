@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "default_locale": "zh_CN",
   "minimum_chrome_version": "109",
-  "permissions": ["alarms", "storage", "webNavigation"],
+  "permissions": ["alarms", "cookies", "storage", "webNavigation"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "__MSG_actionTitle__",

@@ -21,7 +21,7 @@ describe("commercial installability and least privilege", () => {
 
   it("uses only required named permissions and explicit HTTP/HTTPS host scopes", async () => {
     const manifest = await readJson<{ permissions: string[]; host_permissions: string[]; content_scripts: Array<{ matches: string[]; world?: string }> }>("public/manifest.json");
-    expect([...manifest.permissions].sort()).toEqual(["alarms", "storage", "webNavigation"]);
+    expect([...manifest.permissions].sort()).toEqual(["alarms", "cookies", "storage", "webNavigation"]);
     expect(manifest.permissions).not.toContain("activeTab");
     expect(manifest.permissions).not.toContain("tabs");
     expect([...manifest.host_permissions].sort()).toEqual(["http://*/*", "https://*/*"]);

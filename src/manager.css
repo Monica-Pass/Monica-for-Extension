@@ -525,3 +525,66 @@
 .totp-code-cell small {
   color: var(--m3e-color-on-surface-variant, #666);
 }
+
+.steam-network-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 240px;
+}
+
+.steam-action-buttons,
+.steam-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.steam-action-buttons button,
+.steam-request-actions button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--m3e-color-outline-variant, #c7c7c7);
+  border-radius: 16px;
+  background: var(--m3e-color-surface-container-high, #eee);
+  color: inherit;
+  cursor: pointer;
+}
+
+.steam-action-buttons button:disabled,
+.steam-request-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.steam-request-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steam-request-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--m3e-color-surface-container, #f3f3f3);
+}
+
+.steam-request-list li > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.steam-request-list small,
+.steam-action-error {
+  color: var(--m3e-color-on-surface-variant, #666);
+}
+
+.steam-action-error {
+  color: var(--m3e-color-error, #ba1a1a);
+}

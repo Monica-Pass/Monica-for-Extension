@@ -1,10 +1,11 @@
-import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type VaultItem } from "../core/model";
+import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { ProviderRegistry } from "../core/provider";
 import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
+import { listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
@@ -148,6 +149,22 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_FILL_WALLET": {
       assertExtensionPage(sender);
       return fillWalletItem(request.itemId, request.tabId, request.frameId);
+    }
+    case "STEAM_LIST_CONFIRMATIONS": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, listSteamConfirmations);
+    }
+    case "STEAM_RESPOND_CONFIRMATION": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, (item) => respondToSteamConfirmation(item, request.confirmation, request.accept));
+    }
+    case "STEAM_LIST_PENDING_LOGINS": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, listSteamPendingLogins);
+    }
+    case "STEAM_RESPOND_LOGIN": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, (item) => respondToSteamLogin(item, request.login, request.approve));
     }
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);
@@ -301,6 +318,21 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.removeProvider(request.providerId);
   }
   throw new Error("不支持的 Monica 运行时命令。");
+}
+
+async function requireSteamItem(itemId: string): Promise<TotpItem> {
+  const item = await service.getItem(itemId);
+  if (!item || item.kind !== "totp" || item.otpType !== "STEAM") throw new Error("Steam 验证器不存在或类型不正确。");
+  return structuredClone(item);
+}
+
+async function runSteamOperation<T>(itemId: string, operation: (item: TotpItem) => Promise<T>): Promise<T> {
+  const item = await requireSteamItem(itemId);
+  const before = JSON.stringify([item.steamAccessToken, item.steamRefreshToken, item.steamLoginSecure, item.steamRawJson]);
+  const result = await operation(item);
+  const after = JSON.stringify([item.steamAccessToken, item.steamRefreshToken, item.steamLoginSecure, item.steamRawJson]);
+  if (before !== after) await service.upsertItem({ ...item, updatedAt: new Date().toISOString() });
+  return result;
 }
 
 function abortProviderSyncs(): void {
