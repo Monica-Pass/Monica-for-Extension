@@ -13,6 +13,21 @@ function fixtureZip() {
     website: "https://accounts.example.com",
     notes: "fixture",
     isFavorite: true,
+    loginType: "PASSWORD",
+    appPackageName: "com.example.app",
+    appName: "Example App",
+    email: "joy@example.com",
+    phone: "+8613800000000",
+    passkeyBindings: '[{"credentialId":"bound"}]',
+    sshKeyData: '{"private":"encrypted"}',
+    wifiMetadata: '{"ssid":"Monica"}',
+    customIconType: "UPLOADED",
+    customIconValue: "example.enc",
+    customIconUpdatedAt: 1_700_000_002_000,
+    categoryId: 8,
+    categoryName: "Work",
+    imagePaths: '["image-a.enc"]',
+    customFields: [{ title: "tenant", value: "cn", isProtected: false }],
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_001_000,
     futureAndroidField: { preserve: true }
@@ -346,7 +361,20 @@ describe("Android backup ZIP codec", () => {
     const document = readAndroidBackup(fixtureZip(), "provider-1");
     expect(document.warnings).toEqual([]);
     expect(document.items.map((item) => item.kind).sort()).toEqual(["billing-address", "card", "identity", "login", "passkey", "payment-account", "secure-note", "totp"]);
-    expect(document.items.find((item) => item.kind === "login")).toMatchObject({ username: "joy@example.com", password: "android-secret" });
+    expect(document.items.find((item) => item.kind === "login")).toMatchObject({
+      username: "joy@example.com",
+      password: "android-secret",
+      loginType: "PASSWORD",
+      appPackageName: "com.example.app",
+      appName: "Example App",
+      email: "joy@example.com",
+      phone: "+8613800000000",
+      passkeyBindings: '[{"credentialId":"bound"}]',
+      sshKeyData: '{"private":"encrypted"}',
+      wifiMetadata: '{"ssid":"Monica"}',
+      customIconType: "UPLOADED",
+      customFields: [{ name: "tenant", value: "cn", protected: false }]
+    });
     expect(document.items.find((item) => item.kind === "secure-note")).toMatchObject({ content: "# Android note" });
     expect(document.items.find((item) => item.kind === "totp")).toMatchObject({ secret: "TOTPSECRET", algorithm: "SHA256", digits: 8, period: 60 });
     expect(document.items.find((item) => item.kind === "card")).toMatchObject({ number: "4111111111111111", expiryMonth: "12", expiryYear: "2030", securityCode: "123" });

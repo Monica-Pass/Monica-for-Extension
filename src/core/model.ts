@@ -57,6 +57,14 @@ export interface VaultItemBase {
   categoryName?: string;
   sortOrder?: number;
   imagePaths?: string[];
+  boundNoteId?: number;
+  replicaGroupId?: string;
+  keepassDatabaseId?: number;
+  keepassGroupPath?: string;
+  keepassEntryUuid?: string;
+  keepassGroupUuid?: string;
+  mdbxDatabaseId?: number;
+  mdbxFolderId?: string;
   providerRefs: ProviderReference[];
 }
 
@@ -68,7 +76,7 @@ export interface LoginItem extends VaultItemBase {
   uriRules?: LoginUriRule[];
   totpSecret?: string;
   customFields: SecureCustomField[];
-  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH" | "BARCODE";
+  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH" | "SSH_KEY" | "BARCODE";
   ssoProvider?: string;
   ssoRefEntryId?: number;
   appPackageName?: string;

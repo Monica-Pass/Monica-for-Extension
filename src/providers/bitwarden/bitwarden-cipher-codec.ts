@@ -1,4 +1,4 @@
-import type { CardItem, IdentityItem, LoginItem, PasskeyItem, ProviderReference, SecureNoteItem, VaultItem } from "../../core/model";
+import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureNoteItem, VaultItem } from "../../core/model";
 import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
 export interface DecodedBitwardenCipher {
@@ -24,7 +24,14 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
     const username = await decryptBitwardenString(stringValue(login, "Username", "username"), key);
     const password = await decryptBitwardenString(stringValue(login, "Password", "password"), key);
     const totpSecret = await decryptBitwardenString(stringValue(login, "Totp", "totp"), key);
-    const uris = await Promise.all(arrayValue(login, "Uris", "uris").map(async (entry) => decryptBitwardenString(stringValue(record(entry), "Uri", "uri"), key)));
+    const uriRules = await Promise.all(arrayValue(login, "Uris", "uris").map(async (entry): Promise<LoginUriRule> => {
+      const rawUri = record(entry);
+      return {
+        uri: await decryptBitwardenString(stringValue(rawUri, "Uri", "uri"), key),
+        matchType: bitwardenMatchType(value(rawUri, "Match", "match"))
+      };
+    }));
+    const uris = uriRules.map((rule) => rule.uri);
     const customFields = await Promise.all(arrayValue(raw, "Fields", "fields").map(async (entry) => {
       const field = record(entry);
       return {
@@ -39,6 +46,7 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       username,
       password,
       uris: [...new Set(uris.filter(Boolean))],
+      uriRules: uriRules.filter((rule) => Boolean(rule.uri)),
       totpSecret: totpSecret || undefined,
       customFields
     };
@@ -115,7 +123,10 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
       username: await encryptOptional(item.username, encryptionKey),
       password: await encryptOptional(item.password, encryptionKey),
       totp: await encryptOptional(item.totpSecret || "", encryptionKey),
-      uris: await Promise.all(item.uris.map(async (uri) => ({ uri: await encryptBitwardenString(uri, encryptionKey), match: null }))),
+      uris: await Promise.all(effectiveLoginUriRules(item).map(async (rule) => ({
+        uri: await encryptBitwardenString(rule.uri, encryptionKey),
+        match: bitwardenMatchCode(rule.matchType)
+      }))),
       fido2Credentials: value(preservedLogin, "Fido2Credentials", "fido2Credentials") || null
     };
     base.fields = await Promise.all(item.customFields.map(async (field) => ({
@@ -320,6 +331,20 @@ function lowerFirst(value: string): string {
 function value(raw: Record<string, unknown>, ...names: string[]): unknown {
   for (const name of names) if (name in raw) return raw[name];
   return undefined;
+}
+
+function effectiveLoginUriRules(item: LoginItem): LoginUriRule[] {
+  const rules = item.uriRules?.filter((rule) => rule.uri.trim()) || [];
+  const known = new Set(rules.map((rule) => rule.uri));
+  return [...rules, ...item.uris.filter((uri) => uri.trim() && !known.has(uri)).map((uri) => ({ uri, matchType: "base-domain" as const }))];
+}
+
+function bitwardenMatchType(value: unknown): LoginUriMatchType {
+  return ({ 0: "base-domain", 1: "domain", 2: "starts-with", 3: "exact", 4: "regex", 5: "never" } as Record<number, LoginUriMatchType>)[Number(value)] || "base-domain";
+}
+
+function bitwardenMatchCode(value: LoginUriMatchType): number {
+  return ({ "base-domain": 0, domain: 1, "starts-with": 2, exact: 3, regex: 4, never: 5 } as const)[value];
 }
 
 function stringValue(raw: Record<string, unknown>, ...names: string[]): string {

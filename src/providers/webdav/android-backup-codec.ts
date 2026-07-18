@@ -81,13 +81,33 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       username: stringValue(raw.username),
       password: stringValue(raw.password),
       uris: splitUris(stringValue(raw.website)),
+      uriRules: splitUris(stringValue(raw.website)).map((uri) => ({ uri, matchType: "base-domain" })),
       totpSecret: stringValue(raw.authenticatorKey) || undefined,
       customFields: Array.isArray(raw.customFields)
         ? raw.customFields.map((field) => {
             const value = field as Record<string, unknown>;
             return { name: stringValue(value.title), value: stringValue(value.value), protected: Boolean(value.isProtected) };
           })
-        : []
+        : [],
+      loginType: normalizeLoginType(raw.loginType),
+      ssoProvider: optionalString(raw.ssoProvider),
+      ssoRefEntryId: optionalNumber(raw.ssoRefEntryId),
+      appPackageName: optionalString(raw.appPackageName),
+      appName: optionalString(raw.appName),
+      email: optionalString(raw.email),
+      phone: optionalString(raw.phone),
+      addressLine: optionalString(raw.addressLine),
+      city: optionalString(raw.city),
+      state: optionalString(raw.state),
+      zipCode: optionalString(raw.zipCode),
+      country: optionalString(raw.country),
+      passkeyBindings: optionalString(raw.passkeyBindings),
+      sshKeyData: optionalString(raw.sshKeyData),
+      wifiMetadata: optionalString(raw.wifiMetadata),
+      barcodeData: optionalString(raw.barcodeData),
+      customIconType: optionalString(raw.customIconType),
+      customIconValue: optionalString(raw.customIconValue),
+      customIconUpdatedAt: optionalNumber(raw.customIconUpdatedAt)
     } satisfies LoginItem;
   }
 
@@ -240,13 +260,28 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
 
 function baseFields(path: string, raw: Record<string, unknown>, providerId: string) {
   const createdAt = dateValue(raw.createdAt);
+  const updatedAt = dateValue(raw.updatedAt, createdAt);
   return {
     id: `android:${providerId}:${path}`,
     title: stringValue(raw.title) || stringValue(raw.rpName) || "未命名项目",
     favorite: Boolean(raw.isFavorite),
     notes: stringValue(raw.notes),
     createdAt,
-    updatedAt: dateValue(raw.updatedAt, createdAt),
+    updatedAt,
+    deletedAt: Boolean(raw.isDeleted) ? dateValue(raw.deletedAt, updatedAt) : undefined,
+    archivedAt: Boolean(raw.isArchived) ? dateValue(raw.archivedAt, updatedAt) : undefined,
+    categoryId: optionalNumber(raw.categoryId),
+    categoryName: optionalString(raw.categoryName),
+    sortOrder: optionalNumber(raw.sortOrder),
+    imagePaths: parseStringArray(raw.imagePaths),
+    boundNoteId: optionalNumber(raw.boundNoteId),
+    replicaGroupId: optionalString(raw.replicaGroupId ?? raw.replica_group_id),
+    keepassDatabaseId: optionalNumber(raw.keepassDatabaseId),
+    keepassGroupPath: optionalString(raw.keepassGroupPath),
+    keepassEntryUuid: optionalString(raw.keepassEntryUuid ?? raw.keepass_entry_uuid),
+    keepassGroupUuid: optionalString(raw.keepassGroupUuid ?? raw.keepass_group_uuid),
+    mdbxDatabaseId: optionalNumber(raw.mdbxDatabaseId ?? raw.mdbx_database_id),
+    mdbxFolderId: optionalString(raw.mdbxFolderId ?? raw.mdbx_folder_id),
     providerRefs: [{ providerId, remoteId: path }] as ProviderReference[]
   };
 }
@@ -271,6 +306,22 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     setChanged("title", item.title, item.title, previous?.title);
     setChanged("notes", item.notes, item.notes, previous?.notes);
     setChanged("isFavorite", item.favorite, item.favorite, previous?.favorite);
+    setChanged("sortOrder", item.sortOrder || 0, item.sortOrder, previous?.sortOrder);
+    setChanged("categoryId", item.categoryId ?? null, item.categoryId, previous?.categoryId);
+    setChanged("categoryName", item.categoryName ?? null, item.categoryName, previous?.categoryName);
+    setChanged("imagePaths", JSON.stringify(item.imagePaths || []), item.imagePaths || [], previous?.imagePaths || []);
+    setChanged("isDeleted", Boolean(item.deletedAt), item.deletedAt, previous?.deletedAt);
+    setChanged("deletedAt", item.deletedAt ? Date.parse(item.deletedAt) : null, item.deletedAt, previous?.deletedAt);
+    setChanged("isArchived", Boolean(item.archivedAt), item.archivedAt, previous?.archivedAt);
+    setChanged("archivedAt", item.archivedAt ? Date.parse(item.archivedAt) : null, item.archivedAt, previous?.archivedAt);
+    setChanged("boundNoteId", item.boundNoteId ?? null, item.boundNoteId, previous?.boundNoteId);
+    setChanged("replicaGroupId", item.replicaGroupId ?? null, item.replicaGroupId, previous?.replicaGroupId);
+    setChanged("keepassDatabaseId", item.keepassDatabaseId ?? null, item.keepassDatabaseId, previous?.keepassDatabaseId);
+    setChanged("keepassGroupPath", item.keepassGroupPath ?? null, item.keepassGroupPath, previous?.keepassGroupPath);
+    setChanged("keepassEntryUuid", item.keepassEntryUuid ?? null, item.keepassEntryUuid, previous?.keepassEntryUuid);
+    setChanged("keepassGroupUuid", item.keepassGroupUuid ?? null, item.keepassGroupUuid, previous?.keepassGroupUuid);
+    setChanged("mdbxDatabaseId", item.mdbxDatabaseId ?? null, item.mdbxDatabaseId, previous?.mdbxDatabaseId);
+    setChanged("mdbxFolderId", item.mdbxFolderId ?? null, item.mdbxFolderId, previous?.mdbxFolderId);
     setChanged("createdAt", Date.parse(item.createdAt) || Date.now(), item.createdAt, previous?.createdAt);
     setChanged("updatedAt", Date.parse(item.updatedAt) || Date.now(), item.updatedAt, previous?.updatedAt);
     return previous;
@@ -286,6 +337,13 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("password", item.password, item.password, previous?.password);
       setChanged("website", item.uris.join("\n"), item.uris, previous?.uris);
       setChanged("authenticatorKey", item.totpSecret || "", item.totpSecret || "", previous?.totpSecret || "");
+      setChanged("loginType", item.loginType || "PASSWORD", item.loginType || "PASSWORD", previous?.loginType || "PASSWORD");
+      setChanged("ssoProvider", item.ssoProvider || "", item.ssoProvider || "", previous?.ssoProvider || "");
+      setChanged("ssoRefEntryId", item.ssoRefEntryId ?? null, item.ssoRefEntryId, previous?.ssoRefEntryId);
+      for (const key of ["appPackageName", "appName", "email", "phone", "addressLine", "city", "state", "zipCode", "country", "passkeyBindings", "sshKeyData", "wifiMetadata", "barcodeData", "customIconType", "customIconValue"] as const) {
+        setChanged(key, item[key] || "", item[key] || "", previous?.[key] || "");
+      }
+      setChanged("customIconUpdatedAt", item.customIconUpdatedAt || 0, item.customIconUpdatedAt, previous?.customIconUpdatedAt);
       const customFields = item.customFields.map((field) => ({ title: field.name, value: field.value, isProtected: field.protected }));
       setChanged("customFields", customFields, item.customFields, previous?.customFields);
       return { id, raw };
@@ -464,6 +522,13 @@ function splitUris(value: string): string[] {
   return [...new Set(value.split(/[\r\n,;]+/).map((part) => part.trim()).filter(Boolean))];
 }
 
+function parseStringArray(value: unknown): string[] | undefined {
+  const parsed = typeof value === "string" ? (() => { try { return JSON.parse(value) as unknown; } catch { return []; } })() : value;
+  if (!Array.isArray(parsed)) return undefined;
+  const values = parsed.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()));
+  return values.length ? values : undefined;
+}
+
 function parseNestedJson(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object") return value as Record<string, unknown>;
   if (typeof value !== "string" || !value.trim()) return {};
@@ -497,6 +562,7 @@ function numberValue(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 function optionalNumber(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
@@ -513,6 +579,11 @@ function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
 function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
   return normalized === "HOTP" || normalized === "STEAM" || normalized === "YANDEX" || normalized === "MOTP" ? normalized : "TOTP";
+}
+
+function normalizeLoginType(value: unknown): NonNullable<LoginItem["loginType"]> {
+  const normalized = stringValue(value).trim().toUpperCase();
+  return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH" || normalized === "SSH_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
 }
 
 function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: string; refreshToken?: string; loginSecure?: string } {

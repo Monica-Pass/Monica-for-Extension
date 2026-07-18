@@ -124,7 +124,7 @@ function button(rootDocument: Document, text: string, className: string): HTMLBu
 const STYLES = `
   :host { color-scheme: light dark; }
   * { box-sizing: border-box; }
-  .card { pointer-events:auto; position:fixed; top:18px; right:18px; width:min(380px,calc(100vw - 36px)); display:grid; gap:16px; padding:18px; border:1px solid color-mix(in srgb,#6750a4 24%,transparent); border-radius:28px; color:#242126; background:#fff8ff; box-shadow:0 18px 54px rgba(31,24,40,.24); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; animation:monica-in .22s cubic-bezier(.2,.8,.2,1); }
+  .card { pointer-events:auto; position:fixed; top:18px; right:18px; width:min(380px,calc(100vw - 36px)); display:grid; gap:16px; padding:18px; border:1px solid color-mix(in srgb,#6750a4 24%,transparent); border-radius:8px; color:#242126; background:#fff8ff; box-shadow:0 18px 54px rgba(31,24,40,.24); font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; animation:monica-in .22s cubic-bezier(.2,.8,.2,1); }
   .header,.account,.actions { display:flex; align-items:center; }
   .header { gap:12px; }
   .header img { width:42px; height:42px; object-fit:contain; }
@@ -132,17 +132,17 @@ const STYLES = `
   .title { font-size:16px; }
   .subtitle,.password,.field-label { color:#655d68; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   button,select { font:inherit; }
-  button { min-height:42px; border:0; border-radius:21px; padding:0 16px; cursor:pointer; font-weight:700; }
+  button { min-height:44px; border:0; border-radius:8px; padding:0 16px; cursor:pointer; font-weight:700; }
   button:focus-visible,select:focus-visible { outline:3px solid #6750a4; outline-offset:2px; }
   button:disabled { cursor:wait; opacity:.6; }
-  .icon-button { width:42px; padding:0; color:#655d68; background:transparent; font-size:24px; }
+  .icon-button { width:44px; padding:0; color:#655d68; background:transparent; font-size:24px; line-height:1; }
   .icon-button:hover,.secondary:hover { background:#f0e8f2; }
-  .account { gap:12px; min-height:64px; border-radius:20px; padding:10px 12px; background:#f4ecf5; }
-  .account-icon { width:42px; height:42px; flex:0 0 42px; display:grid; place-items:center; border-radius:15px; color:#21005d; background:#eaddff; font-weight:800; }
+  .account { gap:12px; min-height:64px; border-radius:8px; padding:10px 12px; background:#f4ecf5; }
+  .account-icon { width:44px; height:44px; flex:0 0 44px; display:grid; place-items:center; border-radius:8px; color:#21005d; background:#eaddff; font-weight:800; }
   .account-copy { min-width:0; display:grid; }
   .account-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .field { display:grid; gap:6px; }
-  select { width:100%; min-height:48px; border:1px solid #cac4d0; border-radius:15px; padding:0 12px; color:#242126; background:#fff; }
+  select { width:100%; min-height:48px; border:1px solid #cac4d0; border-radius:8px; padding:0 12px; color:#242126; background:#fff; }
   .status { min-height:20px; margin:0; color:#655d68; font-size:12px; text-align:center; }
   .status.success { color:#146c3a; }
   .status.error { color:#b3261e; }

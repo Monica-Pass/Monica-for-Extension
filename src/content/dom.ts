@@ -18,6 +18,7 @@ export interface FillCredentialInput {
   username?: string;
   password?: string;
   totpCode?: string;
+  customFields?: Array<{ name: string; value: string }>;
 }
 
 const USERNAME_SELECTORS = [
@@ -69,7 +70,7 @@ export function scanPage(rootDocument: Document = document, pageLocation: Locati
   };
 }
 
-export function fillCredential(credential: FillCredentialInput, rootDocument: Document = document): { ok: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean } {
+export function fillCredential(credential: FillCredentialInput, rootDocument: Document = document): { ok: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number } {
   const fields = findLoginFields(rootDocument);
   const filledUsername = Boolean(fields.username && credential.username);
   const filledPassword = Boolean(fields.password && credential.password);
@@ -77,10 +78,26 @@ export function fillCredential(credential: FillCredentialInput, rootDocument: Do
   if (fields.username && credential.username) setNativeValue(fields.username, credential.username);
   if (fields.password && credential.password) setNativeValue(fields.password, credential.password);
   if (fields.totp && credential.totpCode) setNativeValue(fields.totp, credential.totpCode);
-  const focusTarget = filledTotp ? fields.totp : filledPassword ? fields.password : filledUsername ? fields.username : undefined;
+  const customTargets = fillCustomFields(credential.customFields || [], fields, rootDocument);
+  const focusTarget = customTargets[customTargets.length - 1] || (filledTotp ? fields.totp : filledPassword ? fields.password : filledUsername ? fields.username : undefined);
   if (!focusTarget) return { ok: false, error: "当前页面没有与此登录项对应的可填写字段。" };
   focusTarget.focus();
-  return { ok: true, filledUsername, filledPassword, filledTotp };
+  return { ok: true, filledUsername, filledPassword, filledTotp, filledCustomFields: customTargets.length };
+}
+
+function fillCustomFields(values: Array<{ name: string; value: string }>, loginFields: ReturnType<typeof findLoginFields>, root: ParentNode): HTMLInputElement[] {
+  const reserved = new Set([loginFields.username, loginFields.password, loginFields.totp].filter(Boolean));
+  const inputs = queryComposedAll<HTMLInputElement>(root, "input").filter((input) => visibleInput(input) && !reserved.has(input));
+  const filled: HTMLInputElement[] = [];
+  for (const field of values) {
+    const name = normalizeHint(field.name);
+    if (!name || !field.value) continue;
+    const target = inputs.find((input) => !filled.includes(input) && inputHints(input).includes(name));
+    if (!target) continue;
+    setNativeValue(target, field.value);
+    filled.push(target);
+  }
+  return filled;
 }
 
 function firstVisible(selector: string, root: ParentNode): HTMLInputElement | undefined {
@@ -106,8 +123,12 @@ function inputHints(input: HTMLInputElement): string[] {
   const labelledBy = (input.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
     .map((id) => elementByIdInRoot(input, id)?.textContent);
   return [input.id, input.name, input.getAttribute("aria-label"), input.placeholder, ...labelledBy, ...Array.from(input.labels || []).map((label) => label.textContent)]
-    .map((value) => (value || "").toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, ""))
+    .map((value) => normalizeHint(value || ""))
     .filter(Boolean);
+}
+
+function normalizeHint(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function visibleInput(input: HTMLInputElement): boolean {

@@ -61,6 +61,8 @@ test("save prompt explicitly stores a newly submitted login in the encrypted loc
 
     const prompt = page.locator("#monica-save-prompt-host");
     await expect(prompt.locator(".title")).toHaveText("保存到 Monica？");
+    await expect(prompt.locator(".card")).toHaveCSS("border-radius", "8px");
+    await expect(prompt.locator(".primary")).toHaveCSS("min-height", "44px");
     await expect(prompt.locator("select")).toHaveValue(/.+/);
     await prompt.locator(".primary").click();
     await expect(prompt.locator(".status")).toContainText("已保存");

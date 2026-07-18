@@ -10,7 +10,7 @@ import AppearancePanel from "./components/AppearancePanel.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
-import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type TotpItem, type VaultItem } from "./core/model";
+import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { normalizeImportedVaultItem } from "./manager/import-items";
@@ -20,6 +20,23 @@ import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
 type Section = "overview" | VaultManagerSection | "steam" | "providers" | "settings";
+type LoginType = NonNullable<LoginItem["loginType"]>;
+
+interface LoginForm {
+  name: string;
+  username: string;
+  password: string;
+  notes: string;
+  favorite: boolean;
+  archived: boolean;
+  providerId: string;
+  loginType: LoginType;
+  ssoProvider: string;
+  ssoRefEntryId: string;
+  totpSecret: string;
+  uriRules: LoginUriRule[];
+  customFields: SecureCustomField[];
+}
 
 const vaultItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
@@ -59,7 +76,7 @@ const selectedEncryptedBackupName = ref("");
 const auth = reactive({ masterPassword: "", confirmation: "" });
 const passwordChange = reactive({ currentPassword: "", newPassword: "", confirmation: "" });
 const restoreForm = reactive({ backupPassword: "", currentPassword: "" });
-const form = reactive({ name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: "" });
+const form = reactive<LoginForm>(emptyLoginForm());
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
 const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
 
@@ -255,7 +272,7 @@ async function removeVaultItem(item: VaultItem) {
 
 function openCreate() {
   editingId.value = null;
-  Object.assign(form, { name: "", username: "", password: "", urls: "", notes: "", favorite: false, providerId: defaultProviderId.value });
+  Object.assign(form, emptyLoginForm(defaultProviderId.value));
   formError.value = "";
   revealPassword.value = false;
   editorOpen.value = true;
@@ -263,7 +280,21 @@ function openCreate() {
 
 function openEdit(item: LoginItem) {
   editingId.value = item.id;
-  Object.assign(form, { name: item.title, username: item.username, password: item.password, urls: item.uris.join("\n"), notes: item.notes, favorite: item.favorite, providerId: item.providerRefs[0]?.providerId || providers.value.find((provider) => provider.kind === "local")?.id || "" });
+  Object.assign(form, {
+    name: item.title,
+    username: item.username,
+    password: item.password,
+    notes: item.notes,
+    favorite: item.favorite,
+    archived: Boolean(item.archivedAt),
+    providerId: item.providerRefs[0]?.providerId || providers.value.find((provider) => provider.kind === "local")?.id || "",
+    loginType: item.loginType || "PASSWORD",
+    ssoProvider: item.ssoProvider || "",
+    ssoRefEntryId: item.ssoRefEntryId == null ? "" : String(item.ssoRefEntryId),
+    totpSecret: item.totpSecret || "",
+    uriRules: effectiveLoginUriRules(item).map((rule) => ({ ...rule })),
+    customFields: item.customFields.map((field) => ({ ...field }))
+  });
   formError.value = "";
   revealPassword.value = false;
   editorOpen.value = true;
@@ -295,14 +326,31 @@ function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: Edita
 
 async function submitCredential() {
   if (!form.name.trim()) return void (formError.value = "请输入登录项名称。");
-  if (!form.password) return void (formError.value = "请输入密码。");
-  const uris = form.urls.split(/\r?\n|,/).map((url) => url.trim()).filter(Boolean);
-  if (!uris.length) return void (formError.value = "至少填写一个用于匹配的网站域名或网址。");
+  const uriRules = form.uriRules.map((rule) => ({ uri: rule.uri.trim(), matchType: rule.matchType })).filter((rule) => Boolean(rule.uri));
+  const uris = uriRules.map((rule) => rule.uri);
+  const customFields = form.customFields.map((field) => ({ ...field, name: field.name.trim() })).filter((field) => field.name || field.value);
+  const ssoRefEntryId = form.ssoRefEntryId.trim() ? Number(form.ssoRefEntryId) : undefined;
+  if (ssoRefEntryId !== undefined && (!Number.isSafeInteger(ssoRefEntryId) || ssoRefEntryId < 0)) return void (formError.value = "SSO 引用条目 ID 必须是非负整数。");
 
   const existing = credentials.value.find((item) => item.id === editingId.value);
+  const shared = {
+    title: form.name.trim(),
+    username: form.username.trim(),
+    password: form.password,
+    uris,
+    uriRules,
+    notes: form.notes.trim(),
+    favorite: form.favorite,
+    loginType: form.loginType,
+    ssoProvider: form.loginType === "SSO" ? form.ssoProvider.trim() : "",
+    ssoRefEntryId: form.loginType === "SSO" ? ssoRefEntryId : undefined,
+    totpSecret: form.totpSecret.trim() || undefined,
+    customFields,
+    archivedAt: form.archived ? existing?.archivedAt || new Date().toISOString() : undefined
+  };
   const item: LoginItem = existing
-    ? { ...existing, title: form.name.trim(), username: form.username.trim(), password: form.password, uris, notes: form.notes.trim(), favorite: form.favorite }
-    : createLoginItem({
+    ? { ...existing, ...shared }
+    : { ...createLoginItem({
         title: form.name,
         username: form.username,
         password: form.password,
@@ -310,11 +358,44 @@ async function submitCredential() {
         notes: form.notes,
         favorite: form.favorite,
         providerRefs: providers.value.find((provider) => provider.id === form.providerId)?.kind === "local" || !form.providerId ? [] : [{ providerId: form.providerId }]
-      });
+      }), ...shared };
   await vaultClient.upsertItem(item);
   await refreshItems();
   showNotice(existing ? "登录项已加密更新。" : "登录项已加密保存。");
   editorOpen.value = false;
+}
+
+function emptyLoginForm(providerId = ""): LoginForm {
+  return {
+    name: "", username: "", password: "", notes: "", favorite: false, archived: false, providerId,
+    loginType: "PASSWORD", ssoProvider: "", ssoRefEntryId: "", totpSecret: "",
+    uriRules: [{ uri: "", matchType: "base-domain" }], customFields: []
+  };
+}
+
+function effectiveLoginUriRules(item: LoginItem): LoginUriRule[] {
+  if (item.uriRules?.length) return item.uriRules;
+  return item.uris.map((uri) => ({ uri, matchType: "base-domain" }));
+}
+
+function addUriRule() {
+  form.uriRules.push({ uri: "", matchType: "base-domain" });
+}
+
+function removeUriRule(index: number) {
+  form.uriRules.splice(index, 1);
+}
+
+function addCustomField() {
+  form.customFields.push({ name: "", value: "", protected: false, type: "text" });
+}
+
+function removeCustomField(index: number) {
+  form.customFields.splice(index, 1);
+}
+
+function uriMatchTypeLabel(type: LoginUriMatchType): string {
+  return ({ "base-domain": "主域名", domain: "域及子域名", "starts-with": "网址开头", exact: "完全相同", regex: "正则表达式", never: "从不匹配" } as const)[type];
 }
 
 async function removeCredential(item: LoginItem) {
@@ -836,8 +917,18 @@ function errorMessage(error: unknown) {
       </form>
     </section></div>
 
-    <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>保存时整个密码库会重新加密。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitCredential">
-      <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label><label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label><label class="field"><span>密码 *</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label><label class="field"><span>匹配网站 *</span><textarea v-model="form.urls" rows="3" placeholder="github.com&#10;https://accounts.example.com"></textarea><small>每行一个域名或网址；子域名会自动匹配。</small></label><label class="field"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label><label class="field"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源；复制到其他源将在后续批量操作中提供。' : '外部密码源项目会在下次同步时写入。' }}</small></label><label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><footer><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>
+    <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog login-item-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>空用户名、空密码和无网址项目均可保存。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form login-item-form" @submit.prevent="submitCredential">
+      <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label>
+      <label class="field"><span>登录类型</span><select v-model="form.loginType"><option value="PASSWORD">密码</option><option value="SSO">SSO</option><option value="WIFI">Wi-Fi</option><option value="SSH">SSH</option><option value="BARCODE">条码</option></select></label>
+      <label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label>
+      <label class="field"><span>密码</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label>
+      <template v-if="form.loginType === 'SSO'"><label class="field"><span>SSO 提供商</span><input v-model="form.ssoProvider" autocomplete="off" placeholder="GOOGLE" /></label><label class="field"><span>引用条目 ID</span><input v-model="form.ssoRefEntryId" inputmode="numeric" placeholder="可选" /></label></template>
+      <label class="field field-wide"><span>绑定验证码密钥</span><input v-model="form.totpSecret" autocomplete="off" placeholder="Base32 或 otpauth 密钥" /><small>仅在点击填充时由后台生成验证码。</small></label>
+      <fieldset class="editor-fieldset field-wide"><legend>匹配网站（可选）</legend><div class="uri-rule-list"><div v-for="(rule, index) in form.uriRules" :key="index" class="uri-rule-row"><select v-model="rule.matchType" :aria-label="`网址 ${index + 1} 匹配方式`"><option v-for="type in (['base-domain','domain','starts-with','exact','regex','never'] as LoginUriMatchType[])" :key="type" :value="type">{{ uriMatchTypeLabel(type) }}</option></select><input v-model="rule.uri" :aria-label="`网址 ${index + 1}`" placeholder="https://accounts.example.com" /><m3e-icon-button type="button" :aria-label="`删除网址 ${index + 1}`" @click="removeUriRule(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addUriRule"><m3e-icon slot="icon" name="add"></m3e-icon>添加网址</m3e-button></fieldset>
+      <fieldset class="editor-fieldset field-wide"><legend>自定义字段</legend><div class="custom-field-list"><div v-for="(field, index) in form.customFields" :key="index" class="custom-field-row"><input v-model="field.name" :aria-label="`自定义字段 ${index + 1} 名称`" placeholder="字段名称" /><input v-model="field.value" :type="field.protected ? 'password' : 'text'" :aria-label="`自定义字段 ${index + 1} 值`" placeholder="字段值" /><label class="compact-check"><input v-model="field.protected" type="checkbox" /><span>隐藏</span></label><m3e-icon-button type="button" :aria-label="`删除自定义字段 ${index + 1}`" @click="removeCustomField(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addCustomField"><m3e-icon slot="icon" name="add"></m3e-icon>添加字段</m3e-button></fieldset>
+      <label class="field field-wide"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label>
+      <label class="field field-wide"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源。' : '外部密码源项目会在下次同步时写入。' }}</small></label>
+      <label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>收藏并优先显示</span></label><label class="favorite-row"><input v-model="form.archived" type="checkbox" /><span>归档并停止自动填充</span></label><p v-if="formError" class="form-error field-wide" role="alert">{{ formError }}</p><footer class="field-wide"><m3e-button variant="text" type="button" @click="editorOpen = false">取消</m3e-button><m3e-button variant="filled" type="submit">加密保存</m3e-button></footer>
     </form></section></div>
 
     <div v-if="bitwardenDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeBitwardenDialog"><section class="editor-dialog" role="dialog" aria-modal="true" aria-labelledby="bitwarden-dialog-title"><header><div><h2 id="bitwarden-dialog-title">{{ editingBitwardenId ? '重新登录 Bitwarden' : '连接 Bitwarden' }}</h2><p>主密码只用于本次登录和密钥派生，不会保存。</p></div><m3e-icon-button aria-label="关闭" @click="closeBitwardenDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="connectBitwarden">

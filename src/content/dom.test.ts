@@ -48,6 +48,15 @@ describe("content autofill DOM engine", () => {
     expect(otp.value).toBe("123456");
   });
 
+  it("fills custom fields only when their explicit labels match", () => {
+    const dom = page('<form><label>用户名<input autocomplete="username"></label><label>租户 ID<input id="tenant"></label><label>无关字段<input id="other"></label></form>');
+    showLightInputs(dom);
+    const result = fillCredential({ username: "joy", customFields: [{ name: "租户 ID", value: "monica-cn" }, { name: "不存在", value: "must-not-fill" }] }, dom.window.document);
+    expect(result).toMatchObject({ ok: true, filledUsername: true, filledCustomFields: 1 });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#tenant")!.value).toBe("monica-cn");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#other")!.value).toBe("");
+  });
+
   it("recognizes phone-number usernames and explicit 2FA labels", () => {
     const dom = page('<form><label>手机号码<input type="tel"></label><label>2FA 验证码<input aria-label="2FA code"></label></form>');
     showLightInputs(dom);

@@ -19,6 +19,7 @@ test("login popup fills username, password, and TOTP through the MV3 background 
         <label>Email <input id="username" autocomplete="username"></label>
         <label>Password <input id="password" type="password" autocomplete="current-password"></label>
         <label>Code <input id="otp" autocomplete="one-time-code"></label>
+        <label>Tenant ID <input id="tenant" aria-label="Tenant ID"></label>
       </form>`
     }));
 
@@ -43,8 +44,9 @@ test("login popup fills username, password, and TOTP through the MV3 background 
       username: "joy@example.com",
       password: "correct horse battery staple",
       uris: ["login.example.test"],
+      uriRules: [{ uri: "https://login.example.test/sign-in", matchType: "exact" }],
       totpSecret: "JBSWY3DPEHPK3PXP",
-      customFields: []
+      customFields: [{ name: "Tenant ID", value: "monica-cn", protected: false }]
     };
     const saveResult = await manager.evaluate(async (value) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: value }), item);
     expect(saveResult).toMatchObject({ ok: true });
@@ -59,6 +61,39 @@ test("login popup fills username, password, and TOTP through the MV3 background 
     await expect(loginPage.locator("#username")).toHaveValue("joy@example.com");
     await expect(loginPage.locator("#password")).toHaveValue("correct horse battery staple");
     await expect(loginPage.locator("#otp")).toHaveValue(/^\d{6}$/);
+    await expect(loginPage.locator("#tenant")).toHaveValue("monica-cn");
+  } finally {
+    await context?.close();
+  }
+});
+
+test("manager saves a metadata-only SSO login with empty username, password, and URI", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist");
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("empty-sso-profile"), {
+      channel: "chromium",
+      headless: true,
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage();
+    await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "metadata login password" }))).toMatchObject({ ok: true });
+    await manager.reload();
+    await manager.getByRole("button", { name: "添加登录项" }).click();
+    await manager.getByLabel("名称 *").fill("Company SSO");
+    await manager.getByLabel("登录类型").selectOption("SSO");
+    await manager.getByLabel("SSO 提供商").fill("GOOGLE");
+    await manager.screenshot({ path: testInfo.outputPath("metadata-login-editor.png"), fullPage: true });
+    await manager.getByRole("button", { name: "加密保存" }).click();
+    await manager.getByRole("button", { name: /^登录项/ }).click();
+    await expect(manager.getByText("Company SSO", { exact: true })).toBeVisible();
+
+    const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
+    expect(response).toMatchObject({ ok: true });
+    expect(response.data).toEqual([expect.objectContaining({ title: "Company SSO", username: "", password: "", uris: [], uriRules: [], loginType: "SSO", ssoProvider: "GOOGLE" })]);
   } finally {
     await context?.close();
   }

@@ -24,7 +24,10 @@ describe("Bitwarden Cipher codec", () => {
         Username: await enc("joy@example.com"),
         Password: await enc("secret"),
         Totp: await enc("JBSWY3DPEHPK3PXP"),
-        Uris: [{ Uri: await enc("https://github.com/login") }],
+        Uris: [
+          { Uri: await enc("https://github.com/login"), Match: 3 },
+          { Uri: await enc("^https://github\\.com/session"), Match: 4 }
+        ],
         Fido2Credentials: [{
           CredentialId: await enc("credential-id"),
           KeyAlgorithm: await enc("ECDSA"),
@@ -44,7 +47,18 @@ describe("Bitwarden Cipher codec", () => {
 
     const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
     expect(decoded.items).toHaveLength(2);
-    expect(decoded.items[0]).toMatchObject({ kind: "login", username: "joy@example.com", password: "secret", totpSecret: "JBSWY3DPEHPK3PXP", uris: ["https://github.com/login"], customFields: [{ name: "Recovery", value: "code", protected: true }] });
+    expect(decoded.items[0]).toMatchObject({
+      kind: "login",
+      username: "joy@example.com",
+      password: "secret",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      uris: ["https://github.com/login", "^https://github\\.com/session"],
+      uriRules: [
+        { uri: "https://github.com/login", matchType: "exact" },
+        { uri: "^https://github\\.com/session", matchType: "regex" }
+      ],
+      customFields: [{ name: "Recovery", value: "code", protected: true }]
+    });
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
 
@@ -82,6 +96,33 @@ describe("Bitwarden Cipher codec", () => {
     const encoded = await encodeBitwardenCipher(item, KEY, { Key: null, Login: { Fido2Credentials: preservedFido } });
     expect((encoded.login as Record<string, unknown>).fido2Credentials).toEqual(preservedFido);
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
+  });
+
+  it("writes every Bitwarden URI match mode without collapsing it to the default", async () => {
+    const item: LoginItem = {
+      id: "uri-rules",
+      kind: "login",
+      title: "URI rules",
+      username: "",
+      password: "",
+      uris: ["example.com", "https://example.com/login", "^https://example\\.com"],
+      uriRules: [
+        { uri: "example.com", matchType: "domain" },
+        { uri: "https://example.com/login", matchType: "starts-with" },
+        { uri: "^https://example\\.com", matchType: "regex" }
+      ],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: REVISION,
+      updatedAt: REVISION,
+      providerRefs: []
+    };
+    const encoded = await encodeBitwardenCipher(item, KEY);
+    const encodedUris = (encoded.login as { uris: Array<{ uri: string; match: number }> }).uris;
+    expect(encodedUris.map((entry) => entry.match)).toEqual([1, 2, 4]);
+    const decoded = await decodeBitwardenCipher({ ...encoded, id: "uri-rules", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+    expect(decoded.items[0]).toMatchObject({ uriRules: item.uriRules });
   });
 
   it("decodes organization Ciphers with item keys and preserves shared ownership metadata", async () => {

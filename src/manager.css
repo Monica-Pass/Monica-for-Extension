@@ -206,6 +206,74 @@
   width: min(100%, 780px);
 }
 
+.login-item-dialog {
+  width: min(100%, 780px);
+}
+
+.login-item-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.editor-fieldset {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: var(--app-shape-card);
+  padding: 12px;
+}
+
+.editor-fieldset legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.uri-rule-list,
+.custom-field-list {
+  display: grid;
+  gap: 8px;
+}
+
+.uri-rule-row,
+.custom-field-row {
+  display: grid;
+  grid-template-columns: 164px minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+.custom-field-row {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1.2fr) auto 44px;
+}
+
+.uri-rule-row input,
+.uri-rule-row select,
+.custom-field-row input {
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--app-shape-field);
+  outline: 0;
+  padding: 0 12px;
+  color: var(--app-text);
+  background: var(--md-sys-color-surface-container-highest, var(--app-surface-high));
+  font: inherit;
+}
+
+.compact-check {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.compact-check input {
+  width: 20px;
+  min-height: 20px;
+  padding: 0;
+}
+
 .vault-item-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -486,6 +554,17 @@
 
   .vault-item-form {
     grid-template-columns: 1fr;
+  }
+
+  .login-item-form,
+  .uri-rule-row,
+  .custom-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .uri-rule-row m3e-icon-button,
+  .custom-field-row m3e-icon-button {
+    justify-self: end;
   }
 
   .field-wide {

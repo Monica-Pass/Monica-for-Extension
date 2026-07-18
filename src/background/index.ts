@@ -634,10 +634,10 @@ async function fillLogin(itemId: string, tabId: number, frameId?: number) {
   const totpCode = item.totpSecret ? await generateTotp(item.totpSecret) : undefined;
   const response = (await chrome.tabs.sendMessage(tabId, {
     type: "MONICA_FILL_CREDENTIAL",
-    credential: { username: item.username, password: item.password, totpCode }
-  }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean };
+    credential: { username: item.username, password: item.password, totpCode, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
+  }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
-  return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp) };
+  return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp), filledCustomFields: response.filledCustomFields || 0 };
 }
 
 type WalletItem = IdentityItem | BillingAddressItem | CardItem | PaymentAccountItem;
