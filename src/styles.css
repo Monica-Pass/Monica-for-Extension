@@ -10,8 +10,13 @@
   --app-accent: #f5c84c;
   --app-text: #1d1b20;
   --app-muted: #49454f;
-  --app-drawer-width: 304px;
-  --app-content-max: 1480px;
+  --app-drawer-width: 256px;
+  --app-content-max: 1280px;
+  --app-shape-card: 8px;
+  --app-shape-field: 8px;
+  --app-shape-dialog: 16px;
+  --app-icon-small: 20px;
+  --app-icon-medium: 24px;
   --motion-fast: 140ms;
   --motion-medium: 240ms;
   --motion-ease: cubic-bezier(0.2, 0, 0, 1);
@@ -49,7 +54,7 @@ body {
   left: 8px;
   z-index: 1000;
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: var(--app-shape-card);
   color: #fff;
   background: var(--app-primary);
   transform: translateY(-160%);
@@ -115,7 +120,7 @@ dt {
 
 m3e-card {
   --m3e-card-padding: 20px;
-  --m3e-card-shape: 28px;
+  --m3e-card-shape: var(--app-shape-card);
   --m3e-filled-card-container-color: color-mix(in srgb, var(--md-sys-color-surface-container, var(--app-surface)) 88%, var(--app-bg));
   --m3e-filled-card-text-color: var(--md-sys-color-on-surface, var(--app-text));
   --m3e-filled-card-hover-container-elevation: var(--md-sys-elevation-level1, 0 1px 3px rgba(0, 0, 0, 0.14));
@@ -127,6 +132,20 @@ m3e-card {
 
 m3e-button {
   white-space: nowrap;
+}
+
+m3e-icon {
+  display: inline-grid;
+  width: var(--app-icon-medium);
+  height: var(--app-icon-medium);
+  place-items: center;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+m3e-icon-button {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .loading,
@@ -198,7 +217,7 @@ m3e-button {
 .field input,
 .field select {
   min-height: 56px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-field);
   padding: 0 16px;
   background: var(--md-sys-color-surface-container-highest, var(--app-surface-high));
   transition: background var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
@@ -282,7 +301,7 @@ m3e-button {
   width: 100%;
   min-height: 48px;
   border: 0;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
   gap: 8px;
@@ -385,7 +404,7 @@ main {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
   align-items: center;
-  border-radius: 28px;
+  border-radius: var(--app-shape-field);
   padding: 0 20px;
   color: var(--md-sys-color-on-surface-variant, var(--app-muted));
   background: var(--md-sys-color-surface-container-high, var(--app-surface-high));
@@ -413,14 +432,14 @@ main {
   gap: 10px;
   align-items: center;
   padding: 4px 10px 4px 4px;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   background: color-mix(in srgb, var(--md-sys-color-surface-container-high, var(--app-surface-high)) 72%, transparent);
 }
 
 .account > span {
   width: 40px;
   height: 40px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
   display: grid;
   place-items: center;
   color: var(--md-sys-color-on-primary, #fff);
@@ -598,14 +617,14 @@ tbody td {
 
 tbody td:first-child {
   border-inline-start: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 36%, transparent);
-  border-start-start-radius: 24px;
-  border-end-start-radius: 24px;
+  border-start-start-radius: var(--app-shape-card);
+  border-end-start-radius: var(--app-shape-card);
 }
 
 tbody td:last-child {
   border-inline-end: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 36%, transparent);
-  border-start-end-radius: 24px;
-  border-end-end-radius: 24px;
+  border-start-end-radius: var(--app-shape-card);
+  border-end-end-radius: var(--app-shape-card);
 }
 
 tbody tr:hover td {
@@ -624,7 +643,7 @@ tbody tr:hover td {
 .row-icon {
   width: 44px;
   height: 44px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
   display: grid;
   place-items: center;
   color: var(--md-sys-color-on-primary-container, var(--app-text));
@@ -705,7 +724,7 @@ tbody tr:hover td {
 
 .detail-grid div {
   padding: 12px;
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   background: var(--md-sys-color-surface-container-high, var(--app-surface-high));
 }
 
@@ -726,7 +745,7 @@ tbody tr:hover td {
   grid-template-columns: 32px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  border-radius: 20px;
+  border-radius: var(--app-shape-card);
   padding: 4px 8px 4px 4px;
 }
 
@@ -737,7 +756,7 @@ tbody tr:hover td {
 .mini-row m3e-icon {
   width: 32px;
   height: 32px;
-  border-radius: 12px;
+  border-radius: var(--app-shape-card);
   display: grid;
   place-items: center;
   color: var(--md-sys-color-primary, var(--app-primary));
@@ -756,7 +775,7 @@ tbody tr:hover td {
 
 .source-card code {
   padding: 12px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
   background: var(--md-sys-color-surface-container-high, var(--app-surface-high));
 }
 
@@ -766,7 +785,7 @@ tbody tr:hover td {
   justify-content: space-between;
   gap: 16px;
   align-items: center;
-  border-radius: 26px;
+  border-radius: var(--app-shape-card);
   padding: 4px 4px 4px 14px;
 }
 
@@ -790,7 +809,7 @@ tbody tr:hover td {
 .palette-button {
   min-height: 48px;
   border: 0;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
@@ -1001,7 +1020,7 @@ tbody tr:hover td {
   }
 
   tbody tr {
-    border-radius: 24px;
+    border-radius: var(--app-shape-card);
     background: color-mix(in srgb, var(--md-sys-color-surface-container-lowest, var(--app-bg)) 84%, var(--app-surface));
     overflow: hidden;
   }

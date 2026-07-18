@@ -46,7 +46,7 @@ body.popup-body {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
   padding: 6px 10px 6px 12px;
   background: color-mix(in srgb, var(--app-surface) 90%, var(--app-bg));
   color: var(--app-muted);
@@ -57,7 +57,7 @@ body.popup-body {
   min-width: 0;
   min-height: 38px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--app-shape-field);
   outline: 0;
   padding: 0 10px;
   color: var(--app-text);
@@ -109,7 +109,7 @@ body.popup-body {
 .site-summary {
   min-height: 72px;
   gap: 12px;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   padding: 10px 12px;
   background: color-mix(in srgb, var(--app-surface) 88%, var(--app-bg));
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
@@ -139,7 +139,7 @@ body.popup-body {
 .site-icon {
   width: 44px;
   height: 44px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
 }
 
 .ready-badge {
@@ -189,7 +189,7 @@ body.popup-body {
   height: 52px;
   display: grid;
   place-items: center;
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
 }
@@ -216,7 +216,7 @@ body.popup-body {
   width: 100%;
   min-height: 48px;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--app-shape-field);
   outline: 0;
   padding: 0 14px;
   color: var(--app-text);
@@ -247,7 +247,7 @@ body.popup-body {
 .inline-warning {
   min-height: 44px;
   gap: 8px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
   padding: 8px 12px;
   color: #6f4a00;
   background: #ffe1a6;
@@ -292,7 +292,7 @@ body.popup-body {
   min-height: 68px;
   gap: 12px;
   border: 1px solid color-mix(in srgb, var(--app-muted) 22%, transparent);
-  border-radius: 22px;
+  border-radius: var(--app-shape-card);
   padding: 10px 12px;
   color: var(--app-text);
   background: color-mix(in srgb, var(--app-surface) 90%, var(--app-bg));
@@ -319,7 +319,7 @@ body.popup-body {
 .credential-icon {
   width: 44px;
   height: 44px;
-  border-radius: 16px;
+  border-radius: var(--app-shape-card);
 }
 
 .credential-copy {

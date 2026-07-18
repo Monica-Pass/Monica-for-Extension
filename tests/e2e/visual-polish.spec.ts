@@ -26,12 +26,13 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await expect(page.locator(".provider-connect-grid .connect-source")).toHaveCount(2);
     await expect(page.locator(".provider-config-card")).toHaveCount(0);
     await expect(page.locator(".provider-list .source-card")).toHaveCount(1);
-    expect((await page.locator(".provider-list .source-card").first().boundingBox())!.width).toBeLessThanOrEqual(400);
+    expect((await page.locator(".provider-page").boundingBox())!.width).toBeLessThanOrEqual(820);
     await expectCentered(page.locator(".source-icon").first(), page.locator(".source-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").first(), page.locator(".connect-icon m3e-icon").first());
     await expectRoundedAndClipped(page.locator(".connect-source-card").first());
     await expectRoundedAndClipped(page.locator(".provider-list .source-card").first());
     await expectAllRoundedAndClipped(page.locator("main m3e-card"));
+    await expect(page.locator("m3e-card m3e-card")).toHaveCount(0);
     const connectionShape = await page.locator(".connect-source-card").first().evaluate((host) => ({
       host: getComputedStyle(host).borderRadius,
       button: getComputedStyle(host.querySelector(".connect-source")!).borderRadius
@@ -40,7 +41,9 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).hover();
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    await expect(page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(page.getByLabel("WebDAV 地址 *")).toBeVisible();
     await page.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
     await expect(page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toHaveCount(0);
@@ -56,6 +59,23 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await page.screenshot({ path: testInfo.outputPath("provider-page.png"), fullPage: true });
   } finally { await context?.close(); }
 });
+
+for (const width of [375, 768, 1280, 1440]) {
+  test(`manager has no horizontal overflow at ${width}px`, async ({}, testInfo) => {
+    const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+    try {
+      context = await chromium.launchPersistentContext(testInfo.outputPath(`viewport-${width}-profile`), { channel: "chromium", headless: true, viewport: { width, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+      const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+      const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+      expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "viewport polish password" }))).toMatchObject({ ok: true });
+      await page.reload();
+      await expectNoHorizontalOverflow(page.locator("html"));
+      if (width <= 900) await page.getByRole("button", { name: "打开导航" }).click();
+      await page.getByRole("button", { name: "密码源" }).click();
+      await expectNoHorizontalOverflow(page.locator("html"));
+    } finally { await context?.close(); }
+  });
+}
 
 test("login table actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
@@ -108,9 +128,14 @@ async function expectRoundedAndClipped(card: Locator): Promise<void> {
       overflow: getComputedStyle(host).overflow
     };
   });
-  expect(styles.hostRadius).not.toBe("0px");
+  expect(styles.hostRadius).toBe("8px");
   expect(styles.hostRadius).toBe(styles.baseRadius);
   expect(["hidden", "clip"]).toContain(styles.overflow);
+}
+
+async function expectNoHorizontalOverflow(root: Locator): Promise<void> {
+  const dimensions = await root.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+  expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
 async function expectAllRoundedAndClipped(cards: Locator): Promise<void> {

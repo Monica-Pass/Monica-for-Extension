@@ -13,7 +13,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 22px;
+  border-radius: var(--app-shape-card);
   color: var(--app-muted);
   background: color-mix(in srgb, var(--app-selected) 48%, transparent);
   font-size: 0.8rem;
@@ -38,7 +38,7 @@
 
 .local-badge {
   min-height: 48px;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   padding: 8px 12px;
   color: var(--app-muted);
   background: color-mix(in srgb, var(--app-selected) 58%, transparent);
@@ -76,7 +76,7 @@
   height: 56px;
   display: grid;
   place-items: center;
-  border-radius: 20px;
+  border-radius: var(--app-shape-card);
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
 }
@@ -126,7 +126,7 @@
 
 .file-action {
   min-height: 48px;
-  border-radius: 24px;
+  border-radius: var(--app-shape-card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,7 +156,7 @@
 
 .boundary-row {
   min-height: 48px;
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   padding: 8px 12px;
   background: color-mix(in srgb, var(--app-selected) 42%, transparent);
 }
@@ -181,7 +181,7 @@
   width: min(100%, 620px);
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
-  border-radius: 30px;
+  border-radius: var(--app-shape-dialog);
   padding: 24px;
   color: var(--app-text);
   background: var(--md-sys-color-surface-container-high, var(--app-surface));
@@ -214,7 +214,7 @@
   width: 100%;
   resize: vertical;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--app-shape-field);
   outline: 0;
   padding: 14px 16px;
   color: var(--app-text);
@@ -227,7 +227,7 @@
   width: 100%;
   min-height: 56px;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--app-shape-field);
   outline: 0;
   padding: 0 16px;
   color: var(--app-text);
@@ -242,7 +242,7 @@
 .provider-page {
   display: grid;
   gap: 20px;
-  max-width: 1240px;
+  width: min(100%, 820px);
 }
 
 .source-card {
@@ -274,9 +274,8 @@
 
 .provider-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
-  gap: 16px;
-  justify-content: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
 }
 
 .provider-connect-grid {
@@ -295,7 +294,7 @@
   flex: 0 0 48px;
   display: grid;
   place-items: center;
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
 }
@@ -328,7 +327,7 @@
   display: grid;
   gap: 6px;
   border: 1px solid color-mix(in srgb, #b26a00 38%, transparent);
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   padding: 12px;
   background: color-mix(in srgb, #ffe1a6 58%, transparent);
 }
@@ -374,7 +373,7 @@
 .connect-icon {
   width: 48px;
   height: 48px;
-  border-radius: 18px;
+  border-radius: var(--app-shape-card);
   display: grid;
   place-items: center;
   color: var(--md-sys-color-on-primary-container, var(--app-text));
@@ -417,7 +416,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-radius: 16px;
+  border-radius: var(--app-shape-field);
   padding-right: 8px;
   background: var(--md-sys-color-surface-container-highest, var(--app-surface-high));
 }
@@ -508,7 +507,7 @@
 
   .editor-dialog {
     max-height: 92dvh;
-    border-radius: 30px 30px 0 0;
+    border-radius: var(--app-shape-dialog) var(--app-shape-dialog) 0 0;
   }
 }
 .totp-code-cell {

@@ -92,6 +92,30 @@ describe("visual design contract", () => {
     ]);
     expect(sources.join("\n")).not.toMatch(/(?:linear|radial|conic|repeating-linear|repeating-radial)-gradient\s*\(/i);
   });
+
+  it("keeps the shared M3E shape and icon tokens stable", async () => {
+    const styles = await read("src/styles.css");
+    expect(styles).toContain("--app-shape-card: 8px");
+    expect(styles).toContain("--app-shape-field: 8px");
+    expect(styles).toContain("--app-shape-dialog: 16px");
+    expect(styles).toContain("--app-icon-small: 20px");
+    expect(styles).toContain("--app-icon-medium: 24px");
+    expect(styles).toMatch(/m3e-icon-button\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+  });
+
+  it("does not nest M3E cards in manager templates", async () => {
+    const template = await read("src/App.vue");
+    const tags = [...template.matchAll(/<\/?m3e-card\b[^>]*>/g)].map((match) => match[0]);
+    let depth = 0;
+    let maximumDepth = 0;
+    for (const tag of tags) {
+      depth += tag.startsWith("</") ? -1 : 1;
+      maximumDepth = Math.max(maximumDepth, depth);
+      expect(depth).toBeGreaterThanOrEqual(0);
+    }
+    expect(depth).toBe(0);
+    expect(maximumDepth).toBeLessThanOrEqual(1);
+  });
 });
 
 async function read(path: string): Promise<string> {
