@@ -1,5 +1,6 @@
 import { argon2id } from "hash-wasm";
 import type { VaultState } from "../core/model";
+import { migrateVaultState } from "../core/migrations";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
@@ -27,7 +28,12 @@ export interface Argon2idVaultKdfParameters {
   salt: string;
 }
 
-export type VaultKdfParameters = Pbkdf2VaultKdfParameters | Argon2idVaultKdfParameters;
+export interface DeviceVaultKdfParameters {
+  name: "DEVICE-KEY";
+  keyId: string;
+}
+
+export type VaultKdfParameters = Pbkdf2VaultKdfParameters | Argon2idVaultKdfParameters | DeviceVaultKdfParameters;
 
 export interface VaultEnvelope {
   version: 1;
@@ -40,6 +46,7 @@ export interface VaultEnvelope {
 
 export async function deriveVaultKey(masterPassword: string, parameters?: VaultKdfParameters): Promise<{ key: CryptoKey; kdf: VaultKdfParameters }> {
   if (!masterPassword) throw new Error("Master password is required");
+  if (parameters?.name === "DEVICE-KEY") throw new Error("Device-key vaults do not use a master-password KDF");
   const kdf: VaultKdfParameters = parameters || {
     name: "ARGON2ID",
     iterations: DEFAULT_ARGON2_ITERATIONS,
@@ -79,7 +86,21 @@ export async function deriveVaultKey(masterPassword: string, parameters?: VaultK
 }
 
 export function vaultKdfNeedsUpgrade(kdf: VaultKdfParameters): boolean {
+  if (kdf.name === "DEVICE-KEY") return false;
   return kdf.name !== "ARGON2ID" || kdf.iterations < DEFAULT_ARGON2_ITERATIONS || kdf.memoryKiB < DEFAULT_ARGON2_MEMORY_KIB;
+}
+
+export async function createDeviceVaultKey(): Promise<{ key: CryptoKey; rawKey: string; kdf: DeviceVaultKdfParameters }> {
+  const raw = randomBytes(32);
+  try {
+    return {
+      key: await crypto.subtle.importKey("raw", raw as BufferSource, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]),
+      rawKey: bytesToBase64(raw),
+      kdf: { name: "DEVICE-KEY", keyId: crypto.randomUUID() }
+    };
+  } finally {
+    raw.fill(0);
+  }
 }
 
 export async function encryptVaultState(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters): Promise<VaultEnvelope> {
@@ -103,12 +124,10 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     key,
     base64ToBytes(envelope.ciphertext) as BufferSource
   );
-  const state = JSON.parse(new TextDecoder().decode(decrypted)) as VaultState;
-  if ((state as Partial<VaultState>).providerConflicts === undefined) state.providerConflicts = [];
-  if ((state as Partial<VaultState>).providerDiagnostics === undefined) state.providerDiagnostics = [];
+  const state = migrateVaultState(JSON.parse(new TextDecoder().decode(decrypted)));
   if (
     state.magic !== "MONICA_EXTENSION_VAULT" ||
-    state.schemaVersion !== 1 ||
+    state.schemaVersion !== 2 ||
     !Array.isArray(state.items) ||
     !Array.isArray(state.providers) ||
     !Array.isArray(state.mutationQueue) ||
@@ -118,8 +137,12 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     !Array.isArray(state.providerDiagnostics) ||
     state.providerDiagnostics.length > 100 ||
     !state.providerDiagnostics.every(validProviderDiagnostic) ||
+    !Array.isArray(state.sourceRecords) ||
+    state.sourceRecords.length > 20_000 ||
+    !state.sourceRecords.every(validProviderSourceRecord) ||
     !state.settings ||
     typeof state.settings.defaultProviderId !== "string" ||
+    (state.settings.protectionMode !== "master-password" && state.settings.protectionMode !== "device-key") ||
     !Number.isInteger(state.settings.autoLockMinutes) ||
     state.settings.autoLockMinutes < 1 ||
     state.settings.autoLockMinutes > 1440 ||
@@ -128,6 +151,13 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
+}
+
+function validProviderSourceRecord(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.providerId === "string" && typeof record.remoteId === "string" && typeof record.payload === "string" && typeof record.contentHash === "string"
+    && (record.format === "android-entry" || record.format === "bitwarden-cipher") && (record.encoding === "base64" || record.encoding === "json");
 }
 
 function validProviderDiagnostic(value: unknown): boolean {
@@ -173,7 +203,10 @@ function validateEnvelope(value: VaultEnvelope): void {
 function validateKdfParameters(value: unknown): asserts value is VaultKdfParameters {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Unsupported or unsafe vault KDF parameters");
   const kdf = value as Partial<VaultKdfParameters>;
-  if (kdf.name === "PBKDF2-SHA256") {
+  if (kdf.name === "DEVICE-KEY") {
+    if (typeof kdf.keyId !== "string" || !/^[0-9a-f-]{16,64}$/i.test(kdf.keyId)) throw new Error("Unsupported or unsafe vault KDF parameters");
+    return;
+  } else if (kdf.name === "PBKDF2-SHA256") {
     if (!Number.isInteger(kdf.iterations) || kdf.iterations! < 100_000 || kdf.iterations! > MAX_PBKDF2_ITERATIONS) throw new Error("Unsupported or unsafe vault KDF parameters");
   } else if (kdf.name === "ARGON2ID") {
     if (
@@ -185,7 +218,7 @@ function validateKdfParameters(value: unknown): asserts value is VaultKdfParamet
   } else {
     throw new Error("Unsupported or unsafe vault KDF parameters");
   }
-  decodeKdfSalt(kdf.salt);
+  decodeKdfSalt((kdf as Pbkdf2VaultKdfParameters | Argon2idVaultKdfParameters).salt);
 }
 
 function decodeKdfSalt(value: unknown): Uint8Array {

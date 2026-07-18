@@ -1,9 +1,10 @@
-import type { ProviderAccount, ProviderReference, VaultItem } from "../../core/model";
+import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { bytesToBase64 } from "../../security/encoding";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
@@ -23,6 +24,7 @@ export class BitwardenProvider implements ProviderAdapter {
     const synced = await this.client.sync(session, context.signal);
     session = synced.session;
     const rawCiphers = arrayValue(synced.payload, "Ciphers", "ciphers").map(record);
+    const sourceRecords = await bitwardenSourceRecords(rawCiphers, account.id);
     const localScoped = context.localItems.filter((item) => hasProviderReference(item, account.id));
     const unrelated = context.localItems.filter((item) => !hasProviderReference(item, account.id));
     const hasExistingBaseline = localScoped.some((item) => Boolean(providerReference(item, account.id)?.revision));
@@ -31,7 +33,8 @@ export class BitwardenProvider implements ProviderAdapter {
         items: context.localItems,
         accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: session },
         conflicts: [{ itemId: account.id, reason: "Bitwarden 返回空密码库，但本地存在已同步项目。" }],
-        warnings: ["Bitwarden 返回空密码库，未删除本地缓存；请确认服务器状态后重试。"]
+        warnings: ["Bitwarden 返回空密码库，未删除本地缓存；请确认服务器状态后重试。"],
+        sourceRecords
       };
     }
 
@@ -143,7 +146,8 @@ export class BitwardenProvider implements ProviderAdapter {
       items: merged.filter((item) => !item.deletedAt),
       accountPatch: { config: session, lastSyncAt: context.now, lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined },
       conflicts,
-      warnings
+      warnings,
+      sourceRecords
     };
   }
 
@@ -211,6 +215,27 @@ function readSession(account: ProviderAccount): BitwardenSessionConfig {
 
 function providerReference(item: VaultItem, providerId: string): ProviderReference | undefined {
   return item.providerRefs.find((reference) => reference.providerId === providerId);
+}
+
+async function bitwardenSourceRecords(ciphers: Record<string, unknown>[], providerId: string): Promise<ProviderSourceRecord[]> {
+  const records = ciphers.flatMap((cipher) => {
+    const remoteId = stringValue(cipher, "Id", "id");
+    if (!remoteId) return [];
+    const payload = JSON.stringify(cipher);
+    return [{ cipher, remoteId, payload }];
+  });
+  return Promise.all(records.map(async ({ cipher, remoteId, payload }) => {
+    const bytes = new TextEncoder().encode(payload);
+    return {
+      providerId,
+      remoteId,
+      revision: stringValue(cipher, "RevisionDate", "revisionDate") || undefined,
+      format: "bitwarden-cipher" as const,
+      encoding: "json" as const,
+      payload,
+      contentHash: bytesToBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource)))
+    };
+  }));
 }
 
 function hasProviderReference(item: VaultItem, providerId: string): boolean {

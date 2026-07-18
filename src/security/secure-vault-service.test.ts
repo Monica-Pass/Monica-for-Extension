@@ -4,6 +4,7 @@ import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultK
 import { MemoryVaultSessionStore } from "./vault-session";
 import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
 import { MemoryVaultStorage } from "./vault-storage";
+import { MemoryVaultDeviceKeyStore } from "./vault-device-key";
 
 describe("encrypted vault", () => {
   it("encrypts secrets and rejects the wrong password", async () => {
@@ -154,7 +155,7 @@ describe("encrypted vault", () => {
     const state = (await new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore()).setup("0123456789-master"));
     const { key, kdf } = await deriveVaultKey("0123456789-master");
     const envelope = await encryptVaultState(state, key, kdf);
-    await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT", schemaVersion: 1 });
+    await expect(decryptVaultState(envelope, key)).resolves.toMatchObject({ magic: "MONICA_EXTENSION_VAULT", schemaVersion: 2 });
   });
 
   it("migrates a valid legacy PBKDF2 vault to Argon2id on unlock without changing its data", async () => {
@@ -319,7 +320,7 @@ describe("encrypted vault", () => {
 
     await service.changeMasterPassword("old master password", "new master password");
 
-    expect(storage.envelope!.kdf.salt).not.toBe(previousEnvelope.kdf.salt);
+    expect("salt" in storage.envelope!.kdf && "salt" in previousEnvelope.kdf && storage.envelope!.kdf.salt).not.toBe("salt" in previousEnvelope.kdf ? previousEnvelope.kdf.salt : undefined);
     expect(storage.envelope!.ciphertext).not.toBe(previousEnvelope.ciphertext);
     expect(JSON.stringify(storage.envelope)).not.toContain("vault-secret");
     expect(sessions.session!.rawKey).not.toBe(previousSessionKey);
@@ -414,6 +415,41 @@ describe("encrypted vault", () => {
     const second = createLoginItem({ title: "Second import", password: "second", uris: ["second.example.com"] });
     await service.importItems([first, second]);
     expect((await service.listItems()).map((item) => item.title).sort()).toEqual(["First import", "Second import"]);
+  });
+
+  it("supports an optional master password with a session-aware device key", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const sessions = new MemoryVaultSessionStore();
+    const service = new SecureVaultService(storage, sessions, () => Date.now(), deviceKeys);
+
+    const setup = await service.setup("", [createLoginItem({ title: "Device vault" })]);
+    expect(setup.settings.protectionMode).toBe("device-key");
+    expect(storage.envelope?.kdf.name).toBe("DEVICE-KEY");
+    expect(JSON.stringify(storage.envelope)).not.toContain("Device vault");
+
+    await service.lock();
+    await expect(service.status()).resolves.toBe("locked");
+    await expect(service.unlock("")).resolves.toMatchObject({ settings: { protectionMode: "device-key" } });
+
+    const restarted = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => Date.now(), deviceKeys);
+    await deviceKeys.setAutoUnlockSuspended(false);
+    await expect(restarted.status()).resolves.toBe("unlocked");
+  });
+
+  it("stores provider source records inside the encrypted vault without returning them from item APIs", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("source record password");
+    await service.upsertProvider({ id: "webdav-source", kind: "monica-webdav", name: "WebDAV", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = createLoginItem({ title: "Source item", password: "item-secret", uris: ["example.test"] });
+    const sourceRecord = { providerId: "webdav-source", itemId: item.id, remoteId: "folders/_root/passwords/item.json", format: "android-entry" as const, encoding: "base64" as const, payload: "cmF3LXByb3ZpZGVyLXNlY3JldA==", contentHash: "hash" };
+
+    await service.applyProviderSync("webdav-source", [item], undefined, [], [sourceRecord]);
+
+    expect(JSON.stringify(storage.envelope)).not.toContain(sourceRecord.payload);
+    expect(await service.getProviderSourceRecords("webdav-source")).toEqual([sourceRecord]);
+    expect(JSON.stringify(await service.listItems())).not.toContain(sourceRecord.payload);
   });
 });
 

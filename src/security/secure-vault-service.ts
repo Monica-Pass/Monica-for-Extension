@@ -1,9 +1,11 @@
-import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState } from "../core/model";
+import { providerSourceRecordsFor, replaceProviderSourceRecords } from "../core/migrations";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
-import { decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
+import { createDeviceVaultKey, decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type DeviceVaultKdfParameters, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import { validateMasterPassword } from "./master-password-policy";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
+import { MemoryVaultDeviceKeyStore, type VaultDeviceKeyStore } from "./vault-device-key";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
 
@@ -39,7 +41,8 @@ export class SecureVaultService {
   constructor(
     private readonly storage: VaultEnvelopeStorage,
     private readonly sessions: VaultSessionStore,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly deviceKeys: VaultDeviceKeyStore = new MemoryVaultDeviceKeyStore()
   ) {}
 
   async status(): Promise<VaultLifecycleStatus> {
@@ -47,7 +50,17 @@ export class SecureVaultService {
     const envelope = await this.storage.read();
     if (!envelope) return "uninitialized";
     const session = await this.sessions.read();
-    if (!session) return "locked";
+    if (!session) {
+      if (envelope.kdf.name !== "DEVICE-KEY" || await this.deviceKeys.isAutoUnlockSuspended()) return "locked";
+      try {
+        const key = await this.deviceKey(envelope.kdf);
+        const state = await decryptVaultState(envelope, key);
+        await this.startSession(key, state.settings.autoLockMinutes);
+        return "unlocked";
+      } catch {
+        return "locked";
+      }
+    }
     if (session.expiresAt <= this.now()) {
       await this.sessions.clear();
       return "locked";
@@ -59,11 +72,23 @@ export class SecureVaultService {
   async setup(masterPassword: string, initialItems: VaultItem[] = []): Promise<VaultState> {
     return this.runExclusive(async () => {
     if ((await this.storage.read()) !== null) throw new Error("Vault has already been initialized");
-    validateMasterPassword(masterPassword);
     const state = createEmptyVaultState();
     state.items = initialItems;
     state.updatedAt = new Date(this.now()).toISOString();
-    const { key, kdf } = await deriveVaultKey(masterPassword);
+    let key: CryptoKey;
+    let kdf: VaultKdfParameters;
+    if (masterPassword) {
+      validateMasterPassword(masterPassword);
+      ({ key, kdf } = await deriveVaultKey(masterPassword));
+      state.settings.protectionMode = "master-password";
+    } else {
+      const device = await createDeviceVaultKey();
+      key = device.key;
+      kdf = device.kdf;
+      state.settings.protectionMode = "device-key";
+      await this.deviceKeys.write(device.kdf.keyId, device.rawKey);
+      await this.deviceKeys.setAutoUnlockSuspended(false);
+    }
     const envelope = await encryptVaultState(state, key, kdf);
     await this.storage.write(envelope);
     await this.startSession(key, state.settings.autoLockMinutes);
@@ -77,13 +102,13 @@ export class SecureVaultService {
     let key: CryptoKey;
     let state: VaultState;
     try {
-      ({ key } = await deriveVaultKey(masterPassword, envelope.kdf));
+      key = envelope.kdf.name === "DEVICE-KEY" ? await this.deviceKey(envelope.kdf) : (await deriveVaultKey(masterPassword, envelope.kdf)).key;
       state = await decryptVaultState(envelope, key);
     } catch {
       await this.sessions.clear();
       throw new VaultUnlockError();
     }
-    if (vaultKdfNeedsUpgrade(envelope.kdf)) {
+    if (envelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(envelope.kdf)) {
       try {
         const upgraded = await deriveVaultKey(masterPassword);
         await this.storage.write(await encryptVaultState(state, upgraded.key, upgraded.kdf));
@@ -93,28 +118,46 @@ export class SecureVaultService {
       }
     }
     await this.startSession(key, state.settings.autoLockMinutes);
+    await this.deviceKeys.setAutoUnlockSuspended(false);
     return state;
     });
   }
 
   async lock(): Promise<void> {
-    return this.runExclusive(() => this.sessions.clear());
+    return this.runExclusive(async () => {
+      const envelope = await this.storage.read();
+      if (envelope?.kdf.name === "DEVICE-KEY") await this.deviceKeys.setAutoUnlockSuspended(true);
+      await this.sessions.clear();
+    });
   }
 
   async changeMasterPassword(currentPassword: string, newPassword: string): Promise<void> {
     return this.runExclusive(async () => {
-      validateMasterPassword(newPassword);
       const envelope = await this.requireEnvelope();
       let state: VaultState;
       try {
-        const { key: currentKey } = await deriveVaultKey(currentPassword, envelope.kdf);
+        const currentKey = envelope.kdf.name === "DEVICE-KEY" ? await this.deviceKey(envelope.kdf) : (await deriveVaultKey(currentPassword, envelope.kdf)).key;
         state = await decryptVaultState(envelope, currentKey);
       } catch {
         throw new VaultUnlockError();
       }
-      const { key: newKey, kdf: newKdf } = await deriveVaultKey(newPassword);
+      let newKey: CryptoKey;
+      let newKdf: VaultKdfParameters;
+      if (newPassword) {
+        validateMasterPassword(newPassword);
+        ({ key: newKey, kdf: newKdf } = await deriveVaultKey(newPassword));
+        state.settings.protectionMode = "master-password";
+      } else {
+        const device = await createDeviceVaultKey();
+        newKey = device.key;
+        newKdf = device.kdf;
+        state.settings.protectionMode = "device-key";
+        await this.deviceKeys.write(device.kdf.keyId, device.rawKey);
+      }
       state.updatedAt = new Date(this.now()).toISOString();
       await this.storage.write(await encryptVaultState(state, newKey, newKdf));
+      if (envelope.kdf.name === "DEVICE-KEY" && envelope.kdf.keyId !== (newKdf.name === "DEVICE-KEY" ? newKdf.keyId : "")) await this.deviceKeys.remove(envelope.kdf.keyId);
+      await this.deviceKeys.setAutoUnlockSuspended(false);
       try {
         await this.startSession(newKey, state.settings.autoLockMinutes);
       } catch {
@@ -151,7 +194,7 @@ export class SecureVaultService {
       let restoredState: VaultState;
       let backupKey: CryptoKey;
       try {
-        ({ key: backupKey } = await deriveVaultKey(backupPassword, backup.envelope.kdf));
+        backupKey = backup.envelope.kdf.name === "DEVICE-KEY" ? await this.deviceKey(backup.envelope.kdf) : (await deriveVaultKey(backupPassword, backup.envelope.kdf)).key;
         restoredState = await decryptVaultState(backup.envelope, backupKey);
       } catch {
         throw new VaultUnlockError();
@@ -159,7 +202,7 @@ export class SecureVaultService {
 
       if (existing) {
         try {
-          const { key: currentKey } = await deriveVaultKey(options.currentPassword || "", existing.kdf);
+          const currentKey = existing.kdf.name === "DEVICE-KEY" ? await this.deviceKey(existing.kdf) : (await deriveVaultKey(options.currentPassword || "", existing.kdf)).key;
           await decryptVaultState(existing, currentKey);
         } catch {
           throw new VaultUnlockError();
@@ -167,7 +210,7 @@ export class SecureVaultService {
       }
 
       let restoredEnvelope = structuredClone(backup.envelope);
-      if (vaultKdfNeedsUpgrade(restoredEnvelope.kdf)) {
+      if (restoredEnvelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(restoredEnvelope.kdf)) {
         try {
           const upgraded = await deriveVaultKey(backupPassword);
           restoredEnvelope = await encryptVaultState(restoredState, upgraded.key, upgraded.kdf);
@@ -239,6 +282,7 @@ export class SecureVaultService {
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider || provider.kind === "local") throw new Error("本地密码源不能删除。");
     state.providers = state.providers.filter((candidate) => candidate.id !== providerId);
+    state.sourceRecords = state.sourceRecords.filter((record) => record.providerId !== providerId);
     state.providerConflicts = state.providerConflicts.filter((conflict) => conflict.providerId !== providerId);
     state.items = state.items.flatMap((item): VaultItem[] => {
       if (!item.providerRefs.some((reference) => reference.providerId === providerId)) return [item];
@@ -256,7 +300,7 @@ export class SecureVaultService {
     });
   }
 
-  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>, conflicts: ProviderConflictInput[] = []): Promise<void> {
+  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>, conflicts: ProviderConflictInput[] = [], sourceRecords?: ProviderSourceRecord[]): Promise<void> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
@@ -277,9 +321,14 @@ export class SecureVaultService {
     });
     state.providerConflicts = [...state.providerConflicts.filter((conflict) => conflict.providerId !== providerId), ...persistedConflicts];
     state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
+    if (sourceRecords) replaceProviderSourceRecords(state, providerId, sourceRecords);
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
     });
+  }
+
+  async getProviderSourceRecords(providerId: string): Promise<ProviderSourceRecord[]> {
+    return providerSourceRecordsFor(await this.readState(), providerId);
   }
 
   async listProviderConflicts(providerId?: string): Promise<ProviderConflict[]> {
@@ -462,6 +511,12 @@ export class SecureVaultService {
     const envelope = await this.storage.read();
     if (!envelope) throw new Error("Vault is not initialized");
     return envelope;
+  }
+
+  private async deviceKey(kdf: DeviceVaultKdfParameters): Promise<CryptoKey> {
+    const rawKey = await this.deviceKeys.read(kdf.keyId);
+    if (!rawKey) throw new Error("此免主密码密码库的设备密钥不可用。");
+    return importVaultKey(rawKey);
   }
 
   private async unlockedContext(): Promise<{ envelope: VaultEnvelope; key: CryptoKey }> {

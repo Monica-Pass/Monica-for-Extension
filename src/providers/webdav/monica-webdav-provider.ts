@@ -1,8 +1,9 @@
-import type { ProviderAccount, ProviderReference, VaultItem } from "../../core/model";
+import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
 import { deleteAndroidBackupItem, readAndroidBackup, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
+import { bytesToBase64 } from "../../security/encoding";
 
 export interface MonicaWebDavConfig extends WebDavCredentials, Record<string, unknown> {
   backupPassword?: string;
@@ -43,6 +44,8 @@ export class MonicaWebDavProvider implements ProviderAdapter {
         warnings: []
       };
     }
+
+    const sourceRecords = await androidSourceRecords(loaded.document, account.id);
 
     const config = readConfig(account);
     const hasBaseline = Boolean(config.lastFileName);
@@ -105,7 +108,8 @@ export class MonicaWebDavProvider implements ProviderAdapter {
         items: [...unrelated, ...merged],
         accountPatch: { lastError: `发现 ${conflicts.length} 个 WebDAV 同步冲突。` },
         conflicts,
-        warnings: loaded.document.warnings
+        warnings: loaded.document.warnings,
+        sourceRecords
       };
     }
 
@@ -116,7 +120,8 @@ export class MonicaWebDavProvider implements ProviderAdapter {
       items: [...unrelated, ...synced],
       accountPatch: syncAccountPatch(account, context.now, baselineFile),
       conflicts,
-      warnings: loaded.document.warnings
+      warnings: loaded.document.warnings,
+      sourceRecords
     };
   }
 
@@ -195,6 +200,22 @@ function readConfig(account: ProviderAccount): MonicaWebDavConfig {
 
 function emptyDocument(): AndroidBackupDocument {
   return { entries: {}, items: [], records: new Map(), warnings: [] };
+}
+
+async function androidSourceRecords(document: AndroidBackupDocument, providerId: string): Promise<ProviderSourceRecord[]> {
+  return Promise.all([...document.records.values()].map(async (record) => {
+    const bytes = document.entries[record.path];
+    return {
+      providerId,
+      itemId: record.itemId,
+      remoteId: record.path,
+      revision: record.item.updatedAt,
+      format: "android-entry" as const,
+      encoding: "base64" as const,
+      payload: bytesToBase64(bytes),
+      contentHash: bytesToBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource)))
+    };
+  }));
 }
 
 function providerReference(item: VaultItem, providerId: string): ProviderReference | undefined {

@@ -53,7 +53,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Malicious WebDAV leaks Basic credentials | HTTPS-only URL policy, no redirects, same-origin/out-of-folder rejection | Loopback HTTP is permitted for local development only |
 | Malicious WebDAV exhausts memory | Content-Length and streaming caps; ZIP central-directory preflight; entry/ratio/JSON caps | Valid very large backup may require an explicit future migration path |
 | ZIP path traversal or archive confusion | Canonical safe-entry validation; ZIP64/multi-disk rejection; post-unzip size verification | Unknown safe entries remain opaque for Android compatibility |
-| Offline vault cracking | Argon2id v1.3 (64 MiB, 3 iterations, parallelism 1), 32-byte random salt and AES-256-GCM; bounded legacy PBKDF2 read/migration | Master-password strength remains user-dependent; browser/OS compromise is out of scope |
+| Offline vault cracking | Master-password mode uses Argon2id v1.3 (64 MiB, 3 iterations, parallelism 1), a 32-byte random salt and AES-256-GCM; bounded legacy PBKDF2 read/migration | Optional device-key mode stores its random key in the browser profile and therefore relies on browser/OS profile protection |
 | Android backup cracking | Android-compatible PBKDF2-SHA256 100,000 and AES-256-GCM | Iteration count is format-controlled; recommend a strong independent backup password |
 | Secret leakage in build/logs | Redacted provider errors, TruffleHog, fixture-token scan, no source maps, package inventory verification | Native GitHub Secret Scanning is unavailable while this private plan lacks the feature; independent audit remains required |
 | Dependency compromise | Official-registry lockfile integrity, install scripts disabled by default, `npm ci`, production audit, CodeQL, dependency review, SBOM and Dependabot alerts | Registry and CI platform remain supply-chain trust anchors; npm registry signature-key availability is external |
@@ -80,7 +80,7 @@ Repository Actions are restricted to GitHub-owned actions plus the explicitly us
 ## Cryptography
 
 - Vault: AES-256-GCM with 128-bit tag and fixed versioned AAD.
-- Vault KDF: Argon2id v1.3 with 64 MiB memory, 3 iterations, parallelism 1 and a 32-byte salt. Imported parameters are capped at 128 MiB, 6 iterations, parallelism 4 and a 384 MiB-iteration work product before derivation. Legacy PBKDF2-HMAC-SHA256 envelopes are bounded and automatically re-encrypted after successful unlock/restore.
+- Vault protection: master-password mode uses Argon2id v1.3 with 64 MiB memory, 3 iterations, parallelism 1 and a 32-byte salt. Optional device-key mode uses a random 256-bit key stored in extension-local browser storage and is accurately presented as lower offline protection. Imported KDF parameters are bounded; legacy PBKDF2 envelopes migrate after successful unlock/restore.
 - Android backup: AES-256-GCM with Android's `MONICA_ENC_V1` envelope and PBKDF2-HMAC-SHA256 at 100,000 iterations.
 - Randomness: Web Crypto random values.
 - Passkeys: ES256 browser-local credentials; Android aliases are non-exportable metadata.
@@ -90,7 +90,7 @@ AES-GCM, legacy PBKDF2 and ECDSA use platform Web Crypto. Argon2id uses the bund
 
 ## Data lifecycle
 
-- At rest: one authenticated encrypted vault envelope in extension storage.
+- At rest: one authenticated encrypted vault envelope in IndexedDB. Device-key mode stores a separate random key in extension-local browser storage; master-password mode stores no derived key there.
 - Unlocked: plaintext exists in the trusted background process memory.
 - Legacy unlock/restore: authentication completes with the bounded legacy KDF, then a fresh Argon2id envelope is committed before the new session key is used; a failed best-effort migration leaves the authenticated legacy envelope usable for retry.
 - Session continuity: only trusted extension contexts may access session key material.

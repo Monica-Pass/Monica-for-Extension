@@ -1,4 +1,4 @@
-import type { ProviderAccount, ProviderConflictInput, ProviderKind, VaultItem } from "./model";
+import type { ProviderAccount, ProviderConflictInput, ProviderKind, ProviderSourceRecord, VaultItem } from "./model";
 
 export interface ProviderSyncContext {
   signal?: AbortSignal;
@@ -11,6 +11,7 @@ export interface ProviderSyncResult {
   accountPatch?: Partial<ProviderAccount>;
   conflicts: ProviderConflictInput[];
   warnings: string[];
+  sourceRecords?: ProviderSourceRecord[];
 }
 
 export interface ProviderAdapter<TAccount extends ProviderAccount = ProviderAccount> {

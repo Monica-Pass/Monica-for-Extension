@@ -18,6 +18,31 @@ export interface ProviderReference {
   etag?: string;
 }
 
+export type LoginUriMatchType = "base-domain" | "domain" | "starts-with" | "exact" | "regex" | "never";
+
+export interface LoginUriRule {
+  uri: string;
+  matchType: LoginUriMatchType;
+}
+
+export interface SecureCustomField {
+  name: string;
+  value: string;
+  protected: boolean;
+  type?: "text" | "hidden" | "boolean";
+}
+
+export interface ProviderSourceRecord {
+  providerId: string;
+  itemId?: string;
+  remoteId: string;
+  revision?: string;
+  format: "android-entry" | "bitwarden-cipher";
+  encoding: "base64" | "json";
+  payload: string;
+  contentHash: string;
+}
+
 export interface VaultItemBase {
   id: string;
   kind: VaultItemKind;
@@ -27,6 +52,11 @@ export interface VaultItemBase {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
+  archivedAt?: string;
+  categoryId?: number;
+  categoryName?: string;
+  sortOrder?: number;
+  imagePaths?: string[];
   providerRefs: ProviderReference[];
 }
 
@@ -35,13 +65,35 @@ export interface LoginItem extends VaultItemBase {
   username: string;
   password: string;
   uris: string[];
+  uriRules?: LoginUriRule[];
   totpSecret?: string;
-  customFields: Array<{ name: string; value: string; protected: boolean }>;
+  customFields: SecureCustomField[];
+  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH" | "BARCODE";
+  ssoProvider?: string;
+  ssoRefEntryId?: number;
+  appPackageName?: string;
+  appName?: string;
+  email?: string;
+  phone?: string;
+  addressLine?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  country?: string;
+  passkeyBindings?: string;
+  sshKeyData?: string;
+  wifiMetadata?: string;
+  barcodeData?: string;
+  customIconType?: string;
+  customIconValue?: string;
+  customIconUpdatedAt?: number;
 }
 
 export interface SecureNoteItem extends VaultItemBase {
   kind: "secure-note";
   content: string;
+  tags?: string[];
+  isMarkdown?: boolean;
 }
 
 export interface TotpItem extends VaultItemBase {
@@ -87,6 +139,21 @@ export interface CardItem extends VaultItemBase {
   securityCode: string;
   brand?: string;
   billingAddressId?: string;
+  bankName?: string;
+  cardType?: "CREDIT" | "DEBIT" | "PREPAID";
+  billingAddress?: string;
+  nickname?: string;
+  validFromMonth?: string;
+  validFromYear?: string;
+  pin?: string;
+  iban?: string;
+  swiftBic?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  branchCode?: string;
+  currency?: string;
+  customerServicePhone?: string;
+  customFields?: SecureCustomField[];
 }
 
 export interface IdentityItem extends VaultItemBase {
@@ -102,9 +169,17 @@ export interface IdentityItem extends VaultItemBase {
   expiryDate?: string;
   issuedBy?: string;
   nationality?: string;
+  additionalInfo?: string;
+  company?: string;
+  username?: string;
+  ssn?: string;
+  passportNumber?: string;
+  licenseNumber?: string;
+  address3?: string;
   email?: string;
   phone?: string;
   address?: Partial<AddressFields>;
+  customFields?: SecureCustomField[];
 }
 
 export interface AddressFields {
@@ -122,6 +197,8 @@ export interface AddressFields {
 
 export interface BillingAddressItem extends VaultItemBase, AddressFields {
   kind: "billing-address";
+  isDefault?: boolean;
+  customFields?: SecureCustomField[];
 }
 
 export interface PaymentAccountItem extends VaultItemBase {
@@ -135,11 +212,15 @@ export interface PaymentAccountItem extends VaultItemBase {
   username: string;
   accountId: string;
   maskedAccountNumber: string;
+  linkedCardLast4?: string;
   routingNumber: string;
   iban: string;
   swiftBic: string;
   website: string;
   currency: string;
+  billingAddress?: string;
+  isDefault?: boolean;
+  customFields?: SecureCustomField[];
 }
 
 export interface PasskeyItem extends VaultItemBase {
@@ -155,6 +236,14 @@ export interface PasskeyItem extends VaultItemBase {
   privateKeyPkcs8?: string;
   signCount: number;
   discoverable: boolean;
+  userVerificationRequired?: boolean;
+  transports?: string[];
+  aaguid?: string;
+  lastUsedAt?: string;
+  useCount?: number;
+  iconUrl?: string;
+  boundPasswordId?: number;
+  passkeyMode?: "LEGACY" | "BW_COMPAT" | "KEEPASS_COMPAT";
   sourceMode: "browser-local" | "bitwarden" | "android-metadata-only";
 }
 
@@ -229,7 +318,7 @@ export interface ProviderDiagnosticExport {
 
 export interface VaultState {
   magic: "MONICA_EXTENSION_VAULT";
-  schemaVersion: 1;
+  schemaVersion: 2;
   createdAt: string;
   updatedAt: string;
   items: VaultItem[];
@@ -237,9 +326,11 @@ export interface VaultState {
   mutationQueue: PendingMutation[];
   providerConflicts: ProviderConflict[];
   providerDiagnostics: ProviderDiagnostic[];
+  sourceRecords: ProviderSourceRecord[];
   settings: {
     autoLockMinutes: number;
     defaultProviderId: string;
+    protectionMode: "master-password" | "device-key";
   };
 }
 
@@ -247,7 +338,7 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
   const localProviderId = crypto.randomUUID();
   return {
     magic: "MONICA_EXTENSION_VAULT",
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: now,
     updatedAt: now,
     items: [],
@@ -264,9 +355,11 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
     mutationQueue: [],
     providerConflicts: [],
     providerDiagnostics: [],
+    sourceRecords: [],
     settings: {
       autoLockMinutes: 15,
-      defaultProviderId: localProviderId
+      defaultProviderId: localProviderId,
+      protectionMode: "master-password"
     }
   };
 }
@@ -274,8 +367,8 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
 export function createLoginItem(input: {
   title: string;
   username?: string;
-  password: string;
-  uris: string[];
+  password?: string;
+  uris?: string[];
   notes?: string;
   favorite?: boolean;
   providerRefs?: ProviderReference[];
@@ -286,8 +379,9 @@ export function createLoginItem(input: {
     kind: "login",
     title: input.title.trim() || "未命名登录项",
     username: input.username?.trim() || "",
-    password: input.password,
-    uris: normalizeUris(input.uris),
+    password: input.password || "",
+    uris: normalizeUris(input.uris || []),
+    uriRules: normalizeUris(input.uris || []).map((uri) => ({ uri, matchType: "base-domain" })),
     notes: input.notes?.trim() || "",
     favorite: Boolean(input.favorite),
     customFields: [],

@@ -16,11 +16,12 @@ import { validatePasskeyRequest } from "../passkey/request-policy";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
+import { ChromeVaultDeviceKeyStore } from "../security/vault-device-key";
 import { configureSessionStorageAccess } from "./startup";
 
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
 const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
-const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore());
+const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore(), () => Date.now(), new ChromeVaultDeviceKeyStore());
 const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
@@ -337,7 +338,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const startedAt = Date.now();
       try {
         const result = await providers.get(account.kind).sync(account, { signal: controller.signal, now: new Date().toISOString(), localItems: (await service.readState()).items });
-        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts);
+        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords);
         await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
           operation: "sync",
           outcome: result.conflicts.length ? "conflict" : "success",
