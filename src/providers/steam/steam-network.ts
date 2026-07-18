@@ -38,7 +38,7 @@ export interface SteamAuthorizedDevice {
 }
 
 export class SteamNetworkError extends Error {
-  constructor(message: string, readonly retryable = true) {
+  constructor(message: string, readonly retryable = true, readonly eResult?: number) {
     super(message);
     this.name = "SteamNetworkError";
   }
@@ -216,8 +216,22 @@ export async function steamProtobufCall(iface: string, method: string, bytes: Ui
   });
   assertSteamResponseOrigin(response, "api.steampowered.com");
   const eresult = Number(response.headers.get("x-eresult") || "1");
-  if (!response.ok || eresult !== 1) throw new SteamNetworkError(`Steam API 请求失败（HTTP ${response.status}, eresult=${eresult}）。`);
+  if (!response.ok || eresult !== 1) throw new SteamNetworkError(`Steam API 请求失败（HTTP ${response.status}, eresult=${eresult}）。`, true, eresult);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+export async function steamApiJson(iface: string, method: string, values: Record<string, string> = {}): Promise<Record<string, unknown>> {
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(iface) || !/^[A-Za-z][A-Za-z0-9]*$/.test(method)) throw new SteamNetworkError("Steam API 方法无效。", false);
+  const query = new URLSearchParams(values);
+  const url = `https://api.steampowered.com/${iface}/${method}/v1/${query.toString() ? `?${query}` : ""}`;
+  const response = await steamFetch(url, { method: "GET", headers: { Accept: "application/json" }, credentials: "omit" });
+  assertSteamResponseOrigin(response, "api.steampowered.com");
+  if (!response.ok) throw new SteamNetworkError(`Steam API 请求失败（HTTP ${response.status}）。`);
+  const text = await response.text();
+  try {
+    const payload = JSON.parse(text) as unknown;
+    return payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  } catch { throw new SteamNetworkError("Steam API 返回了无法解析的响应。", false); }
 }
 
 const protobufCall = steamProtobufCall;
@@ -412,10 +426,10 @@ function bigEndian64(value: bigint): Uint8Array { const output = new Uint8Array(
 async function hmacSha1(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> { const cryptoKey = await crypto.subtle.importKey("raw", key as BufferSource, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]); return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, data as BufferSource)); }
 async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> { const cryptoKey = await crypto.subtle.importKey("raw", key as BufferSource, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, data as BufferSource)); }
 
-class SteamProtoWriter {
+export class SteamProtoWriter {
   private readonly bytes: number[] = [];
   toBytes(): Uint8Array { return Uint8Array.from(this.bytes); }
-  writeVarint(field: number, value: number | bigint) { this.writeTag(field, 0); this.writeRaw(BigInt(value)); }
+  writeVarint(field: number, value: number | bigint) { this.writeTag(field, 0); const parsed = BigInt(value); this.writeRaw(parsed < 0n ? BigInt.asUintN(64, parsed) : parsed); }
   writeBool(field: number, value: boolean) { this.writeVarint(field, value ? 1 : 0); }
   writeString(field: number, value: string) { this.writeBytes(field, new TextEncoder().encode(value)); }
   writeBytes(field: number, value: Uint8Array) { this.writeTag(field, 2); this.writeRaw(BigInt(value.length)); this.bytes.push(...value); }
@@ -424,7 +438,7 @@ class SteamProtoWriter {
   private writeRaw(value: bigint) { let current = value; while (current > 0x7fn) { this.bytes.push(Number((current & 0x7fn) | 0x80n)); current >>= 7n; } this.bytes.push(Number(current)); }
 }
 
-class SteamProtoReader {
+export class SteamProtoReader {
   private offset = 0;
   constructor(private readonly bytes: Uint8Array) {}
   parse(): Map<number, SteamProtoField> { return new Map(this.parseAll().map((field) => [field.number, field])); }
@@ -433,7 +447,7 @@ class SteamProtoReader {
   private readBytes(length: number): Uint8Array { const result = this.bytes.slice(this.offset, this.offset + length); this.offset += length; return result; }
 }
 
-interface SteamProtoField { number: number; wire: number; varint?: bigint; bytes?: Uint8Array }
+export interface SteamProtoField { number: number; wire: number; varint?: bigint; bytes?: Uint8Array }
 function fieldString(field?: SteamProtoField): string { return field?.bytes ? new TextDecoder().decode(field.bytes) : ""; }
 function fieldNumber(field?: SteamProtoField): number { return field?.varint === undefined ? 0 : Number(field.varint); }
 function fieldBool(field?: SteamProtoField): boolean | undefined { return field?.varint === undefined ? undefined : field.varint !== 0n; }
