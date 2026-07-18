@@ -40,9 +40,12 @@ const messageSource = await readFile(resolve(root, "src/runtime/messages.ts"), "
 const steamTypes = [...messageSource.matchAll(/type:\s*"(STEAM_[A-Z0-9_]+)"/g)].map((match) => match[1]);
 for (const type of steamTypes) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged Steam request ${type} is exposed to web pages.`);
 const steamRequestDeclarations = messageSource.split("\n").filter((line) => line.includes('type: "STEAM_'));
-for (const field of ["accessToken", "refreshToken", "identitySecret", "sharedSecret", "steamLoginSecure", "password"]) {
+for (const field of ["accessToken", "refreshToken", "identitySecret", "sharedSecret", "steamLoginSecure"]) {
   if (steamRequestDeclarations.some((line) => line.includes(field))) throw new Error(`Steam runtime request exposes credential field: ${field}.`);
 }
+const revocationDeclaration = steamRequestDeclarations.find((line) => line.includes('"STEAM_REVOKE_AUTHORIZED_DEVICE"')) || "";
+if (revocationDeclaration.includes("password") && !revocationDeclaration.includes("confirmed: true")) throw new Error("Steam revocation password request is missing explicit confirmation.");
+for (const line of steamRequestDeclarations.filter((entry) => entry.includes("password") && !entry.includes('"STEAM_REVOKE_AUTHORIZED_DEVICE"'))) throw new Error(`Unexpected Steam password field: ${line}`);
 const declaredTypes = [...messageSource.matchAll(/type:\s*"([A-Z0-9_]+)"/g)].map((match) => match[1]);
 for (const type of new Set(declaredTypes)) if (!backgroundSource.includes(`case "${type}"`)) throw new Error(`Runtime request ${type} has no explicit background handler.`);
 const contentSource = await readFile(resolve(root, "src/content/index.ts"), "utf8");

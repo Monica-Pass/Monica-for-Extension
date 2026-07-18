@@ -41,9 +41,12 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     });
     await context.route("https://api.steampowered.com/**", async (route) => {
       const pathname = new URL(route.request().url()).pathname;
-      if (pathname.includes("GetAuthSessionsForAccount")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from([0x08, 0x7b]) });
+      if (pathname.includes("GetPasswordRSAPublicKey")) await route.fulfill({ contentType: "application/json", body: JSON.stringify({ response: { publickey_mod: "ff".repeat(128), publickey_exp: "01", timestamp: "1700000000" } }) });
+      else if (pathname.includes("GetAuthSessionsForAccount")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from([0x08, 0x7b]) });
       else if (pathname.includes("GetAuthSessionInfo")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from(protoSessionInfo()) });
       else if (pathname.includes("EnumerateTokens")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from(protoAuthorizedDevices()) });
+      else if (pathname.includes("BeginAuthSessionViaCredentials")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from([...fieldVarint(1, 123n), ...fieldBytes(2, [1, 2, 3, 4]), ...fieldFixed64(5, 76561198000000000n)]) });
+      else if (pathname.includes("PollAuthSessionStatus")) await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.from([...fieldString(3, "refresh-temp"), ...fieldString(4, "access-temp")]) });
       else await route.fulfill({ contentType: "application/octet-stream", headers: { "x-eresult": "1" }, body: Buffer.alloc(0) });
     });
 
@@ -97,6 +100,15 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     await account.getByRole("tab", { name: "设备" }).click();
     await expect(account.getByText(/Chrome on Windows/)).toBeVisible();
     await expect(account.getByText("当前设备", { exact: true })).toBeVisible();
+    const oldDevice = account.getByRole("listitem").filter({ hasText: "Old phone" });
+    await oldDevice.getByRole("button", { name: "撤销", exact: true }).click();
+    await account.getByLabel("Steam 账号名").fill("joy");
+    await account.getByLabel("Steam 密码").fill("one-time-password");
+    manager.once("dialog", (dialog) => void dialog.accept());
+    await account.getByRole("button", { name: "撤销设备授权" }).click();
+    await expect(account.getByText(/Steam 授权设备已撤销/)).toBeVisible();
+    await expect(account.getByText("Old phone", { exact: true })).toHaveCount(0);
+    await expect(account.getByLabel("Steam 密码")).toHaveCount(0);
 
     await manager.screenshot({ path: testInfo.outputPath("steam-manager-desktop.png"), fullPage: true });
     await manager.setViewportSize({ width: 390, height: 844 });
@@ -145,7 +157,8 @@ function protoSessionInfo(): number[] {
 function protoAuthorizedDevices(): number[] {
   const usage = [...fieldVarint(1, 1_700_000_000n), ...fieldString(4, "CN"), ...fieldString(5, "Shanghai"), ...fieldString(6, "Shanghai")];
   const device = [...fieldFixed64(1, 42n), ...fieldString(2, "Chrome on Windows"), ...fieldVarint(4, 3n), ...fieldVarint(5, 1n), ...fieldBytes(10, usage)];
-  return [...fieldBytes(1, device), ...fieldFixed64(2, 42n)];
+  const oldDevice = [...fieldFixed64(1, 43n), ...fieldString(2, "Old phone"), ...fieldVarint(4, 2n), ...fieldVarint(5, 1n), ...fieldBytes(10, usage)];
+  return [...fieldBytes(1, device), ...fieldBytes(1, oldDevice), ...fieldFixed64(2, 42n)];
 }
 
 function fieldString(field: number, value: string): number[] {
