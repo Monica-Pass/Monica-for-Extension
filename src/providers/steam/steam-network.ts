@@ -19,6 +19,24 @@ export interface SteamPendingLogin {
   deviceName: string;
 }
 
+export interface SteamAuthorizedDeviceUsage {
+  timeSeconds: number;
+  country: string;
+  state: string;
+  city: string;
+  location: string;
+}
+
+export interface SteamAuthorizedDevice {
+  tokenId: string;
+  description: string;
+  platformType: number;
+  loggedIn: boolean;
+  firstSeen?: SteamAuthorizedDeviceUsage;
+  lastSeen?: SteamAuthorizedDeviceUsage;
+  isCurrent: boolean;
+}
+
 export class SteamNetworkError extends Error {
   constructor(message: string, readonly retryable = true) {
     super(message);
@@ -98,7 +116,21 @@ export async function respondToSteamLogin(item: TotpItem, login: Pick<SteamPendi
   return fields.size === 0 || fieldBool(fields.get(1)) !== false;
 }
 
-async function prepareAccount(item: TotpItem): Promise<{ item: TotpItem; accessToken: string }> {
+export async function listSteamAuthorizedDevices(item: TotpItem): Promise<SteamAuthorizedDevice[]> {
+  const account = await prepareSteamAccount(item);
+  const request = new SteamProtoWriter();
+  request.writeBool(1, false);
+  const response = await steamProtobufCall("IAuthenticationService", "EnumerateTokens", request.toBytes(), account.accessToken);
+  const fields = new SteamProtoReader(response).parseAll();
+  const requestingToken = fieldFixed64Unsigned(fields.find((field) => field.number === 2));
+  return fields.flatMap((field): SteamAuthorizedDevice[] => {
+    if (field.number !== 1 || !field.bytes) return [];
+    const parsed = parseAuthorizedDevice(field.bytes, requestingToken);
+    return parsed ? [parsed] : [];
+  });
+}
+
+export async function prepareSteamAccount(item: TotpItem): Promise<{ item: TotpItem; accessToken: string }> {
   const accessToken = item.steamAccessToken || parseSteamRaw(item.steamRawJson).accessToken;
   const refreshToken = item.steamRefreshToken || parseSteamRaw(item.steamRawJson).refreshToken;
   if (!accessToken && !refreshToken) throw new SteamNetworkError("Steam 项目缺少 access token 或 refresh token。", false);
@@ -108,7 +140,7 @@ async function prepareAccount(item: TotpItem): Promise<{ item: TotpItem; accessT
   const request = new SteamProtoWriter();
   request.writeString(1, refreshToken);
   request.writeFixed64(2, steamId);
-  const bytes = await protobufCall("IAuthenticationService", "GenerateAccessTokenForApp", request.toBytes());
+  const bytes = await steamProtobufCall("IAuthenticationService", "GenerateAccessTokenForApp", request.toBytes());
   const fields = new SteamProtoReader(bytes).parse();
   const refreshed = fieldString(fields.get(1));
   if (!refreshed) throw new SteamNetworkError("Steam token 刷新失败。", false);
@@ -118,6 +150,8 @@ async function prepareAccount(item: TotpItem): Promise<{ item: TotpItem; accessT
   item.steamRawJson = patchSteamRawSession(item.steamRawJson, steamId.toString(), refreshed, item.steamRefreshToken, item.steamLoginSecure);
   return { item, accessToken: refreshed };
 }
+
+const prepareAccount = prepareSteamAccount;
 
 async function getSteamSessionInfo(item: TotpItem, accessToken: string, clientId: number): Promise<SteamPendingLogin> {
   const request = new SteamProtoWriter();
@@ -135,6 +169,24 @@ async function getSteamSessionInfo(item: TotpItem, accessToken: string, clientId
 }
 
 async function communityJson(path: string, values: Record<string, string>, item: TotpItem, method: "GET" | "POST" = "GET"): Promise<Record<string, unknown>> {
+  return steamCommunityJson(path, values, item, { method });
+}
+
+export interface SteamCommunityRequestOptions {
+  method?: "GET" | "POST";
+  cookies?: Record<string, string>;
+  referer?: string;
+}
+
+export async function steamCommunityJson(path: string, values: Record<string, string>, item: TotpItem, options: SteamCommunityRequestOptions = {}): Promise<Record<string, unknown>> {
+  const text = await steamCommunityText(path, values, item, options);
+  if (!text.trim().startsWith("{")) return {};
+  try { return JSON.parse(text) as Record<string, unknown>; } catch { throw new SteamNetworkError("Steam 返回了无法解析的响应。", false); }
+}
+
+export async function steamCommunityText(path: string, values: Record<string, string>, item: TotpItem, options: SteamCommunityRequestOptions = {}): Promise<string> {
+  if (!/^\/[A-Za-z0-9_./-]*$/.test(path) || path.includes("..")) throw new SteamNetworkError("Steam community 请求路径无效。", false);
+  const method = options.method || "GET";
   const query = new URLSearchParams();
   const headers: Record<string, string> = { Accept: "application/json, text/plain, */*", "X-Requested-With": "com.valvesoftware.android.steam.community" };
   if (method === "GET") Object.entries(values).forEach(([key, value]) => query.set(key, value));
@@ -142,15 +194,15 @@ async function communityJson(path: string, values: Record<string, string>, item:
   const body = method === "POST" ? new URLSearchParams(values) : undefined;
   const response = await withSteamCookies(item, async (cookieHeader) => {
     if (cookieHeader) headers.Cookie = cookieHeader;
-    return fetch(url, { method, headers, body, credentials: "include" });
-  });
+    return fetch(url, { method, headers, body, credentials: "include", referrer: validatedCommunityReferer(options.referer) });
+  }, options.cookies);
+  assertSteamResponseOrigin(response, "steamcommunity.com");
   if (!response.ok) throw new SteamNetworkError(`Steam community 请求失败（HTTP ${response.status}）。`);
-  const text = await response.text();
-  if (!text.trim().startsWith("{")) return {};
-  try { return JSON.parse(text) as Record<string, unknown>; } catch { throw new SteamNetworkError("Steam 返回了无法解析的响应。", false); }
+  return response.text();
 }
 
-async function protobufCall(iface: string, method: string, bytes: Uint8Array, accessToken = "", useGet = false): Promise<Uint8Array> {
+export async function steamProtobufCall(iface: string, method: string, bytes: Uint8Array, accessToken = "", useGet = false): Promise<Uint8Array> {
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(iface) || !/^[A-Za-z][A-Za-z0-9]*$/.test(method)) throw new SteamNetworkError("Steam API 方法无效。", false);
   const encoded = encodeBase64(bytes);
   const query = new URLSearchParams({ input_protobuf_encoded: encoded });
   if (accessToken) query.set("access_token", accessToken);
@@ -162,10 +214,13 @@ async function protobufCall(iface: string, method: string, bytes: Uint8Array, ac
     body: useGet ? undefined : new URLSearchParams({ input_protobuf_encoded: encoded }),
     credentials: "omit"
   });
+  assertSteamResponseOrigin(response, "api.steampowered.com");
   const eresult = Number(response.headers.get("x-eresult") || "1");
   if (!response.ok || eresult !== 1) throw new SteamNetworkError(`Steam API 请求失败（HTTP ${response.status}, eresult=${eresult}）。`);
   return new Uint8Array(await response.arrayBuffer());
 }
+
+const protobufCall = steamProtobufCall;
 
 async function baseConfirmationQuery(item: TotpItem, nowSeconds: number, tag: string): Promise<Record<string, string>> {
   const identitySecret = item.steamIdentitySecret;
@@ -177,19 +232,26 @@ async function baseConfirmationQuery(item: TotpItem, nowSeconds: number, tag: st
   return { p: item.steamDeviceId || "", a: steamId, k: encodeBase64(signature), t: String(nowSeconds), m: "react", tag };
 }
 
-async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string) => Promise<T>): Promise<T> {
+async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string) => Promise<T>, additional: Record<string, string> = {}): Promise<T> {
   const steamId = requireSteamId(item).toString();
   const token = item.steamAccessToken || parseSteamRaw(item.steamRawJson).accessToken || "";
-  const cookieHeader = `steamLoginSecure=${item.steamLoginSecure || `${steamId}||${token}`}; mobileClient=android; mobileClientVersion=777777 3.6.4`;
+  const values: Record<string, string> = {
+    steamLoginSecure: item.steamLoginSecure || `${steamId}||${token}`,
+    mobileClient: "android",
+    mobileClientVersion: "777777 3.6.4",
+    ...additional
+  };
+  for (const [name, value] of Object.entries(values)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name) || /[;\r\n]/.test(value)) throw new SteamNetworkError("Steam Cookie 参数无效。", false);
+  }
+  const cookieHeader = Object.entries(values).map(([name, value]) => `${name}=${value}`).join("; ");
   const cookies = globalThis.chrome?.cookies;
   if (!cookies?.get || !cookies?.set || !cookies?.remove) return action(cookieHeader);
   const url = "https://steamcommunity.com/";
-  const names = ["steamLoginSecure", "mobileClient", "mobileClientVersion"];
+  const names = Object.keys(values);
   const previous = await Promise.all(names.map((name) => new Promise<chrome.cookies.Cookie | null>((resolve) => cookies.get({ url, name }, resolve))));
   try {
-    await setCookie(cookies, url, "steamLoginSecure", item.steamLoginSecure || `${steamId}||${token}`);
-    await setCookie(cookies, url, "mobileClient", "android");
-    await setCookie(cookies, url, "mobileClientVersion", "777777 3.6.4");
+    await Promise.all(Object.entries(values).map(([name, value]) => setCookie(cookies, url, name, value)));
     return await action("");
   } finally {
     await Promise.all(names.map(async (name, index) => {
@@ -198,6 +260,11 @@ async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string
       if (old?.value) await restoreCookie(cookies, old);
     }));
   }
+}
+
+export function createSteamSessionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function setCookie(cookies: typeof chrome.cookies, url: string, name: string, value: string, path = "/"): Promise<void> {
@@ -220,10 +287,60 @@ function restoreCookie(cookies: typeof chrome.cookies, cookie: chrome.cookies.Co
   }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
 }
 
-function requireSteamId(item: TotpItem): bigint {
+export function requireSteamId(item: TotpItem): bigint {
   const value = item.steamId || parseSteamRaw(item.steamRawJson).steamId || "";
   if (!/^7656119\d{10}$/.test(value)) throw new SteamNetworkError("Steam 项目缺少有效 SteamID64。", false);
   return BigInt(value);
+}
+
+function parseAuthorizedDevice(bytes: Uint8Array, requestingToken: string): SteamAuthorizedDevice | undefined {
+  const fields = new SteamProtoReader(bytes).parse();
+  const tokenId = fieldFixed64Unsigned(fields.get(1));
+  const description = fieldString(fields.get(2));
+  if (!tokenId && !description) return undefined;
+  return {
+    tokenId,
+    description,
+    platformType: fieldNumber(fields.get(4)),
+    loggedIn: fieldBool(fields.get(5)) || false,
+    firstSeen: parseAuthorizedDeviceUsage(fields.get(9)?.bytes),
+    lastSeen: parseAuthorizedDeviceUsage(fields.get(10)?.bytes),
+    isCurrent: Boolean(requestingToken && tokenId === requestingToken)
+  };
+}
+
+function parseAuthorizedDeviceUsage(bytes?: Uint8Array): SteamAuthorizedDeviceUsage | undefined {
+  if (!bytes) return undefined;
+  const fields = new SteamProtoReader(bytes).parse();
+  const city = fieldString(fields.get(6));
+  const state = fieldString(fields.get(5));
+  const country = fieldString(fields.get(4));
+  return {
+    timeSeconds: fieldNumber(fields.get(1)),
+    country,
+    state,
+    city,
+    location: [city, state, country].filter(Boolean).join(", ")
+  };
+}
+
+function validatedCommunityReferer(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && isHostOrSubdomain(url.hostname, "steamcommunity.com") ? url.toString() : undefined;
+  } catch { return undefined; }
+}
+
+function assertSteamResponseOrigin(response: Response, expectedHost: string): void {
+  if (!response.url) return;
+  const url = new URL(response.url);
+  if (url.protocol !== "https:" || !isHostOrSubdomain(url.hostname, expectedHost)) throw new SteamNetworkError("Steam 请求被重定向到非官方地址。", false);
+}
+
+function isHostOrSubdomain(host: string, root: string): boolean {
+  const normalized = host.toLowerCase();
+  return normalized === root || normalized.endsWith(`.${root}`);
 }
 
 function parseSteamRaw(rawJson?: string): { steamId?: string; accessToken?: string; refreshToken?: string } {
@@ -289,4 +406,5 @@ interface SteamProtoField { number: number; wire: number; varint?: bigint; bytes
 function fieldString(field?: SteamProtoField): string { return field?.bytes ? new TextDecoder().decode(field.bytes) : ""; }
 function fieldNumber(field?: SteamProtoField): number { return field?.varint === undefined ? 0 : Number(field.varint); }
 function fieldBool(field?: SteamProtoField): boolean | undefined { return field?.varint === undefined ? undefined : field.varint !== 0n; }
+function fieldFixed64Unsigned(field?: SteamProtoField): string { if (!field?.bytes || field.bytes.length !== 8) return ""; let value = 0n; for (let index = 7; index >= 0; index--) value = (value << 8n) | BigInt(field.bytes[index]); return value.toString(); }
 function decodePackedVarints(bytes: Uint8Array): number[] { const values: number[] = []; let offset = 0; while (offset < bytes.length) { let value = 0n; let shift = 0n; while (offset < bytes.length) { const byte = bytes[offset++]; value |= BigInt(byte & 0x7f) << shift; if (!(byte & 0x80)) break; shift += 7n; } values.push(Number(value)); } return values; }

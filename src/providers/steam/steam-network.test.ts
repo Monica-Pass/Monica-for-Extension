@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TotpItem } from "../../core/model";
-import { listSteamConfirmations, respondToSteamConfirmation, respondToSteamLogin } from "./steam-network";
+import { listSteamAuthorizedDevices, listSteamConfirmations, respondToSteamConfirmation, respondToSteamLogin } from "./steam-network";
 
 const item: TotpItem = {
   id: "steam-item",
@@ -75,6 +75,38 @@ describe("Steam network services", () => {
     expect(expired.steamLoginSecure).toContain(expired.steamAccessToken || "");
     expect(expired.steamRawJson).toContain("refresh-new");
   });
+
+  it("lists authorized devices and marks the requesting token as current", async () => {
+    const currentToken = 18_446_744_073_709_551_614n;
+    const usage = protoMessage([
+      ...protoVarintField(1, 1_700_000_000n),
+      ...protoStringField(4, "CN"),
+      ...protoStringField(5, "Shanghai"),
+      ...protoStringField(6, "Shanghai")
+    ]);
+    const currentDevice = protoMessage([
+      ...protoFixed64Field(1, currentToken),
+      ...protoStringField(2, "Chrome on Windows"),
+      ...protoVarintField(4, 3n),
+      ...protoVarintField(5, 1n),
+      ...protoBytesField(10, usage)
+    ]);
+    const oldDevice = protoMessage([
+      ...protoFixed64Field(1, 42n),
+      ...protoStringField(2, "Old phone")
+    ]);
+    const payload = Uint8Array.from([
+      ...protoBytesField(1, currentDevice),
+      ...protoBytesField(1, oldDevice),
+      ...protoFixed64Field(2, currentToken)
+    ]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(payload, { status: 200, headers: { "x-eresult": "1" } })));
+
+    await expect(listSteamAuthorizedDevices(item)).resolves.toEqual([
+      expect.objectContaining({ tokenId: currentToken.toString(), description: "Chrome on Windows", loggedIn: true, isCurrent: true, lastSeen: expect.objectContaining({ location: "Shanghai, Shanghai, CN" }) }),
+      expect.objectContaining({ tokenId: "42", description: "Old phone", isCurrent: false })
+    ]);
+  });
 });
 
 function jwt(exp: number): string {
@@ -85,4 +117,37 @@ function jwt(exp: number): string {
 function protoStringField(field: number, value: string): number[] {
   const bytes = [...new TextEncoder().encode(value)];
   return [(field << 3) | 2, bytes.length, ...bytes];
+}
+
+function protoBytesField(field: number, value: number[]): number[] {
+  return [(field << 3) | 2, value.length, ...value];
+}
+
+function protoMessage(value: number[]): number[] {
+  return value;
+}
+
+function protoVarintField(field: number, value: bigint): number[] {
+  return [(field << 3), ...rawVarint(value)];
+}
+
+function protoFixed64Field(field: number, value: bigint): number[] {
+  const bytes: number[] = [];
+  let current = value;
+  for (let index = 0; index < 8; index++) {
+    bytes.push(Number(current & 0xffn));
+    current >>= 8n;
+  }
+  return [(field << 3) | 1, ...bytes];
+}
+
+function rawVarint(value: bigint): number[] {
+  const bytes: number[] = [];
+  let current = value;
+  while (current > 0x7fn) {
+    bytes.push(Number((current & 0x7fn) | 0x80n));
+    current >>= 7n;
+  }
+  bytes.push(Number(current));
+  return bytes;
 }

@@ -1,5 +1,7 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
+import type { SteamInventoryOverview, SteamInventoryPage } from "../providers/steam/steam-market";
+import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/secure-vault-service";
 
 export interface LoginMatchSummary {
@@ -130,6 +132,9 @@ export type ExtensionRequest =
   | { type: "STEAM_RESPOND_CONFIRMATION"; itemId: string; confirmation: SteamConfirmation; accept: boolean }
   | { type: "STEAM_LIST_PENDING_LOGINS"; itemId: string }
   | { type: "STEAM_RESPOND_LOGIN"; itemId: string; login: Pick<SteamPendingLogin, "clientId" | "version">; approve: boolean }
+  | { type: "STEAM_LIST_AUTHORIZED_DEVICES"; itemId: string }
+  | { type: "STEAM_GET_INVENTORY_OVERVIEW"; itemId: string }
+  | { type: "STEAM_LIST_INVENTORY_ITEMS"; itemId: string; appId: number; contextId: string; language?: string; startAssetId?: string; count?: number }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
@@ -167,3 +172,4 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
+export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage };

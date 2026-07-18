@@ -5,7 +5,8 @@ import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import { listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
+import { getSteamInventoryOverview, listSteamInventoryItems } from "../providers/steam/steam-market";
+import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
@@ -165,6 +166,18 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "STEAM_RESPOND_LOGIN": {
       assertExtensionPage(sender);
       return runSteamOperation(request.itemId, (item) => respondToSteamLogin(item, request.login, request.approve));
+    }
+    case "STEAM_LIST_AUTHORIZED_DEVICES": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, listSteamAuthorizedDevices);
+    }
+    case "STEAM_GET_INVENTORY_OVERVIEW": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, getSteamInventoryOverview);
+    }
+    case "STEAM_LIST_INVENTORY_ITEMS": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, (item) => listSteamInventoryItems(item, request));
     }
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);
