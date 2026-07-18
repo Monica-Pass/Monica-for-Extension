@@ -36,7 +36,30 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string): And
       warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
     }
   }
+  restoreAndroidOtpBindings(items);
+  for (const item of items) {
+    const record = records.get(item.id);
+    if (record) record.item = cloneVaultItem(item);
+  }
   return { entries, items, records, warnings };
+}
+
+function restoreAndroidOtpBindings(items: VaultItem[]): void {
+  const loginsByProviderAndId = new Map<string, LoginItem>();
+  for (const item of items) {
+    if (item.kind !== "login") continue;
+    for (const reference of item.providerRefs) {
+      const match = reference.remoteId?.match(/\/password_(-?\d+)_\d+\.json$/i);
+      if (match) loginsByProviderAndId.set(`${reference.providerId}:${match[1]}`, item);
+    }
+  }
+  for (const item of items) {
+    if (item.kind !== "totp" || item.boundPasswordId == null) continue;
+    for (const reference of item.providerRefs) {
+      const login = loginsByProviderAndId.get(`${reference.providerId}:${item.boundPasswordId}`);
+      if (login && !login.boundTotpItemId) login.boundTotpItemId = item.id;
+    }
+  }
 }
 
 export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string): Uint8Array {

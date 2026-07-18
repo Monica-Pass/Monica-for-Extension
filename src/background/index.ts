@@ -1,7 +1,7 @@
 import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
+import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry } from "../core/provider";
-import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
@@ -631,12 +631,13 @@ async function fillLogin(itemId: string, tabId: number, frameId?: number) {
   const targetUrl = targetFrame?.url || tab.url;
   if (!targetUrl || !isSecureSensitivePageUrl(targetUrl)) throw new Error("已阻止向不安全的 HTTP 页面填充登录信息。");
   if (!targetUrl || (loginMatchScore(item, targetUrl) <= 0 && (!tab.url || loginMatchScore(item, tab.url) <= 0))) throw new Error("登录项与目标页面不匹配，已阻止填充。");
-  const totpCode = item.totpSecret ? await generateTotp(item.totpSecret) : undefined;
+  const otp = await resolveLoginOtp(item, await service.listItems());
   const response = (await chrome.tabs.sendMessage(tabId, {
     type: "MONICA_FILL_CREDENTIAL",
-    credential: { username: item.username, password: item.password, totpCode, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
+    credential: { username: item.username, password: item.password, totpCode: otp?.code, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
   }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
+  if (response.filledTotp && otp?.updatedItem) await service.upsertItem(otp.updatedItem);
   return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp), filledCustomFields: response.filledCustomFields || 0 };
 }
 

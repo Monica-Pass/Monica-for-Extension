@@ -16,7 +16,7 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
     }) : []
   };
   switch (kind) {
-    case "login": return { ...base, kind, username: string(raw.username), password: string(raw.password), uris: strings(raw.uris), totpSecret: optional(raw.totpSecret), customFields: Array.isArray(raw.customFields) ? raw.customFields.flatMap((value) => value && typeof value === "object" ? [{ name: string((value as Record<string, unknown>).name), value: string((value as Record<string, unknown>).value), protected: Boolean((value as Record<string, unknown>).protected) }] : []) : [] };
+    case "login": return { ...base, kind, username: string(raw.username), password: string(raw.password), uris: strings(raw.uris), totpSecret: optional(raw.totpSecret), boundTotpItemId: optional(raw.boundTotpItemId), customFields: Array.isArray(raw.customFields) ? raw.customFields.flatMap((value) => value && typeof value === "object" ? [{ name: string((value as Record<string, unknown>).name), value: string((value as Record<string, unknown>).value), protected: Boolean((value as Record<string, unknown>).protected) }] : []) : [] };
     case "secure-note": return { ...base, kind, content: string(raw.content) };
     case "totp": return {
       ...base,

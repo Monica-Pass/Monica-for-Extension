@@ -7,6 +7,7 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
+import GeneratorPanel from "./components/GeneratorPanel.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
@@ -19,7 +20,7 @@ import { vaultClient } from "./runtime/client";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | VaultManagerSection | "steam" | "providers" | "settings";
+type Section = "overview" | VaultManagerSection | "steam" | "generator" | "providers" | "settings";
 type LoginType = NonNullable<LoginItem["loginType"]>;
 
 interface LoginForm {
@@ -34,6 +35,7 @@ interface LoginForm {
   ssoProvider: string;
   ssoRefEntryId: string;
   totpSecret: string;
+  boundTotpItemId: string;
   uriRules: LoginUriRule[];
   customFields: SecureCustomField[];
 }
@@ -251,11 +253,11 @@ function navigate(section: Section) {
 }
 
 function sectionTitle(section: Section): string {
-  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", providers: "密码源", settings: "设置与备份" } as const)[section];
+  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", generator: "生成器", providers: "密码源", settings: "设置与备份" } as const)[section];
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", providers: "连接 Monica Android WebDAV、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 Monica Android WebDAV、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
 }
 
 function providerName(item: VaultItem): string {
@@ -292,6 +294,7 @@ function openEdit(item: LoginItem) {
     ssoProvider: item.ssoProvider || "",
     ssoRefEntryId: item.ssoRefEntryId == null ? "" : String(item.ssoRefEntryId),
     totpSecret: item.totpSecret || "",
+    boundTotpItemId: item.boundTotpItemId || "",
     uriRules: effectiveLoginUriRules(item).map((rule) => ({ ...rule })),
     customFields: item.customFields.map((field) => ({ ...field }))
   });
@@ -320,6 +323,13 @@ async function saveVaultItem(item: VaultItem) {
   showNotice(`${itemKindLabel(item.kind)}已加密保存。`);
 }
 
+async function advanceHotpItem(item: TotpItem) {
+  if (item.otpType !== "HOTP") return;
+  await vaultClient.upsertItem({ ...item, counter: (item.counter || 0) + 1, updatedAt: new Date().toISOString() });
+  await refreshItems();
+  showNotice("HOTP 已复制，计数器已安全前进。", 1800);
+}
+
 function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: EditableVaultKind } {
   return item.kind === "card" || item.kind === "identity" || item.kind === "billing-address" || item.kind === "payment-account" || item.kind === "secure-note" || item.kind === "totp";
 }
@@ -344,7 +354,8 @@ async function submitCredential() {
     loginType: form.loginType,
     ssoProvider: form.loginType === "SSO" ? form.ssoProvider.trim() : "",
     ssoRefEntryId: form.loginType === "SSO" ? ssoRefEntryId : undefined,
-    totpSecret: form.totpSecret.trim() || undefined,
+    totpSecret: form.boundTotpItemId ? undefined : form.totpSecret.trim() || undefined,
+    boundTotpItemId: form.boundTotpItemId || undefined,
     customFields,
     archivedAt: form.archived ? existing?.archivedAt || new Date().toISOString() : undefined
   };
@@ -368,7 +379,7 @@ async function submitCredential() {
 function emptyLoginForm(providerId = ""): LoginForm {
   return {
     name: "", username: "", password: "", notes: "", favorite: false, archived: false, providerId,
-    loginType: "PASSWORD", ssoProvider: "", ssoRefEntryId: "", totpSecret: "",
+    loginType: "PASSWORD", ssoProvider: "", ssoRefEntryId: "", totpSecret: "", boundTotpItemId: "",
     uriRules: [{ uri: "", matchType: "base-domain" }], customFields: []
   };
 }
@@ -789,6 +800,7 @@ function errorMessage(error: unknown) {
           <section>
             <p class="nav-title">插件</p>
             <button class="nav-item" :class="{ selected: activeSection === 'settings' }" :aria-current="activeSection === 'settings' ? 'page' : undefined" type="button" @click="navigate('settings')"><m3e-icon name="settings"></m3e-icon><span>设置与备份</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'generator' }" :aria-current="activeSection === 'generator' ? 'page' : undefined" type="button" @click="navigate('generator')"><m3e-icon name="tune"></m3e-icon><span>生成器</span></button>
           </section>
         </nav>
         <div class="sidebar-footer">
@@ -834,11 +846,13 @@ function errorMessage(error: unknown) {
           <div v-if="!steamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>还没有 Steam 验证器</h2><p>从 Monica Android 同步，或在动态验证码中添加 Steam Guard。</p><m3e-button variant="filled" @click="openVaultCreate('totp')">添加 Steam Guard</m3e-button></div>
         </section>
 
+        <GeneratorPanel v-else-if="activeSection === 'generator'" />
+
         <section v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
             <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? '私钥已隐藏' : item.kind === 'totp' && item.otpType === 'STEAM' ? 'Steam Guard' : '敏感字段已遮罩' }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? '私钥已隐藏' : item.kind === 'totp' && item.otpType === 'STEAM' ? 'Steam Guard' : '敏感字段已遮罩' }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>
@@ -923,7 +937,8 @@ function errorMessage(error: unknown) {
       <label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label>
       <label class="field"><span>密码</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label>
       <template v-if="form.loginType === 'SSO'"><label class="field"><span>SSO 提供商</span><input v-model="form.ssoProvider" autocomplete="off" placeholder="GOOGLE" /></label><label class="field"><span>引用条目 ID</span><input v-model="form.ssoRefEntryId" inputmode="numeric" placeholder="可选" /></label></template>
-      <label class="field field-wide"><span>绑定验证码密钥</span><input v-model="form.totpSecret" autocomplete="off" placeholder="Base32 或 otpauth 密钥" /><small>仅在点击填充时由后台生成验证码。</small></label>
+      <label class="field"><span>绑定独立验证器</span><select v-model="form.boundTotpItemId"><option value="">不绑定独立项目</option><option v-for="item in totpItems" :key="item.id" :value="item.id">{{ item.title }} · {{ item.otpType || 'TOTP' }}</option></select></label>
+      <label class="field"><span>内嵌验证码密钥</span><input v-model="form.totpSecret" :disabled="Boolean(form.boundTotpItemId)" autocomplete="off" placeholder="Base32 或 otpauth URI" /><small>独立验证器优先；验证码仅在点击填充时由后台生成。</small></label>
       <fieldset class="editor-fieldset field-wide"><legend>匹配网站（可选）</legend><div class="uri-rule-list"><div v-for="(rule, index) in form.uriRules" :key="index" class="uri-rule-row"><select v-model="rule.matchType" :aria-label="`网址 ${index + 1} 匹配方式`"><option v-for="type in (['base-domain','domain','starts-with','exact','regex','never'] as LoginUriMatchType[])" :key="type" :value="type">{{ uriMatchTypeLabel(type) }}</option></select><input v-model="rule.uri" :aria-label="`网址 ${index + 1}`" placeholder="https://accounts.example.com" /><m3e-icon-button type="button" :aria-label="`删除网址 ${index + 1}`" @click="removeUriRule(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addUriRule"><m3e-icon slot="icon" name="add"></m3e-icon>添加网址</m3e-button></fieldset>
       <fieldset class="editor-fieldset field-wide"><legend>自定义字段</legend><div class="custom-field-list"><div v-for="(field, index) in form.customFields" :key="index" class="custom-field-row"><input v-model="field.name" :aria-label="`自定义字段 ${index + 1} 名称`" placeholder="字段名称" /><input v-model="field.value" :type="field.protected ? 'password' : 'text'" :aria-label="`自定义字段 ${index + 1} 值`" placeholder="字段值" /><label class="compact-check"><input v-model="field.protected" type="checkbox" /><span>隐藏</span></label><m3e-icon-button type="button" :aria-label="`删除自定义字段 ${index + 1}`" @click="removeCustomField(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addCustomField"><m3e-icon slot="icon" name="add"></m3e-icon>添加字段</m3e-button></fieldset>
       <label class="field field-wide"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label>

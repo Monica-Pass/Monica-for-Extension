@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import type { BillingAddressItem, CardItem, IdentityItem, PaymentAccountItem, ProviderAccount, SecureNoteItem, TotpItem, VaultItem } from "../core/model";
+import { generateOtpUri, parseOtpUris } from "../core/totp";
+import { createOtpQrDataUrl, decodeOtpQrImage } from "../core/otp-qr";
+import { exportSteamMaFile, parseSteamMaFile } from "../core/steam-mafile";
 import { itemKindLabel } from "../manager/item-metadata";
 
 export type EditableVaultKind = "card" | "identity" | "billing-address" | "payment-account" | "secure-note" | "totp";
@@ -10,6 +13,9 @@ const emit = defineEmits<{ cancel: []; save: [item: VaultItem] }>();
 
 const kind = ref<EditableVaultKind>(props.item && isEditableKind(props.item.kind) ? props.item.kind : props.initialKind);
 const error = ref("");
+const otpTransferInput = ref("");
+const otpQrDataUrl = ref("");
+const otpTransferStatus = ref("");
 const fields = reactive(emptyFields());
 
 const eligibleProviders = computed(() => props.providers.filter((provider) => provider.enabled && providerSupportsKind(provider, kind.value)));
@@ -33,7 +39,7 @@ function initialize() {
     case "billing-address": Object.assign(fields, { fullName: props.item.fullName, company: props.item.company, streetAddress: props.item.streetAddress, apartment: props.item.apartment, city: props.item.city, stateProvince: props.item.stateProvince, postalCode: props.item.postalCode, country: props.item.country, phone: props.item.phone, email: props.item.email }); break;
     case "payment-account": Object.assign(fields, { paymentType: props.item.paymentType, paymentProvider: props.item.provider, accountName: props.item.accountName, accountHolderName: props.item.accountHolderName, email: props.item.email, phone: props.item.phone, username: props.item.username, accountId: props.item.accountId, maskedAccountNumber: props.item.maskedAccountNumber, routingNumber: props.item.routingNumber, iban: props.item.iban, swiftBic: props.item.swiftBic, website: props.item.website, currency: props.item.currency }); break;
     case "secure-note": fields.content = props.item.content; break;
-    case "totp": Object.assign(fields, { secret: props.item.secret, issuer: props.item.issuer || "", accountName: props.item.accountName || "", otpType: props.item.otpType || "TOTP", counter: String(props.item.counter ?? 0), pin: props.item.pin || "", link: props.item.link || "", associatedApp: props.item.associatedApp || "", steamFingerprint: props.item.steamFingerprint || "", steamDeviceId: props.item.steamDeviceId || "", steamSerialNumber: props.item.steamSerialNumber || "", steamSharedSecretBase64: props.item.steamSharedSecretBase64 || "", steamId: props.item.steamId || "", steamAccessToken: props.item.steamAccessToken || "", steamRefreshToken: props.item.steamRefreshToken || "", steamLoginSecure: props.item.steamLoginSecure || "", steamRevocationCode: props.item.steamRevocationCode || "", steamIdentitySecret: props.item.steamIdentitySecret || "", steamTokenGid: props.item.steamTokenGid || "", steamRawJson: props.item.steamRawJson || "", algorithm: props.item.algorithm, digits: String(props.item.digits), period: String(props.item.period) }); break;
+    case "totp": Object.assign(fields, { secret: props.item.secret, issuer: props.item.issuer || "", accountName: props.item.accountName || "", otpType: props.item.otpType || "TOTP", counter: String(props.item.counter ?? 0), pin: props.item.pin || "", link: props.item.link || "", associatedApp: props.item.associatedApp || "", steamFingerprint: props.item.steamFingerprint || "", steamDeviceId: props.item.steamDeviceId || "", steamSerialNumber: props.item.steamSerialNumber || "", steamSecretEncoding: props.item.steamSharedSecretBase64 ? "base64" : "base32", steamSharedSecretBase64: props.item.steamSharedSecretBase64 || "", steamId: props.item.steamId || "", steamAccessToken: props.item.steamAccessToken || "", steamRefreshToken: props.item.steamRefreshToken || "", steamLoginSecure: props.item.steamLoginSecure || "", steamRevocationCode: props.item.steamRevocationCode || "", steamIdentitySecret: props.item.steamIdentitySecret || "", steamTokenGid: props.item.steamTokenGid || "", steamRawJson: props.item.steamRawJson || "", algorithm: props.item.algorithm, digits: String(props.item.digits), period: String(props.item.period) }); break;
   }
 }
 
@@ -59,7 +65,7 @@ function buildItem(title: string): VaultItem {
     case "billing-address": return { ...base, kind: "billing-address", fullName: fields.fullName.trim(), company: fields.company.trim(), streetAddress: fields.streetAddress.trim(), apartment: fields.apartment.trim(), city: fields.city.trim(), stateProvince: fields.stateProvince.trim(), postalCode: fields.postalCode.trim(), country: fields.country.trim(), phone: fields.phone.trim(), email: fields.email.trim() } satisfies BillingAddressItem;
     case "payment-account": return { ...base, kind: "payment-account", paymentType: fields.paymentType.trim(), provider: fields.paymentProvider.trim(), accountName: fields.accountName.trim(), accountHolderName: fields.accountHolderName.trim(), email: fields.email.trim(), phone: fields.phone.trim(), username: fields.username.trim(), accountId: fields.accountId.trim(), maskedAccountNumber: fields.maskedAccountNumber.trim(), routingNumber: fields.routingNumber.trim(), iban: fields.iban.replace(/\s+/g, ""), swiftBic: fields.swiftBic.replace(/\s+/g, ""), website: fields.website.trim(), currency: fields.currency.trim().toUpperCase() } satisfies PaymentAccountItem;
     case "secure-note": return { ...base, kind: "secure-note", content: fields.content } satisfies SecureNoteItem;
-    case "totp": return { ...base, kind: "totp", secret: fields.otpType === "STEAM" ? fields.secret.trim() : fields.secret.replace(/\s+/g, "").toUpperCase(), issuer: optional(fields.issuer), accountName: optional(fields.accountName), otpType: fields.otpType, counter: clampNumber(fields.counter, 0, 0, Number.MAX_SAFE_INTEGER), pin: optional(fields.pin), link: optional(fields.link), associatedApp: optional(fields.associatedApp), steamFingerprint: optional(fields.steamFingerprint), steamDeviceId: optional(fields.steamDeviceId), steamSerialNumber: optional(fields.steamSerialNumber), steamSharedSecretBase64: fields.otpType === "STEAM" ? optional(fields.secret.trim()) : undefined, steamId: optional(fields.steamId), steamAccessToken: optional(fields.steamAccessToken), steamRefreshToken: optional(fields.steamRefreshToken), steamLoginSecure: optional(fields.steamLoginSecure), steamRevocationCode: optional(fields.steamRevocationCode), steamIdentitySecret: optional(fields.steamIdentitySecret), steamTokenGid: optional(fields.steamTokenGid), steamRawJson: fields.otpType === "STEAM" ? optional(mergeSteamRawJson()) : optional(fields.steamRawJson), algorithm: fields.algorithm, digits: fields.otpType === "STEAM" ? 5 : clampNumber(fields.digits, 6, 6, 10), period: clampNumber(fields.period, 30, 5, 300) } satisfies TotpItem;
+    case "totp": return { ...base, kind: "totp", secret: fields.otpType === "MOTP" || fields.otpType === "STEAM" && fields.steamSecretEncoding === "base64" ? fields.secret.trim() : fields.secret.replace(/\s+/g, "").toUpperCase(), issuer: optional(fields.issuer), accountName: optional(fields.accountName), otpType: fields.otpType, counter: clampNumber(fields.counter, 0, 0, Number.MAX_SAFE_INTEGER), pin: optional(fields.pin), link: optional(fields.link), associatedApp: optional(fields.associatedApp), steamFingerprint: optional(fields.steamFingerprint), steamDeviceId: optional(fields.steamDeviceId), steamSerialNumber: optional(fields.steamSerialNumber), steamSharedSecretBase64: fields.otpType === "STEAM" && fields.steamSecretEncoding === "base64" ? optional(fields.secret.trim()) : undefined, steamId: optional(fields.steamId), steamAccessToken: optional(fields.steamAccessToken), steamRefreshToken: optional(fields.steamRefreshToken), steamLoginSecure: optional(fields.steamLoginSecure), steamRevocationCode: optional(fields.steamRevocationCode), steamIdentitySecret: optional(fields.steamIdentitySecret), steamTokenGid: optional(fields.steamTokenGid), steamRawJson: fields.otpType === "STEAM" ? optional(mergeSteamRawJson()) : optional(fields.steamRawJson), algorithm: fields.algorithm, digits: fields.otpType === "STEAM" ? 5 : clampNumber(fields.digits, 6, 1, 10), period: fields.otpType === "MOTP" ? 10 : clampNumber(fields.period, 30, 5, 300) } satisfies TotpItem;
   }
 }
 
@@ -88,7 +94,7 @@ function emptyFields() {
     documentType: "OTHER" as IdentityItem["documentType"], documentNumber: "", firstName: "", middleName: "", lastName: "", fullName: "", birthDate: "", issuedDate: "", expiryDate: "", issuedBy: "", nationality: "",
     company: "", streetAddress: "", apartment: "", city: "", stateProvince: "", postalCode: "", country: "", phone: "", email: "",
     paymentType: "", paymentProvider: "", accountName: "", accountHolderName: "", username: "", accountId: "", maskedAccountNumber: "", routingNumber: "", iban: "", swiftBic: "", website: "", currency: "",
-    content: "", secret: "", issuer: "", otpType: "TOTP" as NonNullable<TotpItem["otpType"]>, counter: "0", pin: "", link: "", associatedApp: "", steamFingerprint: "", steamDeviceId: "", steamSerialNumber: "", steamSharedSecretBase64: "", steamId: "", steamAccessToken: "", steamRefreshToken: "", steamLoginSecure: "", steamRevocationCode: "", steamIdentitySecret: "", steamTokenGid: "", steamRawJson: "", algorithm: "SHA1" as TotpItem["algorithm"], digits: "6", period: "30"
+    content: "", secret: "", issuer: "", otpType: "TOTP" as NonNullable<TotpItem["otpType"]>, counter: "0", pin: "", link: "", associatedApp: "", steamFingerprint: "", steamDeviceId: "", steamSerialNumber: "", steamSecretEncoding: "base64" as "base32" | "base64", steamSharedSecretBase64: "", steamId: "", steamAccessToken: "", steamRefreshToken: "", steamLoginSecure: "", steamRevocationCode: "", steamIdentitySecret: "", steamTokenGid: "", steamRawJson: "", algorithm: "SHA1" as TotpItem["algorithm"], digits: "6", period: "30"
   };
 }
 
@@ -107,6 +113,47 @@ function mergeSteamRawJson(): string {
   set("refresh_token", fields.steamRefreshToken);
   set("steamLoginSecure", fields.steamLoginSecure);
   return JSON.stringify(root);
+}
+
+function applyOtpTransfer() {
+  otpTransferStatus.value = "";
+  try {
+    const results = parseOtpUris(otpTransferInput.value);
+    if (results.length !== 1) throw new Error(`二维码包含 ${results.length} 个验证器，请逐项导入。`);
+    const value = results[0].parameters;
+    Object.assign(fields, { secret: value.secret, issuer: value.issuer || "", accountName: value.accountName || "", otpType: value.otpType || "TOTP", counter: String(value.counter || 0), pin: value.pin || "", algorithm: value.algorithm, digits: String(value.digits), period: String(value.period), steamSecretEncoding: value.secretEncoding || "base32" });
+    otpTransferStatus.value = "OTP URI 已解析，请核对后保存。";
+  } catch (failure) { otpTransferStatus.value = failure instanceof Error ? failure.message : "无法解析 OTP URI。"; }
+}
+
+async function importOtpQr(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return;
+  try { otpTransferInput.value = await decodeOtpQrImage(file); applyOtpTransfer(); }
+  catch (failure) { otpTransferStatus.value = failure instanceof Error ? failure.message : "无法识别二维码。"; }
+  (event.target as HTMLInputElement).value = "";
+}
+
+async function exportOtpQr() {
+  try {
+    const item = buildItem(fields.title.trim() || "OTP"); if (item.kind !== "totp") return;
+    const uri = generateOtpUri({ secret: item.secret, algorithm: item.algorithm, digits: item.digits, period: item.period, otpType: item.otpType, counter: item.counter, pin: item.pin, issuer: item.issuer, accountName: item.accountName, secretEncoding: item.otpType === "STEAM" && item.steamSharedSecretBase64 ? "base64" : "base32" }, [item.issuer, item.accountName].filter(Boolean).join(":") || item.title);
+    otpTransferInput.value = uri; otpQrDataUrl.value = await createOtpQrDataUrl(uri); otpTransferStatus.value = "二维码已在本机生成。";
+  } catch (failure) { otpTransferStatus.value = failure instanceof Error ? failure.message : "无法生成二维码。"; }
+}
+
+async function importMaFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return;
+  try {
+    const value = parseSteamMaFile(await file.text(), file.name);
+    Object.assign(fields, { title: fields.title || value.accountName, accountName: value.accountName, secret: value.sharedSecretBase64, steamSecretEncoding: "base64", steamSharedSecretBase64: value.sharedSecretBase64, steamId: value.steamId || "", steamDeviceId: value.deviceId || "", steamIdentitySecret: value.identitySecret || "", steamRevocationCode: value.revocationCode || "", steamTokenGid: value.tokenGid || "", steamAccessToken: value.accessToken || "", steamRefreshToken: value.refreshToken || "", steamLoginSecure: value.steamLoginSecure || "", steamRawJson: value.rawJson });
+    otpTransferStatus.value = "maFile 已解析，未知字段会保留。";
+  } catch (failure) { otpTransferStatus.value = failure instanceof Error ? failure.message : "无法导入 maFile。"; }
+  (event.target as HTMLInputElement).value = "";
+}
+
+function exportMaFile() {
+  const item = buildItem(fields.title.trim() || fields.accountName.trim() || "Steam"); if (item.kind !== "totp") return;
+  const blob = new Blob([exportSteamMaFile(item)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${item.steamId || item.accountName || "steam"}.maFile`; anchor.click(); URL.revokeObjectURL(url);
 }
 </script>
 
@@ -128,7 +175,16 @@ function mergeSteamRawJson(): string {
 
         <template v-else-if="kind === 'secure-note'"><label class="field field-wide"><span>笔记内容 *</span><textarea v-model="fields.content" rows="10"></textarea></label></template>
 
-        <template v-else><label class="field"><span>验证码类型</span><select v-model="fields.otpType"><option value="TOTP">TOTP</option><option value="HOTP">HOTP</option><option value="STEAM">Steam Guard</option><option value="YANDEX">Yandex</option><option value="MOTP">mOTP</option></select></label><label class="field field-wide"><span>{{ fields.otpType === 'STEAM' ? 'Steam Shared Secret（Base64）' : '验证码密钥' }} *</span><input v-model="fields.secret" type="password" autocomplete="off" /><small>{{ fields.otpType === 'STEAM' ? 'Steam Guard 使用 Base64 Shared Secret，并生成 5 位专用字符验证码。' : '支持 Base32 密钥；空格会在保存时移除。' }}</small></label><label class="field"><span>签发方</span><input v-model="fields.issuer" /></label><label class="field"><span>账户</span><input v-model="fields.accountName" /></label><label v-if="fields.otpType === 'HOTP'" class="field"><span>计数器</span><input v-model="fields.counter" type="number" min="0" /></label><label class="field"><span>算法</span><select v-model="fields.algorithm"><option>SHA1</option><option>SHA256</option><option>SHA512</option></select></label><label v-if="fields.otpType !== 'STEAM'" class="field"><span>位数</span><input v-model="fields.digits" type="number" min="6" max="10" /></label><label class="field"><span>周期（秒）</span><input v-model="fields.period" type="number" min="5" max="300" /></label><template v-if="fields.otpType === 'STEAM'"><label class="field"><span>SteamID64</span><input v-model="fields.steamId" inputmode="numeric" /></label><label class="field"><span>Steam 设备 ID</span><input v-model="fields.steamDeviceId" /></label><label class="field"><span>Steam 指纹</span><input v-model="fields.steamFingerprint" /></label><label class="field"><span>Steam 序列号</span><input v-model="fields.steamSerialNumber" /></label><label class="field"><span>撤销代码</span><input v-model="fields.steamRevocationCode" /></label><label class="field"><span>Identity Secret</span><input v-model="fields.steamIdentitySecret" type="password" /></label><label class="field"><span>Token GID</span><input v-model="fields.steamTokenGid" /></label><label class="field field-wide"><span>Access Token</span><textarea v-model="fields.steamAccessToken" rows="2" autocomplete="off"></textarea></label><label class="field field-wide"><span>Refresh Token</span><textarea v-model="fields.steamRefreshToken" rows="2" autocomplete="off"></textarea></label><label class="field field-wide"><span>Steam Login Secure</span><input v-model="fields.steamLoginSecure" type="password" autocomplete="off" /></label><label class="field field-wide"><span>原始 Steam JSON</span><textarea v-model="fields.steamRawJson" rows="4"></textarea><small>会与上面的 Steam 会话字段合并，用于 Monica Android 无损导出。</small></label></template></template>
+        <template v-else>
+          <fieldset class="editor-fieldset field-wide otp-transfer"><legend>二维码与 URI</legend><label class="field"><span>OTP URI</span><textarea v-model="otpTransferInput" rows="3" placeholder="otpauth://、motp:// 或 migration URI"></textarea></label><div class="otp-transfer-actions"><m3e-button variant="tonal" type="button" @click="applyOtpTransfer"><m3e-icon slot="icon" name="input"></m3e-icon>解析 URI</m3e-button><label class="file-action"><m3e-icon name="qr_code_scanner"></m3e-icon><span>识别二维码图片</span><input type="file" accept="image/*" @change="importOtpQr" /></label><m3e-button variant="text" type="button" @click="exportOtpQr"><m3e-icon slot="icon" name="qr_code_2"></m3e-icon>生成二维码</m3e-button></div><img v-if="otpQrDataUrl" class="otp-qr-preview" :src="otpQrDataUrl" alt="当前验证器的 OTP 二维码" width="240" height="240" /><p v-if="otpTransferStatus" class="supporting" aria-live="polite">{{ otpTransferStatus }}</p></fieldset>
+          <label class="field"><span>验证码类型</span><select v-model="fields.otpType"><option value="TOTP">TOTP</option><option value="HOTP">HOTP</option><option value="STEAM">Steam Guard</option><option value="YANDEX">Yandex</option><option value="MOTP">mOTP</option></select></label>
+          <label v-if="fields.otpType === 'STEAM'" class="field"><span>Steam 密钥编码</span><select v-model="fields.steamSecretEncoding"><option value="base64">Base64（maFile / Android）</option><option value="base32">Base32（OTP URI）</option></select></label>
+          <label class="field field-wide"><span>{{ fields.otpType === 'STEAM' ? 'Steam Shared Secret' : fields.otpType === 'MOTP' ? 'mOTP 原始密钥' : 'Base32 密钥' }} *</span><input v-model="fields.secret" type="password" autocomplete="off" /><small>密钥只保存在加密密码库中；二维码在本机生成。</small></label>
+          <label class="field"><span>签发方</span><input v-model="fields.issuer" /></label><label class="field"><span>账户</span><input v-model="fields.accountName" /></label>
+          <label v-if="fields.otpType === 'HOTP'" class="field"><span>计数器</span><input v-model="fields.counter" type="number" min="0" /></label><label v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'" class="field"><span>PIN {{ fields.otpType === 'YANDEX' ? '（可选）' : '' }}</span><input v-model="fields.pin" type="password" inputmode="numeric" autocomplete="off" /></label>
+          <label v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'" class="field"><span>算法</span><select v-model="fields.algorithm"><option>SHA1</option><option>SHA256</option><option>SHA512</option></select></label><label v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'" class="field"><span>位数</span><input v-model="fields.digits" type="number" min="1" max="10" /></label><label v-if="fields.otpType === 'TOTP' || fields.otpType === 'YANDEX'" class="field"><span>周期（秒）</span><input v-model="fields.period" type="number" min="5" max="300" /></label>
+          <template v-if="fields.otpType === 'STEAM'"><div class="steam-file-actions field-wide"><label class="file-action"><m3e-icon name="upload_file"></m3e-icon><span>导入 maFile</span><input type="file" accept="application/json,.maFile,.json" @change="importMaFile" /></label><m3e-button variant="tonal" type="button" @click="exportMaFile"><m3e-icon slot="icon" name="download"></m3e-icon>导出 maFile</m3e-button></div><label class="field"><span>SteamID64</span><input v-model="fields.steamId" inputmode="numeric" /></label><label class="field"><span>Steam 设备 ID</span><input v-model="fields.steamDeviceId" /></label><label class="field"><span>Steam 指纹</span><input v-model="fields.steamFingerprint" /></label><label class="field"><span>Steam 序列号</span><input v-model="fields.steamSerialNumber" /></label><label class="field"><span>撤销代码</span><input v-model="fields.steamRevocationCode" /></label><label class="field"><span>Identity Secret</span><input v-model="fields.steamIdentitySecret" type="password" /></label><label class="field"><span>Token GID</span><input v-model="fields.steamTokenGid" /></label><label class="field field-wide"><span>Access Token</span><textarea v-model="fields.steamAccessToken" rows="2" autocomplete="off"></textarea></label><label class="field field-wide"><span>Refresh Token</span><textarea v-model="fields.steamRefreshToken" rows="2" autocomplete="off"></textarea></label><label class="field field-wide"><span>Steam Login Secure</span><input v-model="fields.steamLoginSecure" type="password" autocomplete="off" /></label><label class="field field-wide"><span>原始 Steam JSON</span><textarea v-model="fields.steamRawJson" rows="4"></textarea><small>未知字段保持原样，用于 Monica Android 与 maFile 写回。</small></label></template>
+        </template>
 
         <label class="field field-wide"><span>备注</span><textarea v-model="fields.notes" rows="3"></textarea></label>
         <label class="field field-wide"><span>保存到</span><select v-model="fields.providerId" :disabled="Boolean(item)"><option v-for="provider in eligibleProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small v-if="kind === 'billing-address' || kind === 'payment-account' || kind === 'totp'">Bitwarden 不支持该独立记录类型，因此不会显示为目标。</small></label>

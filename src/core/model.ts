@@ -75,6 +75,8 @@ export interface LoginItem extends VaultItemBase {
   uris: string[];
   uriRules?: LoginUriRule[];
   totpSecret?: string;
+  /** Canonical extension link; Android boundPasswordId is resolved to this on import. */
+  boundTotpItemId?: string;
   customFields: SecureCustomField[];
   loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH" | "SSH_KEY" | "BARCODE";
   ssoProvider?: string;
