@@ -1,6 +1,6 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote } from "../providers/steam/steam-market";
+import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry } from "../providers/steam/steam-market";
 import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/secure-vault-service";
 
@@ -137,6 +137,8 @@ export type ExtensionRequest =
   | { type: "STEAM_LIST_INVENTORY_ITEMS"; itemId: string; appId: number; contextId: string; language?: string; startAssetId?: string; count?: number }
   | { type: "STEAM_GET_MARKET_QUOTE"; itemId: string; appId: number; marketHashName: string; currency: number; points?: number }
   | { type: "STEAM_LIST_MARKET_LISTINGS"; itemId: string; language?: string; start?: number; count?: number }
+  | { type: "STEAM_SELL_MARKET_ITEMS"; itemId: string; entries: SteamMarketSellEntry[]; autoConfirm?: boolean; confirmed: true }
+  | { type: "STEAM_CANCEL_MARKET_LISTING"; itemId: string; listingId: string; confirmed: true }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
@@ -174,4 +176,4 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
-export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote };
+export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry };

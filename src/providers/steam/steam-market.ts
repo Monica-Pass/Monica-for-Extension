@@ -1,5 +1,5 @@
 import type { TotpItem } from "../../core/model";
-import { createSteamSessionId, prepareSteamAccount, requireSteamId, SteamNetworkError, steamCommunityJson, steamCommunityText } from "./steam-network";
+import { createSteamSessionId, listSteamConfirmations, prepareSteamAccount, requireSteamId, respondToSteamConfirmation, type SteamConfirmation, SteamNetworkError, steamCommunityJson, steamCommunityText } from "./steam-network";
 
 export interface SteamWalletInfo {
   currency: number;
@@ -86,6 +86,36 @@ export interface SteamMarketListingsPage {
   hasMore: boolean;
 }
 
+export interface SteamMarketSellEntry {
+  appId: number;
+  contextId: string;
+  assetId: string;
+  priceReceive: number;
+}
+
+export interface SteamMarketSellItemResult {
+  assetId: string;
+  success: boolean;
+  requiresConfirmation: boolean;
+  message?: string;
+}
+
+export interface SteamMarketSellBatchResult {
+  items: SteamMarketSellItemResult[];
+  newConfirmations: SteamConfirmation[];
+  approvedConfirmationIds: string[];
+}
+
+export interface SteamMarketFeeBreakdown {
+  receive: number;
+  steamFee: number;
+  publisherFee: number;
+  totalFee: number;
+  buyerPays: number;
+}
+
+export type SteamBatchPriceMode = "lowest-listing" | "median" | "recent-high" | "recent-low" | "manual";
+
 export const FALLBACK_STEAM_WALLET: SteamWalletInfo = {
   currency: 1,
   steamFeePercent: 0.05,
@@ -167,6 +197,66 @@ export async function listSteamMarketListings(item: TotpItem, input: {
     l: steamCommunityLanguage(input.language || navigatorLanguage())
   }, account.item, { cookies: { sessionid: createSteamSessionId() } });
   return parseSteamMarketListings(payload, start, count);
+}
+
+export async function sellSteamMarketItems(item: TotpItem, input: {
+  entries: SteamMarketSellEntry[];
+  autoConfirm?: boolean;
+}, internal: { pollAttempts?: number; pollIntervalMs?: number } = {}): Promise<SteamMarketSellBatchResult> {
+  const account = await prepareSteamAccount(item);
+  if (!Array.isArray(input.entries) || !input.entries.length || input.entries.length > 50) throw new SteamNetworkError("Steam 单次出售数量必须为 1 到 50 项。", false);
+  const entries = input.entries.map(validateSellEntry);
+  if (new Set(entries.map((entry) => entry.assetId)).size !== entries.length) throw new SteamNetworkError("Steam 出售项目包含重复资产。", false);
+  const beforeConfirmations = input.autoConfirm ? await listSteamConfirmations(account.item) : [];
+  const beforeIds = new Set(beforeConfirmations.map((confirmation) => confirmation.id));
+  const results: SteamMarketSellItemResult[] = [];
+  for (const entry of entries) {
+    const sessionId = createSteamSessionId();
+    try {
+      const payload = await steamCommunityJson("/market/sellitem/", {
+        sessionid: sessionId,
+        appid: String(entry.appId),
+        contextid: entry.contextId,
+        assetid: entry.assetId,
+        amount: "1",
+        price: String(entry.priceReceive)
+      }, account.item, {
+        method: "POST",
+        cookies: { sessionid: sessionId },
+        referer: `https://steamcommunity.com/profiles/${requireSteamId(account.item)}/inventory/`
+      });
+      results.push({
+        assetId: entry.assetId,
+        success: booleanValue(payload.success),
+        requiresConfirmation: booleanValue(payload.requires_confirmation) || booleanValue(payload.needs_mobile_confirmation),
+        message: stringValue(payload.message).trim() || undefined
+      });
+    } catch (error) {
+      results.push({ assetId: entry.assetId, success: false, requiresConfirmation: false, message: error instanceof Error ? error.message : "Steam 出售失败。" });
+    }
+  }
+  if (!input.autoConfirm || !results.some((result) => result.success && result.requiresConfirmation)) {
+    return { items: results, newConfirmations: [], approvedConfirmationIds: [] };
+  }
+  const newConfirmations = await pollForNewMarketConfirmations(account.item, beforeIds, internal.pollAttempts ?? 4, internal.pollIntervalMs ?? 750);
+  const approvedConfirmationIds: string[] = [];
+  for (const confirmation of newConfirmations) {
+    if (await respondToSteamConfirmation(account.item, confirmation, true)) approvedConfirmationIds.push(confirmation.id);
+  }
+  return { items: results, newConfirmations, approvedConfirmationIds };
+}
+
+export async function cancelSteamMarketListing(item: TotpItem, listingId: string): Promise<boolean> {
+  const account = await prepareSteamAccount(item);
+  const safeListingId = requireNumericId(listingId, "Steam market listing");
+  const sessionId = createSteamSessionId();
+  const payload = await steamCommunityJson(`/market/removelisting/${safeListingId}`, { sessionid: sessionId }, account.item, {
+    method: "POST",
+    cookies: { sessionid: sessionId },
+    referer: "https://steamcommunity.com/market/"
+  });
+  if (booleanValue(payload.needauth) || booleanValue(payload.needsauth)) return false;
+  return payload.success === undefined || booleanValue(payload.success);
 }
 
 export function parseSteamInventoryOverview(html: string): SteamInventoryOverview {
@@ -300,6 +390,58 @@ export function parseSteamMarketListings(payload: Record<string, unknown>, start
   };
 }
 
+export function findNewSteamMarketConfirmations(existingIds: Set<string>, latest: SteamConfirmation[]): SteamConfirmation[] {
+  return latest.filter((confirmation) => !existingIds.has(confirmation.id) && isSteamMarketConfirmation(confirmation));
+}
+
+export function parseLocalizedSteamPriceMinorUnits(raw?: string): number | undefined {
+  const numeric = (raw || "").trim().replace(/[^\d.,]/g, "");
+  if (!/\d/.test(numeric)) return undefined;
+  const lastDot = numeric.lastIndexOf(".");
+  const lastComma = numeric.lastIndexOf(",");
+  let separator = -1;
+  if (lastDot >= 0 && lastComma >= 0) separator = Math.max(lastDot, lastComma);
+  else if (lastDot >= 0) separator = decimalSeparatorIndex(numeric, lastDot);
+  else if (lastComma >= 0) separator = decimalSeparatorIndex(numeric, lastComma);
+  const wholeDigits = (separator >= 0 ? numeric.slice(0, separator) : numeric).replace(/\D/g, "") || "0";
+  const fractionDigits = separator >= 0 ? numeric.slice(separator + 1).replace(/\D/g, "").slice(0, 2).padEnd(2, "0") : "";
+  const value = Number(wholeDigits) * 100 + Number(fractionDigits || 0);
+  return Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647 ? value : undefined;
+}
+
+export function steamMarketFeeBreakdown(receive: number, wallet: SteamWalletInfo, publisherFeePercent?: number): SteamMarketFeeBreakdown {
+  const safeReceive = toValidSteamMarketPrice(receive, wallet);
+  const steamFee = steamMarketFee(receive, wallet.steamFeePercent, wallet);
+  const publisherFee = steamMarketFee(receive, publisherFeePercent ?? wallet.publisherFeePercent, wallet);
+  return { receive, steamFee, publisherFee, totalFee: steamFee + publisherFee, buyerPays: safeReceive + steamFee + publisherFee };
+}
+
+export function steamSellerReceiveFromBuyerTotal(total: number, wallet: SteamWalletInfo, publisherFeePercent?: number): number {
+  const publisherPercent = publisherFeePercent ?? wallet.publisherFeePercent;
+  const increment = Math.max(1, wallet.currencyIncrement);
+  const minimum = Math.max(1, wallet.marketMinimum);
+  const initialGuess = Math.floor(total / (1 + publisherPercent + wallet.steamFeePercent));
+  const maxBase = total - 2 * minimum;
+  let base = toValidSteamMarketPrice(Math.min(initialGuess, maxBase), wallet);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const calculated = steamMarketFeeBreakdown(base, wallet, publisherPercent).buyerPays;
+    if (calculated === total) return base;
+    if (calculated < total) base += increment;
+    else { base -= increment; break; }
+  }
+  return Math.max(minimum, base);
+}
+
+export function resolveSteamSellerReceive(mode: SteamBatchPriceMode, quote: SteamMarketQuote | undefined, wallet: SteamWalletInfo, publisherFeePercent?: number, manualReceive?: number): number | undefined {
+  if (mode === "manual") return manualReceive && manualReceive > 0 ? Math.trunc(manualReceive) : undefined;
+  let buyerTotal: number | undefined;
+  if (mode === "lowest-listing") buyerTotal = parseLocalizedSteamPriceMinorUnits(quote?.price?.lowestPrice);
+  else if (mode === "median") buyerTotal = parseLocalizedSteamPriceMinorUnits(quote?.price?.medianPrice);
+  else if (mode === "recent-high") buyerTotal = quote?.history.length ? Math.round(Math.max(...quote.history.map((point) => point.price)) * 100) : undefined;
+  else if (mode === "recent-low") buyerTotal = quote?.history.length ? Math.round(Math.min(...quote.history.map((point) => point.price)) * 100) : undefined;
+  return buyerTotal && buyerTotal > 0 ? steamSellerReceiveFromBuyerTotal(buyerTotal, wallet, publisherFeePercent) : undefined;
+}
+
 export function steamCommunityLanguage(languageCode: string): string {
   switch (languageCode.trim().toLowerCase()) {
     case "zh": case "zh-cn": case "zh-hans": return "schinese";
@@ -383,6 +525,49 @@ function requireMarketHashName(value: string): string {
   const normalized = value.trim();
   if (!normalized || normalized.length > 512 || /[\u0000-\u001f\u007f]/.test(normalized)) throw new SteamNetworkError("Steam market hash name 无效。", false);
   return normalized;
+}
+
+function validateSellEntry(entry: SteamMarketSellEntry): SteamMarketSellEntry {
+  return {
+    appId: requirePositiveInteger(entry.appId, "Steam AppID"),
+    contextId: requireNumericId(entry.contextId, "Steam inventory context"),
+    assetId: requireNumericId(entry.assetId, "Steam inventory asset"),
+    priceReceive: requirePositiveInteger(entry.priceReceive, "Steam seller price")
+  };
+}
+
+async function pollForNewMarketConfirmations(item: TotpItem, existingIds: Set<string>, attempts: number, intervalMs: number): Promise<SteamConfirmation[]> {
+  const limit = Math.min(8, Math.max(1, Math.trunc(attempts)));
+  for (let attempt = 0; attempt < limit; attempt++) {
+    if (attempt > 0 && intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const latest = await listSteamConfirmations(item);
+    const added = findNewSteamMarketConfirmations(existingIds, latest);
+    if (added.length) return added;
+  }
+  return [];
+}
+
+function isSteamMarketConfirmation(confirmation: SteamConfirmation): boolean {
+  const normalized = confirmation.type.trim().toLowerCase();
+  const text = `${confirmation.headline} ${confirmation.summary}`.toLowerCase();
+  return normalized === "3" || normalized.includes("market") || normalized.includes("sell") || text.includes("market listing") || text.includes("市场挂单");
+}
+
+function toValidSteamMarketPrice(price: number, wallet: SteamWalletInfo): number {
+  const minimum = Math.max(1, wallet.marketMinimum);
+  const increment = Math.max(1, wallet.currencyIncrement);
+  if (price <= minimum) return minimum;
+  if (price <= increment) return increment;
+  return increment > 1 ? Math.round(price / increment) * increment : Math.trunc(price);
+}
+
+function steamMarketFee(receive: number, percent: number, wallet: SteamWalletInfo): number {
+  return percent > 0 ? toValidSteamMarketPrice(Math.floor(receive * percent), wallet) : 0;
+}
+
+function decimalSeparatorIndex(value: string, index: number): number {
+  const digitsAfter = value.slice(index + 1).replace(/\D/g, "").length;
+  return digitsAfter >= 1 && digitsAfter <= 2 ? index : -1;
 }
 
 function navigatorLanguage(): string {

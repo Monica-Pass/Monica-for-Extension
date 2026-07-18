@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TotpItem } from "../../core/model";
-import { listSteamInventoryItems, parseSteamInventoryOverview, parseSteamInventoryPage, parseSteamMarketHistory, parseSteamMarketListings, parseSteamMarketPrice, sanitizeSteamAssetUrl, steamCommunityLanguage } from "./steam-market";
+import { cancelSteamMarketListing, findNewSteamMarketConfirmations, listSteamInventoryItems, parseLocalizedSteamPriceMinorUnits, parseSteamInventoryOverview, parseSteamInventoryPage, parseSteamMarketHistory, parseSteamMarketListings, parseSteamMarketPrice, resolveSteamSellerReceive, sanitizeSteamAssetUrl, sellSteamMarketItems, steamCommunityLanguage, steamMarketFeeBreakdown, steamSellerReceiveFromBuyerTotal, type SteamWalletInfo } from "./steam-market";
 
 const item: TotpItem = {
   id: "steam-item",
@@ -12,6 +12,8 @@ const item: TotpItem = {
   updatedAt: "2026-07-18T00:00:00.000Z",
   providerRefs: [],
   secret: "MTIzNDU2Nzg=",
+  steamIdentitySecret: "MTIzNDU2Nzg=",
+  steamDeviceId: "android:test-device",
   steamId: "76561198000000000",
   steamAccessToken: jwt(4_102_444_800),
   otpType: "STEAM",
@@ -89,6 +91,63 @@ describe("Steam inventory", () => {
       nextStart: 2,
       hasMore: true
     });
+  });
+
+  it("matches Android localized price and fee calculations", () => {
+    const wallet: SteamWalletInfo = { currency: 23, steamFeePercent: 0.05, publisherFeePercent: 0.1, marketMinimum: 7, currencyIncrement: 1 };
+    expect(parseLocalizedSteamPriceMinorUnits("¥ 1.17")).toBe(117);
+    expect(parseLocalizedSteamPriceMinorUnits("€ 1,17")).toBe(117);
+    expect(parseLocalizedSteamPriceMinorUnits("$1,234.56 USD")).toBe(123456);
+    expect(parseLocalizedSteamPriceMinorUnits("₹ 7")).toBe(700);
+    expect(steamMarketFeeBreakdown(100, wallet)).toEqual({ receive: 100, steamFee: 7, publisherFee: 10, totalFee: 17, buyerPays: 117 });
+    for (const receive of [7, 10, 50, 100, 233, 999, 1000, 12345]) expect(steamSellerReceiveFromBuyerTotal(steamMarketFeeBreakdown(receive, wallet).buyerPays, wallet)).toBe(receive);
+    expect(resolveSteamSellerReceive("lowest-listing", { price: { lowestPrice: "¥ 1.17" }, history: [] }, wallet)).toBe(100);
+  });
+
+  it("submits a validated sell request with seller-receive pricing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true,"requires_confirmation":false}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await sellSteamMarketItems(item, { entries: [{ appId: 730, contextId: "2", assetId: "99", priceReceive: 100 }] });
+    expect(result.items).toEqual([{ assetId: "99", success: true, requiresConfirmation: false, message: undefined }]);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe("/market/sellitem/");
+    expect(String(init.body)).toContain("assetid=99");
+    expect(String(init.body)).toContain("price=100");
+    expect(init.referrer).toContain(`/profiles/${item.steamId}/inventory/`);
+  });
+
+  it("auto-confirms only newly created market confirmations", async () => {
+    const old = { id: "old", nonce: "old-nonce", type: "3", headline: "Market listing", summary: "", creation_time: 1 };
+    const market = { id: "market", nonce: "market-nonce", type: "3", headline: "Market listing", summary: "Case", creation_time: 2 };
+    const trade = { id: "trade", nonce: "trade-nonce", type: "2", headline: "Trade offer", summary: "Item", creation_time: 2 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, conf: [old] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"success":true,"requires_confirmation":true}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, conf: [old, market, trade] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"success":true}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await sellSteamMarketItems(item, { entries: [{ appId: 730, contextId: "2", assetId: "99", priceReceive: 100 }], autoConfirm: true }, { pollAttempts: 1, pollIntervalMs: 0 });
+    expect(result.newConfirmations.map((entry) => entry.id)).toEqual(["market"]);
+    expect(result.approvedConfirmationIds).toEqual(["market"]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body)).toContain("cid=market");
+  });
+
+  it("cancels numeric listings and rejects path injection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(cancelSteamMarketListing(item, "123")).resolves.toBe(true);
+    expect(new URL(fetchMock.mock.calls[0]?.[0] as string).pathname).toBe("/market/removelisting/123");
+    await expect(cancelSteamMarketListing(item, "123/../../login")).rejects.toThrow("无效");
+  });
+
+  it("filters existing and non-market confirmations", () => {
+    const base = { nonce: "n", summary: "", imageUrl: "", creationTime: 0 };
+    expect(findNewSteamMarketConfirmations(new Set(["old"]), [
+      { ...base, id: "old", type: "3", headline: "Market listing" },
+      { ...base, id: "trade", type: "2", headline: "Trade offer" },
+      { ...base, id: "new", type: "3", headline: "Market listing" }
+    ]).map((entry) => entry.id)).toEqual(["new"]);
   });
 });
 
