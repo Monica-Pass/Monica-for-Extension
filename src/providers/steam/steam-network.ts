@@ -194,7 +194,7 @@ export async function steamCommunityText(path: string, values: Record<string, st
   const body = method === "POST" ? new URLSearchParams(values) : undefined;
   const response = await withSteamCookies(item, async (cookieHeader) => {
     if (cookieHeader) headers.Cookie = cookieHeader;
-    return fetch(url, { method, headers, body, credentials: "include", referrer: validatedCommunityReferer(options.referer) });
+    return steamFetch(url, { method, headers, body, credentials: "include", referrer: validatedCommunityReferer(options.referer) });
   }, options.cookies);
   assertSteamResponseOrigin(response, "steamcommunity.com");
   if (!response.ok) throw new SteamNetworkError(`Steam community 请求失败（HTTP ${response.status}）。`);
@@ -208,7 +208,7 @@ export async function steamProtobufCall(iface: string, method: string, bytes: Ui
   if (accessToken) query.set("access_token", accessToken);
   const postQuery = accessToken ? `?${new URLSearchParams({ access_token: accessToken })}` : "";
   const url = `https://api.steampowered.com/${iface}/${method}/v1/${useGet ? `?${query}` : postQuery}`;
-  const response = await fetch(url, {
+  const response = await steamFetch(url, {
     method: useGet ? "GET" : "POST",
     headers: { Accept: "application/json, text/plain, */*", "Content-Type": "application/x-www-form-urlencoded" },
     body: useGet ? undefined : new URLSearchParams({ input_protobuf_encoded: encoded }),
@@ -249,13 +249,13 @@ async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string
   if (!cookies?.get || !cookies?.set || !cookies?.remove) return action(cookieHeader);
   const url = "https://steamcommunity.com/";
   const names = Object.keys(values);
-  const previous = await Promise.all(names.map((name) => new Promise<chrome.cookies.Cookie | null>((resolve) => cookies.get({ url, name }, resolve))));
+  const previous = await Promise.all(names.map((name) => getCookie(cookies, url, name)));
   try {
     await Promise.all(Object.entries(values).map(([name, value]) => setCookie(cookies, url, name, value)));
     return await action("");
   } finally {
     await Promise.all(names.map(async (name, index) => {
-      await new Promise<void>((resolve) => cookies.remove({ url, name }, () => resolve()));
+      await removeCookie(cookies, url, name);
       const old = previous[index];
       if (old?.value) await restoreCookie(cookies, old);
     }));
@@ -268,13 +268,13 @@ export function createSteamSessionId(): string {
 }
 
 function setCookie(cookies: typeof chrome.cookies, url: string, name: string, value: string, path = "/"): Promise<void> {
-  return new Promise((resolve, reject) => cookies.set({ url, name, value, path, secure: url.startsWith("https://") }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
+  return callbackWithTimeout((done) => cookies.set({ url, name, value, path, secure: url.startsWith("https://") }, () => done(chrome.runtime.lastError ? new Error(chrome.runtime.lastError.message) : undefined)), "Steam Cookie 写入超时。");
 }
 
 function restoreCookie(cookies: typeof chrome.cookies, cookie: chrome.cookies.Cookie): Promise<void> {
   const host = cookie.domain.replace(/^\./, "");
   const url = `${cookie.secure ? "https" : "http"}://${host}${cookie.path || "/"}`;
-  return new Promise((resolve, reject) => cookies.set({
+  return callbackWithTimeout((done) => cookies.set({
     url,
     name: cookie.name,
     value: cookie.value,
@@ -284,7 +284,38 @@ function restoreCookie(cookies: typeof chrome.cookies, cookie: chrome.cookies.Co
     sameSite: cookie.sameSite,
     expirationDate: cookie.session ? undefined : cookie.expirationDate,
     storeId: cookie.storeId
-  }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
+  }, () => done(chrome.runtime.lastError ? new Error(chrome.runtime.lastError.message) : undefined)), "Steam Cookie 恢复超时。");
+}
+
+function getCookie(cookies: typeof chrome.cookies, url: string, name: string): Promise<chrome.cookies.Cookie | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new SteamNetworkError("Steam Cookie 读取超时。")), 3_000);
+    cookies.get({ url, name }, (cookie) => { clearTimeout(timer); resolve(cookie); });
+  });
+}
+
+function removeCookie(cookies: typeof chrome.cookies, url: string, name: string): Promise<void> {
+  return callbackWithTimeout((done) => cookies.remove({ url, name }, () => done()), "Steam Cookie 清理超时。");
+}
+
+function callbackWithTimeout(register: (done: (error?: Error) => void) => void, message: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new SteamNetworkError(message)), 3_000);
+    register((error) => { clearTimeout(timer); error ? reject(error) : resolve(); });
+  });
+}
+
+async function steamFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new SteamNetworkError("Steam 请求超时，请稍后重试。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function requireSteamId(item: TotpItem): bigint {

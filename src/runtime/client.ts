@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -39,6 +39,7 @@ export const vaultClient = {
   listSteamMarketListings: (itemId: string, input: { language?: string; start?: number; count?: number } = {}) => send<SteamMarketListingsPage>({ type: "STEAM_LIST_MARKET_LISTINGS", itemId, ...input }),
   sellSteamMarketItems: (itemId: string, entries: SteamMarketSellEntry[], autoConfirm = false) => send<SteamMarketSellBatchResult>({ type: "STEAM_SELL_MARKET_ITEMS", itemId, entries, autoConfirm, confirmed: true }),
   cancelSteamMarketListing: (itemId: string, listingId: string) => send<boolean>({ type: "STEAM_CANCEL_MARKET_LISTING", itemId, listingId, confirmed: true }),
+  getSteamMiniProfileBackground: (itemId: string) => send<SteamMiniProfileBackground | undefined>({ type: "STEAM_GET_MINI_PROFILE_BACKGROUND", itemId }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
   providerQueueStatus: () => send<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>({ type: "PROVIDER_QUEUE_STATUS" }),
   listProviderConflicts: (providerId?: string) => send<ProviderConflict[]>({ type: "PROVIDER_CONFLICT_LIST", providerId }),

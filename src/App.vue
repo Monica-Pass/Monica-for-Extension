@@ -10,7 +10,7 @@ import AppearancePanel from "./components/AppearancePanel.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
-import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type VaultItem } from "./core/model";
+import { createLoginItem, isLoginItem, type LoginItem, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type TotpItem, type VaultItem } from "./core/model";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { normalizeImportedVaultItem } from "./manager/import-items";
@@ -19,7 +19,7 @@ import { vaultClient } from "./runtime/client";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | VaultManagerSection | "providers" | "settings";
+type Section = "overview" | VaultManagerSection | "steam" | "providers" | "settings";
 
 const vaultItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
@@ -76,6 +76,7 @@ const favoriteCount = computed(() => vaultItems.value.filter((item) => item.favo
 const walletItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
 const noteItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "notes"));
 const totpItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "totp"));
+const steamItems = computed(() => totpItems.value.filter((item): item is TotpItem => item.kind === "totp" && item.otpType === "STEAM"));
 const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
 const filteredSectionItems = computed(() => {
   if (activeSection.value !== "wallet" && activeSection.value !== "notes" && activeSection.value !== "totp" && activeSection.value !== "passkeys") return [];
@@ -237,11 +238,11 @@ function navigate(section: Section) {
 }
 
 function sectionTitle(section: Section): string {
-  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", passkeys: "Passkey", providers: "密码源", settings: "设置与备份" } as const)[section];
+  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", providers: "密码源", settings: "设置与备份" } as const)[section];
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP 和 Steam Guard 验证器。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", providers: "连接 Monica Android WebDAV、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", providers: "连接 Monica Android WebDAV、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
 }
 
 function providerName(item: VaultItem): string {
@@ -705,6 +706,7 @@ function errorMessage(error: unknown) {
             <button class="nav-item" :class="{ selected: activeSection === 'wallet' }" :aria-current="activeSection === 'wallet' ? 'page' : undefined" type="button" @click="navigate('wallet')"><m3e-icon name="wallet"></m3e-icon><span>钱包与身份</span><span class="nav-count">{{ walletItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'notes' }" :aria-current="activeSection === 'notes' ? 'page' : undefined" type="button" @click="navigate('notes')"><m3e-icon name="note_stack"></m3e-icon><span>安全笔记</span><span class="nav-count">{{ noteItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'totp' }" :aria-current="activeSection === 'totp' ? 'page' : undefined" type="button" @click="navigate('totp')"><m3e-icon name="timer"></m3e-icon><span>动态验证码</span><span class="nav-count">{{ totpItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'steam' }" :aria-current="activeSection === 'steam' ? 'page' : undefined" type="button" @click="navigate('steam')"><m3e-icon name="sports_esports"></m3e-icon><span>Steam</span><span class="nav-count">{{ steamItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'passkeys' }" :aria-current="activeSection === 'passkeys' ? 'page' : undefined" type="button" @click="navigate('passkeys')"><m3e-icon name="key_vertical"></m3e-icon><span>Passkey</span><span class="nav-count">{{ passkeyItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'providers' }" :aria-current="activeSection === 'providers' ? 'page' : undefined" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
           </section>
@@ -751,11 +753,16 @@ function errorMessage(error: unknown) {
           </m3e-card>
         </section>
 
+        <section v-else-if="activeSection === 'steam'" class="steam-page">
+          <m3e-card v-for="item in steamItems" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
+          <div v-if="!steamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>还没有 Steam 验证器</h2><p>从 Monica Android 同步，或在动态验证码中添加 Steam Guard。</p><m3e-button variant="filled" @click="openVaultCreate('totp')">添加 Steam Guard</m3e-button></div>
+        </section>
+
         <section v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
             <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? '私钥已隐藏' : item.kind === 'totp' && item.otpType === 'STEAM' ? 'Steam Guard' : '敏感字段已遮罩' }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" /><SteamNetworkActions v-if="item.otpType === 'STEAM'" :item="item" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? '私钥已隐藏' : item.kind === 'totp' && item.otpType === 'STEAM' ? 'Steam Guard' : '敏感字段已遮罩' }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>

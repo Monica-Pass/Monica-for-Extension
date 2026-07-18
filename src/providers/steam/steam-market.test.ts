@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TotpItem } from "../../core/model";
-import { cancelSteamMarketListing, findNewSteamMarketConfirmations, listSteamInventoryItems, parseLocalizedSteamPriceMinorUnits, parseSteamInventoryOverview, parseSteamInventoryPage, parseSteamMarketHistory, parseSteamMarketListings, parseSteamMarketPrice, resolveSteamSellerReceive, sanitizeSteamAssetUrl, sellSteamMarketItems, steamCommunityLanguage, steamMarketFeeBreakdown, steamSellerReceiveFromBuyerTotal, type SteamWalletInfo } from "./steam-market";
+import { cancelSteamMarketListing, findNewSteamMarketConfirmations, listSteamInventoryItems, parseLocalizedSteamPriceMinorUnits, parseSteamInventoryOverview, parseSteamInventoryPage, parseSteamMarketHistory, parseSteamMarketListings, parseSteamMarketPrice, parseSteamMiniProfileBackground, resolveSteamSellerReceive, sanitizeSteamAssetUrl, sellSteamMarketItems, steamCommunityLanguage, steamMarketFeeBreakdown, steamSellerReceiveFromBuyerTotal, type SteamWalletInfo } from "./steam-market";
 
 const item: TotpItem = {
   id: "steam-item",
@@ -148,6 +148,11 @@ describe("Steam inventory", () => {
       { ...base, id: "trade", type: "2", headline: "Trade offer" },
       { ...base, id: "new", type: "3", headline: "Market listing" }
     ]).map((entry) => entry.id)).toEqual(["new"]);
+  });
+
+  it("accepts mini profile media only from official Steam HTTPS hosts", () => {
+    expect(parseSteamMiniProfileBackground({ profile_background: { "video/mp4": "https://cdn.cloudflare.steamstatic.com/profile.mp4", "video/webm": "https://example.com/profile.webm" } })).toEqual({ mp4Url: "https://cdn.cloudflare.steamstatic.com/profile.mp4", webmUrl: undefined, preferredUrl: "https://cdn.cloudflare.steamstatic.com/profile.mp4" });
+    expect(parseSteamMiniProfileBackground({ profile_background: { "video/mp4": "http://cdn.cloudflare.steamstatic.com/profile.mp4" } })).toBeUndefined();
   });
 });
 

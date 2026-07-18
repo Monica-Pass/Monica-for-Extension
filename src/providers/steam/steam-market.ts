@@ -114,6 +114,12 @@ export interface SteamMarketFeeBreakdown {
   buyerPays: number;
 }
 
+export interface SteamMiniProfileBackground {
+  mp4Url?: string;
+  webmUrl?: string;
+  preferredUrl: string;
+}
+
 export type SteamBatchPriceMode = "lowest-listing" | "median" | "recent-high" | "recent-low" | "manual";
 
 export const FALLBACK_STEAM_WALLET: SteamWalletInfo = {
@@ -259,6 +265,14 @@ export async function cancelSteamMarketListing(item: TotpItem, listingId: string
   return payload.success === undefined || booleanValue(payload.success);
 }
 
+export async function getSteamMiniProfileBackground(item: TotpItem): Promise<SteamMiniProfileBackground | undefined> {
+  const account = await prepareSteamAccount(item);
+  const accountId = requireSteamId(account.item) - 76_561_197_960_265_728n;
+  if (accountId < 0n) throw new SteamNetworkError("SteamID64 无效。", false);
+  const payload = await steamCommunityJson(`/miniprofile/${accountId}/json/`, {}, account.item);
+  return parseSteamMiniProfileBackground(payload);
+}
+
 export function parseSteamInventoryOverview(html: string): SteamInventoryOverview {
   const apps = extractAssignedJsonObject(html, "g_rgAppContextData");
   const wallet = parseWallet(extractAssignedJsonObject(html, "g_rgWalletInfo"));
@@ -392,6 +406,23 @@ export function parseSteamMarketListings(payload: Record<string, unknown>, start
 
 export function findNewSteamMarketConfirmations(existingIds: Set<string>, latest: SteamConfirmation[]): SteamConfirmation[] {
   return latest.filter((confirmation) => !existingIds.has(confirmation.id) && isSteamMarketConfirmation(confirmation));
+}
+
+export function parseSteamMiniProfileBackground(payload: Record<string, unknown>): SteamMiniProfileBackground | undefined {
+  const background = isObject(payload.profile_background) ? payload.profile_background : undefined;
+  if (!background) return undefined;
+  const mp4Url = sanitizeSteamProfileMediaUrl(stringValue(background["video/mp4"])) || undefined;
+  const webmUrl = sanitizeSteamProfileMediaUrl(stringValue(background["video/webm"])) || undefined;
+  const preferredUrl = mp4Url || webmUrl;
+  return preferredUrl ? { mp4Url, webmUrl, preferredUrl } : undefined;
+}
+
+export function sanitizeSteamProfileMediaUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" && (host === "steamstatic.com" || host.endsWith(".steamstatic.com")) ? url.toString() : "";
+  } catch { return ""; }
 }
 
 export function parseLocalizedSteamPriceMinorUnits(raw?: string): number | undefined {

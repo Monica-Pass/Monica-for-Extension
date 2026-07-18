@@ -5,7 +5,7 @@ import { generateTotp } from "../core/totp";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
-import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
+import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
@@ -196,6 +196,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       if (request.confirmed !== true) throw new Error("Steam 撤销挂单需要明确确认。");
       return runSteamOperation(request.itemId, (item) => cancelSteamMarketListing(item, request.listingId));
+    }
+    case "STEAM_GET_MINI_PROFILE_BACKGROUND": {
+      assertExtensionPage(sender);
+      return runSteamOperation(request.itemId, getSteamMiniProfileBackground);
     }
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);
