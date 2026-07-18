@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
@@ -54,11 +55,18 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     await manager.getByRole("button", { name: "创建并解锁" }).click();
     await expect(manager.getByRole("heading", { name: "密码库概览" })).toBeVisible();
     const now = new Date().toISOString();
+    const accessToken = jwt(4_102_444_800);
     const upsert = await manager.evaluate(async ({ now, token }) => chrome.runtime.sendMessage({
       type: "VAULT_UPSERT_ITEM",
       item: { id: "steam-e2e", kind: "totp", title: "Steam E2E", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], secret: "MTIzNDU2Nzg=", issuer: "Steam", accountName: "joy", otpType: "STEAM", algorithm: "SHA1", digits: 5, period: 30, steamId: "76561198000000000", steamDeviceId: "android:test", steamSharedSecretBase64: "MTIzNDU2Nzg=", steamIdentitySecret: "MTIzNDU2Nzg=", steamAccessToken: token }
-    }), { now, token: jwt(4_102_444_800) }) as { ok: boolean; error?: string };
+    }), { now, token: accessToken }) as { ok: boolean; error?: string };
     expect(upsert.ok, upsert.error).toBe(true);
+    const safeResponses = await manager.evaluate(async (itemId) => Promise.all([
+      chrome.runtime.sendMessage({ type: "STEAM_LIST_AUTHORIZED_DEVICES", itemId }),
+      chrome.runtime.sendMessage({ type: "STEAM_GET_INVENTORY_OVERVIEW", itemId })
+    ]), "steam-e2e");
+    const serializedResponses = JSON.stringify(safeResponses);
+    for (const forbidden of [accessToken, "MTIzNDU2Nzg=", "steamLoginSecure", "access_token", "refresh_token"]) expect(serializedResponses).not.toContain(forbidden);
     await manager.reload();
     await manager.getByRole("button", { name: /^Steam/ }).click();
     const account = manager.locator(".steam-account-panel").filter({ hasText: "Steam E2E" });
@@ -101,6 +109,8 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     expect(mobileLayout).toMatchObject({ width: 390, shellClass: "shell", fits: true });
     expect(mobileLayout.sidebarRight).toBeLessThanOrEqual(1);
     expect(mobileLayout.mainLeft).toBe(0);
+    const accessibility = await new AxeBuilder({ page: manager }).include(".steam-account-panel").analyze();
+    expect(accessibility.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")).toEqual([]);
     await manager.screenshot({ path: testInfo.outputPath("steam-manager-mobile.png"), fullPage: true });
   } finally {
     await context?.close();
