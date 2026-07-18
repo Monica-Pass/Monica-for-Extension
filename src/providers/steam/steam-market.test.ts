@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TotpItem } from "../../core/model";
-import { listSteamInventoryItems, parseSteamInventoryOverview, parseSteamInventoryPage, sanitizeSteamAssetUrl, steamCommunityLanguage } from "./steam-market";
+import { listSteamInventoryItems, parseSteamInventoryOverview, parseSteamInventoryPage, parseSteamMarketHistory, parseSteamMarketListings, parseSteamMarketPrice, sanitizeSteamAssetUrl, steamCommunityLanguage } from "./steam-market";
 
 const item: TotpItem = {
   id: "steam-item",
@@ -68,6 +68,27 @@ describe("Steam inventory", () => {
   it("maps Android Steam language names", () => {
     expect(steamCommunityLanguage("zh-Hant")).toBe("tchinese");
     expect(steamCommunityLanguage("fr-FR")).toBe("english");
+  });
+
+  it("parses localized market overview and recent history", () => {
+    expect(parseSteamMarketPrice({ success: true, lowest_price: "¥ 1,23", median_price: "¥ 1,45", volume: "1,234" })).toEqual({ lowestPrice: "¥ 1,23", medianPrice: "¥ 1,45", volume: 1234 });
+    expect(parseSteamMarketHistory({ success: true, prices: [["Jul 17", 1.2, "2"], ["Jul 18", "1.4", "1,001"]] }, 1)).toEqual([{ label: "Jul 18", price: 1.4, volume: 1001 }]);
+  });
+
+  it("parses active listings and preserves pagination based on raw rows", () => {
+    const page = parseSteamMarketListings({
+      num_active_listings: 3,
+      listings: [
+        { listingid: "100", price: 90, fee: 10, active: 1, time_created: "1700000000", asset: { appid: 730, contextid: "2", id: "9", market_hash_name: "Case", name: "Weapon Case", icon_url: "image-key" } },
+        { listingid: "101", active: 0, asset: { appid: 730, contextid: "2", id: "10" } }
+      ]
+    }, 0, 2);
+    expect(page).toEqual({
+      items: [expect.objectContaining({ listingId: "100", sellerReceives: 90, fee: 10, buyerPrice: 100, active: true })],
+      totalActive: 3,
+      nextStart: 2,
+      hasMore: true
+    });
   });
 });
 

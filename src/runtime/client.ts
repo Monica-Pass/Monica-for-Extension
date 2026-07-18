@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -35,6 +35,8 @@ export const vaultClient = {
   listSteamAuthorizedDevices: (itemId: string) => send<SteamAuthorizedDevice[]>({ type: "STEAM_LIST_AUTHORIZED_DEVICES", itemId }),
   getSteamInventoryOverview: (itemId: string) => send<SteamInventoryOverview>({ type: "STEAM_GET_INVENTORY_OVERVIEW", itemId }),
   listSteamInventoryItems: (itemId: string, input: { appId: number; contextId: string; language?: string; startAssetId?: string; count?: number }) => send<SteamInventoryPage>({ type: "STEAM_LIST_INVENTORY_ITEMS", itemId, ...input }),
+  getSteamMarketQuote: (itemId: string, input: { appId: number; marketHashName: string; currency: number; points?: number }) => send<SteamMarketQuote>({ type: "STEAM_GET_MARKET_QUOTE", itemId, ...input }),
+  listSteamMarketListings: (itemId: string, input: { language?: string; start?: number; count?: number } = {}) => send<SteamMarketListingsPage>({ type: "STEAM_LIST_MARKET_LISTINGS", itemId, ...input }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
   providerQueueStatus: () => send<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>({ type: "PROVIDER_QUEUE_STATUS" }),
   listProviderConflicts: (providerId?: string) => send<ProviderConflict[]>({ type: "PROVIDER_CONFLICT_LIST", providerId }),

@@ -47,6 +47,45 @@ export interface SteamInventoryPage {
   totalCount: number;
 }
 
+export interface SteamMarketPrice {
+  lowestPrice?: string;
+  medianPrice?: string;
+  volume?: number;
+}
+
+export interface SteamMarketHistoryPoint {
+  label: string;
+  price: number;
+  volume?: number;
+}
+
+export interface SteamMarketQuote {
+  price?: SteamMarketPrice;
+  history: SteamMarketHistoryPoint[];
+}
+
+export interface SteamMarketListing {
+  listingId: string;
+  appId: number;
+  contextId: string;
+  assetId: string;
+  marketHashName: string;
+  name: string;
+  iconUrl: string;
+  sellerReceives: number;
+  fee: number;
+  buyerPrice: number;
+  createdAt: number;
+  active: boolean;
+}
+
+export interface SteamMarketListingsPage {
+  items: SteamMarketListing[];
+  totalActive: number;
+  nextStart: number;
+  hasMore: boolean;
+}
+
 export const FALLBACK_STEAM_WALLET: SteamWalletInfo = {
   currency: 1,
   steamFeePercent: 0.05,
@@ -83,6 +122,51 @@ export async function listSteamInventoryItems(item: TotpItem, input: {
     cookies: { sessionid: createSteamSessionId() }
   });
   return parseSteamInventoryPage(payload);
+}
+
+export async function getSteamMarketQuote(item: TotpItem, input: {
+  appId: number;
+  marketHashName: string;
+  currency: number;
+  points?: number;
+}): Promise<SteamMarketQuote> {
+  const account = await prepareSteamAccount(item);
+  const appId = requirePositiveInteger(input.appId, "Steam AppID");
+  const marketHashName = requireMarketHashName(input.marketHashName);
+  const currency = requirePositiveInteger(input.currency, "Steam wallet currency");
+  const points = Math.min(500, Math.max(1, Math.trunc(input.points || 60)));
+  const [pricePayload, historyPayload] = await Promise.all([
+    steamCommunityJson("/market/priceoverview/", {
+      appid: String(appId),
+      currency: String(currency),
+      market_hash_name: marketHashName
+    }, account.item),
+    steamCommunityJson("/market/pricehistory/", {
+      appid: String(appId),
+      market_hash_name: marketHashName
+    }, account.item, { cookies: { sessionid: createSteamSessionId() } })
+  ]);
+  return {
+    price: parseSteamMarketPrice(pricePayload),
+    history: parseSteamMarketHistory(historyPayload, points)
+  };
+}
+
+export async function listSteamMarketListings(item: TotpItem, input: {
+  language?: string;
+  start?: number;
+  count?: number;
+} = {}): Promise<SteamMarketListingsPage> {
+  const account = await prepareSteamAccount(item);
+  const start = Math.max(0, Math.trunc(input.start || 0));
+  const count = Math.min(100, Math.max(1, Math.trunc(input.count || 100)));
+  const payload = await steamCommunityJson("/market/mylistings/", {
+    norender: "1",
+    start: String(start),
+    count: String(count),
+    l: steamCommunityLanguage(input.language || navigatorLanguage())
+  }, account.item, { cookies: { sessionid: createSteamSessionId() } });
+  return parseSteamMarketListings(payload, start, count);
 }
 
 export function parseSteamInventoryOverview(html: string): SteamInventoryOverview {
@@ -150,6 +234,69 @@ export function parseSteamInventoryPage(payload: Record<string, unknown>): Steam
     lastAssetId: numericString(payload.last_assetid) || undefined,
     hasMore: booleanValue(payload.more_items),
     totalCount: Math.max(0, integerValue(payload.total_inventory_count))
+  };
+}
+
+export function parseSteamMarketPrice(payload: Record<string, unknown>): SteamMarketPrice | undefined {
+  if (!booleanValue(payload.success)) return undefined;
+  const lowestPrice = stringValue(payload.lowest_price).trim() || undefined;
+  const medianPrice = stringValue(payload.median_price).trim() || undefined;
+  const volumeText = stringValue(payload.volume).replace(/[^\d]/g, "");
+  const volume = volumeText ? Number(volumeText) : undefined;
+  return { lowestPrice, medianPrice, volume: Number.isSafeInteger(volume) ? volume : undefined };
+}
+
+export function parseSteamMarketHistory(payload: Record<string, unknown>, points = 60): SteamMarketHistoryPoint[] {
+  if (!booleanValue(payload.success)) return [];
+  return arrayValue(payload.prices).flatMap((raw): SteamMarketHistoryPoint[] => {
+    if (!Array.isArray(raw)) return [];
+    const price = Number(raw[1]);
+    if (!Number.isFinite(price)) return [];
+    const volumeText = stringValue(raw[2]).replace(/[^\d]/g, "");
+    const volume = volumeText ? Number(volumeText) : undefined;
+    return [{
+      label: stringValue(raw[0]),
+      price,
+      volume: Number.isSafeInteger(volume) ? volume : undefined
+    }];
+  }).slice(-Math.max(1, Math.trunc(points)));
+}
+
+export function parseSteamMarketListings(payload: Record<string, unknown>, start: number, count: number): SteamMarketListingsPage {
+  const rawListings = arrayValue(payload.listings);
+  const items = rawListings.flatMap((raw): SteamMarketListing[] => {
+    if (!isObject(raw)) return [];
+    const asset = isObject(raw.asset) ? raw.asset : {};
+    const listingId = numericString(raw.listingid);
+    const appId = positiveInteger(asset.appid);
+    const contextId = numericString(asset.contextid);
+    const assetId = numericString(asset.id) || numericString(asset.assetid);
+    const active = booleanValue(raw.active);
+    if (!listingId || !appId || !contextId || !assetId || !active) return [];
+    const sellerReceives = Math.max(0, integerValue(raw.price));
+    const fee = Math.max(0, integerValue(raw.fee));
+    return [{
+      listingId,
+      appId,
+      contextId,
+      assetId,
+      marketHashName: stringValue(asset.market_hash_name),
+      name: stringValue(asset.name) || stringValue(asset.market_name),
+      iconUrl: steamEconomyImageUrl(stringValue(asset.icon_url)),
+      sellerReceives,
+      fee,
+      buyerPrice: sellerReceives + fee,
+      createdAt: Math.max(0, integerValue(raw.time_created)),
+      active
+    }];
+  });
+  const totalActive = Math.max(0, integerValue(payload.num_active_listings));
+  const nextStart = Math.max(0, Math.trunc(start)) + rawListings.length;
+  return {
+    items,
+    totalActive,
+    nextStart,
+    hasMore: totalActive > 0 ? rawListings.length > 0 && nextStart < totalActive : rawListings.length >= Math.max(1, Math.trunc(count))
   };
 }
 
@@ -230,6 +377,12 @@ function requireNumericId(value: string, label: string): string {
   const parsed = numericString(value);
   if (!parsed) throw new SteamNetworkError(`${label} 无效。`, false);
   return parsed;
+}
+
+function requireMarketHashName(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 512 || /[\u0000-\u001f\u007f]/.test(normalized)) throw new SteamNetworkError("Steam market hash name 无效。", false);
+  return normalized;
 }
 
 function navigatorLanguage(): string {
