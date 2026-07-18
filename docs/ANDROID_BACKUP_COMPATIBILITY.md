@@ -5,13 +5,54 @@ This document defines the browser extension's compatibility contract with the cu
 ## Authority
 
 - Repository: `Monica-Pass/Monica`
-- Audited local commit: `d9ee80f2e6c1d8c12b7f29f2a9e3013b77c08f98`
+- Audited local commit: `3666e6eb6619f8884ca330efba57c6a2b6096242`
 - Backup writer/reader: `Monica for Android/app/src/main/java/takagi/ru/monica/utils/WebDavHelper.kt`
 - Wallet codecs/models: `CardWalletDataCodec.kt` and `SecureItemModels.kt`
 - Encryption: `EncryptionHelper.kt`
 - Attachment formats: `AttachmentBackupCodec.kt` and `PortableAttachmentBackup.kt`
 
 The extension treats data it does not edit as opaque Android-owned data. Compatibility does not depend on the provider-neutral extension model knowing every Android field.
+
+## Feature Parity Matrix
+
+The status vocabulary is intentionally strict:
+
+- **Full**: the extension can create, read, edit, delete, and test the browser equivalent.
+- **Data**: the extension can inspect or manage the portable record while retaining Android-only fields.
+- **Preserved**: the Android payload remains byte-identical but has no browser equivalent.
+- **Planned**: the browser equivalent is part of this compatibility epic and must not be described as complete yet.
+
+| Android feature group | Browser status | Compatibility requirement | Acceptance evidence |
+| --- | --- | --- | --- |
+| Login/password records | Planned | Empty username/password, multiple URIs, SSO, custom fields, app metadata, bindings, archive/trash metadata | Model migration, URI matcher, autofill and save E2E |
+| TOTP/HOTP/Steam/Yandex/mOTP | Full | Preserve every algorithm/type parameter and Steam metadata | OTP vectors and Android codec round trips |
+| Steam network operations | Full | Login approvals, confirmations, inventory, market, devices and maFile metadata | Mocked Steam API E2E and boundary audit |
+| Bank cards | Planned | Full `BankCardData`, custom fields and billing-address link | Codec field matrix and card autofill E2E |
+| Documents/identities | Planned | Full `DocumentData`, aliases and custom fields | Codec field matrix and identity autofill E2E |
+| Billing addresses | Planned | Full `BillingAddressData`, defaults and custom fields | Codec field matrix and address autofill E2E |
+| Payment accounts | Planned | Full `PaymentAccountData`, embedded address and custom fields | Codec field matrix and payment autofill E2E |
+| Secure notes | Planned | Content, tags, Markdown and image references | Editor and Android codec tests |
+| Passkeys | Full | Browser/Bitwarden keys are usable; Android aliases remain metadata-only | WebAuthn E2E and source-mode tests |
+| Password generator/history | Planned | Browser generator works; Android history entries remain portable | Generator unit tests and ZIP byte checks |
+| Categories/favorites/order | Planned | Shared organization fields remain stable across edits | Migration and codec tests |
+| Images and attachments | Data | Opaque encrypted blobs stay intact; portable metadata is visible | Binary ZIP entry equality tests |
+| Wi-Fi records | Planned | Metadata can be viewed/edited without pretending to configure an OS network | Model/editor tests |
+| SSH key records | Planned | Public/private OpenSSH fields remain encrypted and editable | Model/editor and content-boundary tests |
+| Barcode records | Planned | Payload and format remain portable; browser can display/copy | Model/editor tests |
+| Autofill blocked fields/targets | Preserved | Android package/field policies remain byte-identical | ZIP entry equality tests |
+| Bitwarden personal/organization vaults | Full | Supported cipher types, folders, collections, FIDO2, 2FA and conflict safety | Provider unit/E2E suite |
+| WebDAV backup/sync | Full | Encryption, ETag, cancellation, merge conflicts and unknown-entry retention | Provider unit/E2E suite |
+| KeePass databases | Preserved | Metadata and KDBX bytes remain unchanged | Binary ZIP entry equality tests |
+| MDBX projects | Preserved | Android database ownership metadata remains unchanged | Raw field preservation tests |
+| OneDrive configuration | Preserved | Configuration remains Android-owned and is never exposed to content scripts | Sender-policy and ZIP tests |
+| Android IME/permissions/launcher settings | Preserved | No false browser equivalent; configuration survives backup rewrites | Compatibility inventory test |
+| Monica Plus/payment | Preserved | No entitlement or payment behavior is inferred by the extension | Compatibility inventory test |
+
+The matrix is re-audited whenever the Android reference commit changes. A feature may move to **Full** only after its acceptance evidence runs in the release check.
+
+## Golden Fixtures
+
+`tests/fixtures/android/forward-compatible-record.json` is a sanitized file-based fixture containing a recognized record with future outer and nested fields plus an unknown binary entry. The larger current-shape fixture remains generated in `android-backup-codec.test.ts` so timestamps and binary payloads are deterministic. Together they cover current, legacy, malformed, encrypted, empty-password, duplicate-ID, and forward-compatible records.
 
 ## Container and Encryption
 

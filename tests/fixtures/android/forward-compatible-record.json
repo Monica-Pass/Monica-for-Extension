@@ -1,0 +1,24 @@
+{
+  "path": "folders/Future/passwords/password_9001_1700000000000.json",
+  "record": {
+    "id": 9001,
+    "title": "Forward compatible login",
+    "username": "fixture@example.test",
+    "password": "fixture-secret",
+    "website": "https://accounts.example.test",
+    "notes": "sanitized fixture",
+    "isFavorite": false,
+    "createdAt": 1700000000000,
+    "updatedAt": 1700000001000,
+    "loginType": "PASSWORD",
+    "futureAndroidField": {
+      "version": 3,
+      "flags": [true, false, null],
+      "nested": {
+        "preserve": "exactly"
+      }
+    }
+  },
+  "unknownEntryPath": "future/format-v3.bin",
+  "unknownEntryBase64": "AP8RIg=="
+}

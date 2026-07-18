@@ -1,4 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem } from "../../core/model";
 import { readAndroidBackup, writeAndroidBackup } from "./android-backup-codec";
@@ -314,6 +315,23 @@ function currentAndroidRecordsFixture() {
 }
 
 describe("Android backup ZIP codec", () => {
+  it("round-trips the checked-in forward-compatible Android fixture", () => {
+    const fixture = JSON.parse(readFileSync(new URL("../../../tests/fixtures/android/forward-compatible-record.json", import.meta.url), "utf8")) as {
+      path: string;
+      record: Record<string, unknown>;
+      unknownEntryPath: string;
+      unknownEntryBase64: string;
+    };
+    const recordBytes = strToU8(JSON.stringify(fixture.record));
+    const unknownBytes = Uint8Array.from(Buffer.from(fixture.unknownEntryBase64, "base64"));
+    const document = readAndroidBackup(zipSync({ [fixture.path]: recordBytes, [fixture.unknownEntryPath]: unknownBytes }), "provider-fixture");
+
+    expect(document.items).toHaveLength(1);
+    const output = unzipSync(writeAndroidBackup(document, document.items, "provider-fixture"));
+    expect(output[fixture.path]).toEqual(recordBytes);
+    expect(output[fixture.unknownEntryPath]).toEqual(unknownBytes);
+  });
+
   it("derives Steam session credentials from Monica Android steamRawJson without flattening them into itemData", () => {
     const path = "folders/_root/authenticators/totp_steam_1700000000000.json";
     const steamRawJson = JSON.stringify({ steamid: "76561198000000000", access_token: "access-token", refresh_token: "refresh-token", steamLoginSecure: "76561198000000000||access-token" });
