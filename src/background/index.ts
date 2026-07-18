@@ -7,6 +7,7 @@ import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
+import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
@@ -200,6 +201,25 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "STEAM_GET_MINI_PROFILE_BACKGROUND": {
       assertExtensionPage(sender);
       return runSteamOperation(request.itemId, getSteamMiniProfileBackground);
+    }
+    case "STEAM_REVOKE_AUTHORIZED_DEVICE": {
+      assertExtensionPage(sender);
+      if (request.confirmed !== true) throw new Error("Steam 设备撤销需要明确确认。");
+      let password = request.password;
+      request.password = "";
+      try {
+        return await runSteamOperation(request.itemId, async (item) => {
+          const target = (await listSteamAuthorizedDevices(item)).find((device) => device.tokenId === request.tokenId);
+          if (!target) throw new Error("Steam 授权设备已不存在，请刷新列表。");
+          if (target.isCurrent) throw new Error("当前 Steam 授权设备不能从 Monica 中撤销。");
+          const input = { accountName: request.accountName, password, tokenId: target.tokenId };
+          password = "";
+          return revokeSteamAuthorizedDevice(item, input);
+        });
+      } finally {
+        password = "";
+        request.password = "";
+      }
     }
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);

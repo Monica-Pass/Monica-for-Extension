@@ -42,6 +42,9 @@ const listingsHasMore = ref(false);
 const selectedListingIds = ref<string[]>([]);
 const profileBackground = ref<SteamMiniProfileBackground>();
 const profileLoaded = ref(false);
+const revokeTarget = ref<SteamAuthorizedDevice>();
+const revokeAccountName = ref(props.item.accountName || "");
+const revokePassword = ref("");
 
 const needle = computed(() => (props.query || "").trim().toLocaleLowerCase());
 const selectedGame = computed(() => inventoryOverview.value?.games.find((game) => gameKey(game.appId, game.contextId) === selectedGameKey.value));
@@ -243,6 +246,41 @@ async function loadProfileBackground() {
   finally { busy.value = ""; }
 }
 
+function openDeviceRevocation(device: SteamAuthorizedDevice) {
+  if (device.isCurrent) return;
+  clearFeedback();
+  revokeTarget.value = device;
+  revokeAccountName.value = props.item.accountName || revokeAccountName.value;
+  revokePassword.value = "";
+}
+
+function closeDeviceRevocation() {
+  revokeTarget.value = undefined;
+  revokePassword.value = "";
+}
+
+async function submitDeviceRevocation() {
+  const target = revokeTarget.value;
+  const accountName = revokeAccountName.value.trim();
+  let password = revokePassword.value;
+  if (!target || !accountName || !password) return void (error.value = "请输入 Steam 账号名和密码。");
+  if (!window.confirm(`确定撤销“${target.description || `设备 …${target.tokenId.slice(-6)}`}”的 Steam 授权吗？`)) return;
+  busy.value = `revoke:${target.tokenId}`;
+  clearFeedback();
+  revokePassword.value = "";
+  try {
+    await vaultClient.revokeSteamAuthorizedDevice(props.item.id, { tokenId: target.tokenId, accountName, password });
+    devices.value = devices.value.filter((device) => device.tokenId !== target.tokenId);
+    revokeTarget.value = undefined;
+    notice.value = "Steam 授权设备已撤销。";
+  } catch (cause) { setError(cause, "Steam 授权设备撤销失败。"); }
+  finally {
+    password = "";
+    revokePassword.value = "";
+    busy.value = "";
+  }
+}
+
 function clearFeedback() {
   error.value = "";
   notice.value = "";
@@ -304,8 +342,13 @@ function formatDeviceTime(seconds?: number): string {
     <section v-else class="steam-tab-panel" role="tabpanel">
       <div class="steam-panel-toolbar"><div><h3>授权设备</h3><small>{{ devices.length }} 台已授权设备</small></div><m3e-icon-button aria-label="刷新 Steam 授权设备" :disabled="Boolean(busy)" @click="loadDevices"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
       <div v-if="busy === 'devices'" class="steam-loading" aria-live="polite">正在读取 Steam 授权设备…</div>
-      <ul v-else-if="filteredDevices.length" class="steam-item-list"><li v-for="device in filteredDevices" :key="device.tokenId"><span class="steam-list-icon"><m3e-icon :name="device.isCurrent ? 'devices' : 'unknown_med'"></m3e-icon></span><span class="steam-list-copy"><strong>{{ device.description || '未命名 Steam 设备' }}<span v-if="device.isCurrent" class="steam-current-badge">当前设备</span></strong><small>{{ device.lastSeen?.location || device.firstSeen?.location || '位置未知' }} · {{ device.loggedIn ? '已登录' : '未登录' }}</small><small>最近使用 {{ formatDeviceTime(device.lastSeen?.timeSeconds) }} · ID …{{ device.tokenId.slice(-6) }}</small></span></li></ul>
+      <ul v-else-if="filteredDevices.length" class="steam-item-list"><li v-for="device in filteredDevices" :key="device.tokenId"><span class="steam-list-icon"><m3e-icon :name="device.isCurrent ? 'devices' : 'unknown_med'"></m3e-icon></span><span class="steam-list-copy"><strong>{{ device.description || '未命名 Steam 设备' }}<span v-if="device.isCurrent" class="steam-current-badge">当前设备</span></strong><small>{{ device.lastSeen?.location || device.firstSeen?.location || '位置未知' }} · {{ device.loggedIn ? '已登录' : '未登录' }}</small><small>最近使用 {{ formatDeviceTime(device.lastSeen?.timeSeconds) }} · ID …{{ device.tokenId.slice(-6) }}</small></span><m3e-button v-if="!device.isCurrent" variant="text" :disabled="Boolean(busy)" @click="openDeviceRevocation(device)">撤销</m3e-button></li></ul>
       <p v-else class="steam-empty">{{ devicesLoaded ? '暂无匹配的授权设备' : '选择刷新以读取授权设备' }}</p>
+      <form v-if="revokeTarget" class="steam-revoke-panel" @submit.prevent="submitDeviceRevocation">
+        <div class="steam-panel-toolbar"><div><h4>撤销 {{ revokeTarget.description || `设备 …${revokeTarget.tokenId.slice(-6)}` }}</h4><small>{{ revokeTarget.lastSeen?.location || '位置未知' }}</small></div><m3e-icon-button type="button" aria-label="关闭设备撤销" :disabled="Boolean(busy)" @click="closeDeviceRevocation"><m3e-icon name="close"></m3e-icon></m3e-icon-button></div>
+        <div class="steam-revoke-fields"><label class="steam-field"><span>Steam 账号名</span><input v-model="revokeAccountName" type="text" maxlength="128" autocomplete="username" required /></label><label class="steam-field"><span>Steam 密码</span><input v-model="revokePassword" type="password" maxlength="1024" autocomplete="current-password" required /></label></div>
+        <div class="steam-row-actions steam-revoke-actions"><m3e-button type="button" variant="text" :disabled="Boolean(busy)" @click="closeDeviceRevocation">取消</m3e-button><m3e-button type="submit" variant="filled" :disabled="Boolean(busy) || !revokeAccountName.trim() || !revokePassword"><m3e-icon slot="icon" name="delete_forever"></m3e-icon>{{ busy.startsWith('revoke:') ? '正在撤销…' : '撤销设备授权' }}</m3e-button></div>
+      </form>
     </section>
 
     <p v-if="notice" class="steam-notice" aria-live="polite"><m3e-icon name="check_circle"></m3e-icon>{{ notice }}</p>

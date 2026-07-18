@@ -805,6 +805,31 @@
   border-radius: 8px;
 }
 
+.steam-revoke-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--m3e-color-error);
+  border-radius: 8px;
+  background: var(--m3e-color-error-container);
+  color: var(--m3e-color-on-error-container);
+}
+
+.steam-revoke-panel h4 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.steam-revoke-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.steam-revoke-actions {
+  justify-content: flex-end;
+}
+
 .steam-notice {
   background: var(--m3e-color-tertiary-container);
   color: var(--m3e-color-on-tertiary-container);
@@ -856,6 +881,10 @@
   }
 
   .steam-inventory-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .steam-revoke-fields {
     grid-template-columns: 1fr;
   }
 

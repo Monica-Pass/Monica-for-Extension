@@ -40,6 +40,7 @@ export const vaultClient = {
   sellSteamMarketItems: (itemId: string, entries: SteamMarketSellEntry[], autoConfirm = false) => send<SteamMarketSellBatchResult>({ type: "STEAM_SELL_MARKET_ITEMS", itemId, entries, autoConfirm, confirmed: true }),
   cancelSteamMarketListing: (itemId: string, listingId: string) => send<boolean>({ type: "STEAM_CANCEL_MARKET_LISTING", itemId, listingId, confirmed: true }),
   getSteamMiniProfileBackground: (itemId: string) => send<SteamMiniProfileBackground | undefined>({ type: "STEAM_GET_MINI_PROFILE_BACKGROUND", itemId }),
+  revokeSteamAuthorizedDevice: (itemId: string, input: { tokenId: string; accountName: string; password: string }) => send<{ success: true; tokenId: string }>({ type: "STEAM_REVOKE_AUTHORIZED_DEVICE", itemId, ...input, confirmed: true }),
   listProviders: () => send<ProviderAccount[]>({ type: "PROVIDER_LIST" }),
   providerQueueStatus: () => send<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>({ type: "PROVIDER_QUEUE_STATUS" }),
   listProviderConflicts: (providerId?: string) => send<ProviderConflict[]>({ type: "PROVIDER_CONFLICT_LIST", providerId }),

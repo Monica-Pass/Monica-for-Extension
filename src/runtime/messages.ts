@@ -140,6 +140,7 @@ export type ExtensionRequest =
   | { type: "STEAM_SELL_MARKET_ITEMS"; itemId: string; entries: SteamMarketSellEntry[]; autoConfirm?: boolean; confirmed: true }
   | { type: "STEAM_CANCEL_MARKET_LISTING"; itemId: string; listingId: string; confirmed: true }
   | { type: "STEAM_GET_MINI_PROFILE_BACKGROUND"; itemId: string }
+  | { type: "STEAM_REVOKE_AUTHORIZED_DEVICE"; itemId: string; tokenId: string; accountName: string; password: string; confirmed: true }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
