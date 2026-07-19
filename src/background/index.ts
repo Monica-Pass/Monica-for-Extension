@@ -13,6 +13,7 @@ import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, Login
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, fromBase64Url, toBase64Url, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
+import { passkeyAvailability } from "../passkey/source-policy";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -582,7 +583,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
     if (passkeys.some((item) => excluded.has(normalizeCredentialId(item.credentialId)))) throw new Error("网站已排除此账户现有的 Passkey。");
   } else {
     const allowed = new Set(request.allowCredentialIds.map(normalizeCredentialId));
-    matches = passkeys.filter((item) => item.sourceMode !== "android-metadata-only" && Boolean(item.privateKeyPkcs8) && (!allowed.size || allowed.has(normalizeCredentialId(item.credentialId))));
+    matches = passkeys.filter((item) => passkeyAvailability(item, rpId) === "ready" && (!allowed.size || allowed.has(normalizeCredentialId(item.credentialId))));
     if (!matches.length) throw new Error("Monica 中没有可用于此网站的 Passkey。");
   }
   const id = crypto.randomUUID(); const expiresAt = Date.now() + 120_000;
