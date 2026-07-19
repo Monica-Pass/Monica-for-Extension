@@ -52,7 +52,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByRole("button", { name: /动态验证码/ }).click();
     await manager.getByRole("button", { name: "添加验证码" }).click();
     await manager.getByLabel("名称 *").fill("Example OTP");
-    await manager.getByLabel("验证码密钥 *").fill("JBSWY3DPEHPK3PXP");
+    await manager.getByLabel("Base32 密钥 *").fill("JBSWY3DPEHPK3PXP");
     await manager.getByLabel("签发方").fill("Example");
     await manager.getByLabel("账户").fill("joy@example.com");
     await manager.getByRole("button", { name: "加密保存" }).click();
@@ -81,7 +81,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     for (const title of ["Imported Passport", "Imported Home", "Imported Bank"]) await expect(manager.getByText(title, { exact: true })).toBeVisible();
     await manager.getByRole("button", { name: /Passkey/ }).click();
     await expect(manager.getByText("Imported Passkey", { exact: true })).toBeVisible();
-    await expect(manager.getByText(/Android 元数据/)).toBeVisible();
+    await expect(manager.getByText("Android 元数据，仅可查看", { exact: true })).toBeVisible();
 
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<{ kind: string; title: string }> };
     expect(response.ok).toBe(true);
@@ -127,8 +127,8 @@ test("manager rotates the master password and atomically restores an encrypted f
     const backupPath = testInfo.outputPath("encrypted-vault-backup.json");
     await download.saveAs(backupPath);
 
-    await manager.getByLabel("当前主密码", { exact: true }).fill(originalPassword);
-    await manager.getByLabel("新主密码", { exact: true }).fill(rotatedPassword);
+    await manager.getByLabel("当前主密码（设备密钥模式留空）", { exact: true }).fill(originalPassword);
+    await manager.getByLabel("新主密码（可选）", { exact: true }).fill(rotatedPassword);
     await manager.getByLabel("确认新主密码", { exact: true }).fill(rotatedPassword);
     await manager.getByRole("button", { name: "更改主密码" }).click();
     await expect(manager.getByText(/主密码已更改/)).toBeVisible();

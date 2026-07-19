@@ -84,7 +84,7 @@ test("manager saves a metadata-only SSO login with empty username, password, and
     await manager.reload();
     await manager.getByRole("button", { name: "添加登录项" }).click();
     await manager.getByLabel("名称 *").fill("Company SSO");
-    await manager.getByLabel("登录类型").selectOption("SSO");
+    await manager.getByRole("radio", { name: "SSO", exact: true }).check();
     await manager.getByLabel("SSO 提供商").fill("GOOGLE");
     await manager.screenshot({ path: testInfo.outputPath("metadata-login-editor.png"), fullPage: true });
     await manager.getByRole("button", { name: "加密保存" }).click();
