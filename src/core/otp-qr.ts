@@ -1,9 +1,11 @@
 import QRCode from "qrcode";
 
-export async function createOtpQrDataUrl(uri: string): Promise<string> {
-  if (!uri.trim()) throw new Error("OTP URI 为空。");
-  return QRCode.toDataURL(uri, { width: 240, margin: 2, errorCorrectionLevel: "M", color: { dark: "#111111ff", light: "#ffffffff" } });
+export async function createQrDataUrl(content: string): Promise<string> {
+  if (!content.trim()) throw new Error("二维码内容为空。");
+  return QRCode.toDataURL(content, { width: 240, margin: 2, errorCorrectionLevel: "M", color: { dark: "#111111ff", light: "#ffffffff" } });
 }
+
+export const createOtpQrDataUrl = createQrDataUrl;
 
 export async function decodeOtpQrImage(file: Blob): Promise<string> {
   const Detector = (globalThis as typeof globalThis & { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;

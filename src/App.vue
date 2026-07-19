@@ -12,6 +12,8 @@ import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
 import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
+import { createQrDataUrl } from "./core/otp-qr";
+import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { normalizeImportedVaultItem } from "./manager/import-items";
@@ -27,6 +29,8 @@ interface LoginForm {
   name: string;
   username: string;
   password: string;
+  wifiPassword: string;
+  barcodeContent: string;
   notes: string;
   favorite: boolean;
   archived: boolean;
@@ -38,6 +42,10 @@ interface LoginForm {
   boundTotpItemId: string;
   uriRules: LoginUriRule[];
   customFields: SecureCustomField[];
+  wifiMetadataRaw: string;
+  wifi: WifiMetadata;
+  sshKeyDataRaw: string;
+  sshKey: SshKeyMetadata;
 }
 
 const vaultItems = ref<VaultItem[]>([]);
@@ -57,6 +65,8 @@ const vaultEditorItem = ref<VaultItem | undefined>();
 const vaultEditorKind = ref<EditableVaultKind>("card");
 const editingId = ref<string | null>(null);
 const revealPassword = ref(false);
+const specialQrDataUrl = ref("");
+const specialQrError = ref("");
 const formError = ref("");
 const notice = ref("");
 const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove">("");
@@ -106,6 +116,8 @@ const webDavProviders = computed(() => providers.value.filter((provider) => prov
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
+const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
+const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
 
 onMounted(initialize);
 
@@ -277,6 +289,7 @@ function openCreate() {
   Object.assign(form, emptyLoginForm(defaultProviderId.value));
   formError.value = "";
   revealPassword.value = false;
+  clearSpecialQr();
   editorOpen.value = true;
 }
 
@@ -286,21 +299,29 @@ function openEdit(item: LoginItem) {
     name: item.title,
     username: item.username,
     password: item.password,
+    wifiPassword: item.password,
+    barcodeContent: item.password,
     notes: item.notes,
     favorite: item.favorite,
     archived: Boolean(item.archivedAt),
     providerId: item.providerRefs[0]?.providerId || providers.value.find((provider) => provider.kind === "local")?.id || "",
-    loginType: item.loginType || "PASSWORD",
+    loginType: item.loginType === ("SSH" as LoginType) ? "SSH_KEY" : item.loginType || "PASSWORD",
     ssoProvider: item.ssoProvider || "",
     ssoRefEntryId: item.ssoRefEntryId == null ? "" : String(item.ssoRefEntryId),
     totpSecret: item.totpSecret || "",
     boundTotpItemId: item.boundTotpItemId || "",
     uriRules: effectiveLoginUriRules(item).map((rule) => ({ ...rule })),
-    customFields: item.customFields.map((field) => ({ ...field }))
+    customFields: item.customFields.map((field) => ({ ...field })),
+    wifiMetadataRaw: item.wifiMetadata || "",
+    wifi: parseWifiMetadata(item.wifiMetadata),
+    sshKeyDataRaw: item.sshKeyData || "",
+    sshKey: parseSshKeyMetadata(item.sshKeyData)
   });
   formError.value = "";
   revealPassword.value = false;
+  clearSpecialQr();
   editorOpen.value = true;
+  if (specialPayloadValue()) void refreshSpecialQr();
 }
 
 function openVaultCreate(section: "wallet" | "notes" | "totp") {
@@ -336,6 +357,8 @@ function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: Edita
 
 async function submitCredential() {
   if (!form.name.trim()) return void (formError.value = "请输入登录项名称。");
+  if (form.loginType === "WIFI" && !validJsonObject(form.wifiMetadataRaw)) return void (formError.value = "Wi-Fi Android 元数据必须是有效的 JSON 对象。");
+  if (form.loginType === "SSH_KEY" && !validJsonObject(form.sshKeyDataRaw)) return void (formError.value = "SSH Android 元数据必须是有效的 JSON 对象。");
   const uriRules = form.uriRules.map((rule) => ({ uri: rule.uri.trim(), matchType: rule.matchType })).filter((rule) => Boolean(rule.uri));
   const uris = uriRules.map((rule) => rule.uri);
   const customFields = form.customFields.map((field) => ({ ...field, name: field.name.trim() })).filter((field) => field.name || field.value);
@@ -343,10 +366,16 @@ async function submitCredential() {
   if (ssoRefEntryId !== undefined && (!Number.isSafeInteger(ssoRefEntryId) || ssoRefEntryId < 0)) return void (formError.value = "SSO 引用条目 ID 必须是非负整数。");
 
   const existing = credentials.value.find((item) => item.id === editingId.value);
+  const wifiMetadata = form.loginType === "WIFI"
+    ? serializeWifiMetadata(form.wifiMetadataRaw, form.wifi)
+    : existing?.wifiMetadata;
+  const sshKeyData = form.loginType === "SSH_KEY"
+    ? serializeSshKeyMetadata(form.sshKeyDataRaw, form.sshKey)
+    : existing?.sshKeyData;
   const shared = {
     title: form.name.trim(),
     username: form.username.trim(),
-    password: form.password,
+    password: form.loginType === "WIFI" || form.loginType === "BARCODE" ? (form.loginType === "WIFI" ? form.wifiPassword : form.barcodeContent) : form.password,
     uris,
     uriRules,
     notes: form.notes.trim(),
@@ -357,6 +386,8 @@ async function submitCredential() {
     totpSecret: form.boundTotpItemId ? undefined : form.totpSecret.trim() || undefined,
     boundTotpItemId: form.boundTotpItemId || undefined,
     customFields,
+    wifiMetadata,
+    sshKeyData,
     archivedAt: form.archived ? existing?.archivedAt || new Date().toISOString() : undefined
   };
   const item: LoginItem = existing
@@ -364,7 +395,7 @@ async function submitCredential() {
     : { ...createLoginItem({
         title: form.name,
         username: form.username,
-        password: form.password,
+        password: form.loginType === "WIFI" || form.loginType === "BARCODE" ? (form.loginType === "WIFI" ? form.wifiPassword : form.barcodeContent) : form.password,
         uris,
         notes: form.notes,
         favorite: form.favorite,
@@ -378,10 +409,63 @@ async function submitCredential() {
 
 function emptyLoginForm(providerId = ""): LoginForm {
   return {
-    name: "", username: "", password: "", notes: "", favorite: false, archived: false, providerId,
+    name: "", username: "", password: "", wifiPassword: "", barcodeContent: "", notes: "", favorite: false, archived: false, providerId,
     loginType: "PASSWORD", ssoProvider: "", ssoRefEntryId: "", totpSecret: "", boundTotpItemId: "",
-    uriRules: [{ uri: "", matchType: "base-domain" }], customFields: []
+    uriRules: [{ uri: "", matchType: "base-domain" }], customFields: [],
+    wifiMetadataRaw: "", wifi: parseWifiMetadata(undefined),
+    sshKeyDataRaw: "", sshKey: parseSshKeyMetadata(undefined)
   };
+}
+
+function applySpecialRaw(): void {
+  if (form.loginType === "WIFI") {
+    if (!validJsonObject(form.wifiMetadataRaw)) return void (formError.value = "Wi-Fi Android 元数据必须是有效的 JSON 对象。");
+    Object.assign(form.wifi, parseWifiMetadata(form.wifiMetadataRaw));
+  } else if (form.loginType === "SSH_KEY") {
+    if (!validJsonObject(form.sshKeyDataRaw)) return void (formError.value = "SSH Android 元数据必须是有效的 JSON 对象。");
+    Object.assign(form.sshKey, parseSshKeyMetadata(form.sshKeyDataRaw));
+  }
+  formError.value = "";
+  clearSpecialQr();
+}
+
+async function refreshSpecialQr(): Promise<void> {
+  specialQrDataUrl.value = "";
+  specialQrError.value = "";
+  try {
+    specialQrDataUrl.value = await createQrDataUrl(specialPayloadValue());
+  } catch (cause) {
+    specialQrError.value = cause instanceof Error ? cause.message : "无法生成二维码。";
+  }
+}
+
+async function copySpecialPayload(): Promise<void> {
+  const payload = specialPayloadValue();
+  if (!payload.trim()) return void (specialQrError.value = "没有可复制的内容。");
+  await navigator.clipboard.writeText(payload);
+  showNotice("内容已复制到剪贴板。", 1800);
+}
+
+function clearSpecialQr(): void {
+  specialQrDataUrl.value = "";
+  specialQrError.value = "";
+}
+
+function specialPayloadValue(): string {
+  if (form.loginType === "WIFI") return form.wifi.ssid.trim() ? buildWifiQrPayload(form.wifi, form.wifiPassword, form.username) : "";
+  if (form.loginType === "SSH_KEY") return form.sshKey.publicKeyOpenSsh.trim();
+  if (form.loginType === "BARCODE") return form.barcodeContent;
+  return "";
+}
+
+function validJsonObject(raw: string): boolean {
+  if (!raw.trim()) return true;
+  try {
+    const value = JSON.parse(raw);
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function effectiveLoginUriRules(item: LoginItem): LoginUriRule[] {
@@ -933,13 +1017,39 @@ function errorMessage(error: unknown) {
 
     <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog login-item-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? '编辑登录项' : '添加登录项' }}</h2><p>空用户名、空密码和无网址项目均可保存。</p></div><m3e-icon-button aria-label="关闭" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form login-item-form" @submit.prevent="submitCredential">
       <label class="field"><span>名称 *</span><input v-model="form.name" autofocus autocomplete="off" placeholder="例如：GitHub 工作账号" /></label>
-      <label class="field"><span>登录类型</span><select v-model="form.loginType"><option value="PASSWORD">密码</option><option value="SSO">SSO</option><option value="WIFI">Wi-Fi</option><option value="SSH">SSH</option><option value="BARCODE">条码</option></select></label>
-      <label class="field"><span>用户名</span><input v-model="form.username" autocomplete="username" placeholder="name@example.com" /></label>
-      <label class="field"><span>密码</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label>
+      <fieldset class="login-type-picker field-wide"><legend>登录类型</legend><div class="login-type-segments"><label><input v-model="form.loginType" type="radio" value="PASSWORD" /><span>密码</span></label><label><input v-model="form.loginType" type="radio" value="SSO" /><span>SSO</span></label><label><input v-model="form.loginType" type="radio" value="WIFI" /><span>Wi-Fi</span></label><label><input v-model="form.loginType" type="radio" value="SSH_KEY" /><span>SSH 密钥</span></label><label><input v-model="form.loginType" type="radio" value="BARCODE" /><span>条码</span></label></div></fieldset>
+      <label v-if="form.loginType !== 'SSH_KEY' && form.loginType !== 'BARCODE'" class="field"><span>{{ form.loginType === 'WIFI' ? '企业身份（Identity）' : '用户名' }}</span><input v-model="form.username" autocomplete="username" :placeholder="form.loginType === 'WIFI' ? '企业网络可选' : 'name@example.com'" /></label>
+      <label v-if="form.loginType === 'WIFI'" class="field"><span>Wi-Fi 密码</span><div class="password-field"><input v-model="form.wifiPassword" :type="revealPassword ? 'text' : 'password'" autocomplete="off" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label>
+      <label v-else-if="form.loginType !== 'SSH_KEY' && form.loginType !== 'BARCODE'" class="field"><span>密码</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></div></label>
       <template v-if="form.loginType === 'SSO'"><label class="field"><span>SSO 提供商</span><input v-model="form.ssoProvider" autocomplete="off" placeholder="GOOGLE" /></label><label class="field"><span>引用条目 ID</span><input v-model="form.ssoRefEntryId" inputmode="numeric" placeholder="可选" /></label></template>
-      <label class="field"><span>绑定独立验证器</span><select v-model="form.boundTotpItemId"><option value="">不绑定独立项目</option><option v-for="item in totpItems" :key="item.id" :value="item.id">{{ item.title }} · {{ item.otpType || 'TOTP' }}</option></select></label>
-      <label class="field"><span>内嵌验证码密钥</span><input v-model="form.totpSecret" :disabled="Boolean(form.boundTotpItemId)" autocomplete="off" placeholder="Base32 或 otpauth URI" /><small>独立验证器优先；验证码仅在点击填充时由后台生成。</small></label>
-      <fieldset class="editor-fieldset field-wide"><legend>匹配网站（可选）</legend><div class="uri-rule-list"><div v-for="(rule, index) in form.uriRules" :key="index" class="uri-rule-row"><select v-model="rule.matchType" :aria-label="`网址 ${index + 1} 匹配方式`"><option v-for="type in (['base-domain','domain','starts-with','exact','regex','never'] as LoginUriMatchType[])" :key="type" :value="type">{{ uriMatchTypeLabel(type) }}</option></select><input v-model="rule.uri" :aria-label="`网址 ${index + 1}`" placeholder="https://accounts.example.com" /><m3e-icon-button type="button" :aria-label="`删除网址 ${index + 1}`" @click="removeUriRule(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addUriRule"><m3e-icon slot="icon" name="add"></m3e-icon>添加网址</m3e-button></fieldset>
+      <template v-if="form.loginType === 'WIFI'">
+        <fieldset class="editor-fieldset special-record-fields field-wide"><legend>Wi-Fi 配置</legend>
+          <label class="field"><span>SSID</span><input v-model="form.wifi.ssid" autocomplete="off" /></label>
+          <label class="field"><span>安全类型</span><select v-model="form.wifi.security"><option value="NONE">开放网络</option><option value="WEP">WEP</option><option value="WPA_WPA2">WPA/WPA2</option><option value="WPA2_WPA3">WPA2/WPA3</option><option value="WPA3">WPA3</option><option value="WPA2_ENTERPRISE">WPA2 企业</option><option value="WPA3_ENTERPRISE">WPA3 企业</option></select></label>
+          <label class="field"><span>BSSID</span><input v-model="form.wifi.bssid" autocomplete="off" placeholder="可选" /></label>
+          <label class="favorite-row"><input v-model="form.wifi.hiddenNetwork" type="checkbox" /><span>隐藏网络</span></label>
+          <details class="special-advanced field-wide"><summary>Android 原始元数据</summary><label class="field"><span>JSON</span><textarea v-model="form.wifiMetadataRaw" rows="6" spellcheck="false"></textarea><small>代理、静态 IP、EAP 和未来字段保留在此对象中；应用后同步到上方已知字段。</small></label><m3e-button variant="tonal" type="button" @click="applySpecialRaw">应用原始元数据</m3e-button></details>
+        </fieldset>
+      </template>
+      <template v-else-if="form.loginType === 'SSH_KEY'">
+        <fieldset class="editor-fieldset special-record-fields field-wide"><legend>SSH 密钥</legend>
+          <label class="field"><span>算法</span><input v-model="form.sshKey.algorithm" list="ssh-algorithms" autocomplete="off" /><datalist id="ssh-algorithms"><option value="ED25519"></option><option value="RSA"></option></datalist></label>
+          <label class="field"><span>密钥位数</span><input v-model.number="form.sshKey.keySize" type="number" min="0" step="1" inputmode="numeric" /></label>
+          <label class="field field-wide"><span>OpenSSH 公钥</span><textarea v-model="form.sshKey.publicKeyOpenSsh" rows="3" spellcheck="false"></textarea></label>
+          <label class="field field-wide"><span>OpenSSH 私钥</span><textarea v-model="form.sshKey.privateKeyOpenSsh" rows="7" spellcheck="false"></textarea></label>
+          <label class="field"><span>SHA-256 指纹</span><input v-model="form.sshKey.fingerprintSha256" autocomplete="off" /></label>
+          <label class="field"><span>注释</span><input v-model="form.sshKey.comment" autocomplete="off" /></label>
+          <label class="field"><span>格式</span><input v-model="form.sshKey.format" autocomplete="off" /></label>
+          <details class="special-advanced field-wide"><summary>Android 原始元数据</summary><label class="field"><span>JSON</span><textarea v-model="form.sshKeyDataRaw" rows="6" spellcheck="false"></textarea><small>未知字段逐项保留；应用后同步到上方已知字段。</small></label><m3e-button variant="tonal" type="button" @click="applySpecialRaw">应用原始元数据</m3e-button></details>
+        </fieldset>
+      </template>
+      <label v-else-if="form.loginType === 'BARCODE'" class="field field-wide"><span>条码内容</span><input v-model="form.barcodeContent" autocomplete="off" spellcheck="false" /><small>按 Monica Android 格式保存到密码字段。</small></label>
+      <fieldset v-if="isSpecialLoginType" class="editor-fieldset special-transfer field-wide"><legend>复制与二维码</legend><div class="special-transfer-actions"><m3e-button variant="tonal" type="button" @click="copySpecialPayload"><m3e-icon slot="icon" name="content_copy"></m3e-icon>复制</m3e-button><m3e-button variant="text" type="button" @click="refreshSpecialQr"><m3e-icon slot="icon" name="qr_code_2"></m3e-icon>生成二维码</m3e-button></div><img v-if="specialQrDataUrl" :src="specialQrDataUrl" :alt="`${form.loginType} 二维码`" width="240" height="240" /><p v-if="specialQrError" class="form-error" role="alert">{{ specialQrError }}</p></fieldset>
+      <template v-if="isWebLoginType">
+        <label class="field"><span>绑定独立验证器</span><select v-model="form.boundTotpItemId"><option value="">不绑定独立项目</option><option v-for="item in totpItems" :key="item.id" :value="item.id">{{ item.title }} · {{ item.otpType || 'TOTP' }}</option></select></label>
+        <label class="field"><span>内嵌验证码密钥</span><input v-model="form.totpSecret" :disabled="Boolean(form.boundTotpItemId)" autocomplete="off" placeholder="Base32 或 otpauth URI" /><small>独立验证器优先；验证码仅在点击填充时由后台生成。</small></label>
+        <fieldset class="editor-fieldset field-wide"><legend>匹配网站（可选）</legend><div class="uri-rule-list"><div v-for="(rule, index) in form.uriRules" :key="index" class="uri-rule-row"><select v-model="rule.matchType" :aria-label="`网址 ${index + 1} 匹配方式`"><option v-for="type in (['base-domain','domain','starts-with','exact','regex','never'] as LoginUriMatchType[])" :key="type" :value="type">{{ uriMatchTypeLabel(type) }}</option></select><input v-model="rule.uri" :aria-label="`网址 ${index + 1}`" placeholder="https://accounts.example.com" /><m3e-icon-button type="button" :aria-label="`删除网址 ${index + 1}`" @click="removeUriRule(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addUriRule"><m3e-icon slot="icon" name="add"></m3e-icon>添加网址</m3e-button></fieldset>
+      </template>
       <fieldset class="editor-fieldset field-wide"><legend>自定义字段</legend><div class="custom-field-list"><div v-for="(field, index) in form.customFields" :key="index" class="custom-field-row"><input v-model="field.name" :aria-label="`自定义字段 ${index + 1} 名称`" placeholder="字段名称" /><input v-model="field.value" :type="field.protected ? 'password' : 'text'" :aria-label="`自定义字段 ${index + 1} 值`" placeholder="字段值" /><label class="compact-check"><input v-model="field.protected" type="checkbox" /><span>隐藏</span></label><m3e-icon-button type="button" :aria-label="`删除自定义字段 ${index + 1}`" @click="removeCustomField(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addCustomField"><m3e-icon slot="icon" name="add"></m3e-icon>添加字段</m3e-button></fieldset>
       <label class="field field-wide"><span>备注</span><textarea v-model="form.notes" rows="3" placeholder="可选备注"></textarea></label>
       <label class="field field-wide"><span>保存到</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select><small>{{ editingId ? '已有项目保留原密码源。' : '外部密码源项目会在下次同步时写入。' }}</small></label>

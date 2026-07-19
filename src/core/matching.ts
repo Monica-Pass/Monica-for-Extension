@@ -16,6 +16,7 @@ export function normalizeHost(value: string): string {
 
 export function loginMatchScore(item: LoginItem, pageUrl: string): number {
   if (item.deletedAt || item.archivedAt) return 0;
+  if (item.loginType && item.loginType !== "PASSWORD" && item.loginType !== "SSO") return 0;
   const page = parsePageUrl(pageUrl);
   if (!page) return 0;
   const rules = effectiveUriRules(item);

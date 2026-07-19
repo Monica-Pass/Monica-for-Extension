@@ -17,10 +17,11 @@ export type WalletFillKind = "identity" | "billing-address" | "card" | "payment-
 
 export type WalletFieldName =
   | "fullName" | "firstName" | "middleName" | "lastName" | "birthDate" | "nationality" | "documentNumber"
+  | "documentType" | "documentIssuedDate" | "documentExpiryDate" | "documentIssuedBy" | "passportNumber" | "licenseNumber" | "ssn"
   | "company" | "streetAddress" | "apartment" | "city" | "stateProvince" | "postalCode" | "country" | "phone" | "email"
-  | "cardholderName" | "cardNumber" | "cardExpiryMonth" | "cardExpiryYear" | "cardExpiry" | "cardSecurityCode" | "cardBrand"
+  | "cardholderName" | "cardNumber" | "cardExpiryMonth" | "cardExpiryYear" | "cardExpiry" | "cardSecurityCode" | "cardBrand" | "cardPin"
   | "paymentProvider" | "paymentAccountName" | "paymentAccountHolder" | "paymentUsername" | "paymentAccountId"
-  | "paymentAccountNumber" | "routingNumber" | "iban" | "swiftBic" | "currency";
+  | "paymentAccountNumber" | "routingNumber" | "iban" | "swiftBic" | "branchCode" | "currency";
 
 export interface WalletMatchSummary {
   id: string;

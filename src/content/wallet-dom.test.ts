@@ -30,12 +30,23 @@ describe("wallet DOM filling", () => {
 
   it("uses conservative exact heuristics for document and bank account fields", () => {
     const dom = page('<label>Passport number<input name="passport_number"></label><input name="iban"><input name="routing_number">');
-    expect(scanWalletKinds(dom.window.document)).toEqual(["identity", "payment-account"]);
+    expect(scanWalletKinds(dom.window.document)).toEqual(["identity", "card", "payment-account"]);
     expect(fillWallet({ kind: "payment-account", fields: { iban: "DE89370400440532013000", routingNumber: "021000021" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 2 });
   });
 
+  it("fills document-specific fields only from explicit labels", () => {
+    const dom = page('<input name="passport_number"><input name="document_expiry_date"><input name="issuing_authority"><input name="license_number"><input name="ssn">');
+    expect(fillWallet({ kind: "identity", fields: { passportNumber: "P123", documentExpiryDate: "2030-01-01", documentIssuedBy: "Monica Authority", licenseNumber: "DL9", ssn: "SS1" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 5 });
+  });
+
+  it("fills card banking fields only from explicit international labels", () => {
+    const dom = page('<input name="card_pin"><input name="bank_account_number"><input name="routing_number"><input name="iban"><input name="swift_bic"><input name="branch_code"><input name="currency"><input name="pin">');
+    expect(fillWallet({ kind: "card", fields: { cardPin: "7890", paymentAccountNumber: "0042", routingNumber: "021000021", iban: "DE89", swiftBic: "BICCODE", branchCode: "001", currency: "EUR" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 7 });
+    expect(dom.window.document.querySelector<HTMLInputElement>('input[name="pin"]')!.value).toBe("");
+  });
+
   it("does not guess generic number code or password fields", () => {
-    const dom = page('<label>号码<input name="number"></label><label>验证码<input name="code"></label><input name="secret" type="password">');
+    const dom = page('<label>号码<input name="number"></label><label>验证码<input name="code"></label><input name="pin"><input name="secret" type="password">');
     expect(scanWalletKinds(dom.window.document)).toEqual([]);
     expect(fillWallet({ kind: "card", fields: { cardNumber: "4111111111111111", cardSecurityCode: "123" } }, dom.window.document)).toMatchObject({ ok: false, filledCount: 0 });
   });
@@ -54,7 +65,7 @@ describe("wallet DOM filling", () => {
 
   it("recognizes Chinese and legacy bank-account labels", () => {
     const dom = page('<label>银行名称<input></label><label>账户名称<input></label><label>账户持有人<input></label><label>银行账号<input></label><label>路由号码<input></label><label>国际银行账号<input></label><label>SWIFT代码<input></label><label>币种<input></label>');
-    expect(scanWalletKinds(dom.window.document)).toEqual(["payment-account"]);
+    expect(scanWalletKinds(dom.window.document)).toEqual(["card", "payment-account"]);
     expect(fillWallet({ kind: "payment-account", fields: { paymentProvider: "Example Bank", paymentAccountName: "Daily", paymentAccountHolder: "Joy Lin", paymentAccountNumber: "0042", routingNumber: "021000021", iban: "DE89370400440532013000", swiftBic: "EXAMPLEBIC", currency: "CNY" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 8 });
   });
 

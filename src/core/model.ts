@@ -29,6 +29,7 @@ export interface SecureCustomField {
   name: string;
   value: string;
   protected: boolean;
+  fieldType?: "TEXT" | "HIDDEN" | "BOOLEAN";
   type?: "text" | "hidden" | "boolean";
 }
 
@@ -78,7 +79,7 @@ export interface LoginItem extends VaultItemBase {
   /** Canonical extension link; Android boundPasswordId is resolved to this on import. */
   boundTotpItemId?: string;
   customFields: SecureCustomField[];
-  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH" | "SSH_KEY" | "BARCODE";
+  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE";
   ssoProvider?: string;
   ssoRefEntryId?: number;
   appPackageName?: string;
@@ -229,6 +230,7 @@ export interface PaymentAccountItem extends VaultItemBase {
   website: string;
   currency: string;
   billingAddress?: string;
+  paymentNotes?: string;
   isDefault?: boolean;
   customFields?: SecureCustomField[];
 }

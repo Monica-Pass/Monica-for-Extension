@@ -523,6 +523,11 @@ describe("Android backup ZIP codec", () => {
       steamTokenGid: "gid",
       steamRawJson: "{\"steam\":true}"
     });
+    expect(document.items.find((item) => item.kind === "card")).toMatchObject({ bankName: "Monica Bank", cardType: "CREDIT", nickname: "Daily", iban: "DE89370400440532013000", customFields: [{ name: "limit", value: "10000", fieldType: "TEXT" }] });
+    expect(document.items.find((item) => item.kind === "identity")).toMatchObject({ additionalInfo: "info", company: "Monica", ssn: "SSN", passportNumber: "P1234567", licenseNumber: "DL123", address3: "Building A", customFields: [{ name: "visa", value: "valid", fieldType: "HIDDEN" }] });
+    expect(document.items.find((item) => item.kind === "billing-address")).toMatchObject({ isDefault: true, customFields: [{ name: "gate", value: "east", fieldType: "TEXT" }] });
+    expect(document.items.find((item) => item.kind === "payment-account")).toMatchObject({ linkedCardLast4: "1111", billingAddress: '{"streetAddress":"1 Main St"}', paymentNotes: "payment-only-note", isDefault: true, customFields: [{ name: "branch", value: "001", fieldType: "TEXT" }] });
+    expect(document.items.find((item) => item.kind === "secure-note")).toMatchObject({ tags: ["android", "work"], isMarkdown: true });
     const changed = document.items.map((item) => {
       if (item.kind === "login") return { ...item, password: "new-password" };
       if (item.kind === "totp") return { ...item, issuer: "GitLab" };

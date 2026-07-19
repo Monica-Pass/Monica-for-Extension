@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, zipSync } from "fflate";
-import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
+import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
 
 export interface AndroidBackupRecord {
@@ -136,7 +136,7 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
 
   if (kindFolder === "notes") {
     const data = parseNestedJson(raw.itemData);
-    return { ...base, kind: "secure-note", content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes) } satisfies SecureNoteItem;
+    return { ...base, kind: "secure-note", content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes), tags: parseStringArray(data.tags) || [], isMarkdown: Boolean(data.isMarkdown) } satisfies SecureNoteItem;
   }
 
   if (kindFolder === "authenticators") {
@@ -208,7 +208,22 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       expiryMonth: firstString(data, "expiryMonth", "expMonth"),
       expiryYear: firstString(data, "expiryYear", "expYear"),
       securityCode: firstString(data, "cvv", "code"),
-      brand: firstString(data, "brand", "bankName") || undefined
+      brand: optionalString(firstString(data, "brand")),
+      bankName: optionalString(firstString(data, "bankName")),
+      cardType: normalizeCardType(data.cardType),
+      billingAddress: optionalString(firstString(data, "billingAddress")),
+      nickname: optionalString(firstString(data, "nickname")),
+      validFromMonth: optionalString(firstString(data, "validFromMonth")),
+      validFromYear: optionalString(firstString(data, "validFromYear")),
+      pin: optionalString(firstString(data, "pin")),
+      iban: optionalString(firstString(data, "iban")),
+      swiftBic: optionalString(firstString(data, "swiftBic")),
+      routingNumber: optionalString(firstString(data, "routingNumber")),
+      accountNumber: optionalString(firstString(data, "accountNumber")),
+      branchCode: optionalString(firstString(data, "branchCode")),
+      currency: optionalString(firstString(data, "currency")),
+      customerServicePhone: optionalString(firstString(data, "customerServicePhone")),
+      customFields: parseSecureCustomFields(data.customFields)
     } satisfies CardItem;
   }
   if (kindFolder === "documents") {
@@ -230,6 +245,13 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       expiryDate: optionalString(firstString(data, "expiryDate")),
       issuedBy: optionalString(firstString(data, "issuedBy", "issuingAuthority")),
       nationality: optionalString(firstString(data, "nationality")),
+      additionalInfo: optionalString(firstString(data, "additionalInfo")),
+      company: optionalString(firstString(data, "company")),
+      username: optionalString(firstString(data, "username")),
+      ssn: optionalString(firstString(data, "ssn")),
+      passportNumber: optionalString(firstString(data, "passportNumber")),
+      licenseNumber: optionalString(firstString(data, "licenseNumber")),
+      address3: optionalString(firstString(data, "address3")),
       email: optionalString(firstString(data, "email")),
       phone: optionalString(firstString(data, "phone", "phoneNumber")),
       address: {
@@ -238,8 +260,12 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
         city: firstString(data, "city"),
         stateProvince: firstString(data, "stateProvince", "state", "province", "region"),
         postalCode: firstString(data, "postalCode", "zip", "zipCode"),
-        country: firstString(data, "country")
-      }
+        country: firstString(data, "country"),
+        company: firstString(data, "company"),
+        email: firstString(data, "email"),
+        phone: firstString(data, "phone", "phoneNumber")
+      },
+      customFields: parseSecureCustomFields(data.customFields)
     } satisfies IdentityItem;
   }
   if (kindFolder === "billing_addresses") {
@@ -255,7 +281,9 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       postalCode: firstString(data, "postalCode", "zip", "zipCode"),
       country: firstString(data, "country"),
       phone: firstString(data, "phone", "phoneNumber"),
-      email: firstString(data, "email")
+      email: firstString(data, "email"),
+      isDefault: Boolean(data.isDefault),
+      customFields: parseSecureCustomFields(data.customFields)
     } satisfies BillingAddressItem;
   }
   if (kindFolder === "payment_accounts") {
@@ -271,11 +299,16 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       username: firstString(data, "username", "userName", "login"),
       accountId: firstString(data, "accountId", "accountIdentifier", "id"),
       maskedAccountNumber: firstString(data, "maskedAccountNumber", "maskedNumber", "accountNumber"),
+      linkedCardLast4: optionalString(firstString(data, "linkedCardLast4")),
       routingNumber: firstString(data, "routingNumber"),
       iban: firstString(data, "iban"),
       swiftBic: firstString(data, "swiftBic", "swift", "bic"),
       website: firstString(data, "website", "url", "uri"),
-      currency: firstString(data, "currency")
+      currency: firstString(data, "currency"),
+      billingAddress: optionalString(firstString(data, "billingAddress")),
+      paymentNotes: optionalString(firstString(data, "notes")),
+      isDefault: Boolean(data.isDefault),
+      customFields: parseSecureCustomFields(data.customFields)
     } satisfies PaymentAccountItem;
   }
   return null;
@@ -375,6 +408,8 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       const previous = applyCommon("secure-note", "NOTE") as SecureNoteItem | undefined;
       const updates: Record<string, unknown> = {};
       setNested(updates, "content", item.content, item.content, previous?.content);
+      setNested(updates, "tags", item.tags || [], item.tags || [], previous?.tags || []);
+      setNested(updates, "isMarkdown", Boolean(item.isMarkdown), Boolean(item.isMarkdown), Boolean(previous?.isMarkdown));
       applyNested(updates);
       return { id, raw };
     }
@@ -421,6 +456,11 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setNested(updates, "expiryYear", item.expiryYear, item.expiryYear, previous?.expiryYear);
       setNested(updates, "cvv", item.securityCode, item.securityCode, previous?.securityCode);
       setNested(updates, "brand", item.brand || "", item.brand || "", previous?.brand || "");
+      for (const key of ["bankName", "billingAddress", "nickname", "validFromMonth", "validFromYear", "pin", "iban", "swiftBic", "routingNumber", "accountNumber", "branchCode", "currency", "customerServicePhone"] as const) {
+        setNested(updates, key, item[key] || "", item[key] || "", previous?.[key] || "");
+      }
+      setNested(updates, "cardType", item.cardType || "CREDIT", item.cardType || "CREDIT", previous?.cardType || "CREDIT");
+      setNested(updates, "customFields", serializeSecureCustomFields(item.customFields), item.customFields || [], previous?.customFields || []);
       applyNested(updates);
       return { id, raw };
     }
@@ -438,6 +478,9 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setNested(updates, "expiryDate", item.expiryDate || "", item.expiryDate || "", previous?.expiryDate || "");
       setNested(updates, "issuedBy", item.issuedBy || "", item.issuedBy || "", previous?.issuedBy || "");
       setNested(updates, "nationality", item.nationality || "", item.nationality || "", previous?.nationality || "");
+      for (const key of ["additionalInfo", "company", "username", "ssn", "passportNumber", "licenseNumber", "address3"] as const) {
+        setNested(updates, key, item[key] || "", item[key] || "", previous?.[key] || "");
+      }
       setNested(updates, "email", item.email || "", item.email || "", previous?.email || "");
       setNested(updates, "phone", item.phone || "", item.phone || "", previous?.phone || "");
       setNested(updates, "address1", item.address?.streetAddress || "", item.address?.streetAddress || "", previous?.address?.streetAddress || "");
@@ -446,6 +489,7 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setNested(updates, "stateProvince", item.address?.stateProvince || "", item.address?.stateProvince || "", previous?.address?.stateProvince || "");
       setNested(updates, "postalCode", item.address?.postalCode || "", item.address?.postalCode || "", previous?.address?.postalCode || "");
       setNested(updates, "country", item.address?.country || "", item.address?.country || "", previous?.address?.country || "");
+      setNested(updates, "customFields", serializeSecureCustomFields(item.customFields), item.customFields || [], previous?.customFields || []);
       applyNested(updates);
       return { id, raw };
     }
@@ -455,6 +499,8 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       for (const key of ["fullName", "company", "streetAddress", "apartment", "city", "stateProvince", "postalCode", "country", "phone", "email"] as const) {
         setNested(updates, key, item[key], item[key], previous?.[key]);
       }
+      setNested(updates, "isDefault", Boolean(item.isDefault), Boolean(item.isDefault), Boolean(previous?.isDefault));
+      setNested(updates, "customFields", serializeSecureCustomFields(item.customFields), item.customFields || [], previous?.customFields || []);
       applyNested(updates);
       return { id, raw };
     }
@@ -464,6 +510,10 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       for (const key of ["paymentType", "provider", "accountName", "accountHolderName", "email", "phone", "username", "accountId", "maskedAccountNumber", "routingNumber", "iban", "swiftBic", "website", "currency"] as const) {
         setNested(updates, key, item[key], item[key], previous?.[key]);
       }
+      for (const key of ["linkedCardLast4", "billingAddress"] as const) setNested(updates, key, item[key] || "", item[key] || "", previous?.[key] || "");
+      setNested(updates, "notes", item.paymentNotes || "", item.paymentNotes || "", previous?.paymentNotes || "");
+      setNested(updates, "isDefault", Boolean(item.isDefault), Boolean(item.isDefault), Boolean(previous?.isDefault));
+      setNested(updates, "customFields", serializeSecureCustomFields(item.customFields), item.customFields || [], previous?.customFields || []);
       applyNested(updates);
       return { id, raw };
     }
@@ -599,6 +649,28 @@ function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
   const normalized = stringValue(value).toUpperCase();
   return normalized === "SHA256" || normalized === "SHA512" ? normalized : "SHA1";
 }
+
+function normalizeCardType(value: unknown): NonNullable<CardItem["cardType"]> {
+  const normalized = stringValue(value).trim().toUpperCase();
+  return normalized === "DEBIT" || normalized === "PREPAID" ? normalized : "CREDIT";
+}
+
+function parseSecureCustomFields(value: unknown): SecureCustomField[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const raw = entry as Record<string, unknown>;
+    const name = firstString(raw, "label", "title", "name").trim();
+    if (!name) return [];
+    const rawType = firstString(raw, "type").toUpperCase();
+    const fieldType: NonNullable<SecureCustomField["fieldType"]> = rawType === "HIDDEN" || rawType === "BOOLEAN" ? rawType : "TEXT";
+    return [{ name, value: firstString(raw, "value"), protected: fieldType === "HIDDEN", fieldType }];
+  });
+}
+
+function serializeSecureCustomFields(value: SecureCustomField[] | undefined): Array<{ label: string; value: string; type: string }> {
+  return (value || []).filter((field) => field.name.trim()).map((field) => ({ label: field.name.trim(), value: field.value, type: field.fieldType || (field.protected ? "HIDDEN" : "TEXT") }));
+}
 function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
   return normalized === "HOTP" || normalized === "STEAM" || normalized === "YANDEX" || normalized === "MOTP" ? normalized : "TOTP";
@@ -606,7 +678,8 @@ function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
 
 function normalizeLoginType(value: unknown): NonNullable<LoginItem["loginType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
-  return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH" || normalized === "SSH_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
+  if (normalized === "SSH") return "SSH_KEY";
+  return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
 }
 
 function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: string; refreshToken?: string; loginSecure?: string } {

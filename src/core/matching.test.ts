@@ -42,6 +42,14 @@ describe("login URL matching", () => {
     delete item.uriRules;
     expect(loginMatchScore(item, "https://accounts.example.com/login")).toBe(80);
   });
+
+  it("never offers Android special records to ordinary web login forms", () => {
+    for (const loginType of ["WIFI", "SSH_KEY", "BARCODE"] as const) {
+      const item = login(loginType, [{ uri: "example.com", matchType: "base-domain" }]);
+      item.loginType = loginType;
+      expect(loginMatchScore(item, "https://example.com/login")).toBe(0);
+    }
+  });
 });
 
 function score(uri: string, matchType: LoginUriRule["matchType"], pageUrl: string): number {

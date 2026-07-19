@@ -214,6 +214,67 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.login-type-picker {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+
+.login-type-picker legend {
+  margin-bottom: 6px;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.login-type-segments {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: var(--app-shape-card);
+  padding: 4px;
+}
+
+.login-type-segments label {
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--app-shape-field);
+  cursor: pointer;
+}
+
+.login-type-segments input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.login-type-segments span {
+  width: 100%;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--app-shape-field);
+  padding: 0 8px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.login-type-segments input:checked + span {
+  color: var(--md-sys-color-on-secondary-container, var(--app-text));
+  background: var(--md-sys-color-secondary-container, var(--app-selected));
+}
+
+.login-type-segments input:focus-visible + span {
+  outline: 3px solid var(--md-sys-color-primary, var(--app-primary));
+  outline-offset: 1px;
+}
+
 .editor-fieldset {
   min-width: 0;
   display: grid;
@@ -226,6 +287,54 @@
 .editor-fieldset legend {
   padding: 0 4px;
   font-weight: 600;
+}
+
+.special-record-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.special-advanced {
+  min-width: 0;
+  border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  padding-top: 12px;
+}
+
+.special-advanced summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--md-sys-color-primary, var(--app-primary));
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.special-advanced[open] {
+  display: grid;
+  gap: 12px;
+}
+
+.special-advanced textarea,
+.special-record-fields textarea {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.special-transfer {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.special-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.special-transfer img {
+  width: 160px;
+  height: 160px;
+  border-radius: var(--app-shape-card);
+  background: #fff;
+  object-fit: contain;
 }
 
 .uri-rule-list,
@@ -557,9 +666,15 @@
   }
 
   .login-item-form,
+  .special-record-fields,
+  .special-transfer,
   .uri-rule-row,
   .custom-field-row {
     grid-template-columns: 1fr;
+  }
+
+  .login-type-segments {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .uri-rule-row m3e-icon-button,
