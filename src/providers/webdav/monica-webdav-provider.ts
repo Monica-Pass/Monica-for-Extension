@@ -173,7 +173,8 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     const client = this.client(account);
     if (expectedLatest) {
       const [latest] = await client.listBackups(signal);
-      if (!latest || latest.name !== expectedLatest.name || (latest.etag && expectedLatest.etag && latest.etag !== expectedLatest.etag)) {
+      const etagChanged = Boolean(latest) && (Boolean(latest.etag) !== Boolean(expectedLatest.etag) || (latest.etag && latest.etag !== expectedLatest.etag));
+      if (!latest || latest.name !== expectedLatest.name || etagChanged) {
         throw new Error("WebDAV 最新备份在同步期间发生变化，已停止写入以避免覆盖 Android 数据。");
       }
     }

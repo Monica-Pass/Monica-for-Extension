@@ -147,6 +147,33 @@ describe("Monica WebDAV provider", () => {
     expect(readAndroidBackup(mock.uploaded()!, PROVIDER_ID).items).toEqual([]);
     expect(unzipSync(mock.uploaded()!)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
   });
+
+  it("stops an upload when the server drops the latest backup ETag during the concurrency check", async () => {
+    const initial = server(androidZip());
+    const first = await new MonicaWebDavProvider(initial.fetcher).sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: [] });
+    const changed = { ...first.items[0], password: "browser-secret", updatedAt: "2026-07-15T03:06:00.000Z" } as LoginItem;
+    let directoryReads = 0;
+    let putCount = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method || "GET";
+      const headers = new Headers(init?.headers);
+      if (method === "PROPFIND" && headers.get("Depth") === "1") {
+        directoryReads += 1;
+        return new Response(directoryReads === 1 ? multiStatus() : multiStatus(undefined, ""), { status: 207 });
+      }
+      if (method === "PROPFIND") return new Response(null, { status: 207 });
+      if (method === "GET") return new Response(androidZip() as unknown as BodyInit, { status: 200 });
+      if (method === "PUT") { putCount += 1; return new Response(null, { status: 201 }); }
+      throw new Error(`Unexpected ${method}`);
+    }) as unknown as typeof fetch;
+
+    await expect(new MonicaWebDavProvider(fetcher).sync(account(first.accountPatch?.config), {
+      now: "2026-07-15T03:07:00.000Z",
+      localItems: [changed]
+    })).rejects.toThrow("同步期间发生变化");
+    expect(directoryReads).toBe(2);
+    expect(putCount).toBe(0);
+  });
 });
 
 function localLogin(): LoginItem {
