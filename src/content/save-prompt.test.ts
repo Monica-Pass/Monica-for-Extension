@@ -40,4 +40,16 @@ describe("save prompt", () => {
     expect(host.shadowRoot?.querySelector("select")).toBeNull();
     vi.unstubAllGlobals();
   });
+
+  it("dismisses with Escape and restores control to the page", async () => {
+    const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://example.com", pretendToBeVisual: true });
+    vi.stubGlobal("chrome", { runtime: { getURL: (path: string) => path } });
+    const dismiss = vi.fn(async () => undefined);
+    const host = renderSavePrompt(context, { accept: vi.fn(), dismiss }, dom.window.document);
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(dismiss).toHaveBeenCalledOnce());
+    expect(host.isConnected).toBe(false);
+    vi.unstubAllGlobals();
+    dom.window.close();
+  });
 });

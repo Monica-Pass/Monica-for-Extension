@@ -19,11 +19,11 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
     </script>` }));
     const page = await context.newPage(); await page.goto("https://passkey.example.test/");
     await page.locator("#register").click();
-    const prompt = page.locator("#monica-passkey-prompt-host"); await expect(prompt.locator("strong")).toContainText("创建 Monica Passkey"); await prompt.locator(".primary").click();
+    const prompt = page.locator("#monica-passkey-prompt-host"); await expect(prompt.locator(".title")).toContainText("创建 Monica Passkey"); await prompt.locator(".primary").click();
     await expect(page.locator("#result")).toContainText("registered:"); await expect(page.locator("#result")).not.toContainText("error:");
     const created = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(created.data).toEqual([expect.objectContaining({ kind: "passkey", sourceMode: "browser-local", privateKeyPkcs8: expect.any(String), signCount: 0 })]);
-    await page.locator("#authenticate").click(); await expect(prompt.locator("strong")).toContainText("使用 Monica Passkey"); await expect(prompt.locator(".choice")).toContainText("Passkey Test"); await prompt.locator(".primary").click();
+    await page.locator("#authenticate").click(); await expect(prompt.locator(".title")).toContainText("使用 Monica Passkey"); await expect(prompt.locator(".choice")).toContainText("Passkey Test"); await prompt.locator(".primary").click();
     await expect(page.locator("#result")).toContainText("authenticated:"); await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(signed.data[0]).toMatchObject({ signCount: 1 });
