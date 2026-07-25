@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem } from "../core/model";
-import { isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel } from "./source-policy";
+import { hasExcludedUsablePasskey, isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "./source-policy";
 
 const base: PasskeyItem = {
   id: "passkey-1",
@@ -40,8 +40,33 @@ describe("Passkey source policy", () => {
     expect(isUsablePasskey(base, "example.com", "BAUG")).toBe(false);
   });
 
+  it("does not offer algorithms that the browser signer cannot use", () => {
+    expect(passkeyAvailability({ ...base, algorithm: -257 }, "example.com")).toBe("unsupported-algorithm");
+    expect(isUsablePasskey({ ...base, algorithm: -257 }, "example.com")).toBe(false);
+  });
+
   it("normalizes base64url and UUID-like credential IDs consistently", () => {
-    expect(normalizeCredentialId("AQID=")).toBe("aqid");
-    expect(normalizeCredentialId("AQID")).toBe("aqid");
+    expect(normalizeCredentialId("AQID=")).toBe("AQID");
+    expect(normalizeCredentialId("AQID")).toBe("AQID");
+    expect(normalizeCredentialId("aqid")).not.toBe(normalizeCredentialId("AQID"));
+  });
+
+  it("normalizes IDN and trailing dots while allowing a parent RP on subdomains", () => {
+    expect(passkeyRpIdsEqual("EXAMPLE.com.", "example.com")).toBe(true);
+    expect(passkeyMatchesPageHost(base, "login.example.com")).toBe(true);
+    expect(passkeyMatchesPageHost(base, "example.net")).toBe(false);
+  });
+
+  it("requires discoverable credentials only when allowCredentials is empty", () => {
+    const nonDiscoverable = { ...base, id: "non-discoverable", credentialId: "BAUG", discoverable: false };
+    expect(selectPasskeyCandidates([base, nonDiscoverable], "example.com", [])).toEqual([base]);
+    expect(selectPasskeyCandidates([base, nonDiscoverable], "example.com", ["BAUG"])).toEqual([nonDiscoverable]);
+  });
+
+  it("does not let Android metadata or unsupported keys block registration", () => {
+    const metadata = { ...base, sourceMode: "android-metadata-only" as const };
+    const unsupported = { ...base, algorithm: -257 };
+    expect(hasExcludedUsablePasskey([metadata, unsupported], "example.com", ["AQID"])).toBe(false);
+    expect(hasExcludedUsablePasskey([base], "example.com", ["AQID"])).toBe(true);
   });
 });

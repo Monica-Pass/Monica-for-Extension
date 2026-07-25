@@ -9,11 +9,11 @@ import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuot
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
-import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
-import { createAssertion, createPasskey, fromBase64Url, toBase64Url, validateRpId } from "../passkey/webauthn-core";
+import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
-import { passkeyAvailability } from "../passkey/source-policy";
+import { hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -28,6 +28,8 @@ providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
+const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
+const PASSKEY_COMPLETION_TTL_MS = 2 * 60_000;
 const activeProviderSyncs = new Map<string, AbortController>();
 
 interface PendingCredentialCapture extends CredentialCaptureInput {
@@ -39,11 +41,62 @@ interface PendingCredentialCapture extends CredentialCaptureInput {
   expiresAt: number;
   existingItemId?: string;
   existingTitle?: string;
+  existingItemIds: string[];
 }
 
 const pendingCredentialCaptures = new Map<string, PendingCredentialCapture>();
-const pendingPasskeyRequests = new Map<string, { id: string; request: PasskeyRequest; tabId: number; frameId: number; origin: string; rpId: string; expiresAt: number; matches: string[]; targetProviderId?: string }>();
+interface PendingUsernameContext {
+  tabId: number;
+  frameId: number;
+  documentId: string;
+  origin: string;
+  username: string;
+  expiresAt: number;
+}
+
+const USERNAME_CONTEXT_PREFIX = "monica.credential.username.v1.";
+const pendingUsernameContexts = new Map<string, PendingUsernameContext>();
+interface PendingPasskeyRequest {
+  id: string;
+  request: PasskeyRequest;
+  tabId: number;
+  frameId: number;
+  documentId: string;
+  origin: string;
+  rpId: string;
+  expiresAt: number;
+  matches: string[];
+  saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" }>;
+  defaultSaveTargetId?: string;
+}
+
+const PASSKEY_PENDING_PREFIX = "monica.passkey.pending.v1.";
+interface PasskeyCompletionReceipt {
+  id: string;
+  tabId: number;
+  frameId: number;
+  documentId: string;
+  origin: string;
+  operation: PasskeyRequest["operation"];
+  itemId: string;
+  result: PasskeyResult;
+  status: "prepared" | "committed";
+  expiresAt: number;
+}
+
+const PASSKEY_COMPLETION_PREFIX = "monica.passkey.completion.v1.";
+const pendingPasskeyRequests = new Map<string, PendingPasskeyRequest>();
+const passkeyCompletionReceipts = new Map<string, PasskeyCompletionReceipt>();
+const processingPasskeyRequests = new Set<string>();
+const committingPasskeyRequests = new Set<string>();
+const cancelledPasskeyRequests = new Set<string>();
+const cancellingPasskeyRequests = new Set<string>();
+class PasskeyUnavailableError extends Error {}
+class PasskeyExcludedError extends Error {}
+class PasskeyCancelledError extends Error {}
+class PasskeyCommitUnknownError extends Error {}
 const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
+  "CREDENTIAL_USERNAME_REMEMBER",
   "CREDENTIAL_CAPTURE",
   "CREDENTIAL_PENDING",
   "CREDENTIAL_ACCEPT",
@@ -57,17 +110,21 @@ void configureSessionStorageAccess(chrome.storage.session.setAccessLevel?.bind(c
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create(AUTO_LOCK_ALARM, { periodInMinutes: 1 });
+  void purgeExpiredPasskeySessionState().catch(() => undefined);
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void chrome.alarms.create(AUTO_LOCK_ALARM, { periodInMinutes: 1 });
+  void purgeExpiredPasskeySessionState().catch(() => undefined);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_LOCK_ALARM) {
+    void purgeExpiredPasskeySessionState().catch(() => undefined);
     void service.status().then((status) => {
       if (status !== "unlocked") pendingCredentialCaptures.clear();
-      if (status !== "unlocked") pendingPasskeyRequests.clear();
+      if (status !== "unlocked") void clearPendingUsernameContexts();
+      if (status !== "unlocked") void clearPendingPasskeyRequests();
       if (status !== "unlocked") abortProviderSyncs();
     });
   }
@@ -77,8 +134,18 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
   handleRequest(message, sender)
     .then((data) => sendResponse({ ok: true, data }))
     .catch((error: unknown) => {
-      const locked = error instanceof VaultLockedError;
-      sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code: locked ? "VAULT_LOCKED" : undefined });
+      const code = error instanceof VaultLockedError
+        ? "VAULT_LOCKED"
+        : error instanceof PasskeyUnavailableError
+          ? "PASSKEY_UNAVAILABLE"
+          : error instanceof PasskeyExcludedError
+            ? "PASSKEY_EXCLUDED"
+            : error instanceof PasskeyCancelledError
+              ? "PASSKEY_CANCELLED"
+              : error instanceof PasskeyCommitUnknownError
+                ? "PASSKEY_COMMIT_UNKNOWN"
+            : undefined;
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
     });
   return true;
 });
@@ -99,12 +166,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       return (await service.unlock(request.masterPassword)).items.filter((item) => !item.deletedAt);
     }
-    case "VAULT_LOCK":
+    case "VAULT_LOCK": {
       assertExtensionPage(sender);
       abortProviderSyncs();
       pendingCredentialCaptures.clear();
-      pendingPasskeyRequests.clear();
+      await clearPendingUsernameContexts();
+      await clearPendingPasskeyRequests();
       return service.lock();
+    }
     case "VAULT_CHANGE_MASTER_PASSWORD":
       assertExtensionPage(sender);
       return service.changeMasterPassword(request.currentPassword, request.newPassword);
@@ -119,7 +188,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         currentPassword: request.currentPassword
       });
       pendingCredentialCaptures.clear();
-      pendingPasskeyRequests.clear();
+      await clearPendingUsernameContexts();
+      await clearPendingPasskeyRequests();
       return state.items.filter((item) => !item.deletedAt);
     }
     case "VAULT_IMPORT_ITEMS":
@@ -142,9 +212,18 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
       return matches.map(toMatchSummary);
     }
+    case "VAULT_MATCH_PASSKEYS": {
+      assertExtensionPage(sender);
+      const page = new URL(request.pageUrl);
+      if (!isSecureSensitivePageUrl(page.toString())) return [];
+      const pageHost = normalizeRpId(page.hostname);
+      return (await service.listItems())
+        .filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyMatchesPageHost(item, pageHost))
+        .map((item): PasskeyMatchSummary => ({ id: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode, availability: passkeyAvailability(item) as PasskeyMatchSummary["availability"], discoverable: item.discoverable, lastUsedAt: item.lastUsedAt, useCount: item.useCount || 0 }));
+    }
     case "VAULT_FILL_LOGIN": {
       assertExtensionPage(sender);
-      return fillLogin(request.itemId, request.tabId, request.frameId);
+      return fillLogin(request.itemId, request.tabId, request.frameId, request.documentId, request.expectedOrigin);
     }
     case "VAULT_LIST_WALLET_ITEMS": {
       assertExtensionPage(sender);
@@ -152,7 +231,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_FILL_WALLET": {
       assertExtensionPage(sender);
-      return fillWalletItem(request.itemId, request.tabId, request.frameId);
+      return fillWalletItem(request.itemId, request.tabId, request.frameId, request.documentId, request.expectedOrigin);
     }
     case "STEAM_LIST_CONFIRMATIONS": {
       assertExtensionPage(sender);
@@ -223,18 +302,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         request.password = "";
       }
     }
+    case "CREDENTIAL_USERNAME_REMEMBER":
+      return rememberCredentialUsername(request.username, sender);
     case "CREDENTIAL_CAPTURE":
       return captureCredentialCandidate(request.candidate, sender);
     case "CREDENTIAL_PENDING":
       return pendingCredentialCandidate(sender);
     case "CREDENTIAL_ACCEPT":
-      return acceptCredentialCandidate(request.candidateId, request.providerId, sender);
+      return acceptCredentialCandidate(request.candidateId, request.providerId, request.existingItemId, sender);
     case "CREDENTIAL_DISMISS":
       return dismissCredentialCandidate(request.candidateId, sender);
     case "PASSKEY_BEGIN":
       return beginPasskeyRequest(request.request, sender);
     case "PASSKEY_ACCEPT":
-      return acceptPasskeyRequest(request.candidateId, request.itemId, sender);
+      return acceptPasskeyRequest(request.candidateId, request.itemId, request.providerId, sender);
     case "PASSKEY_DISMISS":
       return dismissPasskeyRequest(request.candidateId, sender);
     case "PROVIDER_LIST":
@@ -413,17 +494,81 @@ async function recordProviderDiagnosticIfUnlocked(diagnostic: Parameters<SecureV
   }
 }
 
+function usernameContextStorageKey(source: { tabId: number; frameId: number; origin: string }): string {
+  return `${USERNAME_CONTEXT_PREFIX}${source.tabId}.${source.frameId}.${encodeURIComponent(source.origin)}`;
+}
+
+async function rememberCredentialUsername(usernameInput: string, sender: chrome.runtime.MessageSender): Promise<void> {
+  const source = assertWebPageSender(sender);
+  if (!isSecureSensitivePageUrl(source.url) || (await service.status()) !== "unlocked") return;
+  const username = String(usernameInput || "").trim().slice(0, 1024);
+  if (!username) return;
+  const context: PendingUsernameContext = {
+    tabId: source.tabId,
+    frameId: source.frameId,
+    documentId: source.documentId,
+    origin: source.origin,
+    username,
+    expiresAt: Date.now() + USERNAME_CONTEXT_TTL_MS
+  };
+  const key = usernameContextStorageKey(source);
+  pendingUsernameContexts.set(key, context);
+  await chrome.storage.session.set({ [key]: context });
+}
+
+async function loadCredentialUsername(source: { tabId: number; frameId: number; documentId: string; origin: string }): Promise<PendingUsernameContext | undefined> {
+  const key = usernameContextStorageKey(source);
+  const context = pendingUsernameContexts.get(key)
+    || (await chrome.storage.session.get(key))[key] as PendingUsernameContext | undefined;
+  if (!context
+    || context.tabId !== source.tabId
+    || context.frameId !== source.frameId
+    || context.origin !== source.origin
+    || context.expiresAt <= Date.now()) {
+    pendingUsernameContexts.delete(key);
+    if (context) await chrome.storage.session.remove(key);
+    return undefined;
+  }
+  pendingUsernameContexts.set(key, context);
+  return context;
+}
+
+async function deleteCredentialUsername(source: { tabId: number; frameId: number; origin: string }): Promise<void> {
+  const key = usernameContextStorageKey(source);
+  pendingUsernameContexts.delete(key);
+  await chrome.storage.session.remove(key);
+}
+
+async function clearPendingUsernameContexts(): Promise<void> {
+  pendingUsernameContexts.clear();
+  const stored = await chrome.storage.session.get(null);
+  const keys = Object.keys(stored).filter((key) => key.startsWith(USERNAME_CONTEXT_PREFIX));
+  if (keys.length) await chrome.storage.session.remove(keys);
+}
+
 async function captureCredentialCandidate(input: CredentialCaptureInput, sender: chrome.runtime.MessageSender): Promise<SavePromptContext> {
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定；请先解锁 Monica，再重新提交登录表单。");
-  const candidate = validateCredentialCapture(input, source.url);
+  const submittedUsername = String(input.username || "").trim();
+  const remembered = submittedUsername ? undefined : await loadCredentialUsername(source);
+  let candidate: CredentialCaptureInput;
+  try {
+    candidate = validateCredentialCapture({
+      ...input,
+      username: submittedUsername || (remembered?.documentId !== source.documentId ? remembered?.username || "" : "")
+    }, source.url);
+  } finally {
+    await deleteCredentialUsername(source);
+  }
   purgeExpiredCaptures();
 
   const state = await service.readState();
   const matches = matchingLogins(state.items.filter(isLoginItem), candidate.pageUrl);
   const normalizedUsername = candidate.username.trim().toLocaleLowerCase();
-  const existing = matches.find((item) => normalizedUsername && item.username.trim().toLocaleLowerCase() === normalizedUsername)
-    || (candidate.captureKind === "password-change" && matches.length === 1 ? matches[0] : undefined);
+  const existingCandidates = normalizedUsername
+    ? matches.filter((item) => item.username.trim().toLocaleLowerCase() === normalizedUsername)
+    : candidate.captureKind === "password-change" ? matches : [];
+  const existing = existingCandidates.length === 1 ? existingCandidates[0] : undefined;
   const duplicate = [...pendingCredentialCaptures.values()].find((pending) =>
     pending.tabId === source.tabId
     && pending.sourceOrigin === source.origin
@@ -440,11 +585,12 @@ async function captureCredentialCandidate(input: CredentialCaptureInput, sender:
     createdAt: duplicate?.createdAt || now,
     expiresAt: now + CAPTURE_TTL_MS,
     existingItemId: existing?.id,
-    existingTitle: existing?.title
+    existingTitle: existing?.title,
+    existingItemIds: existingCandidates.map((item) => item.id)
   };
   pendingCredentialCaptures.set(pending.id, pending);
   scheduleCaptureExpiry(pending.id, pending.expiresAt);
-  const context = savePromptContext(pending, state.providers, state.settings.defaultProviderId);
+  const context = savePromptContext(pending, state.providers, state.settings.defaultProviderId, state.items.filter(isLoginItem));
   if (source.frameId !== 0) {
     void chrome.tabs.sendMessage(source.tabId, { type: "MONICA_SHOW_SAVE_PROMPT", context }, { frameId: 0 }).catch(() => undefined);
   }
@@ -459,10 +605,10 @@ async function pendingCredentialCandidate(sender: chrome.runtime.MessageSender):
     .sort((left, right) => right.createdAt - left.createdAt)[0];
   if (!pending || (await service.status()) !== "unlocked") return null;
   const state = await service.readState();
-  return savePromptContext(pending, state.providers, state.settings.defaultProviderId);
+  return savePromptContext(pending, state.providers, state.settings.defaultProviderId, state.items.filter(isLoginItem));
 }
 
-async function acceptCredentialCandidate(candidateId: string, requestedProviderId: string | undefined, sender: chrome.runtime.MessageSender) {
+async function acceptCredentialCandidate(candidateId: string, requestedProviderId: string | undefined, requestedExistingItemId: string | undefined, sender: chrome.runtime.MessageSender) {
   const source = assertWebPageSender(sender);
   purgeExpiredCaptures();
   const pending = pendingCredentialCaptures.get(candidateId);
@@ -471,8 +617,11 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
 
   let saved: LoginItem;
   let providerName = "Monica 本地库";
-  if (pending.existingItemId) {
-    const existing = await service.getItem(pending.existingItemId);
+  const selectedExistingItemId = pending.existingItemId || requestedExistingItemId;
+  if (requestedExistingItemId && !pending.existingItemIds.includes(requestedExistingItemId)) throw new Error("所选更新目标不属于当前保存候选。");
+  if (pending.existingItemId && requestedExistingItemId && requestedExistingItemId !== pending.existingItemId) throw new Error("当前保存候选只能更新已匹配的登录项。");
+  if (selectedExistingItemId) {
+    const existing = await service.getItem(selectedExistingItemId);
     if (!existing || !isLoginItem(existing) || loginMatchScore(existing, pending.pageUrl) <= 0) throw new Error("待更新的登录项已不存在或网站不匹配。");
     saved = await service.upsertItem({
       ...existing,
@@ -497,7 +646,7 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
   }
   pendingCredentialCaptures.delete(candidateId);
   return {
-    action: pending.existingItemId ? "updated" : "saved",
+    action: selectedExistingItemId ? "updated" : "saved",
     itemId: saved.id,
     title: saved.title,
     providerName,
@@ -511,21 +660,28 @@ function dismissCredentialCandidate(candidateId: string, sender: chrome.runtime.
   if (pending?.tabId === source.tabId && (source.frameId === pending.frameId || source.frameId === 0)) pendingCredentialCaptures.delete(candidateId);
 }
 
-function savePromptContext(pending: PendingCredentialCapture, providers: ProviderAccount[], defaultProviderId: string): SavePromptContext {
+function savePromptContext(pending: PendingCredentialCapture, providers: ProviderAccount[], defaultProviderId: string, logins: LoginItem[]): SavePromptContext {
   const summaries: SavePromptProviderSummary[] = providers.filter((provider) => provider.enabled).map((provider) => ({
     id: provider.id,
     name: provider.name,
     kind: provider.kind,
     isDefault: provider.id === defaultProviderId
   }));
+  const updateTargets = pending.existingItemIds.flatMap((itemId) => {
+    const item = logins.find((candidate) => candidate.id === itemId);
+    if (!item) return [];
+    const providerNames = item.providerRefs.map((reference) => providers.find((provider) => provider.id === reference.providerId)?.name).filter(Boolean);
+    return [{ id: item.id, title: item.title, username: item.username, providerName: providerNames.join("、") || "Monica 本地库" }];
+  });
   return {
     candidateId: pending.id,
-    action: pending.existingItemId ? "update" : "save",
+    action: pending.existingItemId ? "update" : updateTargets.length > 1 ? "choose" : "save",
     title: pending.pageTitle,
     username: pending.username,
     host: new URL(pending.pageUrl).hostname,
     existingItemId: pending.existingItemId,
     existingTitle: pending.existingTitle,
+    updateTargets,
     providers: summaries,
     defaultProviderId,
     expiresAt: pending.expiresAt
@@ -549,7 +705,7 @@ function validateCredentialCapture(input: CredentialCaptureInput, senderUrl: str
   };
 }
 
-function assertWebPageSender(sender: chrome.runtime.MessageSender): { tabId: number; frameId: number; url: string; origin: string } {
+function assertWebPageSender(sender: chrome.runtime.MessageSender): { tabId: number; frameId: number; documentId: string; url: string; origin: string } {
   return requireTrustedWebPageSender(sender, chrome.runtime.id);
 }
 
@@ -565,78 +721,441 @@ function scheduleCaptureExpiry(candidateId: string, expiresAt: number): void {
   }, Math.max(0, expiresAt - Date.now()) + 50);
 }
 
+function pendingPasskeyStorageKey(candidateId: string): string {
+  return `${PASSKEY_PENDING_PREFIX}${candidateId}`;
+}
+
+function passkeyCompletionStorageKey(candidateId: string): string {
+  return `${PASSKEY_COMPLETION_PREFIX}${candidateId}`;
+}
+
+async function persistPendingPasskeyRequest(pending: PendingPasskeyRequest): Promise<void> {
+  pendingPasskeyRequests.set(pending.id, pending);
+  await chrome.storage.session.set({ [pendingPasskeyStorageKey(pending.id)]: pending });
+}
+
+async function loadPendingPasskeyRequest(candidateId: string): Promise<PendingPasskeyRequest | undefined> {
+  const cached = pendingPasskeyRequests.get(candidateId);
+  if (cached) {
+    if (cached.expiresAt <= Date.now()) {
+      await deletePendingPasskeyRequest(candidateId);
+      return undefined;
+    }
+    return cached;
+  }
+  const key = pendingPasskeyStorageKey(candidateId);
+  const stored = (await chrome.storage.session.get(key))[key] as PendingPasskeyRequest | undefined;
+  if (!stored || stored.id !== candidateId || stored.expiresAt <= Date.now()) {
+    if (stored) await chrome.storage.session.remove(key);
+    return undefined;
+  }
+  pendingPasskeyRequests.set(candidateId, stored);
+  return stored;
+}
+
+async function deletePendingPasskeyRequest(candidateId: string): Promise<void> {
+  pendingPasskeyRequests.delete(candidateId);
+  await chrome.storage.session.remove(pendingPasskeyStorageKey(candidateId));
+}
+
+async function persistPasskeyCompletionReceipt(receipt: PasskeyCompletionReceipt): Promise<void> {
+  passkeyCompletionReceipts.set(receipt.id, receipt);
+  await chrome.storage.session.set({ [passkeyCompletionStorageKey(receipt.id)]: receipt });
+}
+
+async function refreshPasskeyCompletionReceipt(receipt: PasskeyCompletionReceipt, status = receipt.status): Promise<PasskeyCompletionReceipt> {
+  const refreshed = { ...receipt, status, expiresAt: Date.now() + PASSKEY_COMPLETION_TTL_MS };
+  passkeyCompletionReceipts.set(receipt.id, refreshed);
+  try {
+    await chrome.storage.session.set({ [passkeyCompletionStorageKey(receipt.id)]: refreshed });
+  } catch {
+    // Keep the recoverable receipt in memory; a later query can retry persistence.
+  }
+  return refreshed;
+}
+
+async function resolveExpiredPasskeyCompletionReceipt(receipt: PasskeyCompletionReceipt): Promise<PasskeyCompletionReceipt | undefined> {
+  if (receipt.status !== "prepared") {
+    await deletePasskeyCompletionReceipt(receipt.id);
+    return undefined;
+  }
+  const commitState = await passkeyReceiptCommitState(receipt);
+  if (commitState === "not-committed") {
+    await deletePasskeyCompletionReceipt(receipt.id);
+    return undefined;
+  }
+  return refreshPasskeyCompletionReceipt(receipt, commitState === "committed" ? "committed" : "prepared");
+}
+
+async function loadPasskeyCompletionReceipt(candidateId: string): Promise<PasskeyCompletionReceipt | undefined> {
+  const cached = passkeyCompletionReceipts.get(candidateId);
+  if (cached) {
+    if (cached.expiresAt <= Date.now()) return resolveExpiredPasskeyCompletionReceipt(cached);
+    return cached;
+  }
+  const key = passkeyCompletionStorageKey(candidateId);
+  const stored = (await chrome.storage.session.get(key))[key] as PasskeyCompletionReceipt | undefined;
+  if (!stored || stored.id !== candidateId) {
+    if (stored) await chrome.storage.session.remove(key);
+    return undefined;
+  }
+  if (stored.expiresAt <= Date.now()) return resolveExpiredPasskeyCompletionReceipt(stored);
+  passkeyCompletionReceipts.set(candidateId, stored);
+  return stored;
+}
+
+async function deletePasskeyCompletionReceipt(candidateId: string): Promise<void> {
+  passkeyCompletionReceipts.delete(candidateId);
+  await chrome.storage.session.remove(passkeyCompletionStorageKey(candidateId));
+}
+
+function passkeyReceiptMatchesSource(receipt: PasskeyCompletionReceipt, source: { tabId: number; frameId: number; documentId: string; origin: string }): boolean {
+  return receipt.tabId === source.tabId
+    && receipt.frameId === source.frameId
+    && receipt.documentId === source.documentId
+    && receipt.origin === source.origin;
+}
+
+async function promotePasskeyCompletionReceipt(receipt: PasskeyCompletionReceipt): Promise<void> {
+  if (receipt.status === "committed") return;
+  const committed = { ...receipt, status: "committed" as const };
+  passkeyCompletionReceipts.set(receipt.id, committed);
+  try {
+    await chrome.storage.session.set({ [passkeyCompletionStorageKey(receipt.id)]: committed });
+  } catch {
+    // The in-memory committed receipt still closes the response/cancellation race.
+    // A persisted prepared receipt is reconciled against the stable item id after a worker restart.
+  }
+}
+
+async function passkeyReceiptCommitState(receipt: PasskeyCompletionReceipt): Promise<"committed" | "not-committed" | "unknown"> {
+  if (receipt.status === "committed" || receipt.operation === "get") return "committed";
+  try {
+    const item = await service.getItem(receipt.itemId);
+    return item && item.kind === "passkey" && !item.deletedAt && normalizeCredentialId(item.credentialId) === normalizeCredentialId(receipt.result.id)
+      ? "committed"
+      : "not-committed";
+  } catch (error) {
+    if (error instanceof VaultLockedError) return "unknown";
+    throw error;
+  }
+}
+
+async function cancelPendingPasskeyRequest(candidateId: string): Promise<boolean> {
+  if (committingPasskeyRequests.has(candidateId)) return false;
+  if (processingPasskeyRequests.has(candidateId)) {
+    cancelledPasskeyRequests.add(candidateId);
+    await Promise.allSettled([deletePendingPasskeyRequest(candidateId), deletePasskeyCompletionReceipt(candidateId)]);
+    return true;
+  }
+  if (cancellingPasskeyRequests.has(candidateId)) return true;
+  cancellingPasskeyRequests.add(candidateId);
+  try {
+    const receipt = await loadPasskeyCompletionReceipt(candidateId);
+    if (committingPasskeyRequests.has(candidateId)) return false;
+    if (receipt) {
+      const commitState = await passkeyReceiptCommitState(receipt);
+      if (commitState !== "not-committed") {
+        if (commitState === "committed") await promotePasskeyCompletionReceipt(receipt);
+        return false;
+      }
+    }
+    if (receipt) await deletePasskeyCompletionReceipt(candidateId);
+    await deletePendingPasskeyRequest(candidateId);
+    return true;
+  } finally {
+    cancellingPasskeyRequests.delete(candidateId);
+  }
+}
+
+async function clearPendingPasskeyRequests(): Promise<void> {
+  const stored = await chrome.storage.session.get(null);
+  const pendingById = new Map(pendingPasskeyRequests);
+  for (const [key, value] of Object.entries(stored)) {
+    if (!key.startsWith(PASSKEY_PENDING_PREFIX)) continue;
+    const pending = value as PendingPasskeyRequest | undefined;
+    if (pending?.id && pending.expiresAt > Date.now()) pendingById.set(pending.id, pending);
+  }
+  const cancelled: string[] = [];
+  for (const candidateId of processingPasskeyRequests) {
+    if (!committingPasskeyRequests.has(candidateId)) {
+      cancelledPasskeyRequests.add(candidateId);
+      cancelled.push(candidateId);
+    }
+  }
+  await Promise.allSettled(cancelled.map((candidateId) => deletePasskeyCompletionReceipt(candidateId)));
+  pendingPasskeyRequests.clear();
+  const keys = Object.keys(stored).filter((key) => key.startsWith(PASSKEY_PENDING_PREFIX));
+  if (keys.length) await chrome.storage.session.remove(keys);
+  const cancelledPending: PendingPasskeyRequest[] = [];
+  for (const pending of pendingById.values()) {
+    if (committingPasskeyRequests.has(pending.id)) continue;
+    const receipt = await loadPasskeyCompletionReceipt(pending.id);
+    if (receipt) {
+      const commitState = await passkeyReceiptCommitState(receipt);
+      if (commitState !== "not-committed") {
+        if (commitState === "committed") await promotePasskeyCompletionReceipt(receipt);
+        continue;
+      }
+    }
+    cancelledPending.push(pending);
+  }
+  await Promise.allSettled(cancelledPending.map((pending) => chrome.tabs.sendMessage(
+    pending.tabId,
+    { type: "MONICA_CANCEL_PASSKEY", candidateId: pending.id },
+    { documentId: pending.documentId }
+  )));
+}
+
+async function purgeExpiredPasskeySessionState(): Promise<void> {
+  const now = Date.now();
+  const stored = await chrome.storage.session.get(null);
+  const expiredKeys: string[] = [];
+  for (const [key, value] of Object.entries(stored)) {
+    if (!key.startsWith(PASSKEY_PENDING_PREFIX) && !key.startsWith(PASSKEY_COMPLETION_PREFIX)) continue;
+    const expiresAt = Number((value as { expiresAt?: unknown } | undefined)?.expiresAt);
+    if (Number.isFinite(expiresAt) && expiresAt > now) continue;
+    if (key.startsWith(PASSKEY_COMPLETION_PREFIX)) {
+      const receipt = value as PasskeyCompletionReceipt | undefined;
+      if (receipt?.id && receipt.status === "prepared") {
+        await resolveExpiredPasskeyCompletionReceipt(receipt);
+        continue;
+      }
+    }
+    expiredKeys.push(key);
+    const candidateId = key.slice(key.lastIndexOf(".") + 1);
+    pendingPasskeyRequests.delete(candidateId);
+    passkeyCompletionReceipts.delete(candidateId);
+  }
+  if (expiredKeys.length) await chrome.storage.session.remove(expiredKeys);
+}
+
+function schedulePasskeyCompletionExpiry(candidateId: string, expiresAt: number): void {
+  setTimeout(() => void (async () => {
+    const receipt = await loadPasskeyCompletionReceipt(candidateId);
+    if (receipt && receipt.expiresAt <= Date.now()) await deletePasskeyCompletionReceipt(candidateId);
+  })(), Math.max(0, expiresAt - Date.now()) + 100);
+}
+
+function schedulePasskeyExpiry(candidateId: string, expiresAt: number): void {
+  setTimeout(() => void (async () => {
+    const cached = pendingPasskeyRequests.get(candidateId);
+    const key = pendingPasskeyStorageKey(candidateId);
+    const pending = cached || (await chrome.storage.session.get(key))[key] as PendingPasskeyRequest | undefined;
+    if (pending && pending.expiresAt <= Date.now()) await cancelPendingPasskeyRequest(candidateId);
+  })(), Math.max(0, expiresAt - Date.now()) + 100);
+}
+
 async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runtime.MessageSender): Promise<PasskeyPromptContext> {
   request = validatePasskeyRequest(request);
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
   const rpId = validateRpId(source.origin, request.rpId);
   const state = await service.readState();
-  const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && item.rpId.toLowerCase() === rpId);
-  const configuredTarget = state.providers.find((provider) => provider.id === state.settings.defaultProviderId && provider.enabled);
-  const localTarget = state.providers.find((provider) => provider.kind === "local");
-  const saveTarget = configuredTarget?.kind === "bitwarden" ? configuredTarget : localTarget;
+  const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
+  const saveTargets = state.providers
+    .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden"))
+    .map((provider) => ({ providerId: provider.id, name: provider.name, kind: provider.kind }));
+  const configuredTarget = saveTargets.find((provider) => provider.providerId === state.settings.defaultProviderId);
+  const defaultSaveTarget = configuredTarget || saveTargets.find((provider) => provider.kind === "local") || saveTargets[0];
   let matches: PasskeyItem[] = [];
   if (request.operation === "create") {
     if (!request.rpName || !request.userName || !request.userId) throw new Error("Passkey 注册请求缺少用户或网站信息。");
     if (!request.algorithms.includes(-7)) throw new Error("当前仅支持 ES256 Passkey。");
-    const excluded = new Set(request.excludeCredentialIds.map(normalizeCredentialId));
-    if (passkeys.some((item) => excluded.has(normalizeCredentialId(item.credentialId)))) throw new Error("网站已排除此账户现有的 Passkey。");
+    if (hasExcludedUsablePasskey(passkeys, rpId, request.excludeCredentialIds)) throw new PasskeyExcludedError("网站已排除此账户现有的 Passkey。");
   } else {
-    const allowed = new Set(request.allowCredentialIds.map(normalizeCredentialId));
-    matches = passkeys.filter((item) => passkeyAvailability(item, rpId) === "ready" && (!allowed.size || allowed.has(normalizeCredentialId(item.credentialId))));
-    if (!matches.length) throw new Error("Monica 中没有可用于此网站的 Passkey。");
+    matches = selectPasskeyCandidates(passkeys, rpId, request.allowCredentialIds);
+    if (!matches.length) throw new PasskeyUnavailableError("Monica 中没有可用于此网站的 Passkey。");
   }
-  const id = crypto.randomUUID(); const expiresAt = Date.now() + 120_000;
-  pendingPasskeyRequests.set(id, { id, request, tabId: source.tabId, frameId: source.frameId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), targetProviderId: request.operation === "create" && saveTarget?.kind === "bitwarden" ? saveTarget.id : undefined });
-  setTimeout(() => { if ((pendingPasskeyRequests.get(id)?.expiresAt || 0) <= Date.now()) pendingPasskeyRequests.delete(id); }, 120_100);
-  return { candidateId: id, operation: request.operation, rpId, rpName: request.operation === "create" ? request.rpName : rpId, userName: request.operation === "create" ? request.userName : matches[0]?.userName || "", saveTargetName: request.operation === "create" ? saveTarget?.name || "Monica 本地库" : undefined, credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local" })), expiresAt };
+  const id = crypto.randomUUID(); const expiresAt = Date.now() + (request.timeoutMs || 120_000);
+  const pending: PendingPasskeyRequest = { id, request, tabId: source.tabId, frameId: source.frameId, documentId: source.documentId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), saveTargets: request.operation === "create" ? saveTargets : [], defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined };
+  await persistPendingPasskeyRequest(pending);
+  schedulePasskeyExpiry(id, expiresAt);
+  return {
+    candidateId: id,
+    operation: request.operation,
+    rpId,
+    rpName: request.operation === "create" ? request.rpName : matches[0]?.rpName || rpId,
+    origin: source.origin,
+    userName: request.operation === "create" ? request.userName : matches[0]?.userName || "",
+    userDisplayName: request.operation === "create" ? request.userDisplayName : matches[0]?.userDisplayName,
+    saveTargets: request.operation === "create" ? saveTargets.map((target) => ({ providerId: target.providerId, name: target.name, sourceMode: target.kind === "bitwarden" ? "bitwarden" : "browser-local" })) : [],
+    defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined,
+    credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local", useCount: item.useCount || 0, lastUsedAt: item.lastUsedAt })),
+    expiresAt
+  };
 }
 
-async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
-  const source = assertWebPageSender(sender); const pending = pendingPasskeyRequests.get(candidateId);
-  if (!pending || pending.expiresAt <= Date.now() || pending.tabId !== source.tabId || pending.frameId !== source.frameId || pending.origin !== source.origin) throw new Error("Passkey 请求已过期或来源不匹配。");
-  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定。");
-  pendingPasskeyRequests.delete(candidateId);
-  if (pending.request.operation === "create") {
-    const created = await createPasskey({ ...pending.request, origin: pending.origin, rpId: pending.rpId });
-    const now = new Date().toISOString();
-    const item: PasskeyItem = { id: crypto.randomUUID(), kind: "passkey", title: pending.request.rpName || pending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: pending.targetProviderId ? [{ providerId: pending.targetProviderId }] : [], credentialId: created.credentialId, rpId: created.rpId, rpName: pending.request.rpName, userHandle: pending.request.userId, userName: pending.request.userName, userDisplayName: pending.request.userDisplayName, algorithm: -7, publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: true, sourceMode: pending.targetProviderId ? "bitwarden" : "browser-local" };
-    await service.upsertItem(item);
-    return { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response };
+async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, providerId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
+  const source = assertWebPageSender(sender);
+  if (cancellingPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+  if (processingPasskeyRequests.has(candidateId)) throw new Error("Passkey 请求正在处理中。");
+  processingPasskeyRequests.add(candidateId);
+  let pending: PendingPasskeyRequest | undefined;
+  let preparedReceipt: PasskeyCompletionReceipt | undefined;
+  let commitSucceeded = false;
+  try {
+    const existingReceipt = await loadPasskeyCompletionReceipt(candidateId);
+    if (existingReceipt) {
+      if (!passkeyReceiptMatchesSource(existingReceipt, source)) throw new Error("Passkey 请求已过期或来源不匹配。");
+      const commitState = await passkeyReceiptCommitState(existingReceipt);
+      if (commitState === "committed") {
+        await promotePasskeyCompletionReceipt(existingReceipt);
+        await deletePendingPasskeyRequest(candidateId).catch(() => undefined);
+        return existingReceipt.result;
+      }
+      if (commitState === "unknown") throw new PasskeyCommitUnknownError("密码库已锁定，暂时无法确认 Passkey 是否已保存。");
+      await deletePasskeyCompletionReceipt(candidateId);
+    }
+
+    pending = await loadPendingPasskeyRequest(candidateId);
+    if (!pending || pending.expiresAt <= Date.now() || pending.tabId !== source.tabId || pending.frameId !== source.frameId || pending.documentId !== source.documentId || pending.origin !== source.origin) throw new Error("Passkey 请求已过期或来源不匹配。");
+    const activePending = pending;
+    if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+    if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定。");
+    if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+    if (activePending.request.operation === "create") {
+      const target = activePending.saveTargets.find((candidate) => candidate.providerId === (providerId || activePending.defaultSaveTargetId));
+      if (!target) throw new Error("所选 Passkey 保存位置不可用。");
+      const created = await createPasskey({ ...activePending.request, origin: activePending.origin, rpId: activePending.rpId, userVerified: false });
+      if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+      const liveState = await service.readState();
+      const liveTarget = liveState.providers.find((candidate) => candidate.id === target.providerId && candidate.enabled && candidate.kind === target.kind);
+      if (!liveTarget) throw new Error("所选 Passkey 保存位置已变化，请重新发起注册。");
+      const currentPasskeys = liveState.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, activePending.rpId));
+      if (hasExcludedUsablePasskey(currentPasskeys, activePending.rpId, activePending.request.excludeCredentialIds)) {
+        await deletePendingPasskeyRequest(candidateId);
+        throw new PasskeyExcludedError("网站已排除此账户现有的 Passkey。");
+      }
+      const now = new Date().toISOString();
+      const bitwarden = target.kind === "bitwarden";
+      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: bitwarden ? [{ providerId: target.providerId }] : [], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: false, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
+      const result: PasskeyResult = { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response, clientExtensionResults: activePending.request.credProps ? { credProps: { rk: item.discoverable } } : {} };
+      preparedReceipt = {
+        id: candidateId,
+        tabId: activePending.tabId,
+        frameId: activePending.frameId,
+        documentId: activePending.documentId,
+        origin: activePending.origin,
+        operation: "create",
+        itemId: item.id,
+        result,
+        status: "prepared",
+        expiresAt: Date.now() + PASSKEY_COMPLETION_TTL_MS
+      };
+      await persistPasskeyCompletionReceipt(preparedReceipt);
+      if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+      committingPasskeyRequests.add(candidateId);
+      await service.upsertItem(item);
+      commitSucceeded = true;
+      await promotePasskeyCompletionReceipt(preparedReceipt);
+      schedulePasskeyCompletionExpiry(candidateId, preparedReceipt.expiresAt);
+      await deletePendingPasskeyRequest(candidateId).catch(() => undefined);
+      return result;
+    }
+    const selectedId = itemId || activePending.matches[0];
+    if (!activePending.matches.includes(selectedId)) throw new Error("所选 Passkey 不属于当前请求。");
+    const item = await service.getItem(selectedId);
+    if (!item || item.kind !== "passkey" || passkeyAvailability(item, activePending.rpId) !== "ready" || !item.privateKeyPkcs8) throw new Error("所选 Passkey 没有可用私钥或算法不受支持。");
+    const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount, userVerified: false });
+    if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+    const id = normalizeCredentialId(item.credentialId);
+    const result: PasskeyResult = { operation: "get", id, rawId: id, response: assertion.response };
+    preparedReceipt = {
+      id: candidateId,
+      tabId: activePending.tabId,
+      frameId: activePending.frameId,
+      documentId: activePending.documentId,
+      origin: activePending.origin,
+      operation: "get",
+      itemId: item.id,
+      result,
+      status: "prepared",
+      expiresAt: Date.now() + PASSKEY_COMPLETION_TTL_MS
+    };
+    await persistPasskeyCompletionReceipt(preparedReceipt);
+    if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
+    committingPasskeyRequests.add(candidateId);
+    await service.recordPasskeyUse(item.id, assertion.signCount, new Date().toISOString());
+    commitSucceeded = true;
+    await promotePasskeyCompletionReceipt(preparedReceipt);
+    schedulePasskeyCompletionExpiry(candidateId, preparedReceipt.expiresAt);
+    await deletePendingPasskeyRequest(candidateId).catch(() => undefined);
+    return result;
+  } finally {
+    if (preparedReceipt && !commitSucceeded) await deletePasskeyCompletionReceipt(candidateId).catch(() => undefined);
+    processingPasskeyRequests.delete(candidateId);
+    committingPasskeyRequests.delete(candidateId);
+    cancelledPasskeyRequests.delete(candidateId);
+    if (pending?.expiresAt && pending.expiresAt <= Date.now()) await deletePendingPasskeyRequest(candidateId).catch(() => undefined);
   }
-  const selectedId = itemId || pending.matches[0];
-  if (!pending.matches.includes(selectedId)) throw new Error("所选 Passkey 不属于当前请求。");
-  const item = await service.getItem(selectedId);
-  if (!item || item.kind !== "passkey" || !item.privateKeyPkcs8 || item.sourceMode === "android-metadata-only") throw new Error("所选 Passkey 没有可用私钥。");
-  const assertion = await createAssertion({ origin: pending.origin, challenge: pending.request.challenge, rpId: pending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount });
-  await service.upsertItem({ ...item, signCount: assertion.signCount });
-  const id = normalizeCredentialId(item.credentialId);
-  return { operation: "get", id, rawId: id, response: assertion.response };
 }
 
-function dismissPasskeyRequest(candidateId: string, sender: chrome.runtime.MessageSender): void { const source = assertWebPageSender(sender); const pending = pendingPasskeyRequests.get(candidateId); if (pending?.tabId === source.tabId && pending.frameId === source.frameId) pendingPasskeyRequests.delete(candidateId); }
-
-function normalizeCredentialId(value: string): string {
-  const uuid = value.trim().match(/^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/i);
-  if (uuid) { const hex = uuid.slice(1).join(""); return toBase64Url(Uint8Array.from(hex.match(/../g) || [], (part) => parseInt(part, 16))); }
-  try { return toBase64Url(fromBase64Url(value)); } catch { return value.trim(); }
+interface PasskeyDismissResult {
+  cancelled: boolean;
+  pending?: boolean;
+  result?: PasskeyResult;
 }
 
-async function fillLogin(itemId: string, tabId: number, frameId?: number) {
+async function dismissPasskeyRequest(candidateId: string, sender: chrome.runtime.MessageSender): Promise<PasskeyDismissResult> {
+  const source = assertWebPageSender(sender);
+  if (committingPasskeyRequests.has(candidateId)) return { cancelled: false, pending: true };
+  const receipt = await loadPasskeyCompletionReceipt(candidateId);
+  if (receipt && !passkeyReceiptMatchesSource(receipt, source)) throw new Error("Passkey 请求来源不匹配。");
+  if (receipt) {
+    const commitState = await passkeyReceiptCommitState(receipt);
+    if (commitState === "committed") {
+      await promotePasskeyCompletionReceipt(receipt);
+      return { cancelled: false, result: receipt.result };
+    }
+    if (commitState === "unknown") return { cancelled: false, pending: true };
+  }
+  const pending = await loadPendingPasskeyRequest(candidateId);
+  if (pending && (pending.tabId !== source.tabId || pending.frameId !== source.frameId || pending.documentId !== source.documentId || pending.origin !== source.origin)) throw new Error("Passkey 请求来源不匹配。");
+  if (!receipt && !pending && !processingPasskeyRequests.has(candidateId) && !committingPasskeyRequests.has(candidateId)) return { cancelled: true };
+  const cancelled = await cancelPendingPasskeyRequest(candidateId);
+  if (cancelled) return { cancelled: true };
+  const completed = await loadPasskeyCompletionReceipt(candidateId);
+  if (completed && passkeyReceiptMatchesSource(completed, source)) {
+    const commitState = await passkeyReceiptCommitState(completed);
+    if (commitState === "committed") {
+      await promotePasskeyCompletionReceipt(completed);
+      return { cancelled: false, result: completed.result };
+    }
+  }
+  return { cancelled: false, pending: true };
+}
+
+interface SensitiveFillTarget {
+  url: string;
+  origin: string;
+  documentId: string;
+}
+
+async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId?: string, expectedOrigin?: string): Promise<SensitiveFillTarget> {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab.active) throw new Error("已阻止向非活动标签页填充敏感信息。");
+  const target = documentId
+    ? await chrome.webNavigation.getFrame({ tabId, frameId, documentId })
+    : ((await chrome.webNavigation.getAllFrames({ tabId })) || []).find((frame) => frame.frameId === frameId) || null;
+  if (!target || target.documentLifecycle !== "active") throw new Error("页面已变化，请重新打开 Monica 后再填充。");
+  const origin = new URL(target.url).origin;
+  if (expectedOrigin && origin !== expectedOrigin) throw new Error("页面来源已变化，已阻止敏感信息填充。");
+  if (!isSecureSensitivePageUrl(target.url)) throw new Error("已阻止向不安全的 HTTP 页面填充敏感信息。");
+  return { url: target.url, origin, documentId: target.documentId };
+}
+
+async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) {
+  const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
   const item = await service.getItem(itemId);
   if (!item || !isLoginItem(item)) throw new Error("登录项不存在或已被删除。");
-  const tab = await chrome.tabs.get(tabId);
-  if (!tab.active) throw new Error("已阻止向非活动标签页填充登录信息。");
-  const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
-  const targetFrame = frameId === undefined ? frames.find((frame) => frame.frameId === 0) : frames.find((frame) => frame.frameId === frameId);
-  const targetUrl = targetFrame?.url || tab.url;
-  if (!targetUrl || !isSecureSensitivePageUrl(targetUrl)) throw new Error("已阻止向不安全的 HTTP 页面填充登录信息。");
-  if (!targetUrl || (loginMatchScore(item, targetUrl) <= 0 && (!tab.url || loginMatchScore(item, tab.url) <= 0))) throw new Error("登录项与目标页面不匹配，已阻止填充。");
+  if (loginMatchScore(item, target.url) <= 0) throw new Error("登录项与目标页面不匹配，已阻止填充。");
   const otp = await resolveLoginOtp(item, await service.listItems());
   const response = (await chrome.tabs.sendMessage(tabId, {
     type: "MONICA_FILL_CREDENTIAL",
+    expectedOrigin: target.origin,
     credential: { username: item.username, password: item.password, totpCode: otp?.code, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
-  }, frameId === undefined ? undefined : { frameId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
+  }, { documentId: target.documentId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
   if (response.filledTotp && otp?.updatedItem) await service.upsertItem(otp.updatedItem);
   return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp), filledCustomFields: response.filledCustomFields || 0 };
@@ -656,16 +1175,11 @@ async function listWalletItems(requestedKinds: WalletFillKind[]): Promise<Wallet
   })).sort((left, right) => Number(right.favorite) - Number(left.favorite) || left.title.localeCompare(right.title));
 }
 
-async function fillWalletItem(itemId: string, tabId: number, frameId?: number): Promise<WalletFillResult> {
+async function fillWalletItem(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string): Promise<WalletFillResult> {
+  const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
   const item = await service.getItem(itemId);
   if (!item || !isWalletItem(item)) throw new Error("证件或支付项目不存在或已被删除。");
-  const tab = await chrome.tabs.get(tabId);
-  if (!tab.active) throw new Error("已阻止向非活动标签页填充敏感信息。");
-  const frames = (await chrome.webNavigation.getAllFrames({ tabId })) || [];
-  const target = frames.find((frame) => frame.frameId === (frameId ?? 0));
-  const targetUrl = target?.url || (frameId === undefined || frameId === 0 ? tab.url : undefined);
-  if (!targetUrl || !isSecureSensitivePageUrl(targetUrl)) throw new Error("已阻止向不安全的 HTTP 页面填充证件或支付信息。");
-  const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", wallet: walletPayload(item) }, frameId === undefined ? undefined : { frameId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };
+  const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", expectedOrigin: target.origin, wallet: walletPayload(item) }, { documentId: target.documentId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了证件或支付信息填充。");
   return { filledCount: Number(response.filledCount) || 0, filledFields: response.filledFields || [] };
 }

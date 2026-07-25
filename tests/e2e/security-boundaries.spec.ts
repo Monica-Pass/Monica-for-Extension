@@ -146,3 +146,55 @@ test("login filling is rejected when the target tab is not active", async ({}, t
     await context?.close();
   }
 });
+
+test("login filling is rejected after the reviewed document navigates", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo, "stale-document-fill-profile");
+    context = launched.context;
+    const pageUrl = "https://stale-document.example.test/login";
+    await context.route("https://stale-document.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password">' }));
+    const page = await context.newPage();
+    await page.goto(pageUrl);
+    await seedLogin(launched.manager, "stale-document-login", pageUrl);
+    await page.bringToFront();
+    const target = await tabState(launched.manager, pageUrl);
+    const reviewed = await launched.manager.evaluate(async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }))?.find((frame) => frame.frameId === 0), target.id);
+    expect(reviewed?.documentId).toEqual(expect.any(String));
+    await page.reload();
+    const response = await launched.manager.evaluate(async ({ tabId, documentId, origin }) => chrome.runtime.sendMessage({ type: "VAULT_FILL_LOGIN", itemId: "stale-document-login", tabId, frameId: 0, documentId, expectedOrigin: origin }), { tabId: target.id, documentId: reviewed!.documentId, origin: new URL(pageUrl).origin }) as RuntimeResponse;
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain("页面已变化");
+    await expect(page.locator("#username")).toHaveValue("");
+    await expect(page.locator("#password")).toHaveValue("");
+  } finally {
+    await context?.close();
+  }
+});
+
+test("a top-page match is not reused for a cross-origin iframe", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo, "iframe-boundary");
+    context = launched.context;
+    const topUrl = "https://top-login.example.test/";
+    await context.route("https://top-login.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<iframe src="https://untrusted-frame.attacker.test/login"></iframe>' }));
+    await context.route("https://untrusted-frame.attacker.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password">' }));
+    const page = await context.newPage();
+    await page.goto(topUrl);
+    await seedLogin(launched.manager, "top-only-login", topUrl);
+    await page.bringToFront();
+    const target = await tabState(launched.manager, topUrl);
+    const frames = await launched.manager.evaluate(async (tabId) => chrome.webNavigation.getAllFrames({ tabId }), target.id);
+    const child = frames?.find((frame) => frame.url.startsWith("https://untrusted-frame.attacker.test/"));
+    expect(child).toBeDefined();
+    const response = await launched.manager.evaluate(async ({ tabId, frame }) => chrome.runtime.sendMessage({ type: "VAULT_FILL_LOGIN", itemId: "top-only-login", tabId, frameId: frame.frameId, documentId: frame.documentId, expectedOrigin: new URL(frame.url).origin }), { tabId: target.id, frame: child! }) as RuntimeResponse;
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain("目标页面不匹配");
+    const childFrame = page.frames().find((frame) => frame.url().startsWith("https://untrusted-frame.attacker.test/"))!;
+    await expect(childFrame.locator("#username")).toHaveValue("");
+    await expect(childFrame.locator("#password")).toHaveValue("");
+  } finally {
+    await context?.close();
+  }
+});

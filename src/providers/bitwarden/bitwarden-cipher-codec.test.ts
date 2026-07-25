@@ -172,6 +172,21 @@ describe("Bitwarden Cipher codec", () => {
     });
   });
 
+  it("preserves unknown Bitwarden Passkey algorithms as unusable metadata", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const raw = {
+      Id: "future-passkey", Type: 1, Name: await enc("Future"), RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Username: null, Password: null, Uris: [], Fido2Credentials: [{
+        CredentialId: await enc("future-id"), KeyAlgorithm: await enc("FUTURE-999"), KeyValue: await enc("future-key"),
+        RpId: await enc("example.com"), RpName: await enc("Example"), Counter: await enc("0"), UserHandle: await enc("user"),
+        UserName: await enc("joy"), UserDisplayName: await enc("Joy"), Discoverable: await enc("true"), CreationDate: await enc(REVISION)
+      }] }
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({ algorithm: 0, keyAlgorithm: "FUTURE-999" });
+    await expect(encodeBitwardenPasskeyCipher(decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")!, KEY, raw)).rejects.toThrow("ES256");
+  });
+
   it("updates one FIDO2 credential and retains its sibling", async () => {
     const original = await encodeBitwardenPasskeyCipher(passkey("first", 1), KEY);
     const withSibling = await encodeBitwardenPasskeyCipher(passkey("sibling", 4), KEY, original);

@@ -17,14 +17,16 @@ describe("runtime sender policy", () => {
   });
 
   it("binds page commands to a same-extension content script and consistent origin", () => {
-    expect(requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example/path", origin: "https://login.example", tab: { id: 7 } as chrome.tabs.Tab, frameId: 2 }), runtimeId)).toEqual({
+    expect(requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example/path", origin: "https://login.example", tab: { id: 7 } as chrome.tabs.Tab, frameId: 2, documentId: "12345678-1234-1234-1234-123456789abc" }), runtimeId)).toEqual({
       tabId: 7,
       frameId: 2,
+      documentId: "12345678-1234-1234-1234-123456789abc",
       url: "https://login.example/path",
       origin: "https://login.example"
     });
     expect(() => requireTrustedWebPageSender(sender({ id: "other", url: "https://login.example", tab: { id: 7 } as chrome.tabs.Tab }), runtimeId)).toThrow();
     expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example", origin: "https://attacker.example", tab: { id: 7 } as chrome.tabs.Tab }), runtimeId)).toThrow();
+    expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example", origin: "https://login.example", tab: { id: 7 } as chrome.tabs.Tab, documentId: "" }), runtimeId)).toThrow();
     expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: `${extensionRoot}index.html`, tab: { id: 7 } as chrome.tabs.Tab }), runtimeId)).toThrow();
   });
 

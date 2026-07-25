@@ -4,6 +4,24 @@ import { decodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-c
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
 import { deriveBitwardenMasterKey, stretchBitwardenMasterKey, type BitwardenKdfConfig, type BitwardenSymmetricKey } from "../../src/providers/bitwarden/bitwarden-crypto";
 
+async function confirmPasskeyCreate(page: import("@playwright/test").Page): Promise<void> {
+  const prompt = page.locator("#monica-passkey-prompt-host");
+  await expect(prompt).toHaveCount(1);
+  expect(await prompt.evaluate((host) => host.shadowRoot)).toBeNull();
+  await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
+  await page.keyboard.press("Enter");
+}
+
+async function confirmFirstPasskey(page: import("@playwright/test").Page): Promise<void> {
+  const prompt = page.locator("#monica-passkey-prompt-host");
+  await expect(prompt).toHaveCount(1);
+  expect(await prompt.evaluate((host) => host.shadowRoot)).toBeNull();
+  await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+}
+
 test("passkey bridge creates an encrypted ES256 credential and signs a later assertion", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
@@ -19,14 +37,120 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
     </script>` }));
     const page = await context.newPage(); await page.goto("https://passkey.example.test/");
     await page.locator("#register").click();
-    const prompt = page.locator("#monica-passkey-prompt-host"); await expect(prompt.locator(".title")).toContainText("创建 Monica Passkey"); await prompt.locator(".primary").click();
+    await confirmPasskeyCreate(page);
     await expect(page.locator("#result")).toContainText("registered:"); await expect(page.locator("#result")).not.toContainText("error:");
     const created = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(created.data).toEqual([expect.objectContaining({ kind: "passkey", sourceMode: "browser-local", privateKeyPkcs8: expect.any(String), signCount: 0 })]);
-    await page.locator("#authenticate").click(); await expect(prompt.locator(".title")).toContainText("使用 Monica Passkey"); await expect(prompt.locator(".choice")).toContainText("Passkey Test"); await prompt.locator(".primary").click();
+    const sessionSnapshot = await manager.evaluate(async () => chrome.storage.session.get(null));
+    expect(JSON.stringify(sessionSnapshot)).not.toContain(String(created.data[0].privateKeyPkcs8));
+    await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
     await expect(page.locator("#result")).toContainText("authenticated:"); await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
-    expect(signed.data[0]).toMatchObject({ signCount: 1 });
+    expect(signed.data[0]).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
+  } finally { await context?.close(); }
+});
+
+test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    const masterPassword = "pending passkey lock password";
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
+    await context.route("https://pending-lock-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="register">Register</button><output id="result"></output><script>
+      register.onclick = async () => { try { await navigator.credentials.create({ publicKey: { challenge: new Uint8Array(32).fill(7), rp: { id: 'pending-lock-passkey.example.test', name: 'Pending lock test' }, user: { id: new Uint8Array(16).fill(8), name: 'joy', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000 } }); result.textContent='registered'; } catch(error) { result.textContent='error:'+error.name; } };
+    </script>` }));
+    const page = await context.newPage(); await page.goto("https://pending-lock-passkey.example.test/");
+    await page.locator("#register").click();
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(1);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
+    await expect(page.locator("#result")).toHaveText("error:NotAllowedError");
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_UNLOCK", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
+    expect(await listVaultItems(manager)).toEqual([]);
+  } finally { await context?.close(); }
+});
+
+test("locking immediately after confirmation keeps the page and vault consistent", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    const masterPassword = "passkey lock race password";
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
+    await context.route("https://lock-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="register">Register</button><output id="result"></output><script>
+      register.onclick = async () => { try { const credential = await navigator.credentials.create({ publicKey: { challenge: new Uint8Array(32).fill(4), rp: { id: 'lock-passkey.example.test', name: 'Lock test' }, user: { id: new Uint8Array(16).fill(5), name: 'joy', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000 } }); result.textContent='registered:'+credential.id; } catch(error) { result.textContent='error:'+error.name; } };
+    </script>` }));
+    const page = await context.newPage(); await page.goto("https://lock-passkey.example.test/");
+    await page.locator("#register").click();
+    await confirmPasskeyCreate(page);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_UNLOCK", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
+    await expect(page.locator("#result")).not.toHaveText("");
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
+    const outcome = await page.locator("#result").textContent();
+    const items = await listVaultItems(manager);
+    if (outcome?.startsWith("registered:")) {
+      expect(items).toEqual([expect.objectContaining({ kind: "passkey", credentialId: outcome.slice("registered:".length) })]);
+    } else {
+      expect(outcome).toMatch(/^error:(NotAllowedError|NotSupportedError)$/);
+      expect(items).toEqual([]);
+    }
+  } finally { await context?.close(); }
+});
+
+test("aborting immediately after confirmation never leaves an orphaned Passkey", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "abort passkey password" }))).toMatchObject({ ok: true });
+    await context.route("https://abort-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="register">Register</button><output id="result"></output><script>
+      register.onclick = async () => { window.passkeyController = new AbortController(); try { const credential = await navigator.credentials.create({ signal: window.passkeyController.signal, publicKey: { challenge: new Uint8Array(32).fill(3), rp: { id: 'abort-passkey.example.test', name: 'Abort test' }, user: { id: new Uint8Array(16).fill(2), name: 'joy', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000 } }); result.textContent='registered:'+credential.id; } catch(error) { result.textContent='error:'+error.name; } };
+    </script>` }));
+    const page = await context.newPage(); await page.goto("https://abort-passkey.example.test/");
+    await page.locator("#register").click();
+    await confirmPasskeyCreate(page);
+    await page.evaluate(() => (window as Window & { passkeyController: AbortController }).passkeyController.abort());
+    await expect(page.locator("#result")).not.toHaveText("");
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
+    const outcome = await page.locator("#result").textContent();
+    if (outcome?.startsWith("registered:")) {
+      expect(await listVaultItems(manager)).toEqual([expect.objectContaining({ kind: "passkey", credentialId: outcome.slice("registered:".length) })]);
+    } else {
+      expect(outcome).toBe("error:AbortError");
+      await expect.poll(async () => (await listVaultItems(manager)).length).toBe(0);
+    }
+  } finally { await context?.close(); }
+});
+
+test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "exclude recheck password" }))).toMatchObject({ ok: true });
+    await context.route("https://exclude-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="register">Register</button><output id="result"></output><script>
+      register.onclick = async () => { try { await navigator.credentials.create({ publicKey: { challenge: new Uint8Array(32).fill(8), rp: { id: 'exclude-passkey.example.test', name: 'Exclude test' }, user: { id: new Uint8Array(16).fill(6), name: 'joy', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], excludeCredentials: [{ type: 'public-key', id: new Uint8Array([1,2,3,4]) }], timeout: 60000 } }); result.textContent='registered'; } catch(error) { result.textContent='error:'+error.name; } };
+    </script>` }));
+    const page = await context.newPage(); await page.goto("https://exclude-passkey.example.test/");
+    await page.locator("#register").click();
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(1);
+    const now = new Date().toISOString();
+    expect(await manager.evaluate(async (item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), {
+      id: "late-excluded-passkey", kind: "passkey", title: "Existing excluded", favorite: false, notes: "", createdAt: now, updatedAt: now,
+      providerRefs: [], credentialId: "AQIDBA", rpId: "exclude-passkey.example.test", rpName: "Exclude test", userHandle: "dXNlcg", userName: "joy", userDisplayName: "Joy",
+      algorithm: -7, publicKey: "public", privateKeyPkcs8: "private", signCount: 0, discoverable: true, sourceMode: "browser-local"
+    })).toMatchObject({ ok: true });
+    await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#result")).toHaveText("error:InvalidStateError");
+    await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
+    expect((await listVaultItems(manager)).map((item) => item.id)).toEqual(["late-excluded-passkey"]);
   } finally { await context?.close(); }
 });
 
@@ -60,7 +184,8 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
-    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey provider e2e password" }))).toMatchObject({ ok: true });
+    const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey provider e2e password" })) as { ok: boolean; error?: string };
+    expect(setup.ok, setup.error).toBe(true);
     const login = await manager.evaluate(async ({ email, masterPassword }) => chrome.runtime.sendMessage({ type: "BITWARDEN_LOGIN", name: "Bitwarden E2E", vaultUrl: "https://bw.example.test", email, masterPassword, isDefaultSaveTarget: true }), { email, masterPassword }) as { ok: boolean; data: { providerId: string }; error?: string };
     expect(login.ok, login.error).toBe(true);
     expect(login.data.providerId).toEqual(expect.any(String));
@@ -68,10 +193,8 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
 
     await context.route("https://bitwarden-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: passkeyPage("bitwarden-passkey.example.test") }));
     const page = await context.newPage(); await page.goto("https://bitwarden-passkey.example.test/");
-    const prompt = page.locator("#monica-passkey-prompt-host");
     await page.locator("#register").click();
-    await expect(prompt.locator(".muted")).toContainText("保存至 Bitwarden E2E");
-    await prompt.locator(".primary").click();
+    await confirmPasskeyCreate(page);
     await expect(page.locator("#result")).toContainText("registered:");
     const createdLocally = await listVaultItems(manager);
     const localPasskey = createdLocally.find((item) => item.kind === "passkey")!;
@@ -85,14 +208,13 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     expect(syncedPasskey).toMatchObject({ sourceMode: "bitwarden", signCount: 0, providerRefs: [{ remoteId: expect.stringContaining("#fido2:") }] });
 
     await page.locator("#authenticate").click();
-    await expect(prompt.locator(".choice")).toContainText("Bitwarden");
-    await prompt.locator(".primary").click();
+    await confirmFirstPasskey(page);
     await expect(page.locator("#result")).toContainText("authenticated:");
-    expect((await listVaultItems(manager)).find((item) => item.kind === "passkey")).toMatchObject({ signCount: 1 });
+    expect((await listVaultItems(manager)).find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
     expect(putCount).toBe(1);
     const remoteAfterSign = await decodeBitwardenCipher(remoteCipher!, providerId, vaultKey);
-    expect(remoteAfterSign.items.find((item) => item.kind === "passkey")).toMatchObject({ signCount: 1 });
+    expect(remoteAfterSign.items.find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0 });
 
     synced = await listVaultItems(manager);
     const passkeyId = synced.find((item) => item.kind === "passkey")!.id;

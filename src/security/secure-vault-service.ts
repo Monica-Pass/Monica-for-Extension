@@ -1,4 +1,4 @@
-import { createEmptyVaultState, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, type PasskeyItem, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState } from "../core/model";
 import { providerSourceRecordsFor, replaceProviderSourceRecords } from "../core/migrations";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import { createDeviceVaultKey, decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type DeviceVaultKdfParameters, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
@@ -442,6 +442,20 @@ export class SecureVaultService {
     });
   }
 
+  async recordPasskeyUse(itemId: string, signCount: number, usedAt: string): Promise<PasskeyItem> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const item = state.items.find((candidate): candidate is PasskeyItem => candidate.id === itemId && candidate.kind === "passkey" && !candidate.deletedAt);
+      if (!item) throw new Error("Passkey 不存在或已被删除。");
+      const updated: PasskeyItem = { ...item, signCount, lastUsedAt: usedAt, useCount: (item.useCount || 0) + 1, updatedAt: usedAt };
+      state.items = state.items.map((candidate) => candidate.id === itemId ? updated : candidate);
+      queueProviderMutations(state, updated, "update", usedAt);
+      state.updatedAt = usedAt;
+      await this.persist(state, key, envelope.kdf);
+      return updated;
+    });
+  }
+
   async importItems(items: VaultItem[]): Promise<VaultItem[]> {
     return this.runExclusive(async () => {
       const imported = validateImportedItems(items);
@@ -504,7 +518,13 @@ export class SecureVaultService {
 
   private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters): Promise<void> {
     await this.storage.write(await encryptVaultState(state, key, kdf));
-    await this.touchSession(state.settings.autoLockMinutes);
+    try {
+      await this.touchSession(state.settings.autoLockMinutes);
+    } catch {
+      // The encrypted IndexedDB write is already durable. Failing the caller here
+      // would make a committed mutation look rolled back and invite duplicate writes.
+      // Keeping the previous expiry is fail-secure: the vault may lock sooner.
+    }
   }
 
   private async requireEnvelope(): Promise<VaultEnvelope> {

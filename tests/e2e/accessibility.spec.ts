@@ -101,12 +101,19 @@ test("locked and unlocked popup states have no serious axe violations", async ({
     profileDir = launched.profileDir;
     const password = "popup accessibility master password";
     await ensureVault(launched.page, password);
+    const now = new Date().toISOString();
+    for (const item of [
+      { id: "popup-login", kind: "login", title: "Dark login", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], username: "joy", password: "secret", uris: ["popup-a11y.example.test"], customFields: [] },
+      { id: "popup-passkey", kind: "passkey", title: "Dark Passkey", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], credentialId: "AQID", rpId: "example.test", rpName: "Example", userHandle: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithm: -7, publicKey: "public", privateKeyPkcs8: "private", signCount: 0, discoverable: true, sourceMode: "browser-local" },
+      { id: "popup-card", kind: "card", title: "Dark Visa", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], cardholderName: "JOY", number: "4111111111111111", expiryMonth: "12", expiryYear: "2030", securityCode: "123", brand: "Visa", customFields: [] }
+    ]) expect(await launched.page.evaluate(async (value) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: value }), item)).toMatchObject({ ok: true });
     expect(await launched.page.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
 
     await context.route("https://popup-a11y.example.test/**", (route) => route.fulfill({
       contentType: "text/html; charset=utf-8",
-      body: "<!doctype html><html lang=\"zh-CN\"><title>Popup accessibility</title><label>用户名<input autocomplete=\"username\"></label><label>密码<input type=\"password\" autocomplete=\"current-password\"></label></html>"
+      body: "<!doctype html><html lang=\"zh-CN\"><title>Popup accessibility</title><label>用户名<input autocomplete=\"username\"></label><label>密码<input type=\"password\" autocomplete=\"current-password\"></label><label>卡号<input autocomplete=\"cc-number\"></label><iframe src=\"https://popup-frame.example.test/login\"></iframe></html>"
     }));
+    await context.route("https://popup-frame.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<label>用户名<input autocomplete="username"></label><label>密码<input type="password" autocomplete="current-password"></label>' }));
     const site = await context.newPage();
     await site.goto("https://popup-a11y.example.test/login");
     const popup = await context.newPage();
@@ -115,10 +122,15 @@ test("locked and unlocked popup states have no serious axe violations", async ({
 
     await expect(popup.getByText("密码库已锁定", { exact: true })).toBeVisible();
     await expectA11y(popup, "locked popup");
+    await expectMinimumTargets(popup, "locked popup");
     await popup.getByLabel("主密码").fill(password);
     await popup.getByRole("button", { name: "解锁", exact: true }).click();
-    await expect(popup.getByText("没有匹配项", { exact: true })).toBeVisible();
-    await expectA11y(popup, "unlocked empty popup");
+    await expect(popup.getByText("Dark login", { exact: true })).toBeVisible();
+    await expect(popup.getByText("Dark Passkey", { exact: true })).toBeVisible();
+    await expect(popup.getByText("Dark Visa", { exact: true })).toBeVisible();
+    await expect(popup.getByLabel("填充目标")).toBeVisible();
+    await expectA11y(popup, "unlocked populated dark popup");
+    await expectMinimumTargets(popup, "unlocked populated dark popup");
   } finally {
     await closeContext(context, profileDir);
   }
@@ -159,6 +171,18 @@ async function expectA11y(page: Page, label: string): Promise<void> {
   const result = await new AxeBuilder({ page }).analyze();
   const blocking = result.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical");
   expect(blocking, `${label}: ${blocking.map((violation) => `${violation.id} (${violation.nodes.length})`).join(", ")}`).toEqual([]);
+}
+
+async function expectMinimumTargets(page: Page, label: string): Promise<void> {
+  const tooSmall = await page.locator("button,m3e-button,m3e-icon-button,input,select").evaluateAll((elements) => elements.flatMap((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return [];
+    return rect.width + 0.5 < 44 || rect.height + 0.5 < 44
+      ? [`${element.tagName.toLowerCase()}[${element.getAttribute("aria-label") || element.textContent?.trim() || "unnamed"}]=${rect.width.toFixed(1)}x${rect.height.toFixed(1)}`]
+      : [];
+  }));
+  expect(tooSmall, `${label}: undersized targets ${tooSmall.join(", ")}`).toEqual([]);
 }
 
 async function ensureVault(page: Page, password: string): Promise<void> {

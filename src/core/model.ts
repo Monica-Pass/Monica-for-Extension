@@ -243,7 +243,10 @@ export interface PasskeyItem extends VaultItemBase {
   userHandle: string;
   userName: string;
   userDisplayName: string;
-  algorithm: -7 | -257 | -37 | -8;
+  /** COSE algorithm identifier. Unknown future values are preserved but never used for signing. */
+  algorithm: number;
+  /** Original Bitwarden KeyAlgorithm text, retained for lossless round-trips. */
+  keyAlgorithm?: string;
   publicKey: string;
   privateKeyPkcs8?: string;
   signCount: number;

@@ -71,6 +71,36 @@ test("popup explicitly fills a login inserted later inside an open shadow root",
   }
 });
 
+test("popup fills the login form that was focused before opening the popup", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo, "focused-form-fill-profile");
+    context = launched.context;
+    const now = new Date().toISOString();
+    expect(await launched.manager.evaluate(async (item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), {
+      id: "focused-form-login", kind: "login", title: "Focused Form Account", favorite: false, notes: "", createdAt: now, updatedAt: now,
+      providerRefs: [], username: "focused-user", password: "focused-secret", uris: ["focused-forms.example.test"], customFields: []
+    })).toMatchObject({ ok: true });
+    await context.route("https://focused-forms.example.test/**", (route) => route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: '<!doctype html><title>Focused forms</title><form id="first"><input autocomplete="username"><input type="password" autocomplete="current-password"></form><form id="second"><input autocomplete="username"><input type="password" autocomplete="current-password"></form>'
+    }));
+    const page = await context.newPage();
+    await page.goto("https://focused-forms.example.test/login");
+    await page.locator("#second input").first().focus();
+    const popup = await context.newPage();
+    await page.bringToFront();
+    await popup.goto(`chrome-extension://${launched.extensionId}/popup.html`);
+    await popup.getByRole("button", { name: /Focused Form Account/ }).click();
+    await expect(page.locator("#first input").nth(0)).toHaveValue("");
+    await expect(page.locator("#first input").nth(1)).toHaveValue("");
+    await expect(page.locator("#second input").nth(0)).toHaveValue("focused-user");
+    await expect(page.locator("#second input").nth(1)).toHaveValue("focused-secret");
+  } finally {
+    await context?.close();
+  }
+});
+
 test("two-step SPA login in a late open shadow root offers one save prompt with its username", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
@@ -101,12 +131,56 @@ test("two-step SPA login in a late open shadow root offers one save prompt with 
     await loginPage.getByRole("button", { name: "Sign in" }).click();
 
     const prompt = loginPage.locator("#monica-save-prompt-host");
-    await expect(prompt.locator(".title")).toHaveText("保存到 Monica？");
-    await prompt.locator(".primary").click();
-    await expect(prompt.locator(".status")).toContainText("已保存");
+    await expect(prompt).toHaveCount(1);
+    expect(await prompt.evaluate((host) => host.shadowRoot)).toBeNull();
+    await expect.poll(() => prompt.evaluate((host) => document.activeElement === host)).toBe(true);
+    await loginPage.keyboard.press("Enter");
+    await expect.poll(async () => {
+      const response = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data?: Array<{ username: string }> };
+      return response.data?.[0]?.username;
+    }).toBe("two-step-user");
     const response = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data?: Array<{ username: string; password: string }> };
     expect(response).toMatchObject({ ok: true });
     expect(response.data).toEqual([expect.objectContaining({ username: "two-step-user", password: "two-step-secret" })]);
+  } finally {
+    await context?.close();
+  }
+});
+
+test("navigation carries username to the next password page", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo, "nav-user");
+    context = launched.context;
+    await context.route("https://navigation-steps.example.test/**", (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === "/username") return route.fulfill({
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html><title>Username step</title><form><input id="username" autocomplete="username"><button type="button">Continue</button></form><script>
+          document.querySelector('button').addEventListener('click', () => setTimeout(() => location.href='/password', 30));
+        </script>`
+      });
+      return route.fulfill({
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html><title>Password step</title><form><input id="password" type="password" autocomplete="current-password"><button type="submit">Sign in</button></form><script>
+          document.querySelector('form').addEventListener('submit', event => event.preventDefault());
+        </script>`
+      });
+    });
+    const page = await context.newPage();
+    await page.goto("https://navigation-steps.example.test/username");
+    await page.locator("#username").fill("navigation-user");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.waitForURL("**/password");
+    await page.locator("#password").fill("navigation-secret");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("#monica-save-prompt-host")).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-save-prompt-host");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => {
+      const response = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data?: Array<{ username: string }> };
+      return response.data?.[0]?.username;
+    }).toBe("navigation-user");
   } finally {
     await context?.close();
   }

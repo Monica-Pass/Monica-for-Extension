@@ -13,6 +13,18 @@ export interface LoginMatchSummary {
   hasTotp: boolean;
 }
 
+export interface PasskeyMatchSummary {
+  id: string;
+  title: string;
+  userName: string;
+  userDisplayName: string;
+  sourceMode: "browser-local" | "bitwarden" | "android-metadata-only";
+  availability: "ready" | "android-metadata-only" | "missing-private-key" | "unsupported-algorithm";
+  discoverable: boolean;
+  lastUsedAt?: string;
+  useCount: number;
+}
+
 export type WalletFillKind = "identity" | "billing-address" | "card" | "payment-account";
 
 export type WalletFieldName =
@@ -62,22 +74,25 @@ export interface SteamPendingLogin {
 }
 
 export type PasskeyRequest =
-  | { operation: "create"; challenge: string; rpId?: string; rpName: string; userId: string; userName: string; userDisplayName: string; algorithms: number[]; excludeCredentialIds: string[] }
-  | { operation: "get"; challenge: string; rpId?: string; allowCredentialIds: string[] };
+  | { operation: "create"; challenge: string; rpId?: string; rpName: string; userId: string; userName: string; userDisplayName: string; algorithms: number[]; excludeCredentialIds: string[]; discoverable?: boolean; userVerificationRequired?: boolean; credProps?: boolean; timeoutMs?: number }
+  | { operation: "get"; challenge: string; rpId?: string; allowCredentialIds: string[]; userVerification?: "required" | "preferred" | "discouraged"; timeoutMs?: number };
 
 export interface PasskeyPromptContext {
   candidateId: string;
   operation: "create" | "get";
   rpId: string;
   rpName: string;
+  origin: string;
   userName: string;
-  saveTargetName?: string;
-  credentials: Array<{ itemId: string; title: string; userName: string; sourceMode: "browser-local" | "bitwarden" }>;
+  userDisplayName?: string;
+  saveTargets: Array<{ providerId: string; name: string; sourceMode: "browser-local" | "bitwarden" }>;
+  defaultSaveTargetId?: string;
+  credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; useCount: number; lastUsedAt?: string }>;
   expiresAt: number;
 }
 
 export type PasskeyResult =
-  | { operation: "create"; id: string; rawId: string; response: { clientDataJSON: string; attestationObject: string; authenticatorData: string; publicKey: string; publicKeyAlgorithm: -7 } }
+  | { operation: "create"; id: string; rawId: string; response: { clientDataJSON: string; attestationObject: string; authenticatorData: string; publicKey: string; publicKeyAlgorithm: -7 }; clientExtensionResults: { credProps?: { rk: boolean } } }
   | { operation: "get"; id: string; rawId: string; response: { clientDataJSON: string; authenticatorData: string; signature: string; userHandle: string } };
 
 export type BitwardenConnectResult =
@@ -91,14 +106,22 @@ export interface SavePromptProviderSummary {
   isDefault: boolean;
 }
 
+export interface SavePromptUpdateTarget {
+  id: string;
+  title: string;
+  username: string;
+  providerName: string;
+}
+
 export interface SavePromptContext {
   candidateId: string;
-  action: "save" | "update";
+  action: "save" | "update" | "choose";
   title: string;
   username: string;
   host: string;
   existingItemId?: string;
   existingTitle?: string;
+  updateTargets: SavePromptUpdateTarget[];
   providers: SavePromptProviderSummary[];
   defaultProviderId: string;
   expiresAt: number;
@@ -126,9 +149,10 @@ export type ExtensionRequest =
   | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
-  | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number }
+  | { type: "VAULT_MATCH_PASSKEYS"; pageUrl: string }
+  | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
   | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[] }
-  | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number }
+  | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
   | { type: "STEAM_LIST_CONFIRMATIONS"; itemId: string }
   | { type: "STEAM_RESPOND_CONFIRMATION"; itemId: string; confirmation: SteamConfirmation; accept: boolean }
   | { type: "STEAM_LIST_PENDING_LOGINS"; itemId: string }
@@ -142,12 +166,13 @@ export type ExtensionRequest =
   | { type: "STEAM_CANCEL_MARKET_LISTING"; itemId: string; listingId: string; confirmed: true }
   | { type: "STEAM_GET_MINI_PROFILE_BACKGROUND"; itemId: string }
   | { type: "STEAM_REVOKE_AUTHORIZED_DEVICE"; itemId: string; tokenId: string; accountName: string; password: string; confirmed: true }
+  | { type: "CREDENTIAL_USERNAME_REMEMBER"; username: string }
   | { type: "CREDENTIAL_CAPTURE"; candidate: CredentialCaptureInput }
   | { type: "CREDENTIAL_PENDING" }
-  | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string }
+  | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string; existingItemId?: string }
   | { type: "CREDENTIAL_DISMISS"; candidateId: string }
   | { type: "PASSKEY_BEGIN"; request: PasskeyRequest }
-  | { type: "PASSKEY_ACCEPT"; candidateId: string; itemId?: string }
+  | { type: "PASSKEY_ACCEPT"; candidateId: string; itemId?: string; providerId?: string }
   | { type: "PASSKEY_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }
   | { type: "PROVIDER_QUEUE_STATUS" }
