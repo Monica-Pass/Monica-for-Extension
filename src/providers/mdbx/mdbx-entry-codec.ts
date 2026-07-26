@@ -13,6 +13,8 @@ export interface MdbxEntryRow {
   title: string;
   payload: Record<string, unknown>;
   deleted: boolean;
+  createdAt?: string;
+  updatedAt?: string;
   objectClock?: number;
   payloadSchemaVersion?: number;
 }
@@ -26,17 +28,20 @@ export interface MdbxDecodedEntry {
 const LOGIN_TYPES = new Set(["PASSWORD", "SSO", "WIFI", "SSH_KEY", "BARCODE"]);
 const OTP_TYPES = new Set(["TOTP", "HOTP", "STEAM", "YANDEX", "MOTP"]);
 const TOTP_ALGORITHMS = new Set(["SHA1", "SHA256", "SHA512"]);
+const EPOCH = new Date(0).toISOString();
 
 export function decodeMdbxEntry(row: MdbxEntryRow, providerId: string, databaseId: number): MdbxDecodedEntry {
   const providerRefs: ProviderReference[] = [{ providerId, remoteId: row.entryId, revision: String(row.objectClock ?? "") || undefined }];
+  const createdAt = row.createdAt || EPOCH;
+  const updatedAt = row.updatedAt || createdAt;
   const base = {
     id: `mdbx:${providerId}:${row.entryId}`,
     title: row.title || "未命名 MDBX 条目",
     favorite: false,
     notes: stringValue(row.payload.notes),
-    createdAt: new Date(0).toISOString(),
-    updatedAt: new Date(0).toISOString(),
-    ...(row.deleted ? { deletedAt: new Date(0).toISOString() } : {}),
+    createdAt,
+    updatedAt,
+    ...(row.deleted ? { deletedAt: updatedAt } : {}),
     categoryId: optionalNumber(row.payload.category_id),
     mdbxDatabaseId: databaseId,
     mdbxFolderId: optionalString(row.payload.mdbx_folder_id),
@@ -44,6 +49,11 @@ export function decodeMdbxEntry(row: MdbxEntryRow, providerId: string, databaseI
   };
 
   switch (row.entryType) {
+    /**
+     * Android writes `entry_type = "login"` for a password (`MdbxVaultStore.kt:1961`) while the
+     * payload's own `kind` says `"password"` (`:1929`). `"password"` also exists as a `SecureItem`
+     * prefix (`:2094`), so both spellings are accepted on read even though writes always emit `login`.
+     */
     case "login":
     case "password":
       return { item: { ...base, kind: "login", ...decodeLoginFields(row.payload) } as LoginItem };

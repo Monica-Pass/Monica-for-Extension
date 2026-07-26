@@ -17,14 +17,22 @@ export interface MdbxUnsupportedEntry {
   reason: string;
 }
 
-export interface MdbxVaultSnapshot {
-  meta: MdbxVaultMeta;
-  access: MdbxAccessAssessment;
+export interface MdbxVaultEntries {
   items: VaultItem[];
   /** Rows kept verbatim because this build cannot model their `entry_type`. Never rewritten. */
   unsupported: MdbxUnsupportedEntry[];
   /** Raw payloads keyed by `entry_id`, so a later write can diff against what was actually stored. */
   payloads: Map<string, Record<string, unknown>>;
+}
+
+export interface MdbxVaultSnapshot extends MdbxVaultEntries {
+  meta: MdbxVaultMeta;
+  access: MdbxAccessAssessment;
+  /**
+   * Stays in the background context so a write can re-encrypt fields without re-running PBKDF2.
+   * It must never cross a runtime message boundary.
+   */
+  epochKey?: Uint8Array;
   warnings: string[];
 }
 
@@ -51,6 +59,18 @@ export async function openMdbxVault(
   }
 
   const epochKey = await unlockEpochKey(database, tables, meta, credential, warnings);
+  const entries = await readMdbxEntries(database, epochKey, databaseId, providerId);
+
+  return { meta, access, epochKey, warnings, ...entries };
+}
+
+/** Re-reads the entry tables against an already-unlocked key, so a write-back never re-derives it. */
+export async function readMdbxEntries(
+  database: MdbxSqliteDatabase,
+  epochKey: Uint8Array | undefined,
+  databaseId: number,
+  providerId: string
+): Promise<MdbxVaultEntries> {
   const items: VaultItem[] = [];
   const unsupported: MdbxUnsupportedEntry[] = [];
   const payloads = new Map<string, Record<string, unknown>>();
@@ -63,7 +83,7 @@ export async function openMdbxVault(
     else unsupported.push({ entryId: entry.entryId, entryType: entry.entryType, reason: decoded.unsupportedReason || "" });
   }
 
-  return { meta, access, items, unsupported, payloads, warnings };
+  return { items, unsupported, payloads };
 }
 
 /**
@@ -116,9 +136,18 @@ async function readEntryRow(row: Record<string, unknown>, epochKey: Uint8Array |
     title: titleBytes ? await decryptMdbxField(epochKey, titleBytes) : "",
     payload: payloadBytes ? parsePayload(await decryptMdbxField(epochKey, payloadBytes)) : {},
     deleted: Number(row.deleted ?? 0) !== 0,
+    createdAt: isoTimestamp(row.created_at),
+    updatedAt: isoTimestamp(row.updated_at),
     objectClock: Number(row.object_clock) || undefined,
     payloadSchemaVersion: Number(row.payload_schema_version) || undefined
   };
+}
+
+/** Android stores ISO-8601 text, but the column is untyped, so anything unparseable falls back. */
+function isoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
 }
 
 function parsePayload(raw: string): Record<string, unknown> {

@@ -1,4 +1,6 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
+import type { MdbxUnlockMethod } from "../providers/mdbx/mdbx-crypto";
+import type { MdbxSessionSummary } from "../providers/mdbx/mdbx-provider";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
 import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
@@ -135,6 +137,31 @@ export interface CredentialCaptureInput {
   captureKind: "login" | "password-change";
 }
 
+/**
+ * A `.mdbx` file is a local SQLite database the user picks in an extension page, so the bytes travel
+ * as Base64 through the runtime channel. The credential is never persisted: the unlocked session
+ * lives in the background worker only, and locking the vault drops it.
+ */
+export interface MdbxOpenInput {
+  providerId?: string;
+  name: string;
+  fileName: string;
+  /** Base64 of the whole `.mdbx` file. */
+  file: string;
+  unlockMethod: MdbxUnlockMethod;
+  password?: string;
+  /** Base64 of the key file, for the unlock methods that require one. */
+  keyFile?: string;
+  isDefaultSaveTarget?: boolean;
+}
+
+/** Writes stay in memory until the user exports; this is what they save back over the original. */
+export interface MdbxFileExport {
+  fileName: string;
+  /** Base64 of the rewritten `.mdbx` file. */
+  file: string;
+}
+
 export type ExtensionRequest =
   | { type: "VAULT_STATUS" }
   | { type: "VAULT_SETUP"; masterPassword: string }
@@ -194,6 +221,10 @@ export type ExtensionRequest =
       isDefaultSaveTarget?: boolean;
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
+  | { type: "MDBX_OPEN"; input: MdbxOpenInput }
+  | { type: "MDBX_STATUS"; providerId: string }
+  | { type: "MDBX_EXPORT_FILE"; providerId: string }
+  | { type: "MDBX_LOCK"; providerId?: string }
   | { type: "PROVIDER_SYNC"; providerId: string }
   | { type: "PROVIDER_SYNC_CANCEL"; providerId: string }
   | { type: "PROVIDER_REMOVE"; providerId: string };
@@ -204,4 +235,5 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
+export type { MdbxSessionSummary, MdbxUnlockMethod };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

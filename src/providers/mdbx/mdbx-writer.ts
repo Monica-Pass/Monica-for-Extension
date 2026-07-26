@@ -166,10 +166,20 @@ function insertMdbxTombstone(context: MdbxWriteContext, objectType: string, obje
   );
 }
 
-/** `MdbxVaultStore.kt:2086-2095`. A password entry is stored as `password`, not `login`. */
+/**
+ * `MdbxVaultStore.kt:1961` and `:2010`. A password entry is stored as `login`; `password` is only a
+ * `SecureItem` prefix (`:2094`) and is absent from Android's import filter
+ * (`MdbxViewModel.kt:2146,2338`), so writing it would make the entry invisible on Android.
+ */
 export function mdbxEntryTypeFor(item: VaultItem): string {
-  if (item.kind === "secure-note") return "note";
-  if (item.kind === "totp") return "totp";
-  if (item.kind === "passkey") return "passkey";
-  return "password";
+  switch (item.kind) {
+    case "secure-note": return "note";
+    case "totp": return "totp";
+    case "passkey": return "passkey";
+    case "card": return "card";
+    case "identity": return "document-ref";
+    case "billing-address": return "billing-address";
+    case "payment-account": return "payment-account";
+    default: return "login";
+  }
 }

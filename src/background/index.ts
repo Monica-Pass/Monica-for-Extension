@@ -4,6 +4,9 @@ import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry } from "../core/provider";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
+import { MdbxProvider } from "../providers/mdbx/mdbx-provider";
+import { setMdbxSqliteEngineLoader } from "../providers/mdbx/mdbx-sqlite";
+import { createExtensionSqlJsEngine } from "../providers/mdbx/mdbx-sqljs";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
@@ -14,6 +17,7 @@ import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWeb
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
 import { hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
+import { base64ToBytes, bytesToBase64 } from "../security/encoding";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
@@ -26,6 +30,8 @@ const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVa
 const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
+const mdbxProvider = new MdbxProvider();
+providers.register(mdbxProvider);
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
@@ -108,6 +114,16 @@ const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
 
 void configureSessionStorageAccess(chrome.storage.session.setAccessLevel?.bind(chrome.storage.session));
 
+/**
+ * The SQLite WASM is fetched from the packaged extension, never from `web_accessible_resources` —
+ * `security-audit.mjs:20` pins that list to the logo. The dynamic import keeps the module body from
+ * running during worker startup; it only executes when someone actually opens a `.mdbx` file.
+ */
+setMdbxSqliteEngineLoader(async () => {
+  const initSqlJs = (await import("sql.js")).default;
+  return createExtensionSqlJsEngine(initSqlJs, chrome.runtime.getURL("sql-wasm.wasm"));
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create(AUTO_LOCK_ALARM, { periodInMinutes: 1 });
   void purgeExpiredPasskeySessionState().catch(() => undefined);
@@ -126,6 +142,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") void clearPendingUsernameContexts();
       if (status !== "unlocked") void clearPendingPasskeyRequests();
       if (status !== "unlocked") abortProviderSyncs();
+      if (status !== "unlocked") mdbxProvider.lock();
     });
   }
 });
@@ -169,6 +186,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_LOCK": {
       assertExtensionPage(sender);
       abortProviderSyncs();
+      mdbxProvider.lock();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
@@ -409,6 +427,43 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID()
       });
     }
+    case "MDBX_OPEN": {
+      assertExtensionPage(sender);
+      const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
+      if (existing && existing.kind !== "mdbx") throw new Error("所选密码源不是 MDBX 数据库。");
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "mdbx",
+        name: request.input.name.trim() || request.input.fileName || "Monica MDBX",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(request.input.isDefaultSaveTarget),
+        config: { ...existing?.config, fileName: request.input.fileName, unlockMethod: request.input.unlockMethod },
+        lastSyncAt: existing?.lastSyncAt,
+        lastError: undefined
+      };
+      // Unlocking first means a wrong credential never leaves a half-configured password source behind.
+      const session = await mdbxProvider.unlock(account, base64ToBytes(request.input.file), {
+        unlockMethod: request.input.unlockMethod,
+        password: request.input.password,
+        keyFile: request.input.keyFile ? base64ToBytes(request.input.keyFile) : undefined
+      });
+      return { account: await service.upsertProvider(account), session };
+    }
+    case "MDBX_STATUS":
+      assertExtensionPage(sender);
+      return mdbxProvider.isUnlocked(request.providerId) ? mdbxProvider.summarize(request.providerId) : undefined;
+    case "MDBX_EXPORT_FILE": {
+      assertExtensionPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "mdbx") throw new Error("MDBX 密码源不存在。");
+      const fileName = typeof account.config.fileName === "string" && account.config.fileName ? account.config.fileName : "monica.mdbx";
+      return { fileName, file: bytesToBase64(mdbxProvider.exportFile(account.id)) };
+    }
+    case "MDBX_LOCK":
+      assertExtensionPage(sender);
+      if (request.providerId) mdbxProvider.lockAccount(request.providerId);
+      else mdbxProvider.lock();
+      return undefined;
     case "PROVIDER_SYNC": {
       assertExtensionPage(sender);
       const account = await service.getProvider(request.providerId);
@@ -419,8 +474,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       activeProviderSyncs.set(account.id, controller);
       const startedAt = Date.now();
       try {
-        const result = await providers.get(account.kind).sync(account, { signal: controller.signal, now: new Date().toISOString(), localItems: (await service.readState()).items });
-        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords);
+        // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
+        // concurrent local edit against. Both must be the same read of the vault.
+        const snapshot = (await service.readState()).items;
+        const result = await providers.get(account.kind).sync(account, { signal: controller.signal, now: new Date().toISOString(), localItems: structuredClone(snapshot) });
+        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
         await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
           operation: "sync",
           outcome: result.conflicts.length ? "conflict" : "success",
@@ -453,6 +511,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "PROVIDER_REMOVE":
       assertExtensionPage(sender);
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
+      mdbxProvider.lockAccount(request.providerId);
       return service.removeProvider(request.providerId);
   }
   throw new Error("不支持的 Monica 运行时命令。");

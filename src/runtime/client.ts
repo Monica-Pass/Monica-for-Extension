@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, LoginMatchSummary, MdbxFileExport, MdbxOpenInput, MdbxSessionSummary, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -63,6 +63,10 @@ export const vaultClient = {
   }) => send<BitwardenConnectResult>({ type: "BITWARDEN_LOGIN", ...input }),
   sendBitwardenEmailCode: (vaultUrl: string, email: string, masterPassword: string, providerId?: string) =>
     send<void>({ type: "BITWARDEN_SEND_EMAIL_CODE", vaultUrl, email, masterPassword, providerId }),
+  openMdbx: (input: MdbxOpenInput) => send<{ account: ProviderAccount; session: MdbxSessionSummary }>({ type: "MDBX_OPEN", input }),
+  mdbxStatus: (providerId: string) => send<MdbxSessionSummary | undefined>({ type: "MDBX_STATUS", providerId }),
+  exportMdbxFile: (providerId: string) => send<MdbxFileExport>({ type: "MDBX_EXPORT_FILE", providerId }),
+  lockMdbx: (providerId?: string) => send<void>({ type: "MDBX_LOCK", providerId }),
   syncProvider: (providerId: string) => send<{ warnings: string[]; conflicts: number }>({ type: "PROVIDER_SYNC", providerId }),
   cancelProviderSync: (providerId: string) => send<{ cancelled: boolean }>({ type: "PROVIDER_SYNC_CANCEL", providerId }),
   removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
