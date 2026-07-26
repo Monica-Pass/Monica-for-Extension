@@ -27,6 +27,11 @@ const forbidden = ["super-secret-value", "webdav-secret", "android-backup-secret
 for (const name of scripts) {
   const source = await readFile(resolve(root, "dist", name), "utf8");
   for (const token of forbidden) if (source.includes(token)) throw new Error(`${name} contains forbidden token: ${token}`);
+  // The release CSP is `script-src 'self' 'wasm-unsafe-eval'`, so any code-generation form a bundled
+  // dependency drags in would fail at load rather than at review time.
+  for (const form of ["new Function", "eval(", "importScripts"]) {
+    if (source.includes(form)) throw new Error(`${name} contains a CSP-forbidden code-generation form: ${form}`);
+  }
 }
 const background = await readFile(resolve(root, "dist/background.js"), "utf8");
 if (!background.includes("TRUSTED_CONTEXTS")) throw new Error("Session storage is not restricted to trusted contexts.");

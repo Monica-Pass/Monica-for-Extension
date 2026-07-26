@@ -1,5 +1,16 @@
 import { strFromU8, strToU8, zipSync } from "fflate";
 import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
+import {
+  firstString,
+  normalizeCardType,
+  normalizeDocumentType,
+  normalizeOtpType,
+  normalizePaymentAccountType,
+  normalizeTotpAlgorithm,
+  parseSecureCustomFields,
+  parseSteamSession,
+  serializeSecureCustomFields
+} from "../monica-item-data";
 import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
 
 export interface AndroidBackupRecord {
@@ -629,14 +640,6 @@ function mergeNestedItemData(original: unknown, updates: Record<string, unknown>
   return JSON.stringify({ ...parseNestedJson(original), ...updates });
 }
 
-function firstString(data: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const value = stringValue(data[key]);
-    if (value) return value;
-  }
-  return "";
-}
-
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -658,75 +661,13 @@ function dateValue(value: unknown, fallback = new Date().toISOString()): string 
   if (typeof value === "string" && !Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
   return fallback;
 }
-function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
-  const normalized = stringValue(value).toUpperCase();
-  return normalized === "SHA256" || normalized === "SHA512" ? normalized : "SHA1";
-}
-
-function normalizeCardType(value: unknown): NonNullable<CardItem["cardType"]> {
-  const normalized = stringValue(value).trim().toUpperCase();
-  return normalized === "DEBIT" || normalized === "PREPAID" ? normalized : "CREDIT";
-}
-
-function parseSecureCustomFields(value: unknown): SecureCustomField[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-    const raw = entry as Record<string, unknown>;
-    const name = firstString(raw, "label", "title", "name").trim();
-    if (!name) return [];
-    const rawType = firstString(raw, "type").toUpperCase();
-    const fieldType: NonNullable<SecureCustomField["fieldType"]> = rawType === "HIDDEN" || rawType === "BOOLEAN" ? rawType : "TEXT";
-    return [{ name, value: firstString(raw, "value"), protected: fieldType === "HIDDEN", fieldType }];
-  });
-}
-
-function serializeSecureCustomFields(value: SecureCustomField[] | undefined): Array<{ label: string; value: string; type: string }> {
-  return (value || []).filter((field) => field.name.trim()).map((field) => ({ label: field.name.trim(), value: field.value, type: field.fieldType || (field.protected ? "HIDDEN" : "TEXT") }));
-}
-function normalizeOtpType(value: unknown): NonNullable<TotpItem["otpType"]> {
-  const normalized = stringValue(value).trim().toUpperCase();
-  return normalized === "HOTP" || normalized === "STEAM" || normalized === "YANDEX" || normalized === "MOTP" ? normalized : "TOTP";
-}
-
 function normalizeLoginType(value: unknown): NonNullable<LoginItem["loginType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
   if (normalized === "SSH") return "SSH_KEY";
   return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
 }
 
-function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: string; refreshToken?: string; loginSecure?: string } {
-  if (!rawJson.trim()) return {};
-  try {
-    const root = JSON.parse(rawJson) as Record<string, unknown>;
-    const session = (root.Session || root.session) as Record<string, unknown> | undefined;
-    const loginSecure = firstString(root, "steamLoginSecure", "steam_login_secure") || firstString(session || {}, "SteamLoginSecure", "steamLoginSecure");
-    const accessToken = firstString(root, "access_token", "accessToken", "oauth_token", "OAuthToken") || firstString(session || {}, "AccessToken", "access_token", "OAuthToken", "oauth_token") || loginSecure.split("||").slice(1).join("||");
-    const refreshToken = firstString(root, "refresh_token", "refreshToken") || firstString(session || {}, "RefreshToken", "refresh_token");
-    const steamId = firstString(root, "steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64") || firstString(session || {}, "SteamID", "steamid", "steam_id") || loginSecure.split("||")[0];
-    return { steamId: optionalString(steamId), accessToken: optionalString(accessToken), refreshToken: optionalString(refreshToken), loginSecure: optionalString(loginSecure) };
-  } catch {
-    return {};
-  }
-}
 function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {
   const algorithm = numberValue(value, -7);
   return Number.isSafeInteger(algorithm) ? algorithm : -7;
-}
-function normalizeDocumentType(value: unknown): IdentityItem["documentType"] {
-  const normalized = stringValue(value).trim().toUpperCase().replace(/[ -]/g, "_");
-  if (normalized === "PASSPORT") return "PASSPORT";
-  if (normalized === "DRIVER_LICENSE" || normalized === "DRIVERLICENSE" || normalized === "LICENSE") return "DRIVER_LICENSE";
-  if (normalized === "SOCIAL_SECURITY" || normalized === "SOCIALSECURITY" || normalized === "SSN") return "SOCIAL_SECURITY";
-  if (normalized === "ID_CARD" || normalized === "IDCARD" || normalized === "IDENTITY") return "ID_CARD";
-  return "OTHER";
-}
-function normalizePaymentAccountType(value: unknown): string {
-  const normalized = stringValue(value).trim().toLowerCase().replace(/[ -]/g, "_");
-  if (normalized === "bank" || normalized === "bank_account" || normalized === "account") return "BANK_ACCOUNT";
-  if (normalized === "payment_app" || normalized === "app" || normalized === "mobile_payment" || normalized === "mobile_wallet") return "PAYMENT_APP";
-  if (normalized === "bnpl" || normalized === "buy_now_pay_later" || normalized === "pay_later") return "BUY_NOW_PAY_LATER";
-  if (normalized === "crypto" || normalized === "crypto_wallet" || normalized === "wallet_crypto") return "CRYPTO_WALLET";
-  if (normalized === "other") return "OTHER";
-  return "DIGITAL_WALLET";
 }

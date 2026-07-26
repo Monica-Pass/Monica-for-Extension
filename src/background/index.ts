@@ -7,6 +7,7 @@ import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { MdbxProvider } from "../providers/mdbx/mdbx-provider";
 import { setMdbxSqliteEngineLoader } from "../providers/mdbx/mdbx-sqlite";
 import { createExtensionSqlJsEngine } from "../providers/mdbx/mdbx-sqljs";
+import { KeePassProvider } from "../providers/keepass/keepass-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
@@ -32,6 +33,8 @@ providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const mdbxProvider = new MdbxProvider();
 providers.register(mdbxProvider);
+const keePassProvider = new KeePassProvider();
+providers.register(keePassProvider);
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
@@ -143,6 +146,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") void clearPendingPasskeyRequests();
       if (status !== "unlocked") abortProviderSyncs();
       if (status !== "unlocked") mdbxProvider.lock();
+      if (status !== "unlocked") keePassProvider.lock();
     });
   }
 });
@@ -187,6 +191,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       abortProviderSyncs();
       mdbxProvider.lock();
+      keePassProvider.lock();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
@@ -464,6 +469,43 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (request.providerId) mdbxProvider.lockAccount(request.providerId);
       else mdbxProvider.lock();
       return undefined;
+    case "KEEPASS_OPEN": {
+      assertExtensionPage(sender);
+      const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
+      if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "keepass",
+        name: request.input.name.trim() || request.input.fileName || "KeePass 数据库",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(request.input.isDefaultSaveTarget),
+        config: { ...existing?.config, fileName: request.input.fileName },
+        lastSyncAt: existing?.lastSyncAt,
+        lastError: undefined
+      };
+      // Unlocking first means a wrong credential never leaves a half-configured password source behind.
+      const session = await keePassProvider.unlock(account, base64ToBytes(request.input.file), {
+        password: request.input.password,
+        keyFile: request.input.keyFile ? base64ToBytes(request.input.keyFile) : undefined,
+        sourceName: request.input.fileName
+      });
+      return { account: await service.upsertProvider(account), session };
+    }
+    case "KEEPASS_STATUS":
+      assertExtensionPage(sender);
+      return keePassProvider.isUnlocked(request.providerId) ? keePassProvider.summarize(request.providerId) : undefined;
+    case "KEEPASS_EXPORT_FILE": {
+      assertExtensionPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "keepass") throw new Error("KeePass 密码源不存在。");
+      const fileName = typeof account.config.fileName === "string" && account.config.fileName ? account.config.fileName : "monica.kdbx";
+      return { fileName, file: bytesToBase64(await keePassProvider.exportFile(account.id)) };
+    }
+    case "KEEPASS_LOCK":
+      assertExtensionPage(sender);
+      if (request.providerId) keePassProvider.lockAccount(request.providerId);
+      else keePassProvider.lock();
+      return undefined;
     case "PROVIDER_SYNC": {
       assertExtensionPage(sender);
       const account = await service.getProvider(request.providerId);
@@ -512,6 +554,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
       mdbxProvider.lockAccount(request.providerId);
+      keePassProvider.lockAccount(request.providerId);
       return service.removeProvider(request.providerId);
   }
   throw new Error("不支持的 Monica 运行时命令。");
