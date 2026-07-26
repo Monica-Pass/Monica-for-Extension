@@ -23,7 +23,11 @@ export function validatePasskeyRequest(input: unknown): PasskeyRequest {
       userName: boundedString(value.userName, 256, "Passkey 用户名"),
       userDisplayName: boundedString(value.userDisplayName, 256, "Passkey 显示名"),
       algorithms,
-      excludeCredentialIds: boundedCredentialIds(value.excludeCredentialIds)
+      excludeCredentialIds: boundedCredentialIds(value.excludeCredentialIds),
+      discoverable: optionalBoolean(value.discoverable),
+      userVerificationRequired: optionalBoolean(value.userVerificationRequired),
+      credProps: optionalBoolean(value.credProps),
+      timeoutMs: optionalTimeout(value.timeoutMs)
     };
   }
   if (operation === "get") {
@@ -31,10 +35,30 @@ export function validatePasskeyRequest(input: unknown): PasskeyRequest {
       operation,
       challenge,
       rpId,
-      allowCredentialIds: boundedCredentialIds(value.allowCredentialIds)
+      allowCredentialIds: boundedCredentialIds(value.allowCredentialIds),
+      userVerification: optionalUserVerification(value.userVerification),
+      timeoutMs: optionalTimeout(value.timeoutMs)
     };
   }
   throw new Error("Passkey 操作类型无效。");
+}
+
+function optionalBoolean(input: unknown): boolean | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "boolean") throw new Error("Passkey 布尔选项格式无效。");
+  return input;
+}
+
+function optionalUserVerification(input: unknown): "required" | "preferred" | "discouraged" | undefined {
+  if (input === undefined) return undefined;
+  if (input === "required" || input === "preferred" || input === "discouraged") return input;
+  throw new Error("Passkey 用户验证选项无效。");
+}
+
+function optionalTimeout(input: unknown): number | undefined {
+  if (input === undefined) return undefined;
+  if (!Number.isSafeInteger(input) || (input as number) < 1_000 || (input as number) > 120_000) throw new Error("Passkey 超时时间无效。");
+  return input as number;
 }
 
 function boundedCredentialIds(input: unknown): string[] {

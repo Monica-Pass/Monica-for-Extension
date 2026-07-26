@@ -1,6 +1,7 @@
 export interface WebPageSenderContext {
   tabId: number;
   frameId: number;
+  documentId: string;
   url: string;
   origin: string;
 }
@@ -19,6 +20,7 @@ export function requireTrustedWebPageSender(sender: chrome.runtime.MessageSender
   const url = sender.url || "";
   const parsed = new URL(url);
   const frameId = sender.frameId ?? 0;
+  const documentId = sender.documentId || "";
   if (
     sender.id !== runtimeId ||
     sender.tab?.id === undefined ||
@@ -26,12 +28,13 @@ export function requireTrustedWebPageSender(sender: chrome.runtime.MessageSender
     sender.tab.id < 0 ||
     !Number.isInteger(frameId) ||
     frameId < 0 ||
+    !/^[0-9a-f-]{16,64}$/i.test(documentId) ||
     (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
     (sender.origin !== undefined && sender.origin !== parsed.origin)
   ) {
     throw new Error("此命令只允许 Monica 网页内容脚本调用。");
   }
-  return { tabId: sender.tab.id, frameId, url: parsed.toString(), origin: parsed.origin };
+  return { tabId: sender.tab.id, frameId, documentId, url: parsed.toString(), origin: parsed.origin };
 }
 
 export function isSecureSensitivePageUrl(raw: string): boolean {

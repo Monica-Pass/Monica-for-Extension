@@ -194,6 +194,14 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
       publicKey: stringValue(raw.publicKey),
       signCount: numberValue(raw.signCount, 0),
       discoverable: raw.isDiscoverable !== false,
+      userVerificationRequired: raw.isUserVerificationRequired !== false,
+      transports: (stringValue(raw.transports) || "internal").split(",").map((value) => value.trim()).filter(Boolean),
+      aaguid: optionalString(raw.aaguid),
+      lastUsedAt: dateValue(raw.lastUsedAt, base.updatedAt),
+      useCount: numberValue(raw.useCount, 0),
+      iconUrl: optionalString(raw.iconUrl),
+      boundPasswordId: optionalNumber(raw.boundPasswordId),
+      passkeyMode: normalizePasskeyMode(raw.passkeyMode),
       sourceMode: "android-metadata-only"
     } satisfies PasskeyItem;
   }
@@ -530,22 +538,27 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("createdAt", Date.parse(item.createdAt) || Date.now(), item.createdAt, previous?.createdAt);
       setChanged("signCount", item.signCount, item.signCount, previous?.signCount);
       setChanged("isDiscoverable", item.discoverable, item.discoverable, previous?.discoverable);
+      setChanged("lastUsedAt", Date.parse(item.lastUsedAt || item.updatedAt) || Date.now(), item.lastUsedAt, previous?.lastUsedAt);
+      setChanged("useCount", item.useCount || 0, item.useCount, previous?.useCount);
+      setChanged("iconUrl", item.iconUrl ?? null, item.iconUrl, previous?.iconUrl);
+      setChanged("isUserVerificationRequired", item.userVerificationRequired !== false, item.userVerificationRequired, previous?.userVerificationRequired);
+      setChanged("transports", (item.transports || ["internal"]).join(","), item.transports || [], previous?.transports || []);
+      setChanged("aaguid", item.aaguid || "", item.aaguid, previous?.aaguid);
+      setChanged("boundPasswordId", item.boundPasswordId ?? null, item.boundPasswordId, previous?.boundPasswordId);
+      setChanged("passkeyMode", item.passkeyMode || "BW_COMPAT", item.passkeyMode, previous?.passkeyMode);
       setChanged("notes", item.notes, item.notes, previous?.notes);
       if (isNew) {
         raw.privateKeyAlias = "";
-        raw.lastUsedAt = Date.parse(item.updatedAt) || Date.now();
-        raw.useCount = 0;
-        raw.iconUrl = null;
-        raw.isUserVerificationRequired = true;
-        raw.transports = "internal";
-        raw.aaguid = "";
-        raw.boundPasswordId = null;
-        raw.passkeyMode = item.sourceMode === "bitwarden" ? "BW_COMPAT" : "LEGACY";
-        raw.categoryName = null;
+        raw.categoryName = item.categoryName ?? null;
       }
       return { id: item.credentialId, raw };
     }
   }
+}
+
+function normalizePasskeyMode(value: unknown): PasskeyItem["passkeyMode"] {
+  const mode = stringValue(value).toUpperCase();
+  return mode === "BW_COMPAT" || mode === "KEEPASS_COMPAT" ? mode : "LEGACY";
 }
 
 function sameWritableItem(left: VaultItem, right: VaultItem): boolean {
@@ -698,7 +711,7 @@ function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: s
 }
 function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {
   const algorithm = numberValue(value, -7);
-  return algorithm === -257 || algorithm === -37 || algorithm === -8 ? algorithm : -7;
+  return Number.isSafeInteger(algorithm) ? algorithm : -7;
 }
 function normalizeDocumentType(value: unknown): IdentityItem["documentType"] {
   const normalized = stringValue(value).trim().toUpperCase().replace(/[ -]/g, "_");

@@ -1,4 +1,5 @@
 import type { CredentialCaptureInput } from "../runtime/messages";
+import { loginFieldRole } from "./login-field-role";
 
 const USERNAME_SELECTORS = [
   'input[autocomplete="username"]',
@@ -19,12 +20,13 @@ const USERNAME_SELECTORS = [
 
 export function captureCredentialInput(root: ParentNode, rootDocument: Document = document, pageLocation: Location = location, fallbackUsername = ""): CredentialCaptureInput | null {
   const passwordInputs = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="password"]'))
-    .filter((input) => !input.disabled && !input.readOnly && input.value.length > 0);
+    .filter((input) => !input.disabled && !input.readOnly && input.value.length > 0 && loginFieldRole(input, root) !== "totp");
   if (!passwordInputs.length) return null;
 
-  const newPasswordInputs = passwordInputs.filter((input) => input.autocomplete.toLowerCase() === "new-password");
+  const newPasswordInputs = passwordInputs.filter((input) => loginFieldRole(input, root) === "new-password");
+  const currentPasswordInputs = passwordInputs.filter((input) => loginFieldRole(input, root) === "current-password");
   const captureKind = newPasswordInputs.length ? "password-change" : "login";
-  const password = choosePassword(newPasswordInputs.length ? newPasswordInputs : passwordInputs);
+  const password = choosePassword(newPasswordInputs.length ? newPasswordInputs : currentPasswordInputs);
   if (!password) return null;
   const username = findUsername(root, passwordInputs)?.value || fallbackUsername;
   return {
@@ -57,7 +59,7 @@ function choosePassword(inputs: HTMLInputElement[]): string {
 function findUsername(root: ParentNode, passwordInputs: HTMLInputElement[]): HTMLInputElement | undefined {
   for (const selector of USERNAME_SELECTORS) {
     const candidate = Array.from(root.querySelectorAll<HTMLInputElement>(selector)).find((input) =>
-      !passwordInputs.includes(input) && !input.disabled && !input.readOnly && input.value.trim().length > 0
+      !passwordInputs.includes(input) && !input.disabled && !input.readOnly && input.value.trim().length > 0 && loginFieldRole(input, root) === "username"
     );
     if (candidate) return candidate;
   }

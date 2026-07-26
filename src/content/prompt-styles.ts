@@ -13,7 +13,7 @@ export const PROMPT_BASE_STYLES = `
     --monica-outline: #bec9c7;
     --monica-error: #ba1a1a;
     --monica-success: #146c3a;
-    font: 14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+    font: 0.875rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
   }
   * { box-sizing: border-box; }
   .card {
@@ -39,26 +39,26 @@ export const PROMPT_BASE_STYLES = `
     width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center;
     border-radius: 8px; color: var(--monica-on-primary-container); background: var(--monica-primary-container);
   }
-  .brand-icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .brand-icon svg, .icon-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .heading { min-width: 0; flex: 1; display: grid; gap: 2px; }
-  .title { font-size: 16px; line-height: 1.3; }
-  .subtitle, .supporting, .masked { color: var(--monica-muted); font-size: 12px; }
+  .title { font-size: 1rem; line-height: 1.3; }
+  .subtitle, .supporting, .masked { color: var(--monica-muted); font-size: 0.75rem; }
   .subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   button, select { font: inherit; }
   button { min-height: 44px; border: 0; border-radius: 8px; padding: 0 14px; cursor: pointer; font-weight: 700; }
   button:focus-visible, select:focus-visible { outline: 3px solid var(--monica-primary); outline-offset: 2px; }
   button:disabled { cursor: wait; opacity: .62; }
-  .icon-button { width: 44px; padding: 0; color: var(--monica-muted); background: transparent; font-size: 24px; }
+  .icon-button { width: 44px; padding: 0; display: grid; place-items: center; color: var(--monica-muted); background: transparent; line-height: 1; }
   .icon-button:hover, .secondary:hover { background: var(--monica-surface-container); }
   .summary { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 12px; border-radius: 8px; background: var(--monica-surface-container); }
   .summary-copy { min-width: 0; display: grid; gap: 2px; }
   .summary-copy strong, .summary-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .notice { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--monica-muted); background: var(--monica-surface-container); font-size: 12px; }
-  .notice svg { width: 18px; height: 18px; flex: 0 0 18px; stroke: currentColor; fill: none; stroke-width: 2; }
-  .status { min-height: 20px; margin: 0; color: var(--monica-muted); font-size: 12px; text-align: center; }
+  .notice { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--monica-muted); background: var(--monica-surface-container); font-size: 0.75rem; }
+  .notice svg { width: 20px; height: 20px; flex: 0 0 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .status { min-height: 20px; margin: 0; color: var(--monica-muted); font-size: 0.75rem; text-align: center; }
   .status.success { color: var(--monica-success); }
   .status.error { color: var(--monica-error); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .secondary { color: var(--monica-primary); background: transparent; }
   .primary { color: var(--monica-on-primary); background: var(--monica-primary); }
   .primary:hover { filter: brightness(.92); }
@@ -70,7 +70,8 @@ export const PROMPT_BASE_STYLES = `
   @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 `;
 
-export function promptIcon(kind: "key" | "save" | "info"): string {
+export function promptIcon(kind: "key" | "save" | "info" | "close"): string {
+  if (kind === "close") return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
   if (kind === "save") return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h11l3 3v11H5z"></path><path d="M8 5v5h7V5M8 19v-6h8v6"></path></svg>';
   if (kind === "info") return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7h.01"></path></svg>';
   return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="12" r="4"></circle><path d="M12 12h9m-3 0v3m-3-3v2"></path></svg>';

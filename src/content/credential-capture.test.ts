@@ -36,4 +36,19 @@ describe("credential submit capture", () => {
     const dom = page('<form><label>手机号码<input type="tel" value="13800000000"></label><input type="password" value="secret"></form>');
     expect(captureCredentialInput(dom.window.document.querySelector("form")!, dom.window.document, dom.window.location)).toMatchObject({ username: "13800000000", password: "secret" });
   });
+
+  it("does not treat a masked OTP as a password candidate", () => {
+    const dom = page('<form><input autocomplete="username" value="joy"><input type="password" autocomplete="one-time-code" value="123456"></form>');
+    expect(captureCredentialInput(dom.window.document.querySelector("form")!, dom.window.document, dom.window.location)).toBeNull();
+  });
+
+  it("does not capture a masked verification_code as the submitted password", () => {
+    const dom = page('<form><input autocomplete="username" value="joy"><input type="password" name="verification_code" inputmode="numeric" maxlength="6" value="123456"></form>');
+    expect(captureCredentialInput(dom.window.document.querySelector("form")!, dom.window.document, dom.window.location)).toBeNull();
+  });
+
+  it("conservatively treats an unannotated two-password registration form as new-password", () => {
+    const dom = page('<form id="register"><input autocomplete="username" value="joy"><input type="password" value="new-secret"><input type="password" value="new-secret"></form>');
+    expect(captureCredentialInput(dom.window.document.querySelector("form")!, dom.window.document, dom.window.location)).toMatchObject({ password: "new-secret", captureKind: "password-change" });
+  });
 });

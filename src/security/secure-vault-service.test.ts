@@ -7,6 +7,25 @@ import { MemoryVaultStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore } from "./vault-device-key";
 
 describe("encrypted vault", () => {
+  it("keeps a durable mutation successful when only session activity refresh fails", async () => {
+    class FailingRefreshSessionStore extends MemoryVaultSessionStore {
+      private writes = 0;
+
+      override async write(session: Parameters<MemoryVaultSessionStore["write"]>[0]): Promise<void> {
+        this.writes += 1;
+        if (this.writes === 2) throw new Error("session refresh failed");
+        await super.write(session);
+      }
+    }
+
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new FailingRefreshSessionStore());
+    await service.setup("durable mutation password");
+    const login = createLoginItem({ title: "Durable", password: "secret", uris: ["example.com"] });
+    await expect(service.upsertItem(login)).resolves.toMatchObject({ id: login.id });
+    expect((await service.readState()).items).toEqual([expect.objectContaining({ id: login.id })]);
+  });
+
   it("encrypts secrets and rejects the wrong password", async () => {
     const storage = new MemoryVaultStorage();
     const sessions = new MemoryVaultSessionStore();

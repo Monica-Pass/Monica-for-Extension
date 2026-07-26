@@ -1,4 +1,5 @@
 import { OPEN_SHADOW_ROOT_EVENT } from "../content/shadow-bridge";
+import { shouldInterceptPasskeyCreate, shouldInterceptPasskeyGet } from "./interception-policy";
 
 const PAGE_SOURCE = "monica-passkey-page";
 const EXTENSION_SOURCE = "monica-passkey-extension";
@@ -23,34 +24,106 @@ if (navigator.credentials && !(navigator.credentials as CredentialsContainer & {
   Object.defineProperty(credentials, "create", { configurable: true, value: async (options?: CredentialCreationOptions) => {
     if (!options?.publicKey) return nativeCreate(options);
     const pk = options.publicKey;
-    const result = await bridge({
-      operation: "create", challenge: encode(pk.challenge), rpId: pk.rp.id, rpName: pk.rp.name,
-      userId: encode(pk.user.id), userName: pk.user.name, userDisplayName: pk.user.displayName,
-      algorithms: pk.pubKeyCredParams.map((param) => param.alg), excludeCredentialIds: (pk.excludeCredentials || []).map((item) => encode(item.id))
-    });
-    return publicKeyCredential(result);
+    const selection = pk.authenticatorSelection;
+    const extensionNames = Object.keys(pk.extensions || {});
+    if (!shouldInterceptPasskeyCreate({
+      topLevel: window.top === window,
+      authenticatorAttachment: selection?.authenticatorAttachment,
+      userVerification: selection?.userVerification,
+      extensionNames,
+      algorithms: pk.pubKeyCredParams.map((param) => param.alg)
+    })) return nativeCreate(options);
+    try {
+      const result = await bridge({
+        operation: "create", challenge: encode(pk.challenge), rpId: pk.rp.id, rpName: pk.rp.name,
+        userId: encode(pk.user.id), userName: pk.user.name, userDisplayName: pk.user.displayName,
+        algorithms: pk.pubKeyCredParams.map((param) => param.alg), excludeCredentialIds: (pk.excludeCredentials || []).map((item) => encode(item.id)),
+        discoverable: selection?.residentKey === "required" || selection?.residentKey === "preferred" || selection?.requireResidentKey === true,
+        userVerificationRequired: selection?.userVerification === "required", credProps: Boolean(pk.extensions?.credProps), timeoutMs: normalizeTimeout(pk.timeout)
+      }, normalizeTimeout(pk.timeout), (options as CredentialCreationOptions & { signal?: AbortSignal }).signal);
+      return publicKeyCredential(result);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "NotSupportedError") return nativeCreate(options);
+      throw error;
+    }
   } });
   Object.defineProperty(credentials, "get", { configurable: true, value: async (options?: CredentialRequestOptions) => {
     if (!options?.publicKey) return nativeGet(options);
     const pk = options.publicKey;
-    const result = await bridge({ operation: "get", challenge: encode(pk.challenge), rpId: pk.rpId, allowCredentialIds: (pk.allowCredentials || []).map((item) => encode(item.id)) });
-    return publicKeyCredential(result);
+    const mediation = (options as CredentialRequestOptions & { mediation?: CredentialMediationRequirement }).mediation;
+    const allow = pk.allowCredentials || [];
+    const externalOnly = allow.length > 0 && allow.every((item) => item.transports?.length && !item.transports.some((transport) => transport === "internal" || transport === "hybrid"));
+    if (!shouldInterceptPasskeyGet({
+      topLevel: window.top === window,
+      mediation,
+      userVerification: pk.userVerification,
+      extensionNames: Object.keys(pk.extensions || {}),
+      externalOnly
+    })) return nativeGet(options);
+    try {
+      const result = await bridge({ operation: "get", challenge: encode(pk.challenge), rpId: pk.rpId, allowCredentialIds: allow.map((item) => encode(item.id)), userVerification: pk.userVerification, timeoutMs: normalizeTimeout(pk.timeout) }, normalizeTimeout(pk.timeout), (options as CredentialRequestOptions & { signal?: AbortSignal }).signal);
+      return publicKeyCredential(result);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "NotSupportedError") return nativeGet(options);
+      throw error;
+    }
   } });
 }
 
-function bridge(request: Record<string, unknown>): Promise<Record<string, any>> {
+function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: AbortSignal): Promise<Record<string, any>> {
   const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => { cleanup(); reject(new DOMException("Monica Passkey 请求超时。", "NotAllowedError")); }, 120_000);
+    let settled = false;
+    let cancellationRequested = false;
+    let cancellationMessage = "Passkey 请求已取消。";
+    let cancellationName = "NotAllowedError";
+    let timeout = 0;
+    let acknowledgementTimeout = 0;
+    let acknowledgementFallback = 0;
+    let terminalWatchdog = 0;
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      window.clearTimeout(acknowledgementTimeout);
+      window.clearTimeout(acknowledgementFallback);
+      window.clearTimeout(terminalWatchdog);
+      window.removeEventListener("message", listener);
+      signal?.removeEventListener("abort", abort);
+    };
+    const fail = (message: string, name: string) => { if (settled) return; settled = true; cleanup(); reject(new DOMException(message, name)); };
+    const requestCancellation = (message: string, name: string) => {
+      if (settled || cancellationRequested) return;
+      cancellationRequested = true;
+      cancellationMessage = message;
+      cancellationName = name;
+      window.clearTimeout(timeout);
+      terminalWatchdog = window.setTimeout(() => fail(cancellationMessage, cancellationName), 5 * 60_000);
+      window.postMessage({ source: "monica-passkey-page-cancel", requestId, message, name }, location.origin);
+    };
     const listener = (event: MessageEvent) => {
       if (event.source !== window || event.origin !== location.origin || event.data?.source !== EXTENSION_SOURCE || event.data?.requestId !== requestId) return;
-      cleanup();
+      if (event.data.ack === true) {
+        window.clearTimeout(acknowledgementTimeout);
+        window.clearTimeout(acknowledgementFallback);
+        return;
+      }
+      if (settled) return; settled = true; cleanup();
       if (event.data.error) reject(new DOMException(event.data.error, event.data.name || "NotAllowedError")); else resolve(event.data.result);
     };
-    const cleanup = () => { window.clearTimeout(timeout); window.removeEventListener("message", listener); };
+    const abort = () => requestCancellation("Passkey 请求已中止。", "AbortError");
+    if (signal?.aborted) return fail("Passkey 请求已中止。", "AbortError");
+    signal?.addEventListener("abort", abort, { once: true });
     window.addEventListener("message", listener);
+    timeout = window.setTimeout(() => requestCancellation("Monica Passkey 请求超时。", "NotAllowedError"), timeoutMs);
+    acknowledgementTimeout = window.setTimeout(() => {
+      requestCancellation("Monica Passkey 通道没有响应。", "NotAllowedError");
+      acknowledgementFallback = window.setTimeout(() => fail(cancellationMessage, cancellationName), 1_000);
+    }, 750);
     window.postMessage({ source: PAGE_SOURCE, requestId, request }, location.origin);
   });
+}
+
+function normalizeTimeout(value?: number): number {
+  return Number.isFinite(value) ? Math.max(1_000, Math.min(120_000, Math.trunc(value!))) : 120_000;
 }
 
 function publicKeyCredential(result: Record<string, any>): Credential {
@@ -69,7 +142,7 @@ function publicKeyCredential(result: Record<string, any>): Credential {
   Object.defineProperties(credential, {
     id: { enumerable: true, value: result.id }, rawId: { enumerable: true, value: decode(result.rawId) }, type: { enumerable: true, value: "public-key" },
     response: { enumerable: true, value: response }, authenticatorAttachment: { enumerable: true, value: "platform" },
-    getClientExtensionResults: { value: () => ({}) }, toJSON: { value: () => ({ id: result.id, rawId: result.rawId, type: "public-key", authenticatorAttachment: "platform", response: responseData, clientExtensionResults: {} }) }
+    getClientExtensionResults: { value: () => result.clientExtensionResults || {} }, toJSON: { value: () => ({ id: result.id, rawId: result.rawId, type: "public-key", authenticatorAttachment: "platform", response: responseData, clientExtensionResults: result.clientExtensionResults || {} }) }
   });
   return credential as Credential;
 }

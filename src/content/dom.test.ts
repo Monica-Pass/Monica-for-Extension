@@ -33,6 +33,85 @@ describe("content autofill DOM engine", () => {
     expect([username.value, password.value]).toEqual(["joy@example.com", "correct horse"]);
   });
 
+  it("uses a lone unlabeled text field before a password as the username", () => {
+    const dom = page('<form><input id="username"><input id="password" type="password"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ username: "joy", password: "secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: true });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#username")!.value).toBe("joy");
+  });
+
+  it("does not let an unrelated text field steal an explicitly identified username", () => {
+    const dom = page('<form><label>Tenant<input id="tenant"></label><input id="username" autocomplete="username"><input id="password" type="password"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ username: "joy", password: "secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: true });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#tenant")!.value).toBe("");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#username")!.value).toBe("joy");
+  });
+
+  it("fills the login form that currently owns keyboard focus", () => {
+    const dom = page(`
+      <form id="first"><input autocomplete="username"><input type="password"></form>
+      <form id="second"><input id="second-user" autocomplete="username"><input id="second-password" type="password"></form>
+    `);
+    showLightInputs(dom);
+    const focused = dom.window.document.querySelector<HTMLInputElement>("#second-user")!;
+    focused.focus();
+
+    expect(fillCredential({ username: "focused-user", password: "focused-secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: true });
+    expect(Array.from(dom.window.document.querySelectorAll<HTMLInputElement>("#first input")).map((input) => input.value)).toEqual(["", ""]);
+    expect(focused.value).toBe("focused-user");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#second-password")!.value).toBe("focused-secret");
+  });
+
+  it("keeps focused-form targeting inside an open shadow root", () => {
+    const dom = page('<form id="light"><input autocomplete="username"><input type="password"></form><div id="host"></div>');
+    showLightInputs(dom);
+    const shadow = dom.window.document.querySelector("#host")!.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<form><input id="shadow-user" autocomplete="username"><input id="shadow-password" type="password"></form>';
+    const username = show(shadow.querySelector<HTMLInputElement>("#shadow-user")!);
+    const password = show(shadow.querySelector<HTMLInputElement>("#shadow-password")!);
+    username.focus();
+
+    expect(fillCredential({ username: "shadow-focused", password: "shadow-secret" }, dom.window.document)).toMatchObject({ ok: true });
+    expect([username.value, password.value]).toEqual(["shadow-focused", "shadow-secret"]);
+    expect(Array.from(dom.window.document.querySelectorAll<HTMLInputElement>("#light input")).map((input) => input.value)).toEqual(["", ""]);
+  });
+
+  it("never writes a real password into a masked one-time-code field", () => {
+    const dom = page('<form><input id="otp" type="password" autocomplete="one-time-code"></form>');
+    const otp = show(dom.window.document.querySelector<HTMLInputElement>("#otp")!);
+    const observed: string[] = [];
+    otp.addEventListener("input", () => observed.push(otp.value));
+
+    expect(fillCredential({ password: "must-not-leak", totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: true, filledPassword: false, filledTotp: true });
+    expect(observed).toEqual(["123456"]);
+  });
+
+  it("separates a masked verification code from an unannotated current password", () => {
+    const dom = page('<form><input id="password" type="password" name="password"><input id="otp" type="password" name="verification_code" inputmode="numeric" maxlength="6"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ password: "must-stay-in-password", totpCode: "654321" }, dom.window.document)).toMatchObject({ ok: true, filledPassword: true, filledTotp: true });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#password")!.value).toBe("must-stay-in-password");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#otp")!.value).toBe("654321");
+  });
+
+  it("does not fill existing secrets into new-password fields", () => {
+    const dom = page('<form><input autocomplete="username"><input id="new" type="password" autocomplete="new-password"><input id="confirm" type="password" autocomplete="new-password"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ username: "joy", password: "existing-secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: true, filledPassword: false });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#new")!.value).toBe("");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#confirm")!.value).toBe("");
+  });
+
+  it("fills only current-password on mixed password-change forms", () => {
+    const dom = page('<form><input autocomplete="username"><input id="current" type="password" autocomplete="current-password"><input id="new" type="password" autocomplete="new-password"><input id="confirm" type="password" autocomplete="new-password"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ username: "joy", password: "existing-secret" }, dom.window.document)).toMatchObject({ ok: true, filledPassword: true });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#current")!.value).toBe("existing-secret");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#new")!.value).toBe("");
+    expect(dom.window.document.querySelector<HTMLInputElement>("#confirm")!.value).toBe("");
+  });
+
   it("returns a recoverable error without a password field", () => {
     const dom = page('<form><input type="search"></form>');
     showLightInputs(dom);
@@ -71,6 +150,13 @@ describe("content autofill DOM engine", () => {
     showLightInputs(dom);
     expect(scanPage(dom.window.document, dom.window.location)).toMatchObject({ hasTotpField: false });
     expect(fillCredential({ totpCode: "123456" }, dom.window.document)).toMatchObject({ ok: false });
+  });
+
+  it("does not treat a generic code field before a password as the username", () => {
+    const dom = page('<form><input id="code" name="code"><input id="password" type="password"></form>');
+    showLightInputs(dom);
+    expect(fillCredential({ username: "must-not-fill", password: "secret" }, dom.window.document)).toMatchObject({ ok: true, filledUsername: false, filledPassword: true });
+    expect(dom.window.document.querySelector<HTMLInputElement>("#code")!.value).toBe("");
   });
 
   it("rescans late SPA fields and fills username and password steps independently", () => {

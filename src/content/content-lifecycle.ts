@@ -12,6 +12,7 @@ interface CaptureOptions {
   rootDocument?: Document;
   pageLocation?: Location;
   onCandidate: (candidate: CredentialCaptureInput) => void | Promise<void>;
+  onUsernameContext?: (username: string) => void | Promise<void>;
   now?: () => number;
   usernameContextTtlMs?: number;
 }
@@ -20,6 +21,7 @@ interface UsernameContext {
   origin: string;
   value: string;
   expiresAt: number;
+  published: boolean;
 }
 
 export function installCredentialCapture(options: CaptureOptions): () => void {
@@ -40,7 +42,9 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
   const rememberUsername = (root: ParentNode): void => {
     const value = captureUsernameInput(root);
     if (!value) return;
-    usernameContext = { origin: pageLocation.origin, value, expiresAt: now() + usernameTtlMs };
+    const timestamp = now();
+    if (usernameContext?.origin === pageLocation.origin && usernameContext.value === value && usernameContext.expiresAt >= timestamp) return;
+    usernameContext = { origin: pageLocation.origin, value, expiresAt: timestamp + usernameTtlMs, published: false };
   };
 
   const recentUsername = (): string => {
@@ -54,7 +58,13 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
   const capture = (root: ParentNode): void => {
     rememberUsername(root);
     const candidate = captureCredentialInput(root, rootDocument, pageLocation, recentUsername());
-    if (candidate) void options.onCandidate(candidate);
+    if (candidate) {
+      usernameContext = undefined;
+      void options.onCandidate(candidate);
+    } else if (usernameContext && !usernameContext.published) {
+      usernameContext.published = true;
+      void options.onUsernameContext?.(usernameContext.value);
+    }
   };
 
   const clearClickFallback = (root: ParentNode): void => {

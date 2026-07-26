@@ -499,7 +499,7 @@ describe("Android backup ZIP codec", () => {
       credentialId: "abc/def",
       rpId: "example.com",
       privateKeyAlias: "",
-      passkeyMode: "LEGACY"
+      passkeyMode: "BW_COMPAT"
     });
     expect(raw).not.toHaveProperty("id");
     expect(raw).not.toHaveProperty("title");
@@ -528,6 +528,16 @@ describe("Android backup ZIP codec", () => {
     expect(document.items.find((item) => item.kind === "billing-address")).toMatchObject({ isDefault: true, customFields: [{ name: "gate", value: "east", fieldType: "TEXT" }] });
     expect(document.items.find((item) => item.kind === "payment-account")).toMatchObject({ linkedCardLast4: "1111", billingAddress: '{"streetAddress":"1 Main St"}', paymentNotes: "payment-only-note", isDefault: true, customFields: [{ name: "branch", value: "001", fieldType: "TEXT" }] });
     expect(document.items.find((item) => item.kind === "secure-note")).toMatchObject({ tags: ["android", "work"], isMarkdown: true });
+    expect(document.items.find((item) => item.kind === "passkey")).toMatchObject({
+      lastUsedAt: new Date(1_700_000_001_000).toISOString(),
+      useCount: 9,
+      iconUrl: "https://example.com/icon.png",
+      userVerificationRequired: true,
+      transports: ["internal", "hybrid"],
+      aaguid: "00000000-0000-0000-0000-000000000000",
+      boundPasswordId: 101,
+      passkeyMode: "LEGACY"
+    });
     const changed = document.items.map((item) => {
       if (item.kind === "login") return { ...item, password: "new-password" };
       if (item.kind === "totp") return { ...item, issuer: "GitLab" };

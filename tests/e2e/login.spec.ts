@@ -99,6 +99,39 @@ test("manager saves a metadata-only SSO login with empty username, password, and
   }
 });
 
+test("popup shows top-level parent-RP Passkey status without exposing a signing action", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist");
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("passkey-status-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    const extensionId = new URL(worker.url()).host;
+    await context.route("https://login.accounts.example.co.uk/**", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Passkey-only site</title>" }));
+    const page = await context.newPage();
+    await page.goto("https://login.accounts.example.co.uk/");
+    const manager = await context.newPage();
+    await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey status password" }))).toMatchObject({ ok: true });
+    const now = new Date().toISOString();
+    for (const item of [
+      { id: "ready-parent-passkey", kind: "passkey", title: "Ready parent account", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], credentialId: "AQID", rpId: "example.co.uk", rpName: "Example", userHandle: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithm: -7, publicKey: "public", privateKeyPkcs8: "private", signCount: 0, discoverable: true, useCount: 2, sourceMode: "browser-local" },
+      { id: "android-parent-passkey", kind: "passkey", title: "Android reference", favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], credentialId: "BAUG", rpId: "example.co.uk", rpName: "Example", userHandle: "dXNlcg", userName: "android", userDisplayName: "Android", algorithm: -7, publicKey: "public", signCount: 0, discoverable: true, sourceMode: "android-metadata-only" }
+    ]) expect(await manager.evaluate(async (value) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: value }), item)).toMatchObject({ ok: true });
+    await page.bringToFront();
+    const popup = await context.newPage();
+    await popup.setViewportSize({ width: 375, height: 667 });
+    await page.bringToFront();
+    await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+    await expect(popup.getByText("Ready parent account", { exact: true })).toBeVisible();
+    await expect(popup.getByText("已保存，等待网站请求", { exact: true })).toBeVisible();
+    await expect(popup.getByText("仅兼容保留，不能登录", { exact: true })).toBeVisible();
+    await expect(popup.getByRole("button", { name: /Ready parent account/ })).toHaveCount(0);
+    expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 375, scroll: 375 });
+  } finally {
+    await context?.close();
+  }
+});
+
 test("login popup discovers and safely fills a cross-origin login frame", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;

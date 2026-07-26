@@ -239,7 +239,7 @@ async function encodeFido2Credential(item: PasskeyItem, key: BitwardenSymmetricK
   return {
     ...unknown,
     credentialId: await encryptBitwardenString(item.credentialId, key),
-    keyAlgorithm: await encryptBitwardenString("ECDSA", key),
+    keyAlgorithm: await encryptBitwardenString(item.keyAlgorithm || "ECDSA", key),
     keyValue: await encryptBitwardenString(item.privateKeyPkcs8 || "", key),
     rpId: await encryptBitwardenString(item.rpId, key),
     rpName: await encryptBitwardenString(item.rpName || item.title, key),
@@ -287,6 +287,7 @@ async function decodeFido2Credentials(
       userName: decrypted.UserName,
       userDisplayName: decrypted.UserDisplayName,
       algorithm,
+      keyAlgorithm: decrypted.KeyAlgorithm || undefined,
       publicKey: "",
       privateKeyPkcs8: decrypted.KeyValue || undefined,
       signCount: Number(decrypted.Counter) || 0,
@@ -316,7 +317,8 @@ function normalizePasskeyAlgorithm(value: string): PasskeyItem["algorithm"] {
   if (normalized === "rsa" || normalized === "rs256") return -257;
   if (normalized === "ps256") return -37;
   if (normalized === "eddsa" || normalized === "ed25519") return -8;
-  return -7;
+  if (normalized === "ecdsa" || normalized === "es256") return -7;
+  return 0;
 }
 
 function dateValue(raw: unknown, fallback = new Date().toISOString()): string {

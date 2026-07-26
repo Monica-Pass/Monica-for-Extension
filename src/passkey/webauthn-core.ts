@@ -1,3 +1,10 @@
+import { parse as parseDomain } from "tldts";
+
+const MONICA_AAGUID = Uint8Array.of(
+  0x6d, 0x6f, 0x6e, 0x69, 0x63, 0x61, 0x4d, 0x33,
+  0xa0, 0x01, 0x70, 0x61, 0x73, 0x73, 0x6b, 0x79
+);
+
 export interface PasskeyCreateInput {
   origin: string;
   challenge: string;
@@ -8,6 +15,7 @@ export interface PasskeyCreateInput {
   userDisplayName: string;
   algorithms: number[];
   excludeCredentialIds: string[];
+  userVerified?: boolean;
 }
 
 export interface PasskeyCreateOutput {
@@ -32,15 +40,18 @@ export interface PasskeyAssertionInput {
   userHandle: string;
   privateKeyPkcs8: string;
   signCount: number;
+  userVerified?: boolean;
 }
 
 export function validateRpId(origin: string, requestedRpId?: string): string {
   const page = new URL(origin);
-  const local = page.hostname === "localhost" || page.hostname === "127.0.0.1" || page.hostname === "[::1]";
+  const pageHost = normalizeRpId(page.hostname);
+  const local = isLoopbackRpId(pageHost);
   if (page.protocol !== "https:" && !(local && page.protocol === "http:")) throw new Error("Passkey 只允许安全 HTTPS 来源。");
-  const rpId = (requestedRpId || page.hostname).toLowerCase().replace(/\.$/, "");
-  if (!rpId || !(page.hostname === rpId || page.hostname.endsWith(`.${rpId}`))) throw new Error("RP ID 与当前页面来源不匹配。");
-  if (!local && !rpId.includes(".")) throw new Error("RP ID 不能是公共顶级域名。");
+  const rpId = normalizeRpId(requestedRpId || pageHost);
+  if (!pageHost || !rpId || !(pageHost === rpId || pageHost.endsWith(`.${rpId}`))) throw new Error("RP ID 与当前页面来源不匹配。");
+  const parsed = parseDomain(rpId, { allowPrivateDomains: true });
+  if (!local && !parsed.isIp && !parsed.domain) throw new Error("RP ID 不能是公共后缀。");
   return rpId;
 }
 
@@ -60,7 +71,8 @@ export async function createPasskey(input: PasskeyCreateInput): Promise<PasskeyC
   if (!jwk.x || !jwk.y) throw new Error("无法导出 ES256 公钥。");
   const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
   const coseKey = encodeCbor(new Map<unknown, unknown>([[1, 2], [3, -7], [-1, 1], [-2, fromBase64Url(jwk.x)], [-3, fromBase64Url(jwk.y)]]));
-  const authenticatorData = concat(rpHash, Uint8Array.of(0x45), uint32(0), new Uint8Array(16), uint16(credentialBytes.length), credentialBytes, coseKey);
+  const flags = 0x59 | (input.userVerified ? 0x04 : 0);
+  const authenticatorData = concat(rpHash, Uint8Array.of(flags), uint32(0), MONICA_AAGUID, uint16(credentialBytes.length), credentialBytes, coseKey);
   const attestationObject = encodeCbor(new Map<unknown, unknown>([["fmt", "none"], ["attStmt", new Map()], ["authData", authenticatorData]]));
   const clientDataJSON = clientData("webauthn.create", input.challenge, input.origin);
   return {
@@ -82,9 +94,13 @@ export async function createAssertion(input: PasskeyAssertionInput): Promise<{ r
   const rpId = validateRpId(input.origin, input.rpId);
   assertChallenge(input.challenge);
   const privateKey = await crypto.subtle.importKey("pkcs8", arrayBuffer(fromBase64(input.privateKeyPkcs8)), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-  const nextCount = Math.min(0xffff_ffff, Math.max(0, input.signCount) + 1);
+  // Monica Passkeys are portable and may be restored on multiple devices.
+  // A constant zero counter is permitted by WebAuthn and avoids false clone
+  // detection when restored copies would otherwise advance independently.
+  const nextCount = 0;
   const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
-  const authenticatorData = concat(rpHash, Uint8Array.of(0x05), uint32(nextCount));
+  const flags = 0x19 | (input.userVerified ? 0x04 : 0);
+  const authenticatorData = concat(rpHash, Uint8Array.of(flags), uint32(nextCount));
   const clientDataJSON = clientData("webauthn.get", input.challenge, input.origin);
   const clientHash = new Uint8Array(await crypto.subtle.digest("SHA-256", arrayBuffer(clientDataJSON)));
   const rawSignature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, arrayBuffer(concat(authenticatorData, clientHash))));
@@ -97,6 +113,27 @@ export async function createAssertion(input: PasskeyAssertionInput): Promise<{ r
     },
     signCount: nextCount
   };
+}
+
+export function normalizeRpId(value: string): string {
+  const trimmed = value.trim().replace(/\.+$/, "");
+  if (!trimmed) return "";
+  if (/[\/@?#%]/.test(trimmed)) return "";
+  const ipv6 = /^\[[0-9a-f:.]+\]$/i.test(trimmed);
+  if (trimmed.includes(":") && !ipv6) return "";
+  try {
+    const parsed = new URL(`https://${trimmed}/`);
+    if (parsed.username || parsed.password || parsed.port || parsed.pathname !== "/" || parsed.search || parsed.hash) return "";
+    const hostname = parsed.hostname.toLowerCase().replace(/\.+$/, "");
+    if (isLoopbackRpId(hostname) || parseDomain(hostname).isIp) return hostname;
+    return hostname.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? hostname : "";
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackRpId(value: string): boolean {
+  return value === "localhost" || value === "127.0.0.1" || value === "[::1]";
 }
 
 function clientData(type: "webauthn.create" | "webauthn.get", challenge: string, origin: string): Uint8Array {

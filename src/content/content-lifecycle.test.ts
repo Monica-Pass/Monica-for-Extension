@@ -77,6 +77,35 @@ describe("dynamic credential capture lifecycle", () => {
     stop();
   });
 
+  it("publishes username context once and clears it after producing a password candidate", async () => {
+    const dom = page();
+    const app = dom.window.document.querySelector("#app")!;
+    const candidates: CredentialCaptureInput[] = [];
+    const remembered: string[] = [];
+    const stop = installCredentialCapture({
+      rootDocument: dom.window.document,
+      pageLocation: dom.window.location,
+      onUsernameContext: (username) => { remembered.push(username); },
+      onCandidate: (candidate) => { candidates.push(candidate); }
+    });
+    app.innerHTML = '<form><input autocomplete="username" value="first-user"><button type="button">Continue</button></form>';
+    click(dom, app.querySelector("button")!);
+    await settle(dom);
+    app.innerHTML = '<form><input type="password" value="first-secret"><button type="button">Sign in</button></form>';
+    click(dom, app.querySelector("button")!);
+    await settle(dom);
+    app.innerHTML = '<form><input type="password" value="second-secret"><button type="button">Sign in</button></form>';
+    click(dom, app.querySelector("button")!);
+    await settle(dom);
+
+    expect(remembered).toEqual(["first-user"]);
+    expect(candidates).toEqual([
+      expect.objectContaining({ username: "first-user", password: "first-secret" }),
+      expect.objectContaining({ username: "", password: "second-secret" })
+    ]);
+    stop();
+  });
+
   it("does not reuse an expired username-step context", async () => {
     const dom = page();
     const app = dom.window.document.querySelector("#app")!;
