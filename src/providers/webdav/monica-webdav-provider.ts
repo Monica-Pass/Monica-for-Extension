@@ -3,7 +3,7 @@ import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from ".
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
 import { deleteAndroidBackupItem, readAndroidBackup, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
-import { bytesToBase64 } from "../../security/encoding";
+import { createSourceRecord } from "../../core/source-records";
 
 export interface MonicaWebDavConfig extends WebDavCredentials, Record<string, unknown> {
   backupPassword?: string;
@@ -204,19 +204,15 @@ function emptyDocument(): AndroidBackupDocument {
 }
 
 async function androidSourceRecords(document: AndroidBackupDocument, providerId: string): Promise<ProviderSourceRecord[]> {
-  return Promise.all([...document.records.values()].map(async (record) => {
-    const bytes = document.entries[record.path];
-    return {
-      providerId,
-      itemId: record.itemId,
-      remoteId: record.path,
-      revision: record.item.updatedAt,
-      format: "android-entry" as const,
-      encoding: "base64" as const,
-      payload: bytesToBase64(bytes),
-      contentHash: bytesToBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource)))
-    };
-  }));
+  return Promise.all([...document.records.values()].map((record) => createSourceRecord({
+    providerId,
+    itemId: record.itemId,
+    remoteId: record.path,
+    revision: record.item.updatedAt,
+    format: "android-entry",
+    encoding: "base64",
+    payload: document.entries[record.path]
+  })));
 }
 
 function providerReference(item: VaultItem, providerId: string): ProviderReference | undefined {

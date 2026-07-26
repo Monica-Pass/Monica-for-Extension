@@ -1,6 +1,6 @@
 import { argon2id } from "hash-wasm";
 import type { VaultState } from "../core/model";
-import { migrateVaultState } from "../core/migrations";
+import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState } from "../core/migrations";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
@@ -157,7 +157,8 @@ function validProviderSourceRecord(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return typeof record.providerId === "string" && typeof record.remoteId === "string" && typeof record.payload === "string" && typeof record.contentHash === "string"
-    && (record.format === "android-entry" || record.format === "bitwarden-cipher") && (record.encoding === "base64" || record.encoding === "json");
+    && typeof record.format === "string" && Boolean(record.format) && record.format.length <= MAX_SOURCE_RECORD_TAG_LENGTH
+    && typeof record.encoding === "string" && Boolean(record.encoding) && record.encoding.length <= MAX_SOURCE_RECORD_TAG_LENGTH;
 }
 
 function validProviderDiagnostic(value: unknown): boolean {

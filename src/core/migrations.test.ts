@@ -27,4 +27,43 @@ describe("vault schema migrations", () => {
     });
     expect(migrateVaultState(migrated)).toEqual(migrated);
   });
+
+  it("carries source envelopes of unrecognised formats through untouched", () => {
+    const current = createEmptyVaultState("2026-07-18T00:00:00.000Z");
+    const future = {
+      providerId: "provider-from-a-newer-build",
+      itemId: "item-1",
+      remoteId: "row-42",
+      revision: "7",
+      format: "some-format-this-build-has-never-heard-of",
+      encoding: "cbor",
+      payload: "b3BhcXVl",
+      contentHash: "hash",
+      extraKeyFromTheFuture: { nested: true }
+    };
+    const known = { providerId: "provider-1", remoteId: "cipher-1", format: "bitwarden-cipher", encoding: "json", payload: "{}", contentHash: "hash-2" };
+
+    const migrated = migrateVaultState({ ...current, sourceRecords: [future, known] });
+
+    expect(migrated.sourceRecords).toEqual([future, known]);
+  });
+
+  it("drops only structurally invalid source envelopes", () => {
+    const current = createEmptyVaultState("2026-07-18T00:00:00.000Z");
+    const valid = { providerId: "provider-1", remoteId: "row-1", format: "mdbx-row", encoding: "json", payload: "{}", contentHash: "hash" };
+
+    const migrated = migrateVaultState({
+      ...current,
+      sourceRecords: [
+        valid,
+        { ...valid, format: "" },
+        { ...valid, format: "f".repeat(65) },
+        { ...valid, encoding: 7 },
+        { ...valid, payload: undefined },
+        null
+      ]
+    });
+
+    expect(migrated.sourceRecords).toEqual([valid]);
+  });
 });

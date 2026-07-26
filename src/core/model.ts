@@ -8,7 +8,7 @@ export type VaultItemKind =
   | "payment-account"
   | "passkey";
 
-export type ProviderKind = "local" | "monica-webdav" | "bitwarden";
+export type ProviderKind = "local" | "monica-webdav" | "bitwarden" | "mdbx" | "keepass";
 
 export interface ProviderReference {
   providerId: string;
@@ -33,13 +33,18 @@ export interface SecureCustomField {
   type?: "text" | "hidden" | "boolean";
 }
 
+/**
+ * Verbatim copy of the remote record an item came from, so fields Monica has no model for survive a
+ * local edit. `format` and `encoding` are open strings on purpose: a build that predates a provider
+ * must still carry that provider's envelopes through untouched rather than drop them.
+ */
 export interface ProviderSourceRecord {
   providerId: string;
   itemId?: string;
   remoteId: string;
   revision?: string;
-  format: "android-entry" | "bitwarden-cipher";
-  encoding: "base64" | "json";
+  format: string;
+  encoding: string;
   payload: string;
   contentHash: string;
 }
