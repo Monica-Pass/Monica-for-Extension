@@ -1,9 +1,9 @@
 html,
 body.popup-body,
 #popup-root {
-  width: min(390px, 100vw);
+  width: 390px;
   max-width: 390px;
-  min-width: 0;
+  min-width: 390px;
   min-height: 520px;
   margin: 0;
 }
@@ -15,8 +15,9 @@ body.popup-body {
 
 .popup-shell {
   --popup-action-color: var(--app-primary);
-  width: 100%;
+  width: 390px;
   max-width: 390px;
+  min-width: 390px;
   max-height: 600px;
   overflow-y: auto;
   min-height: 520px;

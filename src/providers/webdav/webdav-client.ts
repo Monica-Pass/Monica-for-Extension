@@ -1,6 +1,6 @@
 import { bytesToBase64 } from "../../security/encoding";
 import { readBoundedResponseBytes, readBoundedResponseText } from "../bounded-body";
-import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
+import { providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
 import { DEFAULT_ZIP_SAFETY_LIMITS } from "./zip-safety";
 
 export interface WebDavCredentials {
@@ -41,20 +41,21 @@ export class WebDavClient {
   ) {}
 
   async testConnection(signal?: AbortSignal): Promise<void> {
-    const response = await this.request(normalizeServerUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 连接");
-    if (!response.ok && response.status !== 207) throw webDavError("连接 WebDAV 失败", response);
+    await this.request(normalizeServerUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 连接", async (response) => {
+      if (!response.ok && response.status !== 207) throw webDavError("连接 WebDAV 失败", response);
+    });
   }
 
   async listBackups(signal?: AbortSignal): Promise<WebDavBackupFile[]> {
     const folderUrl = backupFolderUrl(this.credentials.baseUrl);
-    let response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份");
-    if (response.status === 404) {
+    let result = await this.listFolder(folderUrl, signal);
+    if (result.status === 404) {
       await this.ensureBackupFolder(signal);
-      response = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份");
+      result = await this.listFolder(folderUrl, signal);
     }
-    if (!response.ok && response.status !== 207) throw webDavError("读取 Monica_Backups 失败", response);
+    if (result.status !== 200 && result.status !== 207) throw result.error;
     const limits = this.limits();
-    return parseMultiStatus(await readBoundedResponseText(response, limits.maxMultiStatusBytes, "WebDAV 目录响应"), folderUrl)
+    return parseMultiStatus(result.body, folderUrl)
       .filter((file) => BACKUP_FILE_PATTERN.test(file.name))
       .sort((left, right) => compareBackups(right, left));
   }
@@ -66,9 +67,10 @@ export class WebDavClient {
     if (file.size !== undefined && (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > limits.maxDownloadBytes)) {
       throw new Error("WebDAV 备份下载超过安全上限。");
     }
-    const response = await this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份");
-    if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
-    return readBoundedResponseBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载");
+    return this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份", async (response, requestSignal) => {
+      if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
+      return readBoundedResponseBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载", requestSignal);
+    });
   }
 
   async upload(bytes: Uint8Array, encrypted: boolean, signal?: AbortSignal): Promise<WebDavBackupFile> {
@@ -77,31 +79,40 @@ export class WebDavClient {
     const now = new Date();
     const name = `monica_backup_${formatTimestamp(now)}_browser${encrypted ? ".enc.zip" : ".zip"}`;
     const url = joinUrl(backupFolderUrl(this.credentials.baseUrl), name);
-    const response = await this.request(url, {
+    return this.request(url, {
       method: "PUT",
       headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
       body: bytes as BodyInit,
       signal
-    }, "WebDAV 上传备份");
-    if (!response.ok) throw webDavError(`上传备份 ${name} 失败`, response);
-    return { name, url, etag: response.headers.get("etag") || undefined, size: bytes.length, lastModified: now.toISOString(), encrypted };
+    }, "WebDAV 上传备份", async (response) => {
+      if (!response.ok) throw webDavError(`上传备份 ${name} 失败`, response);
+      return { name, url, etag: response.headers.get("etag") || undefined, size: bytes.length, lastModified: now.toISOString(), encrypted };
+    });
   }
 
   private async ensureBackupFolder(signal?: AbortSignal): Promise<void> {
     const folderUrl = backupFolderUrl(this.credentials.baseUrl);
-    const check = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 检查目录");
-    if (check.ok || check.status === 207) return;
-    if (check.status !== 404) throw webDavError("检查 Monica_Backups 目录失败", check);
-    const create = await this.request(folderUrl, { method: "MKCOL", signal }, "WebDAV 创建目录");
-    if (!create.ok && create.status !== 405) throw webDavError("创建 Monica_Backups 目录失败", create);
+    const check = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 检查目录", async (response) => ({ status: response.status, error: response.ok || response.status === 207 ? undefined : webDavError("检查 Monica_Backups 目录失败", response) }));
+    if (check.status >= 200 && check.status < 300 || check.status === 207) return;
+    if (check.status !== 404) throw check.error || new Error("检查 Monica_Backups 目录失败。");
+    await this.request(folderUrl, { method: "MKCOL", signal }, "WebDAV 创建目录", async (response) => {
+      if (!response.ok && response.status !== 405) throw webDavError("创建 Monica_Backups 目录失败", response);
+    });
   }
 
-  private request(url: string, init: RequestInit, operation: string): Promise<Response> {
+  private async listFolder(folderUrl: string, signal?: AbortSignal): Promise<{ status: number; body: string; error: Error }> {
+    return this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份", async (response, requestSignal) => {
+      if (!response.ok && response.status !== 207) return { status: response.status, body: "", error: webDavError("读取 Monica_Backups 失败", response) };
+      return { status: response.status, body: await readBoundedResponseText(response, this.limits().maxMultiStatusBytes, "WebDAV 目录响应", requestSignal), error: new Error() };
+    });
+  }
+
+  private request<T>(url: string, init: RequestInit, operation: string, consume: ProviderResponseConsumer<T>): Promise<T> {
     assertSameProviderOrigin(url, this.credentials.baseUrl);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Basic ${bytesToBase64(new TextEncoder().encode(`${this.credentials.username}:${this.credentials.password}`))}`);
     headers.set("Accept", "*/*");
-    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher });
+    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher }, consume);
   }
 
   private limits(): WebDavClientLimits {

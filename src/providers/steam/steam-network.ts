@@ -263,26 +263,113 @@ async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string
   if (!cookies?.get || !cookies?.set || !cookies?.remove) return action(cookieHeader);
   const url = "https://steamcommunity.com/";
   const names = Object.keys(values);
-  const previous = await Promise.all(names.map((name) => getCookie(cookies, url, name)));
+  // A cookie store is shared by all Steam accounts.  Keep the snapshot, temporary
+  // values, request, and restoration in one critical section so accounts cannot
+  // observe each other's authenticated session.  We discover the store while the
+  // fallback gate is held; an empty store cannot be identified safely, so it keeps
+  // that conservative origin-wide gate for the complete operation.
+  const releaseGate = await steamCookieLocks.acquire(STEAM_COOKIE_GLOBAL_LOCK);
+  let gateReleased = false;
   try {
-    await Promise.all(Object.entries(values).map(([name, value]) => setCookie(cookies, url, name, value)));
-    return await action("");
+    const previous = await Promise.all(names.map((name) => getCookie(cookies, url, name)));
+    const storeId = previous.find((cookie): cookie is chrome.cookies.Cookie => Boolean(cookie?.storeId))?.storeId;
+    if (!storeId) return await useSteamCookieStore(cookies, url, values, previous, action);
+
+    // Acquire the store lock before opening the gate.  A second caller cannot
+    // snapshot the same store between this caller's snapshot and its request.
+    const releaseStore = await steamCookieLocks.acquire(steamCookieStoreLock(storeId));
+    releaseGate();
+    gateReleased = true;
+    try {
+      // The first read only identifies the store. Another request may have
+      // completed while this caller waited for its store lock, so take the
+      // actual restoration snapshot after that lock has been acquired.
+      const storePrevious = await Promise.all(names.map((name) => getCookie(cookies, url, name)));
+      return await useSteamCookieStore(cookies, url, values, storePrevious, action, storeId);
+    } finally {
+      releaseStore();
+    }
   } finally {
-    await Promise.all(names.map(async (name, index) => {
-      await removeCookie(cookies, url, name);
-      const old = previous[index];
-      if (old?.value) await restoreCookie(cookies, old);
-    }));
+    if (!gateReleased) releaseGate();
   }
 }
+
+const STEAM_COOKIE_ORIGIN = "https://steamcommunity.com";
+const STEAM_COOKIE_GLOBAL_LOCK = `${STEAM_COOKIE_ORIGIN}:unknown-store`;
+
+/** A small FIFO mutex registry. Entries are removed once idle to avoid lock leaks. */
+class AsyncKeyedMutex {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async acquire(key: string): Promise<() => void> {
+    const previous = this.tails.get(key) || Promise.resolve();
+    let releaseCurrent!: () => void;
+    const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
+    const tail = previous.then(() => current);
+    this.tails.set(key, tail);
+    await previous;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseCurrent();
+      if (this.tails.get(key) === tail) this.tails.delete(key);
+    };
+  }
+}
+
+const steamCookieLocks = new AsyncKeyedMutex();
+
+function steamCookieStoreLock(storeId: string): string {
+  return `${STEAM_COOKIE_ORIGIN}:${storeId}`;
+}
+
+async function useSteamCookieStore<T>(cookies: typeof chrome.cookies, url: string, values: Record<string, string>, previous: Array<chrome.cookies.Cookie | null>, action: (cookieHeader: string) => Promise<T>, storeId?: string): Promise<T> {
+  let result: T | undefined;
+  let actionError: unknown;
+  let actionFailed = false;
+  try {
+    const writes = await Promise.allSettled(Object.entries(values).map(([name, value]) => setCookie(cookies, url, name, value, storeId)));
+    const failedWrite = writes.find((write): write is PromiseRejectedResult => write.status === "rejected");
+    if (failedWrite) throw failedWrite.reason;
+    result = await action("");
+  } catch (error) {
+    actionFailed = true;
+    actionError = error;
+  }
+
+  const restoreError = await restoreSteamCookies(cookies, url, Object.keys(values), previous, storeId);
+  if (actionFailed) {
+    if (restoreError && actionError && typeof actionError === "object") Object.assign(actionError, { steamCookieRestoreError: restoreError });
+    throw actionError;
+  }
+  if (restoreError) throw restoreError;
+  return result as T;
+}
+
+async function restoreSteamCookies(cookies: typeof chrome.cookies, url: string, names: string[], previous: Array<chrome.cookies.Cookie | null>, storeId?: string): Promise<Error | undefined> {
+  const results = await Promise.all(names.map(async (name, index) => {
+    const errors: Error[] = [];
+    try { await removeCookie(cookies, url, name, storeId); } catch (error) { errors.push(asError(error)); }
+    const old = previous[index];
+    if (old) {
+      try { await restoreCookie(cookies, old); } catch (error) { errors.push(asError(error)); }
+    }
+    return errors;
+  }));
+  const errors = results.flat();
+  return errors.length ? new SteamNetworkError(`Steam Cookie 恢复失败：${errors.map((error) => error.message).join("；")}`) : undefined;
+}
+
+function asError(error: unknown): Error { return error instanceof Error ? error : new Error(String(error)); }
 
 export function createSteamSessionId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-function setCookie(cookies: typeof chrome.cookies, url: string, name: string, value: string, path = "/"): Promise<void> {
-  return callbackWithTimeout((done) => cookies.set({ url, name, value, path, secure: url.startsWith("https://") }, () => done(chrome.runtime.lastError ? new Error(chrome.runtime.lastError.message) : undefined)), "Steam Cookie 写入超时。");
+function setCookie(cookies: typeof chrome.cookies, url: string, name: string, value: string, storeId?: string, path = "/"): Promise<void> {
+  return callbackWithTimeout((done) => cookies.set({ url, name, value, path, secure: url.startsWith("https://"), ...(storeId ? { storeId } : {}) }, () => done(chrome.runtime.lastError ? new Error(chrome.runtime.lastError.message) : undefined)), "Steam Cookie 写入超时。");
 }
 
 function restoreCookie(cookies: typeof chrome.cookies, cookie: chrome.cookies.Cookie): Promise<void> {
@@ -308,8 +395,8 @@ function getCookie(cookies: typeof chrome.cookies, url: string, name: string): P
   });
 }
 
-function removeCookie(cookies: typeof chrome.cookies, url: string, name: string): Promise<void> {
-  return callbackWithTimeout((done) => cookies.remove({ url, name }, () => done()), "Steam Cookie 清理超时。");
+function removeCookie(cookies: typeof chrome.cookies, url: string, name: string, storeId?: string): Promise<void> {
+  return callbackWithTimeout((done) => cookies.remove({ url, name, ...(storeId ? { storeId } : {}) }, () => done(chrome.runtime.lastError ? new Error(chrome.runtime.lastError.message) : undefined)), "Steam Cookie 清理超时。");
 }
 
 function callbackWithTimeout(register: (done: (error?: Error) => void) => void, message: string): Promise<void> {

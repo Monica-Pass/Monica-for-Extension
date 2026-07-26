@@ -154,6 +154,7 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("使用 Markdown").check();
     await manager.getByLabel("笔记内容 *").fill("# Recovery\n\n- Keep future fields");
     await manager.getByRole("button", { name: "加密保存" }).click();
+    await expect(manager.getByText("Markdown Runbook", { exact: true })).toBeVisible();
 
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(response.ok).toBe(true);

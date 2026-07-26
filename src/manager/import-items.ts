@@ -59,6 +59,7 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
       otpType: otpType(raw.otpType),
       counter: optionalNumber(raw.counter),
       pin: optional(raw.pin),
+      pinLength: optionalNumber(raw.pinLength),
       link: optional(raw.link),
       associatedApp: optional(raw.associatedApp),
       customIconType: optional(raw.customIconType),

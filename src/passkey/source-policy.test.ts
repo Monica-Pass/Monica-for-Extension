@@ -41,8 +41,12 @@ describe("Passkey source policy", () => {
   });
 
   it("does not offer algorithms that the browser signer cannot use", () => {
+    const unsupported = { ...base, sourceMode: "bitwarden" as const, algorithm: -257 as const };
     expect(passkeyAvailability({ ...base, algorithm: -257 }, "example.com")).toBe("unsupported-algorithm");
     expect(isUsablePasskey({ ...base, algorithm: -257 }, "example.com")).toBe(false);
+    expect(passkeyAvailability(unsupported, "example.com")).toBe("unsupported-algorithm");
+    expect(isUsablePasskey(unsupported, "example.com")).toBe(false);
+    expect(passkeyAvailabilityLabel("unsupported-algorithm")).toContain("ES256");
   });
 
   it("normalizes base64url and UUID-like credential IDs consistently", () => {

@@ -23,6 +23,12 @@ const KEY_BYTES = 32;
 const IV_BYTES = 16;
 const MAX_CIPHER_STRING_LENGTH = 1024 * 1024;
 const MAX_RSA_PRIVATE_KEY_BYTES = 64 * 1024;
+// Bitwarden's default Argon2id configuration (64 MiB, 3 iterations, 4 lanes)
+// remains supported while preventing a self-hosted server from exhausting an
+// MV3 extension worker.
+export const MAX_BITWARDEN_ARGON2_MEMORY_MB = 128;
+export const MAX_BITWARDEN_ARGON2_PARALLELISM = 4;
+export const MAX_BITWARDEN_ARGON2_WORK_UNITS = 512;
 
 export async function deriveBitwardenMasterKey(password: string, email: string, kdf: BitwardenKdfConfig): Promise<Uint8Array> {
   const normalizedEmail = normalizeBitwardenEmail(email);
@@ -32,8 +38,9 @@ export async function deriveBitwardenMasterKey(password: string, email: string, 
     return pbkdf2(encoder.encode(password), encoder.encode(normalizedEmail), kdf.iterations, KEY_BYTES);
   }
   assertIntegerRange(kdf.iterations, 1, 20, "Argon2 迭代次数");
-  assertIntegerRange(kdf.memoryMb, 1, 1024, "Argon2 内存");
-  assertIntegerRange(kdf.parallelism, 1, 64, "Argon2 并行度");
+  assertIntegerRange(kdf.memoryMb, 1, MAX_BITWARDEN_ARGON2_MEMORY_MB, "Argon2 内存");
+  assertIntegerRange(kdf.parallelism, 1, MAX_BITWARDEN_ARGON2_PARALLELISM, "Argon2 并行度");
+  if (kdf.memoryMb * kdf.iterations > MAX_BITWARDEN_ARGON2_WORK_UNITS) throw new Error("Argon2 总工作量超过安全上限。");
   const saltHash = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(normalizedEmail)));
   return argon2id({
     password: encoder.encode(password),

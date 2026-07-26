@@ -47,6 +47,7 @@ export function parametersFromItem(item: TotpItem) {
     otpType: item.otpType || "TOTP",
     counter: item.counter || 0,
     pin: item.pin || "",
+    pinLength: item.pinLength,
     issuer: item.issuer,
     accountName: item.accountName,
     secretEncoding: item.otpType === "STEAM" && item.steamSharedSecretBase64 ? "base64" as const : "base32" as const

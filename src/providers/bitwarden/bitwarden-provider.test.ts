@@ -161,6 +161,7 @@ describe("Bitwarden provider", () => {
     };
     const created = await provider.sync(account(), { now: "2026-07-15T04:01:00.000Z", localItems: [local] });
     expect(created.conflicts).toEqual([]);
+    expect(created.items[0]?.id).toBe(local.id);
     expect(created.items[0].providerRefs[0]).toMatchObject({ remoteId: "created-cipher", revision: "2026-07-15T04:00:00.000Z" });
     expect(postCount).toBe(1);
 

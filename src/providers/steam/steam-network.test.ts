@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TotpItem } from "../../core/model";
-import { listSteamAuthorizedDevices, listSteamConfirmations, respondToSteamConfirmation, respondToSteamLogin } from "./steam-network";
+import { listSteamAuthorizedDevices, listSteamConfirmations, respondToSteamConfirmation, respondToSteamLogin, steamCommunityText } from "./steam-network";
 
 const item: TotpItem = {
   id: "steam-item",
@@ -107,7 +107,176 @@ describe("Steam network services", () => {
       expect.objectContaining({ tokenId: "42", description: "Old phone", isCurrent: false })
     ]);
   });
+
+  it("serializes interleaved account cookie requests and restores the original store", async () => {
+    const jar = installSteamCookieJar({
+      steamLoginSecure: "initial-login",
+      mobileClient: "initial-client",
+      mobileClientVersion: "initial-version"
+    });
+    const firstFetch = deferred<Response>();
+    const firstStarted = deferred<void>();
+    const accountA = { ...item, steamLoginSecure: "account-a" };
+    const accountB = { ...item, steamLoginSecure: "account-b" };
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(() => {
+      seen.push(jar.get("steamLoginSecure") || "");
+      if (seen.length === 1) {
+        firstStarted.resolve();
+        return firstFetch.promise;
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }));
+
+    const first = steamCommunityText("/mobileconf/getlist", {}, accountA);
+    await firstStarted.promise;
+    const second = steamCommunityText("/mobileconf/getlist", {}, accountB);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(seen).toEqual(["account-a"]);
+
+    firstFetch.resolve(new Response("{}", { status: 200 }));
+    await expect(Promise.all([first, second])).resolves.toEqual(["{}", "{}"]);
+    expect(seen).toEqual(["account-a", "account-b"]);
+    expect(Object.fromEntries(jar)).toEqual({ steamLoginSecure: "initial-login", mobileClient: "initial-client", mobileClientVersion: "initial-version" });
+  });
+
+  it("restores and releases the cookie lock when a request throws", async () => {
+    const jar = installSteamCookieJar({ steamLoginSecure: "initial-login", mobileClient: "initial-client", mobileClientVersion: "initial-version" });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network failed"))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(steamCommunityText("/mobileconf/getlist", {}, { ...item, steamLoginSecure: "account-a" })).rejects.toThrow("network failed");
+    expect(Object.fromEntries(jar)).toEqual({ steamLoginSecure: "initial-login", mobileClient: "initial-client", mobileClientVersion: "initial-version" });
+    await expect(steamCommunityText("/mobileconf/getlist", {}, { ...item, steamLoginSecure: "account-b" })).resolves.toBe("{}");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(Object.fromEntries(jar)).toEqual({ steamLoginSecure: "initial-login", mobileClient: "initial-client", mobileClientVersion: "initial-version" });
+  });
+
+  it("serializes empty-jar requests under the conservative global Steam lock", async () => {
+    const jar = installSteamCookieJar({});
+    const setStoreIds: Array<string | undefined> = [];
+    const removeStoreIds: Array<string | undefined> = [];
+    const cookies = (globalThis as unknown as {
+      chrome: {
+        cookies: {
+          get: (details: chrome.cookies.CookieDetails, callback: (value: chrome.cookies.Cookie | null) => void) => void;
+          set: (details: chrome.cookies.SetDetails, callback?: () => void) => void;
+          remove: (details: chrome.cookies.CookieDetails, callback?: () => void) => void;
+        };
+      };
+    }).chrome.cookies;
+    const originalSet = cookies.set.bind(cookies);
+    const originalRemove = cookies.remove.bind(cookies);
+    cookies.set = ((details: chrome.cookies.SetDetails, callback?: () => void) => {
+      setStoreIds.push(details.storeId);
+      originalSet(details, callback);
+    }) as typeof cookies.set;
+    cookies.remove = ((details: chrome.cookies.CookieDetails, callback?: () => void) => {
+      removeStoreIds.push(details.storeId);
+      originalRemove(details, callback);
+    }) as typeof cookies.remove;
+    const firstFetch = deferred<Response>();
+    const firstStarted = deferred<void>();
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(() => {
+      seen.push(jar.get("steamLoginSecure") || "");
+      if (seen.length === 1) {
+        firstStarted.resolve();
+        return firstFetch.promise;
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }));
+
+    const first = steamCommunityText("/mobileconf/getlist", {}, { ...item, steamLoginSecure: "account-a" });
+    await firstStarted.promise;
+    const second = steamCommunityText("/mobileconf/getlist", {}, { ...item, steamLoginSecure: "account-b" });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Empty jar cannot identify a store, so the origin-wide gate must keep the second request out.
+    expect(seen).toEqual(["account-a"]);
+    expect(setStoreIds.every((value) => value === undefined)).toBe(true);
+
+    firstFetch.resolve(new Response("{}", { status: 200 }));
+    await expect(Promise.all([first, second])).resolves.toEqual(["{}", "{}"]);
+    expect(seen).toEqual(["account-a", "account-b"]);
+    expect(removeStoreIds.every((value) => value === undefined)).toBe(true);
+    expect(Object.fromEntries(jar)).toEqual({});
+  });
+
+  it("forwards the discovered cookie storeId on set and remove", async () => {
+    const jar = installSteamCookieJar({
+      steamLoginSecure: "initial-login",
+      mobileClient: "initial-client",
+      mobileClientVersion: "initial-version"
+    }, "store-7");
+    const setStoreIds: Array<string | undefined> = [];
+    const removeStoreIds: Array<string | undefined> = [];
+    const cookies = (globalThis as unknown as {
+      chrome: {
+        cookies: {
+          set: (details: chrome.cookies.SetDetails, callback?: () => void) => void;
+          remove: (details: chrome.cookies.CookieDetails, callback?: () => void) => void;
+        };
+      };
+    }).chrome.cookies;
+    const originalSet = cookies.set.bind(cookies);
+    const originalRemove = cookies.remove.bind(cookies);
+    cookies.set = ((details: chrome.cookies.SetDetails, callback?: () => void) => {
+      setStoreIds.push(details.storeId);
+      originalSet(details, callback);
+    }) as typeof cookies.set;
+    cookies.remove = ((details: chrome.cookies.CookieDetails, callback?: () => void) => {
+      removeStoreIds.push(details.storeId);
+      originalRemove(details, callback);
+    }) as typeof cookies.remove;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    await expect(steamCommunityText("/mobileconf/getlist", {}, { ...item, steamLoginSecure: "account-a" })).resolves.toBe("{}");
+    expect(setStoreIds.filter((value) => value === "store-7").length).toBeGreaterThan(0);
+    expect(removeStoreIds.filter((value) => value === "store-7").length).toBeGreaterThan(0);
+    expect(Object.fromEntries(jar)).toEqual({
+      steamLoginSecure: "initial-login",
+      mobileClient: "initial-client",
+      mobileClientVersion: "initial-version"
+    });
+  });
 });
+
+function installSteamCookieJar(initial: Record<string, string>, storeId = "0"): Map<string, string> {
+  const jar = new Map(Object.entries(initial));
+  const cookie = (name: string, value: string) => ({
+    name,
+    value,
+    domain: "steamcommunity.com",
+    hostOnly: true,
+    path: "/",
+    secure: true,
+    httpOnly: false,
+    session: true,
+    sameSite: "no_restriction",
+    storeId
+  }) as unknown as chrome.cookies.Cookie;
+  vi.stubGlobal("chrome", {
+    runtime: { lastError: undefined },
+    cookies: {
+      get: (details: chrome.cookies.CookieDetails, callback: (value: chrome.cookies.Cookie | null) => void) => callback(jar.has(details.name) ? cookie(details.name, jar.get(details.name) || "") : null),
+      set: (details: chrome.cookies.SetDetails, callback?: () => void) => {
+        if (typeof details.name === "string" && typeof details.value === "string") jar.set(details.name, details.value);
+        callback?.();
+      },
+      remove: (details: chrome.cookies.CookieDetails, callback?: () => void) => { jar.delete(details.name); callback?.(); }
+    }
+  });
+  return jar;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
 
 function jwt(exp: number): string {
   const encode = (value: unknown) => btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");

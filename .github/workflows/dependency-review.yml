@@ -1,13 +1,25 @@
 name: Dependency Review
 
 on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base Git ref or commit SHA to compare
+        required: true
+      head_ref:
+        description: Head Git ref or commit SHA to compare
+        required: true
+        default: main
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  # Upstream / non-fork: real GitHub Dependency Review API (base/head + severity/license gates).
   review:
+    name: Dependency Review
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -15,5 +27,30 @@ jobs:
           persist-credentials: false
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
+          base-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_ref || github.event.pull_request.base.sha }}
+          head-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_ref || github.event.pull_request.head.sha }}
           fail-on-severity: moderate
           deny-licenses: GPL-2.0, LGPL-2.0
+
+  # Forks: Dependency Review API returns 403. Do not call it (avoids false red as required check).
+  # Substitute: npm audit snapshot — different semantics; does not claim Dependency Review success.
+  fork-audit:
+    name: Fork dependency snapshot (npm audit)
+    if: ${{ github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Explain fork substitute
+        run: |
+          echo "::notice::This repository is a fork. GitHub Dependency Review API returns 403 on forks."
+          echo "Skipping actions/dependency-review-action to avoid a false required-check failure."
+          echo "Running npm audit as a local substitute (not equivalent to Dependency Review API)."
+          echo "workflow_dispatch base_ref/head_ref inputs are ignored on forks; they only apply to the upstream Dependency Review job."
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate

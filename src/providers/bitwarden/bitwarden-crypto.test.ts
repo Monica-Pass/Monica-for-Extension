@@ -29,6 +29,20 @@ describe("Bitwarden cryptography", () => {
     expect(bytesToBase64(masterKey)).toBe("nr0yQbvfjo6pjGGgb0bWQKGX04OMrA0kM2l7aXQVBHk=");
   });
 
+  it("rejects excessive server-provided Argon2 settings before computation", async () => {
+    await expect(deriveBitwardenMasterKey(PASSWORD, EMAIL, { type: 1, iterations: 20, memoryMb: 128, parallelism: 4 }))
+      .rejects.toThrow("总工作量超过安全上限");
+    await expect(deriveBitwardenMasterKey(PASSWORD, EMAIL, { type: 1, iterations: 3, memoryMb: 129, parallelism: 4 }))
+      .rejects.toThrow("Argon2 内存无效");
+    await expect(deriveBitwardenMasterKey(PASSWORD, EMAIL, { type: 1, iterations: 3, memoryMb: 64, parallelism: 5 }))
+      .rejects.toThrow("Argon2 并行度无效");
+  });
+
+  it("continues to accept Bitwarden's common Argon2 settings", async () => {
+    await expect(deriveBitwardenMasterKey(PASSWORD, EMAIL, { type: 1, iterations: 3, memoryMb: 64, parallelism: 4 }))
+      .resolves.toHaveLength(32);
+  });
+
   it("decrypts an independent AES-CBC-HMAC vector and emits the same deterministic CipherString", async () => {
     const key: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32) };
     const vector = "2.QEFCQ0RFRkdISUpLTE1OTw==|lcCAvrsTM4NpNoS0mMkKZM7cIEKWe5pOvTtdrfDSqvA=|RDhDIlSvSE98/5acvdCVpNf4Kx5AO4gaIkRjKf0lluk=";

@@ -86,10 +86,21 @@ const securityBusy = ref<"" | "password" | "export" | "restore">("");
 const securityError = ref("");
 const selectedEncryptedBackup = ref<EncryptedVaultBackup | null>(null);
 const selectedEncryptedBackupName = ref("");
+const exportBackupDialogOpen = ref(false);
+const exportBackupError = ref("");
+// protectionMode drives currentPassword validation when replacing the live vault.
+// It is a best-effort UI hint persisted alongside the session; the runtime still
+// authoritatively re-derives the envelope key, so a stale value can never weaken
+// the actual cryptographic check.
+const protectionMode = ref<"master-password" | "device-key" | "unknown">("unknown");
 
 const auth = reactive({ masterPassword: "", confirmation: "" });
 const passwordChange = reactive({ currentPassword: "", newPassword: "", confirmation: "" });
 const restoreForm = reactive({ backupPassword: "", currentPassword: "" });
+const exportBackupForm = reactive({ password: "", confirmation: "" });
+
+const PROTECTION_MODE_STORAGE_KEY = "monica.ui.protectionMode.v1";
+const MIN_BACKUP_PASSWORD_LENGTH = MIN_MASTER_PASSWORD_LENGTH;
 const form = reactive<LoginForm>(emptyLoginForm());
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
 const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
@@ -120,10 +131,11 @@ const externalProviders = computed(() => providers.value.filter((provider) => pr
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
 const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
+const restoreCurrentPasswordHint = computed(() => protectionMode.value === "master-password" ? "替换主密码库时必须验证当前主密码。" : "设备密钥模式可留空；后台仍会重新派生密钥并拒绝无效输入。");
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || exportBackupDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -160,7 +172,8 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (!dialog) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    if (bitwardenDialogOpen.value) closeBitwardenDialog();
+    if (exportBackupDialogOpen.value) closeExportBackupDialog();
+    else if (bitwardenDialogOpen.value) closeBitwardenDialog();
     else if (webDavDialogOpen.value) closeWebDavDialog();
     else if (vaultEditorOpen.value) vaultEditorOpen.value = false;
     else editorOpen.value = false;
@@ -181,6 +194,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
 }
 
 async function initialize() {
+  readPersistedProtectionMode();
   loading.value = true;
   try {
     lifecycle.value = await vaultClient.status();
@@ -189,6 +203,25 @@ async function initialize() {
     authError.value = errorMessage(error);
   } finally {
     loading.value = false;
+  }
+}
+
+function readPersistedProtectionMode() {
+  try {
+    const value = localStorage.getItem(PROTECTION_MODE_STORAGE_KEY);
+    if (value === "master-password" || value === "device-key") protectionMode.value = value;
+    else protectionMode.value = "unknown";
+  } catch {
+    protectionMode.value = "unknown";
+  }
+}
+
+function rememberProtectionMode(mode: "master-password" | "device-key") {
+  protectionMode.value = mode;
+  try {
+    localStorage.setItem(PROTECTION_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Storage may be unavailable in private mode; the runtime still validates.
   }
 }
 
@@ -216,6 +249,7 @@ async function authenticate(action: () => Promise<VaultItem[]>) {
     vaultItems.value = await action();
     await refreshProviders();
     lifecycle.value = "unlocked";
+    rememberProtectionMode(auth.masterPassword ? "master-password" : "device-key");
     auth.masterPassword = "";
     auth.confirmation = "";
   } catch (error) {
@@ -726,15 +760,38 @@ function exportVault() {
   downloadJsonFile(`monica-extension-export-${new Date().toISOString().slice(0, 10)}.json`, { version: 1, items: vaultItems.value });
 }
 
-async function exportEncryptedVault() {
+function openExportBackupDialog() {
+  exportBackupForm.password = "";
+  exportBackupForm.confirmation = "";
+  exportBackupError.value = "";
+  exportBackupDialogOpen.value = true;
+}
+
+function closeExportBackupDialog() {
+  exportBackupDialogOpen.value = false;
+  exportBackupForm.password = "";
+  exportBackupForm.confirmation = "";
+  exportBackupError.value = "";
+}
+
+async function submitExportBackup() {
+  exportBackupError.value = "";
+  if (exportBackupForm.password.length < MIN_BACKUP_PASSWORD_LENGTH) {
+    exportBackupError.value = `独立备份密码至少需要 ${MIN_BACKUP_PASSWORD_LENGTH} 个字符。`;
+    return;
+  }
+  if (exportBackupForm.password !== exportBackupForm.confirmation) {
+    exportBackupError.value = "两次输入的备份密码不一致。";
+    return;
+  }
   securityBusy.value = "export";
-  securityError.value = "";
   try {
-    const backup = await vaultClient.exportEncryptedBackup();
+    const backup = await vaultClient.exportEncryptedBackup(exportBackupForm.password);
     downloadJsonFile(`monica-extension-encrypted-${new Date().toISOString().slice(0, 10)}.json`, backup);
-    showNotice("已导出加密整库备份；恢复时需要当前主密码。");
+    showNotice("已导出可移植的加密整库备份；恢复时需要此独立备份密码。");
+    closeExportBackupDialog();
   } catch (error) {
-    securityError.value = errorMessage(error);
+    exportBackupError.value = errorMessage(error);
   } finally {
     securityBusy.value = "";
   }
@@ -763,15 +820,25 @@ async function selectEncryptedBackup(event: Event) {
 
 async function restoreEncryptedVault() {
   if (!selectedEncryptedBackup.value) return void (securityError.value = "请先选择加密整库备份。");
-  if (!restoreForm.backupPassword) return void (securityError.value = "请输入备份主密码。");
+  if (!restoreForm.backupPassword) return void (securityError.value = "请输入备份时使用的独立备份密码。");
   const replacing = lifecycle.value === "unlocked";
-  if (replacing && !restoreForm.currentPassword) return void (securityError.value = "替换当前密码库需要验证当前主密码。");
+  // DEVICE-KEY vaults do not have a master password, so an empty currentPassword
+  // must not be blocked here. The runtime re-derives the device key and rejects
+  // invalid input authoritatively. Master-password vaults still need UI validation
+  // so the user gets an immediate, clear error before the destructive replace.
+  if (replacing && protectionMode.value === "master-password" && !restoreForm.currentPassword) {
+    return void (securityError.value = "替换当前主密码库需要验证当前主密码。");
+  }
   if (replacing && !window.confirm("恢复会完整替换当前本地密码库。确定继续吗？")) return;
   securityBusy.value = "restore";
   securityError.value = "";
   try {
     vaultItems.value = await vaultClient.restoreEncryptedBackup(selectedEncryptedBackup.value, restoreForm.backupPassword, replacing, replacing ? restoreForm.currentPassword : undefined);
     lifecycle.value = "unlocked";
+    // New portable backups are password-derived. Legacy DEVICE-KEY envelopes may
+    // still restore on the same device and must keep that protection mode.
+    const restoredMode = selectedEncryptedBackup.value.envelope.kdf.name === "DEVICE-KEY" ? "device-key" : "master-password";
+    rememberProtectionMode(restoredMode);
     selectedEncryptedBackup.value = null;
     selectedEncryptedBackupName.value = "";
     restoreForm.backupPassword = "";
@@ -794,6 +861,7 @@ async function changeMasterPassword() {
   securityBusy.value = "password";
   try {
     await vaultClient.changeMasterPassword(passwordChange.currentPassword, passwordChange.newPassword);
+    rememberProtectionMode(passwordChange.newPassword ? "master-password" : "device-key");
     passwordChange.currentPassword = "";
     passwordChange.newPassword = "";
     passwordChange.confirmation = "";
@@ -868,11 +936,11 @@ function errorMessage(error: unknown) {
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
           <div v-if="lifecycle === 'uninitialized'" class="recovery-panel stack">
-            <div><strong>已有加密整库备份？</strong><p class="supporting">选择备份并输入它原来的主密码，可恢复项目、密码源和设置。</p></div>
+            <div><strong>已有加密整库备份？</strong><p class="supporting">选择备份并输入对应的备份密码，可恢复项目、密码源和设置。</p></div>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
-              <label class="field"><span>备份主密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
+              <label class="field"><span>备份密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
               <m3e-button variant="tonal" type="button" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在恢复…' : '恢复并解锁' }}</m3e-button>
             </template>
             <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
@@ -992,13 +1060,13 @@ function errorMessage(error: unknown) {
           <AppearancePanel class="motion-card" />
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>加密整库备份</h2>
-            <p class="supporting">包含项目、密码源和设置，仍由主密码加密；恢复后将使用备份原来的主密码。</p>
-            <m3e-button variant="tonal" :disabled="Boolean(securityBusy)" @click="exportEncryptedVault"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出加密整库备份' }}</m3e-button>
+            <p class="supporting">包含项目、密码源和设置，使用独立备份密码加密；恢复时需要此备份密码，与主密码互不影响。</p>
+            <m3e-button variant="tonal" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出加密整库备份' }}</m3e-button>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
-              <label class="field"><span>备份主密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
-              <label class="field"><span>恢复前的当前主密码</span><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /></label>
+              <label class="field"><span>备份密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
+              <label class="field"><span>恢复前的当前主密码</span><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /><small>{{ restoreCurrentPasswordHint }}</small></label>
               <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在验证并恢复…' : '验证并替换当前密码库' }}</m3e-button>
             </template>
           </div></m3e-card>
@@ -1079,10 +1147,17 @@ function errorMessage(error: unknown) {
       <label class="field"><span>邮箱 *</span><input v-model="bitwardenForm.email" type="email" autocomplete="username" required /></label>
       <label class="field"><span>主密码 *</span><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></label>
       <template v-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
-      <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
+       <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
       <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
       <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。</span></div>
       <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
+    </form></section></div>
+
+    <div v-if="exportBackupDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeExportBackupDialog"><section class="editor-dialog backup-password-dialog" role="dialog" aria-modal="true" aria-labelledby="export-backup-title"><header><div><h2 id="export-backup-title">导出加密整库备份</h2><p>设置独立备份密码；恢复时需要此密码，与当前主密码互不影响。</p></div><m3e-icon-button aria-label="关闭" @click="closeExportBackupDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitExportBackup">
+      <label class="field"><span>备份密码 *</span><input v-model="exportBackupForm.password" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" autofocus /></label>
+      <label class="field"><span>确认备份密码 *</span><input v-model="exportBackupForm.confirmation" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" /></label>
+      <p v-if="exportBackupError" class="form-error" role="alert">{{ exportBackupError }}</p>
+      <footer><m3e-button variant="text" type="button" @click="closeExportBackupDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(securityBusy)">{{ securityBusy === 'export' ? '正在导出…' : '加密导出' }}</m3e-button></footer>
     </form></section></div>
   </m3e-theme>
 </template>

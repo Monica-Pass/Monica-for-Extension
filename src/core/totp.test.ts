@@ -14,11 +14,20 @@ describe("Android-compatible OTP", () => {
     await expect(generateOtpWithParameters({ ...base, counter: 2 })).resolves.toBe("359152");
   });
 
-  it("matches Monica Android mOTP and treats Yandex as standard TOTP", async () => {
-    await expect(generateMobileOtp("secret", "1234", 1_700_000_000_000)).resolves.toBe("500376");
-    const yandex = parseTotpParameters("otpauth://yaotp/Yandex:user?secret=JBSWY3DPEHPK3PXP&issuer=Yandex");
-    expect(yandex.otpType).toBe("YANDEX");
-    await expect(generateOtpWithParameters(yandex, 0)).resolves.toMatch(/^\d{6}$/);
+  it("matches the mOTP fixed vector without stripping hexadecimal letters", async () => {
+    await expect(generateMobileOtp("1234567890abcdef", "5555", 1_700_000_000_000)).resolves.toBe("e44b41");
+  });
+
+  it("matches the YAOTP fixed vector and preserves its required URI parameters", async () => {
+    const yandex = parseTotpParameters("otpauth://yaotp/Yandex:user?secret=Q3GXYNZ7INQOWXTVKGKYBLKDU4&issuer=Yandex&pin=2452544424551078&pin_length=16");
+    expect(yandex).toMatchObject({ otpType: "YANDEX", pin: "2452544424551078", pinLength: 16 });
+    await expect(generateOtpWithParameters(yandex, 1_700_000_000_000)).resolves.toBe("dkpcmema");
+    expect(parseTotpParameters(generateOtpUri(yandex))).toMatchObject({ otpType: "YANDEX", pin: "2452544424551078", pinLength: 16 });
+  });
+
+  it("rejects YAOTP without a valid PIN or matching pin_length", async () => {
+    expect(() => parseTotpParameters("otpauth://yaotp/Yandex:user?secret=Q3GXYNZ7INQOWXTVKGKYBLKDU4&pin_length=4")).toThrow("YAOTP PIN");
+    await expect(generateOtpWithParameters({ secret: "Q3GXYNZ7INQOWXTVKGKYBLKDU4", algorithm: "SHA1", digits: 6, period: 30, otpType: "YANDEX", pin: "0012", pinLength: 5 }, 0)).rejects.toThrow("pin_length");
   });
 
   it("parses and exports Android OTP URI variants without losing parameters", () => {

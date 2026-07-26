@@ -202,8 +202,25 @@ export class BitwardenProvider implements ProviderAdapter {
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId)
       : decoded.items.find((candidate) => candidate.kind === item.kind);
     if (!created) throw new Error("Bitwarden 创建响应无法映射回 Monica 项目。");
-    return { session: response.session, item: created, items: item.kind === "passkey" ? decoded.items : [created] };
+    // Bitwarden assigns the cipher ID, not Monica's item ID. Keep the latter
+    // stable so an edit made while this request was in flight still targets the
+    // same local record; only the provider reference is acknowledged here.
+    const canonical = withCreatedReference(item, created, providerId);
+    const items = item.kind === "passkey"
+      ? decoded.items.map((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId ? canonical : candidate)
+      : [canonical];
+    return { session: response.session, item: canonical, items };
   }
+}
+
+function withCreatedReference(local: VaultItem, created: VaultItem, providerId: string): VaultItem {
+  const reference = providerReference(created, providerId);
+  if (!reference?.remoteId) throw new Error("Bitwarden 创建响应缺少远端 Cipher ID。");
+  return {
+    ...local,
+    updatedAt: created.updatedAt,
+    providerRefs: [...local.providerRefs.filter((candidate) => candidate.providerId !== providerId), reference]
+  } as VaultItem;
 }
 
 function readSession(account: ProviderAccount): BitwardenSessionConfig {

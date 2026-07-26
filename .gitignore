@@ -6,6 +6,7 @@ playwright-report/
 test-results/
 .tmp/
 .codex-tasks/
+.slim/deepwork/
 *.log
 *.tsbuildinfo
 .DS_Store

@@ -179,6 +179,7 @@ function initialize() {
         otpType: props.item.otpType || "TOTP",
         counter: String(props.item.counter ?? 0),
         pin: props.item.pin || "",
+        pinLength: String(props.item.pinLength ?? ""),
         link: props.item.link || "",
         associatedApp: props.item.associatedApp || "",
         steamFingerprint: props.item.steamFingerprint || "",
@@ -376,6 +377,7 @@ function buildItem(title: string): VaultItem {
         otpType: fields.otpType,
         counter: clampNumber(fields.counter, 0, 0, Number.MAX_SAFE_INTEGER),
         pin: optional(fields.pin),
+        pinLength: fields.otpType === "YANDEX" && optional(fields.pinLength) ? clampNumber(fields.pinLength, 4, 4, 16) : undefined,
         link: optional(fields.link),
         associatedApp: optional(fields.associatedApp),
         steamFingerprint: optional(fields.steamFingerprint),
@@ -541,6 +543,7 @@ function emptyFields() {
     otpType: "TOTP" as NonNullable<TotpItem["otpType"]>,
     counter: "0",
     pin: "",
+    pinLength: "",
     link: "",
     associatedApp: "",
     steamFingerprint: "",
@@ -633,6 +636,7 @@ function applyOtpTransfer() {
       otpType: value.otpType || "TOTP",
       counter: String(value.counter || 0),
       pin: value.pin || "",
+      pinLength: String(value.pinLength ?? ""),
       algorithm: value.algorithm,
       digits: String(value.digits),
       period: String(value.period),
@@ -671,6 +675,7 @@ async function exportOtpQr() {
         otpType: item.otpType,
         counter: item.counter,
         pin: item.pin,
+        pinLength: item.pinLength,
         issuer: item.issuer,
         accountName: item.accountName,
         secretEncoding:
@@ -1207,12 +1212,16 @@ function exportMaFile() {
           ><label
             v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'"
             class="field"
-            ><span>PIN {{ fields.otpType === "YANDEX" ? "（可选）" : "" }}</span
+            ><span>PIN {{ fields.otpType === "YANDEX" ? "（4-16 位数字）" : "" }}</span
             ><input
               v-model="fields.pin"
               type="password"
               inputmode="numeric"
               autocomplete="off"
+          /></label>
+          <label v-if="fields.otpType === 'YANDEX'" class="field"
+            ><span>PIN 长度</span
+            ><input v-model="fields.pinLength" type="number" min="4" max="16" inputmode="numeric"
           /></label>
           <label
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"

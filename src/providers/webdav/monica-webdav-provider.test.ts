@@ -76,6 +76,26 @@ describe("Monica WebDAV provider", () => {
     expect(mock.uploaded()).toBeUndefined();
   });
 
+  it("does not mutate the sync snapshot while first creating an Android backup", async () => {
+    let uploaded: Uint8Array | undefined;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method || "GET";
+      const headers = new Headers(init?.headers);
+      if (method === "PROPFIND" && headers.get("Depth") === "1") return new Response(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`, { status: 207 });
+      if (method === "PROPFIND") return new Response(null, { status: 207 });
+      if (method === "PUT") { uploaded = new Uint8Array(await new Response(init?.body).arrayBuffer()); return new Response(null, { status: 201, headers: { etag: '"created"' } }); }
+      throw new Error(`Unexpected ${method}`);
+    }) as unknown as typeof fetch;
+    const local = { ...localLogin(), providerRefs: [{ providerId: PROVIDER_ID }] };
+    const snapshot = structuredClone([local]);
+
+    const result = await new MonicaWebDavProvider(fetcher).sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: snapshot });
+
+    expect(snapshot).toEqual([local]);
+    expect(result.items[0]).toMatchObject({ id: local.id, providerRefs: [expect.objectContaining({ remoteId: local.id, etag: '"created"' })] });
+    expect(uploaded).toBeDefined();
+  });
+
   it("uploads a lossless new snapshot when a WebDAV item changed locally", async () => {
     const mock = server(androidZip());
     const provider = new MonicaWebDavProvider(mock.fetcher);

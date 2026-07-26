@@ -27,11 +27,74 @@ async function closeContext(context: BrowserContext | undefined, profileDir: str
   if (profileDir) await rm(profileDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
+/** Freeze CSS motion so M3E theme color animations cannot be mid-transition during Axe. */
+async function stabilizePresentation(page: Page): Promise<void> {
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation: none !important;
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition: none !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+        caret-color: transparent !important;
+      }
+    `
+  });
+
+  await page.evaluate(async () => {
+    const sample = (): string => {
+      const root = document.documentElement;
+      const body = document.body;
+      const main =
+        document.querySelector<HTMLElement>('[role="dialog"]') ||
+        document.querySelector<HTMLElement>("main") ||
+        document.querySelector<HTMLElement>("#main-content") ||
+        body;
+      const pick = (el: Element | null): string => {
+        if (!el) return "";
+        const style = getComputedStyle(el);
+        return [style.color, style.backgroundColor, style.borderColor, style.outlineColor].join("|");
+      };
+      return [pick(root), pick(body), pick(main)].join(";;");
+    };
+
+    const waitFrames = (n: number): Promise<void> =>
+      new Promise((resolve) => {
+        const step = (left: number): void => {
+          if (left <= 0) {
+            resolve();
+            return;
+          }
+          requestAnimationFrame(() => step(left - 1));
+        };
+        requestAnimationFrame(() => step(n - 1));
+      });
+
+    let previous = sample();
+    let stable = 0;
+    const deadline = performance.now() + 3000;
+    while (performance.now() < deadline) {
+      await waitFrames(2);
+      const next = sample();
+      if (next === previous) {
+        stable += 1;
+        if (stable >= 2) return;
+      } else {
+        stable = 0;
+        previous = next;
+      }
+    }
+    throw new Error("Presentation colors did not stabilize before accessibility scan.");
+  });
+}
+
 test("auth and unlocked manager have no serious axe violations", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {
-    const launched = await launch(testInfo, "manager-a11y-profile", { colorScheme: "dark" });
+    const launched = await launch(testInfo, "manager-a11y-profile", { reducedMotion: "reduce", colorScheme: "dark" });
     context = launched.context;
     profileDir = launched.profileDir;
     await expectA11y(launched.page, "manager auth");
@@ -96,7 +159,7 @@ test("locked and unlocked popup states have no serious axe violations", async ({
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {
-    const launched = await launch(testInfo, "popup-a11y-profile", { colorScheme: "dark" });
+    const launched = await launch(testInfo, "popup-a11y-profile", { reducedMotion: "reduce", colorScheme: "dark" });
     context = launched.context;
     profileDir = launched.profileDir;
     const password = "popup accessibility master password";
@@ -168,6 +231,7 @@ test("manager remains operable with reduced motion, large text, and a narrow vie
 });
 
 async function expectA11y(page: Page, label: string): Promise<void> {
+  await stabilizePresentation(page);
   const result = await new AxeBuilder({ page }).analyze();
   const blocking = result.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical");
   expect(blocking, `${label}: ${blocking.map((violation) => `${violation.id} (${violation.nodes.length})`).join(", ")}`).toEqual([]);

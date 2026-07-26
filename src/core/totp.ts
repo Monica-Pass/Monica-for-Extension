@@ -12,6 +12,7 @@ export interface TotpParameters {
   otpType?: OtpType;
   counter?: number;
   pin?: string;
+  pinLength?: number;
   issuer?: string;
   accountName?: string;
   label?: string;
@@ -41,6 +42,7 @@ export async function generateOtpWithParameters(parameters: TotpParameters, now 
     case "MOTP":
       return generateMobileOtp(normalized.secret, normalized.pin || "", now);
     case "YANDEX":
+      return generateYaOtp(normalized, now);
     case "TOTP":
       return generateTimeOtp(normalized, now);
   }
@@ -59,13 +61,13 @@ export async function generateMobileOtp(secret: string, pin: string, now = Date.
   if (!secret) throw new Error("mOTP 密钥为空。");
   const epoch = Math.floor(now / 1000 / 10);
   const digest = await md5(`${epoch}${secret}${pin}`);
-  return digest.replace(/\D/g, "").slice(0, 6).padEnd(6, "0");
+  return digest.slice(0, 6);
 }
 
 export function otpSecondsRemaining(parameters: TotpParameters, now = Date.now()): number {
   const normalized = normalizeParameters(parameters);
   if (normalized.otpType === "HOTP") return 0;
-  const period = normalized.otpType === "MOTP" ? 10 : normalized.otpType === "STEAM" ? 30 : normalized.period;
+  const period = normalized.otpType === "MOTP" ? 10 : normalized.otpType === "STEAM" || normalized.otpType === "YANDEX" ? 30 : normalized.period;
   return period - Math.floor(now / 1000) % period;
 }
 
@@ -104,6 +106,10 @@ export function generateOtpUri(parameters: TotpParameters, label?: string): stri
   query.set("secret", secret);
   if (value.issuer) query.set("issuer", value.issuer);
   if (value.otpType === "HOTP") query.set("counter", String(value.counter || 0));
+  if (value.otpType === "YANDEX") {
+    query.set("pin", value.pin);
+    query.set("pin_length", String(value.pinLength));
+  }
   if (value.otpType !== "HOTP" && value.period !== 30) query.set("period", String(value.period));
   if (value.digits !== 6) query.set("digits", String(value.digits));
   if (value.algorithm !== "SHA1") query.set("algorithm", value.algorithm);
@@ -116,31 +122,55 @@ async function generateTimeOtp(parameters: RequiredOtpParameters, now: number): 
   return generateHmacCode(parameters.secret, counter, parameters.algorithm, parameters.digits);
 }
 
-async function generateHmacCode(secret: string, counter: number, algorithm: OtpAlgorithm, digits: number): Promise<string> {
-  const message = new Uint8Array(8);
-  let remaining = Math.max(0, Math.floor(counter));
-  for (let index = 7; index >= 0; index -= 1) {
-    message[index] = remaining & 0xff;
-    remaining = Math.floor(remaining / 256);
+async function generateYaOtp(parameters: RequiredOtpParameters, now: number): Promise<string> {
+  const secret = decodeBase32(parameters.secret);
+  const pin = new TextEncoder().encode(parameters.pin);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", byteBuffer(concatBytes(pin, secret))));
+  const keyBytes = hash[0] === 0 ? hash.slice(1) : hash;
+  const message = counterBytes(Math.floor(now / 1000 / 30));
+  const key = await crypto.subtle.importKey("raw", byteBuffer(keyBytes), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, byteBuffer(message)));
+  const offset = digest[31] & 0x0f;
+  const value = digest.slice(offset, offset + 8);
+  value[0] &= 0x7f;
+  let number = 0n;
+  for (const byte of value) number = (number << 8n) | BigInt(byte);
+  number %= 26n ** 8n;
+  let code = "";
+  for (let index = 0; index < 8; index += 1) {
+    code = String.fromCharCode(97 + Number(number % 26n)) + code;
+    number /= 26n;
   }
-  const key = await crypto.subtle.importKey("raw", decodeBase32(secret) as BufferSource, { name: "HMAC", hash: `SHA-${algorithm.slice(3)}` }, false, ["sign"]);
-  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
+  return code;
+}
+
+async function generateHmacCode(secret: string, counter: number, algorithm: OtpAlgorithm, digits: number): Promise<string> {
+  const message = counterBytes(counter);
+  const key = await crypto.subtle.importKey("raw", byteBuffer(decodeBase32(secret)), { name: "HMAC", hash: `SHA-${algorithm.slice(3)}` }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, byteBuffer(message)));
   const offset = signature[signature.length - 1] & 0x0f;
   const binary = ((signature[offset] & 0x7f) << 24) | ((signature[offset + 1] & 0xff) << 16) | ((signature[offset + 2] & 0xff) << 8) | (signature[offset + 3] & 0xff);
   return String(binary % 10 ** digits).padStart(digits, "0");
 }
 
-type RequiredOtpParameters = TotpParameters & { otpType: OtpType; algorithm: OtpAlgorithm; digits: number; period: number; counter: number; pin: string };
+type RequiredOtpParameters = TotpParameters & { otpType: OtpType; algorithm: OtpAlgorithm; digits: number; period: number; counter: number; pin: string; pinLength?: number };
 
 function normalizeParameters(parameters: TotpParameters): RequiredOtpParameters {
   const otpType = parameters.otpType || "TOTP";
   const secret = parameters.secret.trim();
   if (!secret) throw new Error("OTP 密钥为空。");
-  const algorithm = normalizeAlgorithm(parameters.algorithm);
-  const digits = otpType === "STEAM" ? 5 : integerInRange(parameters.digits, 6, 1, 10, "OTP 位数无效。");
-  const period = otpType === "MOTP" ? 10 : otpType === "STEAM" ? 30 : integerInRange(parameters.period, 30, 5, 300, "OTP 周期无效。");
+  const algorithm = otpType === "YANDEX" ? "SHA256" : normalizeAlgorithm(parameters.algorithm);
+  const digits = otpType === "STEAM" ? 5 : otpType === "YANDEX" ? 8 : integerInRange(parameters.digits, 6, 1, 10, "OTP 位数无效。");
+  const period = otpType === "MOTP" ? 10 : otpType === "STEAM" || otpType === "YANDEX" ? 30 : integerInRange(parameters.period, 30, 5, 300, "OTP 周期无效。");
   const counter = integerInRange(parameters.counter, 0, 0, Number.MAX_SAFE_INTEGER, "HOTP 计数器无效。");
-  return { ...parameters, secret, otpType, algorithm, digits, period, counter, pin: parameters.pin || "" };
+  const pin = parameters.pin ?? "";
+  if (otpType === "YANDEX") {
+    if (!/^\d{4,16}$/.test(pin)) throw new Error("YAOTP PIN 必须为 4 到 16 位数字。");
+    const pinLength = integerInRange(parameters.pinLength, pin.length, 4, 16, "YAOTP pin_length 必须为 4 到 16。");
+    if (pin.length !== pinLength) throw new Error("YAOTP PIN 长度与 pin_length 不匹配。");
+    return { ...parameters, secret, otpType, algorithm, digits, period, counter, pin, pinLength };
+  }
+  return { ...parameters, secret, otpType, algorithm, digits, period, counter, pin };
 }
 
 function parseOtpAuthUri(input: string): OtpParseResult {
@@ -159,6 +189,8 @@ function parseOtpAuthUri(input: string): OtpParseResult {
     digits: numberParameter(url.searchParams.get("digits"), otpType === "STEAM" ? 5 : 6),
     period: numberParameter(url.searchParams.get("period"), 30),
     counter: numberParameter(url.searchParams.get("counter"), 0),
+    pin: url.searchParams.get("pin") || "",
+    pinLength: numberParameter(url.searchParams.get("pin_length"), undefined),
     otpType,
     issuer,
     accountName,
@@ -240,7 +272,30 @@ function integerInRange(value: unknown, fallback: number, min: number, max: numb
   return parsed;
 }
 
-function numberParameter(value: string | null, fallback: number): number { return value == null || value === "" ? fallback : Number(value); }
+function numberParameter(value: string | null, fallback: number): number;
+function numberParameter(value: string | null, fallback: undefined): number | undefined;
+function numberParameter(value: string | null, fallback: number | undefined): number | undefined { return value == null || value === "" ? fallback : Number(value); }
+
+function counterBytes(counter: number): Uint8Array {
+  const message = new Uint8Array(8);
+  let remaining = Math.max(0, Math.floor(counter));
+  for (let index = 7; index >= 0; index -= 1) {
+    message[index] = remaining & 0xff;
+    remaining = Math.floor(remaining / 256);
+  }
+  return message;
+}
+
+function concatBytes(first: Uint8Array, second: Uint8Array): Uint8Array {
+  const result = new Uint8Array(first.length + second.length);
+  result.set(first);
+  result.set(second, first.length);
+  return result;
+}
+
+function byteBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 export function decodeBase32(value: string): Uint8Array {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

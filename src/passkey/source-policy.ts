@@ -16,6 +16,7 @@ export type PasskeyAvailability =
 
 export function passkeyAvailability(item: PasskeyItem, rpId?: string): PasskeyAvailability {
   if (item.sourceMode === "android-metadata-only") return "android-metadata-only";
+  if (item.algorithm !== -7) return "unsupported-algorithm";
   if (!item.privateKeyPkcs8) return "missing-private-key";
   if (item.algorithm !== -7) return "unsupported-algorithm";
   if (rpId && !passkeyRpIdsEqual(item.rpId, rpId)) return "rp-mismatch";
@@ -68,8 +69,8 @@ export function passkeyAvailabilityLabel(availability: PasskeyAvailability): str
   return ({
     ready: "可用于浏览器认证",
     "android-metadata-only": "Android 元数据，仅可查看",
+    "unsupported-algorithm": "算法不受支持（目前仅支持 ES256）",
     "missing-private-key": "缺少私钥，仅可查看",
-    "unsupported-algorithm": "当前浏览器暂不支持此算法",
     "rp-mismatch": "与当前网站不匹配"
   } as const)[availability];
 }

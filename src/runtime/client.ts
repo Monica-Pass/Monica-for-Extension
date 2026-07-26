@@ -16,7 +16,7 @@ export const vaultClient = {
   unlock: (masterPassword: string) => send<VaultItem[]>({ type: "VAULT_UNLOCK", masterPassword }),
   lock: () => send<void>({ type: "VAULT_LOCK" }),
   changeMasterPassword: (currentPassword: string, newPassword: string) => send<void>({ type: "VAULT_CHANGE_MASTER_PASSWORD", currentPassword, newPassword }),
-  exportEncryptedBackup: () => send<EncryptedVaultBackup>({ type: "VAULT_EXPORT_ENCRYPTED" }),
+  exportEncryptedBackup: (backupPassword: string) => send<EncryptedVaultBackup>({ type: "VAULT_EXPORT_ENCRYPTED", backupPassword }),
   restoreEncryptedBackup: (backup: EncryptedVaultBackup, backupPassword: string, replaceExisting = false, currentPassword?: string) =>
     send<VaultItem[]>({ type: "VAULT_RESTORE_ENCRYPTED", backup, backupPassword, replaceExisting, currentPassword }),
   importItems: (items: VaultItem[]) => send<VaultItem[]>({ type: "VAULT_IMPORT_ITEMS", items }),
