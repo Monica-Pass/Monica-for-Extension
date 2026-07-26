@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem } from "../../core/model";
+import { resolveLoginOtp } from "../../core/login-otp";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "./bitwarden-cipher-codec";
 import { decryptBitwardenString, encryptBitwardenBytes, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
@@ -238,6 +239,27 @@ describe("Bitwarden Cipher codec", () => {
     const names = await Promise.all(fields.slice(2).map((field) => decryptBitwardenString(field.name as string, KEY)));
     expect(names).toEqual(["Shared", "LocalOnly"]);
     await expect(decryptBitwardenString(fields[2].value as string, KEY)).resolves.toBe("local-value");
+  });
+
+  it("keeps an Android Steam Guard steam:// Totp payload usable and byte-identical on write-back", async () => {
+    const sharedSecret = "QUJDREVGR0hJSktMTU5PUFFSU1Q=";
+    const raw = {
+      Id: "cipher-steam",
+      Type: 1,
+      Name: await encryptBitwardenString("Steam", KEY),
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: { Username: await encryptBitwardenString("joy", KEY), Password: null, Totp: await encryptBitwardenString(`steam://${sharedSecret}`, KEY), Uris: [] }
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const login = decoded.items[0] as LoginItem;
+    expect(login.totpSecret).toBe(`steam://${sharedSecret}`);
+    const code = await resolveLoginOtp(login, [login], 1_700_000_000_000);
+    expect(code?.code).toHaveLength(5);
+
+    const encoded = await encodeBitwardenCipher({ ...login, title: "Steam Renamed" }, KEY, raw);
+    await expect(decryptBitwardenString((encoded.login as Record<string, string>).totp, KEY)).resolves.toBe(`steam://${sharedSecret}`);
   });
 
   it("creates a login Cipher containing a Bitwarden-compatible FIDO2 credential", async () => {

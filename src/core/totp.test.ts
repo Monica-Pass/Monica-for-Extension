@@ -45,4 +45,20 @@ describe("Android-compatible OTP", () => {
     const data = btoa(String.fromCharCode(...payload));
     expect(parseOtpUris(`otpauth-migration://offline?data=${encodeURIComponent(data)}`)[0].parameters).toMatchObject({ secret: "JBUQ", issuer: "Example", accountName: "alice", otpType: "HOTP", counter: 9 });
   });
+
+  it("parses the Bitwarden steam:// payload Monica Android writes for Steam Guard", async () => {
+    const parameters = parseTotpParameters("steam://QUJDREVGR0hJSktMTU5PUFFSU1Q=");
+    expect(parameters).toMatchObject({ otpType: "STEAM", digits: 5, period: 30, algorithm: "SHA1", secret: "QUJDREVGR0hJSktMTU5PUFFSU1Q=", secretEncoding: "base64" });
+    // Android's TotpDataResolverTest asserts this exact base32 projection of the shared secret.
+    expect(generateOtpUri(parameters)).toContain("secret=IFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2U");
+    const code = await generateOtpWithParameters(parameters, 1_700_000_000_000);
+    expect(code).toHaveLength(5);
+    expect([...code].every((character) => "23456789BCDFGHJKMNPQRTVWXY".includes(character))).toBe(true);
+  });
+
+  it("keeps a plus sign in a steam:// shared secret and falls back to base32 payloads", () => {
+    expect(parseTotpParameters("steam://ABCDEFGHIJKLMNOPQRS+")).toMatchObject({ otpType: "STEAM", secret: "ABCDEFGHIJKLMNOPQRS+", secretEncoding: "base64" });
+    expect(generateOtpUri(parseTotpParameters("steam://ABCDEFGHIJKLMNOPQRS+"))).toContain("secret=AAIIGECRQ4QJFCZQ2OHUCFF6");
+    expect(parseTotpParameters("steam://IFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2U")).toMatchObject({ otpType: "STEAM", secret: "IFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2U", secretEncoding: "base32" });
+  });
 });

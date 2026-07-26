@@ -186,16 +186,24 @@ export class BitwardenClient {
     return this.authorizedJson(session, `/ciphers/${encodeURIComponent(cipherId)}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(payload), signal }, "更新 Bitwarden 项目失败");
   }
 
-  async deleteCipher(session: BitwardenSessionConfig, cipherId: string, signal?: AbortSignal): Promise<BitwardenSessionConfig> {
+  /**
+   * Bitwarden's recycle bin. The bare `DELETE /ciphers/{id}` is an irreversible purge and is
+   * deliberately not exposed: Monica's own delete is a tombstone the user can still recover from.
+   */
+  async softDeleteCipher(session: BitwardenSessionConfig, cipherId: string, signal?: AbortSignal): Promise<BitwardenSessionConfig> {
     const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
-    await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}`, {
-      method: "DELETE",
+    await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/delete`, {
+      method: "PUT",
       headers: authorizedHeaders(active.accessToken),
       signal
-    }, "Bitwarden 删除项目", true, async (response, requestSignal) => {
-      if (!response.ok) throw bitwardenHttpError("删除 Bitwarden 项目失败", response, await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 删除响应", requestSignal));
+    }, "Bitwarden 移入回收站", true, async (response, requestSignal) => {
+      if (!response.ok) throw bitwardenHttpError("将 Bitwarden 项目移入回收站失败", response, await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 回收站响应", requestSignal));
     });
     return active;
+  }
+
+  restoreCipher(session: BitwardenSessionConfig, cipherId: string, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedJson(session, `/ciphers/${encodeURIComponent(cipherId)}/restore`, { method: "PUT", headers: jsonHeaders(), signal }, "恢复 Bitwarden 项目失败");
   }
 
   private async authorizedJson(

@@ -83,6 +83,7 @@ export function parseOtpUris(input: string): OtpParseResult[] {
   if (/^otpauth-migration:\/\//i.test(trimmed)) return parseMigrationUri(trimmed);
   if (/^motp:\/\//i.test(trimmed)) return [parseMotpUri(trimmed)];
   if (/^otpauth:\/\//i.test(trimmed)) return [parseOtpAuthUri(trimmed)];
+  if (/^steam:\/\//i.test(trimmed)) return [parseSteamUri(trimmed)];
   return [{
     parameters: normalizeParameters({ secret: trimmed, algorithm: "SHA1", digits: 6, period: 30, otpType: "TOTP", secretEncoding: "base32" }),
     label: "",
@@ -198,6 +199,55 @@ function parseOtpAuthUri(input: string): OtpParseResult {
     secretEncoding: "base32"
   });
   return { parameters, label, accountName };
+}
+
+/**
+ * Bitwarden's `Totp` field carries Monica Android's Steam authenticators as `steam://<base64 shared
+ * secret>` (`TotpDataResolver.toBitwardenPayload`). Without this branch the payload falls through to
+ * the bare-secret path and `decodeBase32` rejects the `:` and `/`.
+ */
+function parseSteamUri(input: string): OtpParseResult {
+  const raw = input.trim().slice("steam://".length).split(/[?#]/, 1)[0].replace(/^\/+|\/+$/g, "").trim();
+  if (!raw) throw new Error("Steam 验证器密钥为空。");
+  const secretPart = decodeSteamComponent(raw);
+  const shared = isSteamSharedSecretBase64(secretPart);
+  const parameters = normalizeParameters({
+    secret: secretPart,
+    algorithm: "SHA1",
+    digits: 5,
+    period: 30,
+    otpType: "STEAM",
+    issuer: "Steam",
+    accountName: "",
+    label: "Steam",
+    secretEncoding: shared ? "base64" : "base32"
+  });
+  return { parameters, label: "Steam", accountName: "" };
+}
+
+/**
+ * Android accepts either a base64 shared secret or a base32 fallback here, so the discriminator has
+ * to be the alphabet: anything outside base32 that still decodes as base64 to >= 10 bytes is a raw
+ * shared secret. Matches `TotpDataResolver.decodeSteamSharedSecret`.
+ */
+function isSteamSharedSecretBase64(secret: string): boolean {
+  const compact = secret.replace(/\s+/g, "");
+  if (!compact) return false;
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(compact)) return false;
+  if (!/[^A-Za-z2-7]/.test(compact.toUpperCase())) return false;
+  try {
+    return base64ToBytes(compact).length >= 10;
+  } catch {
+    return false;
+  }
+}
+
+function decodeSteamComponent(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, "%2B"));
+  } catch {
+    return value;
+  }
 }
 
 function parseMotpUri(input: string): OtpParseResult {

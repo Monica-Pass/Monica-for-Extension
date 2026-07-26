@@ -124,10 +124,10 @@ describe("Bitwarden provider", () => {
     expect(result.warnings[0]).toContain("未删除本地缓存");
   });
 
-  it("creates and deletes a personal Cipher through provider sync", async () => {
+  it("creates and trashes a personal Cipher through provider sync", async () => {
     let remote: Record<string, unknown>[] = [];
     let postCount = 0;
-    let deleteCount = 0;
+    const deleteUrls: string[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: remote });
       if (init?.method === "POST") {
@@ -137,10 +137,10 @@ describe("Bitwarden provider", () => {
         remote = [created];
         return json(created);
       }
-      if (init?.method === "DELETE") {
-        deleteCount += 1;
-        remote = [];
-        return new Response(null, { status: 204 });
+      if (init?.method === "PUT" && String(input).endsWith("/delete")) {
+        deleteUrls.push(String(input));
+        remote = remote.map((cipher) => ({ ...cipher, deletedDate: "2026-07-15T04:03:00.000Z" }));
+        return new Response(null, { status: 200 });
       }
       throw new Error(`Unexpected ${init?.method} ${String(input)}`);
     }) as unknown as typeof fetch;
@@ -169,7 +169,7 @@ describe("Bitwarden provider", () => {
     const afterDelete = await provider.sync(account(), { now: "2026-07-15T04:03:00.000Z", localItems: [deleted] });
     expect(afterDelete.conflicts).toEqual([]);
     expect(afterDelete.items).toEqual([]);
-    expect(deleteCount).toBe(1);
+    expect(deleteUrls).toEqual(["https://self.example.com/api/ciphers/created-cipher/delete"]);
   });
 
   it("persists a Bitwarden Passkey signature counter through its parent Cipher", async () => {
@@ -314,6 +314,136 @@ describe("Bitwarden provider", () => {
     expect(deleteCount).toBe(0);
     expect(writeCount).toBe(0);
     expect(result.items).toEqual([]);
+  });
+
+  it("never issues Bitwarden's permanent delete for a locally trashed item", async () => {
+    const remote = await loginCipher("remote-secret", OLD_REVISION);
+    const methods: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      methods.push(`${init?.method} ${new URL(String(input)).pathname}`);
+      if (init?.method === "PUT" && String(input).endsWith("/delete")) return new Response(null, { status: 200 });
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const trashed: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: ["https://example.com"],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: "2026-07-15T07:00:00.000Z",
+      deletedAt: "2026-07-15T07:00:00.000Z",
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const result = await provider.sync(account(), { now: "2026-07-15T07:01:00.000Z", localItems: [trashed] });
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.items).toEqual([]);
+    expect(methods).toEqual(["PUT /api/ciphers/cipher-1/delete"]);
+  });
+
+  it("restores a remotely trashed Cipher before writing a revived local edit", async () => {
+    let remote: Record<string, unknown> = { ...(await loginCipher("remote-secret", OLD_REVISION)), DeletedDate: "2026-07-15T08:00:00.000Z" };
+    const calls: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      const path = new URL(String(input)).pathname;
+      calls.push(`${init?.method} ${path}`);
+      if (path.endsWith("/restore")) {
+        remote = { ...remote, DeletedDate: null };
+        return json(remote);
+      }
+      if (init?.method === "PUT") {
+        remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), Id: "cipher-1", RevisionDate: "2026-07-15T08:02:00.000Z", CreationDate: OLD_REVISION };
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const revived: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "revived",
+      uris: ["https://example.com"],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: "2026-07-15T08:01:00.000Z",
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const result = await provider.sync(account(), { now: "2026-07-15T08:03:00.000Z", localItems: [revived] });
+
+    expect(result.conflicts).toEqual([]);
+    expect(calls).toEqual(["PUT /api/ciphers/cipher-1/restore", "PUT /api/ciphers/cipher-1"]);
+    expect(result.items.find((item): item is LoginItem => item.kind === "login")).toMatchObject({ password: "revived", deletedAt: undefined });
+  });
+
+  it("does not re-trash a Cipher the server already moved to the recycle bin", async () => {
+    const remote = { ...(await loginCipher("remote-secret", OLD_REVISION)), DeletedDate: "2026-07-15T09:00:00.000Z" };
+    const calls: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      calls.push(`${init?.method} ${new URL(String(input)).pathname}`);
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const trashed: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: ["https://example.com"],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: "2026-07-15T09:01:00.000Z",
+      deletedAt: "2026-07-15T09:01:00.000Z",
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const result = await provider.sync(account(), { now: "2026-07-15T09:02:00.000Z", localItems: [trashed] });
+
+    expect(result.conflicts).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("moves an explicit provider removal to the Bitwarden recycle bin", async () => {
+    const calls: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method} ${new URL(String(input)).pathname}`);
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    const item: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: [],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    await new BitwardenProvider(fetcher).remove(account(), item);
+
+    expect(calls).toEqual(["PUT /api/ciphers/cipher-1/delete"]);
   });
 });
 

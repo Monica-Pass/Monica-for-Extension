@@ -110,13 +110,20 @@ export class BitwardenProvider implements ProviderAdapter {
       }
       try {
         const primary = changes.find((item) => item.kind !== "passkey");
+        const trashedRemotely = Boolean(stringValue(raw, "DeletedDate", "deletedDate"));
         if (primary?.deletedAt) {
-          session = await this.client.deleteCipher(session, cipherId, context.signal);
+          // Monica's local delete is a recycle-bin tombstone, so the remote copy has to land in
+          // Bitwarden's recycle bin as well. `DELETE /ciphers/{id}` purges it irreversibly.
+          if (!trashedRemotely) session = await this.client.softDeleteCipher(session, cipherId, context.signal);
           continue;
         }
-        const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
-        const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
-        let payload = primary ? await encodeBitwardenCipher(primary, cipherKey, raw) : raw;
+        // A live local item over a trashed Cipher means the item came back; Bitwarden rejects
+        // edits to trashed Ciphers, so restore before writing rather than silently dropping.
+        const current = trashedRemotely ? await this.restoreCipher(session, cipherId, raw, context.signal) : { session, raw };
+        session = current.session;
+        const ownerKey = requireCipherOwnerKey(current.raw, vaultKey, organizations.keys);
+        const cipherKey = await resolveBitwardenCipherKey(current.raw, ownerKey);
+        let payload = primary ? await encodeBitwardenCipher(primary, cipherKey, current.raw) : current.raw;
         for (const passkey of changes.filter((item): item is Extract<VaultItem, { kind: "passkey" }> => item.kind === "passkey")) {
           payload = await encodeBitwardenPasskeyCipher(passkey, cipherKey, payload, passkey.deletedAt ? "delete" : "upsert");
         }
@@ -180,7 +187,7 @@ export class BitwardenProvider implements ProviderAdapter {
     const cipherId = baseCipherId(providerReference(item, account.id)?.remoteId);
     if (!cipherId) return;
     if (item.kind !== "passkey") {
-      await this.client.deleteCipher(readSession(account), cipherId, signal);
+      await this.client.softDeleteCipher(readSession(account), cipherId, signal);
       return;
     }
     const current = await this.client.sync(readSession(account), signal);
@@ -191,6 +198,19 @@ export class BitwardenProvider implements ProviderAdapter {
     const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
     const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
     await this.client.updateCipher(current.session, cipherId, await encodeBitwardenPasskeyCipher(item, cipherKey, raw, "delete"), signal);
+  }
+
+  private async restoreCipher(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    raw: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; raw: Record<string, unknown> }> {
+    const restored = await this.client.restoreCipher(session, cipherId, signal);
+    // A 200 with an empty body is a valid restore acknowledgement on some server builds, so fall
+    // back to the synced Cipher with its trash markers cleared rather than failing the write.
+    const payload = stringValue(restored.payload, "Id", "id") ? restored.payload : { ...raw, DeletedDate: null, deletedDate: null };
+    return { session: restored.session, raw: payload };
   }
 
   private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[] }> {
