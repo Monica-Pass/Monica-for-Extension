@@ -1,6 +1,7 @@
 import type { LoginItem, LoginUriMatchType, ProviderSourceRecord, VaultItem, VaultState } from "./model";
 
 const URI_MATCH_TYPES = new Set<LoginUriMatchType>(["base-domain", "domain", "starts-with", "exact", "regex", "never"]);
+export const MAX_SOURCE_RECORD_TAG_LENGTH = 64;
 
 export function migrateVaultState(input: unknown): VaultState {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Vault payload is invalid or unsupported");
@@ -46,11 +47,16 @@ function normalizeProtectionMode(value: unknown): VaultState["settings"]["protec
   return value === "device-key" ? "device-key" : "master-password";
 }
 
+/**
+ * Structural check only. An unrecognised `format` must still round-trip, otherwise a build that
+ * predates a provider would silently discard that provider's source envelopes on first unlock.
+ */
 function validSourceRecord(value: unknown): value is ProviderSourceRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Partial<ProviderSourceRecord>;
   return typeof record.providerId === "string" && typeof record.remoteId === "string" && typeof record.payload === "string" && typeof record.contentHash === "string"
-    && (record.format === "android-entry" || record.format === "bitwarden-cipher") && (record.encoding === "base64" || record.encoding === "json");
+    && typeof record.format === "string" && Boolean(record.format) && record.format.length <= MAX_SOURCE_RECORD_TAG_LENGTH
+    && typeof record.encoding === "string" && Boolean(record.encoding) && record.encoding.length <= MAX_SOURCE_RECORD_TAG_LENGTH;
 }
 
 export function providerSourceRecordsFor(state: VaultState, providerId: string): ProviderSourceRecord[] {

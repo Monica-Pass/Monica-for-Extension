@@ -1,5 +1,6 @@
 import { createEmptyVaultState, type PasskeyItem, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState } from "../core/model";
 import { providerSourceRecordsFor, replaceProviderSourceRecords } from "../core/migrations";
+import { sourceRecordsBudgetError } from "../core/source-records";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import { createDeviceVaultKey, decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type DeviceVaultKdfParameters, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import { validateMasterPassword } from "./master-password-policy";
@@ -369,7 +370,11 @@ export class SecureVaultService {
       kind: candidate.kind,
       lastError: persistedConflicts.length ? `发现 ${persistedConflicts.length} 个同步冲突。` : accountPatch?.lastError
     } : candidate);
-    if (sourceRecords) replaceProviderSourceRecords(state, providerId, sourceRecords);
+    if (sourceRecords) {
+      replaceProviderSourceRecords(state, providerId, sourceRecords);
+      const budgetError = sourceRecordsBudgetError(state.sourceRecords);
+      if (budgetError) throw new Error(budgetError);
+    }
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
     return { conflicts: persistedConflicts.length };

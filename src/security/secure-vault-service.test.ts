@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createEmptyVaultState, createLoginItem, type LoginItem, type VaultItem, type VaultState } from "../core/model";
+import { MAX_SOURCE_RECORD_PAYLOAD_BYTES } from "../core/source-records";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
 import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
@@ -623,6 +624,16 @@ describe("encrypted vault", () => {
     expect(JSON.stringify(storage.envelope)).not.toContain(sourceRecord.payload);
     expect(await service.getProviderSourceRecords("webdav-source")).toEqual([sourceRecord]);
     expect(JSON.stringify(await service.listItems())).not.toContain(sourceRecord.payload);
+  });
+
+  it("refuses an oversized source envelope instead of writing a vault that can no longer be decrypted", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("source budget password");
+    await service.upsertProvider({ id: "big-source", kind: "mdbx", name: "MDBX", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const oversized = { providerId: "big-source", remoteId: "row-1", format: "mdbx-row", encoding: "json", payload: "x".repeat(MAX_SOURCE_RECORD_PAYLOAD_BYTES + 1), contentHash: "hash" };
+
+    await expect(service.applyProviderSync("big-source", [], undefined, [], [oversized])).rejects.toThrow("超过单条");
+    expect(await service.getProviderSourceRecords("big-source")).toEqual([]);
   });
 });
 

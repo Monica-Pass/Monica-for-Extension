@@ -642,7 +642,7 @@ async function exportProviderDiagnostics() {
 }
 
 async function removeProvider(provider: ProviderAccount) {
-  const remoteName = provider.kind === "bitwarden" ? "Bitwarden 密码库" : "WebDAV 文件";
+  const remoteName = { bitwarden: "Bitwarden 密码库", mdbx: "MDBX 数据库", keepass: "KeePass 数据库" }[provider.kind as string] || "WebDAV 文件";
   if (!window.confirm(`确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 ${remoteName} 不会被删除。`)) return;
   await runWebDavAction("remove", async () => {
     await vaultClient.removeProvider(provider.id);

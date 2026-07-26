@@ -5,6 +5,7 @@ import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCip
 import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
+import { createSourceRecord } from "../../core/source-records";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
@@ -238,21 +239,16 @@ async function bitwardenSourceRecords(ciphers: Record<string, unknown>[], provid
   const records = ciphers.flatMap((cipher) => {
     const remoteId = stringValue(cipher, "Id", "id");
     if (!remoteId) return [];
-    const payload = JSON.stringify(cipher);
-    return [{ cipher, remoteId, payload }];
+    return [{ cipher, remoteId, payload: JSON.stringify(cipher) }];
   });
-  return Promise.all(records.map(async ({ cipher, remoteId, payload }) => {
-    const bytes = new TextEncoder().encode(payload);
-    return {
-      providerId,
-      remoteId,
-      revision: stringValue(cipher, "RevisionDate", "revisionDate") || undefined,
-      format: "bitwarden-cipher" as const,
-      encoding: "json" as const,
-      payload,
-      contentHash: bytesToBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource)))
-    };
-  }));
+  return Promise.all(records.map(({ cipher, remoteId, payload }) => createSourceRecord({
+    providerId,
+    remoteId,
+    revision: stringValue(cipher, "RevisionDate", "revisionDate") || undefined,
+    format: "bitwarden-cipher",
+    encoding: "json",
+    payload
+  })));
 }
 
 function hasProviderReference(item: VaultItem, providerId: string): boolean {

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { deriveVaultKey, exportVaultKey, vaultKdfNeedsUpgrade, type Argon2idVaultKdfParameters, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
+import { createEmptyVaultState } from "../core/model";
+import {
+  createDeviceVaultKey,
+  decryptVaultState,
+  deriveVaultKey,
+  encryptVaultState,
+  exportVaultKey,
+  vaultKdfNeedsUpgrade,
+  type Argon2idVaultKdfParameters,
+  type Pbkdf2VaultKdfParameters
+} from "./vault-crypto";
 
 const ARGON_VECTOR: Argon2idVaultKdfParameters = {
   name: "ARGON2ID",
@@ -34,5 +44,29 @@ describe("vault key derivation", () => {
     await expect(deriveVaultKey("password", { ...ARGON_VECTOR, parallelism: 5 })).rejects.toThrow("KDF parameters");
     await expect(deriveVaultKey("password", { ...ARGON_VECTOR, memoryKiB: 128 * 1024, iterations: 4 })).rejects.toThrow("KDF parameters");
     expect(vaultKdfNeedsUpgrade({ ...ARGON_VECTOR, memoryKiB: 19 * 1024, iterations: 1 })).toBe(true);
+  });
+});
+
+describe("vault envelope round-trip", () => {
+  it("unlocks a vault holding source envelopes this build cannot parse", async () => {
+    const state = createEmptyVaultState("2026-07-18T00:00:00.000Z");
+    const future = {
+      providerId: "provider-from-a-newer-build",
+      itemId: "item-1",
+      remoteId: "row-42",
+      revision: "7",
+      format: "some-format-this-build-has-never-heard-of",
+      encoding: "cbor",
+      payload: "b3BhcXVl",
+      contentHash: "hash",
+      extraKeyFromTheFuture: { nested: true }
+    };
+    state.sourceRecords = [future as never];
+    state.settings.protectionMode = "device-key";
+
+    const { key, kdf } = await createDeviceVaultKey();
+    const restored = await decryptVaultState(await encryptVaultState(state, key, kdf), key);
+
+    expect(restored.sourceRecords).toEqual([future]);
   });
 });
