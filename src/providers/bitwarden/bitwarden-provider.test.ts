@@ -267,6 +267,53 @@ describe("Bitwarden provider", () => {
     expect(result.items.find((item): item is LoginItem => item.kind === "login")?.password).toBe("changed");
     expect(result.items.find((item): item is PasskeyItem => item.kind === "passkey")?.signCount).toBe(4);
   });
+  it("treats a trashed remote Cipher as trashed instead of silently resurrecting it", async () => {
+    const remote = { ...(await loginCipher("remote-secret", OLD_REVISION)), DeletedDate: "2026-07-15T06:00:00.000Z" };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+
+    const result = await provider.sync(account(), { now: "2026-07-15T06:01:00.000Z", localItems: [] });
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.items).toEqual([]);
+    expect(result.sourceRecords?.[0]).toMatchObject({ remoteId: "cipher-1", format: "bitwarden-cipher" });
+  });
+
+  it("never issues a permanent delete for a Cipher the server already trashed", async () => {
+    const remote = { ...(await loginCipher("remote-secret", OLD_REVISION)), DeletedDate: "2026-07-15T06:00:00.000Z" };
+    let deleteCount = 0;
+    let writeCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (init?.method === "DELETE") { deleteCount += 1; return new Response(null, { status: 204 }); }
+      writeCount += 1;
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const cached: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "joy",
+      password: "remote-secret",
+      uris: [],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const result = await provider.sync(account(), { now: "2026-07-15T06:01:00.000Z", localItems: [cached] });
+
+    expect(deleteCount).toBe(0);
+    expect(writeCount).toBe(0);
+    expect(result.items).toEqual([]);
+  });
 });
 
 function account(): ProviderAccount {

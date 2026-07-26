@@ -157,6 +157,59 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).password, itemKey)).resolves.toBe("updated");
   });
 
+  it("preserves reprompt, attachments, history, and unknown Cipher keys when only the title changes", async () => {
+    const attachments = [{ Id: "attachment-1", FileName: await encryptBitwardenString("report.pdf", KEY), Size: "2048", Key: "attachment-key" }];
+    const passwordHistory = [{ Password: await encryptBitwardenString("old-secret", KEY), LastUsedDate: "2026-07-01T00:00:00.000Z" }];
+    const raw = {
+      Id: "cipher-preserve",
+      Type: 1,
+      Name: await encryptBitwardenString("Original", KEY),
+      Reprompt: 2,
+      Attachments: attachments,
+      PasswordHistory: passwordHistory,
+      SshKey: { PrivateKey: "encrypted-private", PublicKey: "encrypted-public", KeyFingerprint: "SHA256:abc" },
+      ArchivedDate: "2026-07-10T00:00:00.000Z",
+      DeletedDate: null,
+      FutureField: { nested: [1, 2, 3], flag: false },
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: { Username: await encryptBitwardenString("user", KEY), Password: await encryptBitwardenString("pass", KEY), Uris: [] }
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const encoded = await encodeBitwardenCipher({ ...(decoded.items[0] as LoginItem), title: "Renamed" }, KEY, raw);
+
+    await expect(decryptBitwardenString(encoded.name as string, KEY)).resolves.toBe("Renamed");
+    expect(encoded.reprompt).toBe(2);
+    expect(encoded.attachments).toEqual(attachments);
+    expect(encoded.passwordHistory).toEqual(passwordHistory);
+    expect(encoded.sshKey).toEqual(raw.SshKey);
+    expect(encoded.archivedDate).toBe("2026-07-10T00:00:00.000Z");
+    expect(encoded.deletedDate).toBeNull();
+    expect(encoded.futureField).toEqual({ nested: [1, 2, 3], flag: false });
+  });
+
+  it("unions local and remote custom fields so server-only fields survive a local edit", async () => {
+    const remoteFields = [
+      { Type: 0, Name: await encryptBitwardenString("Shared", KEY), Value: await encryptBitwardenString("remote-value", KEY) },
+      { Type: 1, Name: await encryptBitwardenString("ServerOnly", KEY), Value: await encryptBitwardenString("hidden", KEY) },
+      { Type: 4, Name: await encryptBitwardenString("Linked", KEY), Value: null, LinkedId: 100 }
+    ];
+    const item: LoginItem = {
+      id: "fields", kind: "login", title: "Fields", username: "user", password: "pass", uris: [],
+      customFields: [{ name: "Shared", value: "local-value", protected: false }, { name: "LocalOnly", value: "local", protected: true }],
+      favorite: false, notes: "", createdAt: REVISION, updatedAt: REVISION, providerRefs: []
+    };
+
+    const encoded = await encodeBitwardenCipher(item, KEY, { Fields: remoteFields });
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+    expect(fields).toHaveLength(4);
+    expect(fields.slice(0, 2)).toEqual([remoteFields[1], remoteFields[2]]);
+    const names = await Promise.all(fields.slice(2).map((field) => decryptBitwardenString(field.name as string, KEY)));
+    expect(names).toEqual(["Shared", "LocalOnly"]);
+    await expect(decryptBitwardenString(fields[2].value as string, KEY)).resolves.toBe("local-value");
+  });
+
   it("creates a login Cipher containing a Bitwarden-compatible FIDO2 credential", async () => {
     const encoded = await encodeBitwardenPasskeyCipher(passkey("new-credential", 0), KEY);
     const decoded = await decodeBitwardenCipher({ ...encoded, id: "created", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);

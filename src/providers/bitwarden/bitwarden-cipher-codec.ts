@@ -1,4 +1,4 @@
-import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureNoteItem, VaultItem } from "../../core/model";
+import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureCustomField, SecureNoteItem, VaultItem } from "../../core/model";
 import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
 export interface DecodedBitwardenCipher {
@@ -17,7 +17,17 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
   const notes = await decryptBitwardenString(stringValue(raw, "Notes", "notes"), key);
   const favorite = booleanValue(raw, "Favorite", "favorite");
   const reference: ProviderReference = { providerId, remoteId: cipherId, remoteFolderId: stringValue(raw, "FolderId", "folderId") || undefined, revision };
-  const base = { id: `bitwarden:${providerId}:${cipherId}`, title: name || "未命名 Bitwarden 项目", favorite, notes, createdAt, updatedAt: revision, providerRefs: [reference] };
+  const base = {
+    id: `bitwarden:${providerId}:${cipherId}`,
+    title: name || "未命名 Bitwarden 项目",
+    favorite,
+    notes,
+    createdAt,
+    updatedAt: revision,
+    deletedAt: optionalDateValue(value(raw, "DeletedDate", "deletedDate")),
+    archivedAt: optionalDateValue(value(raw, "ArchivedDate", "archivedDate")),
+    providerRefs: [reference]
+  };
 
   if (type === 1) {
     const login = recordValue(raw, "Login", "login") || {};
@@ -104,72 +114,103 @@ export async function resolveBitwardenCipherKey(raw: Record<string, unknown>, va
 }
 
 export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: BitwardenSymmetricKey, preservedRaw?: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const base: Record<string, unknown> = {
-    type: bitwardenType(item),
-    name: await encryptBitwardenString(item.title, encryptionKey),
-    notes: item.notes ? await encryptBitwardenString(item.notes, encryptionKey) : null,
-    favorite: item.favorite,
-    reprompt: 0,
-    key: stringValue(preservedRaw || {}, "Key", "key") || null,
-    organizationId: value(preservedRaw || {}, "OrganizationId", "organizationId") ?? null,
-    collectionIds: value(preservedRaw || {}, "CollectionIds", "collectionIds") ?? null,
-    folderId: item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null,
-    fields: null
-  };
+  const preserved = preservedRaw || {};
+  const base = cipherRequestBody(preserved);
+  base.type = bitwardenType(item);
+  base.name = await encryptBitwardenString(item.title, encryptionKey);
+  base.notes = item.notes ? await encryptBitwardenString(item.notes, encryptionKey) : null;
+  base.favorite = item.favorite;
+  base.reprompt = numberValue(preserved, "Reprompt", "reprompt");
+  base.key = value(preserved, "Key", "key") ?? null;
+  base.organizationId = value(preserved, "OrganizationId", "organizationId") ?? null;
+  base.collectionIds = value(preserved, "CollectionIds", "collectionIds") ?? null;
+  base.folderId = item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null;
+  base.fields = value(preserved, "Fields", "fields") ?? null;
 
   if (item.kind === "login") {
-    const preservedLogin = recordValue(preservedRaw || {}, "Login", "login") || {};
-    base.login = {
-      username: await encryptOptional(item.username, encryptionKey),
-      password: await encryptOptional(item.password, encryptionKey),
-      totp: await encryptOptional(item.totpSecret || "", encryptionKey),
-      uris: await Promise.all(effectiveLoginUriRules(item).map(async (rule) => ({
-        uri: await encryptBitwardenString(rule.uri, encryptionKey),
-        match: bitwardenMatchCode(rule.matchType)
-      }))),
-      fido2Credentials: value(preservedLogin, "Fido2Credentials", "fido2Credentials") || null
-    };
-    base.fields = await Promise.all(item.customFields.map(async (field) => ({
-      type: field.protected ? 1 : 0,
-      name: await encryptOptional(field.name, encryptionKey),
-      value: await encryptOptional(field.value, encryptionKey),
-      linkedId: null
+    const login = cipherRequestBody(recordValue(preserved, "Login", "login") || {});
+    login.username = await encryptOptional(item.username, encryptionKey);
+    login.password = await encryptOptional(item.password, encryptionKey);
+    login.totp = await encryptOptional(item.totpSecret || "", encryptionKey);
+    login.uris = await Promise.all(effectiveLoginUriRules(item).map(async (rule) => ({
+      uri: await encryptBitwardenString(rule.uri, encryptionKey),
+      match: bitwardenMatchCode(rule.matchType)
     })));
+    login.fido2Credentials = login.fido2Credentials ?? null;
+    base.login = login;
+    base.fields = await mergeCipherFieldsPreservingUnknown(item.customFields, arrayValue(preserved, "Fields", "fields"), encryptionKey);
   } else if (item.kind === "card") {
-    base.card = {
-      cardholderName: await encryptOptional(item.cardholderName, encryptionKey),
-      number: await encryptOptional(item.number, encryptionKey),
-      expMonth: await encryptOptional(item.expiryMonth, encryptionKey),
-      expYear: await encryptOptional(item.expiryYear, encryptionKey),
-      code: await encryptOptional(item.securityCode, encryptionKey),
-      brand: await encryptOptional(item.brand || "", encryptionKey)
-    };
+    const card = cipherRequestBody(recordValue(preserved, "Card", "card") || {});
+    card.cardholderName = await encryptOptional(item.cardholderName, encryptionKey);
+    card.number = await encryptOptional(item.number, encryptionKey);
+    card.expMonth = await encryptOptional(item.expiryMonth, encryptionKey);
+    card.expYear = await encryptOptional(item.expiryYear, encryptionKey);
+    card.code = await encryptOptional(item.securityCode, encryptionKey);
+    card.brand = await encryptOptional(item.brand || "", encryptionKey);
+    base.card = card;
   } else if (item.kind === "identity") {
-    base.identity = {
-      title: null,
-      firstName: await encryptOptional(item.firstName, encryptionKey),
-      middleName: await encryptOptional(item.middleName, encryptionKey),
-      lastName: await encryptOptional(item.lastName, encryptionKey),
-      address1: await encryptOptional(item.address?.streetAddress || "", encryptionKey),
-      address2: await encryptOptional(item.address?.apartment || "", encryptionKey),
-      address3: null,
-      city: await encryptOptional(item.address?.city || "", encryptionKey),
-      state: await encryptOptional(item.address?.stateProvince || "", encryptionKey),
-      postalCode: await encryptOptional(item.address?.postalCode || "", encryptionKey),
-      country: await encryptOptional(item.address?.country || "", encryptionKey),
-      company: null,
-      email: await encryptOptional(item.email || "", encryptionKey),
-      phone: await encryptOptional(item.phone || "", encryptionKey),
-      ssn: item.documentType === "SOCIAL_SECURITY" ? await encryptOptional(item.documentNumber, encryptionKey) : null,
-      passportNumber: item.documentType === "PASSPORT" ? await encryptOptional(item.documentNumber, encryptionKey) : null,
-      licenseNumber: item.documentType === "DRIVER_LICENSE" ? await encryptOptional(item.documentNumber, encryptionKey) : null
-    };
+    const identity = cipherRequestBody(recordValue(preserved, "Identity", "identity") || {});
+    identity.title = identity.title ?? null;
+    identity.firstName = await encryptOptional(item.firstName, encryptionKey);
+    identity.middleName = await encryptOptional(item.middleName, encryptionKey);
+    identity.lastName = await encryptOptional(item.lastName, encryptionKey);
+    identity.address1 = await encryptOptional(item.address?.streetAddress || "", encryptionKey);
+    identity.address2 = await encryptOptional(item.address?.apartment || "", encryptionKey);
+    identity.address3 = identity.address3 ?? null;
+    identity.city = await encryptOptional(item.address?.city || "", encryptionKey);
+    identity.state = await encryptOptional(item.address?.stateProvince || "", encryptionKey);
+    identity.postalCode = await encryptOptional(item.address?.postalCode || "", encryptionKey);
+    identity.country = await encryptOptional(item.address?.country || "", encryptionKey);
+    identity.company = identity.company ?? null;
+    identity.email = await encryptOptional(item.email || "", encryptionKey);
+    identity.phone = await encryptOptional(item.phone || "", encryptionKey);
+    identity.ssn = item.documentType === "SOCIAL_SECURITY" ? await encryptOptional(item.documentNumber, encryptionKey) : null;
+    identity.passportNumber = item.documentType === "PASSPORT" ? await encryptOptional(item.documentNumber, encryptionKey) : null;
+    identity.licenseNumber = item.documentType === "DRIVER_LICENSE" ? await encryptOptional(item.documentNumber, encryptionKey) : null;
+    base.identity = identity;
   } else if (item.kind === "secure-note") {
     base.notes = await encryptOptional(item.content, encryptionKey);
-    base.secureNote = { type: 0 };
+    base.secureNote = recordValue(preserved, "SecureNote", "secureNote") || { type: 0 };
   }
   return base;
 }
+
+/**
+ * Bitwarden answers `/sync` in PascalCase but binds write requests in camelCase, so every preserved
+ * key — including ones this codec has no model for, such as attachments or passwordHistory — has to
+ * be carried across under the request casing or the server drops it.
+ */
+function cipherRequestBody(preserved: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(preserved).map(([name, entry]) => [lowerFirst(name), entry]));
+}
+
+/**
+ * Union by field name, mirroring Android's mergeCipherFieldsPreservingUnknown: a remote custom field
+ * that Monica never decoded into `customFields` must survive a local edit.
+ */
+async function mergeCipherFieldsPreservingUnknown(
+  localFields: SecureCustomField[],
+  remoteFields: unknown[],
+  encryptionKey: BitwardenSymmetricKey
+): Promise<unknown[] | null> {
+  const encoded = await Promise.all(localFields.map(async (field) => ({
+    type: field.protected ? 1 : 0,
+    name: await encryptOptional(field.name, encryptionKey),
+    value: await encryptOptional(field.value, encryptionKey),
+    linkedId: null
+  })));
+  if (!remoteFields.length) return encoded.length ? encoded : null;
+  const localNames = new Set(localFields.map((field) => field.name.trim()).filter(Boolean));
+  const preserved: unknown[] = [];
+  for (const entry of remoteFields) {
+    const field = record(entry);
+    const name = (await decryptBitwardenString(stringValue(field, "Name", "name"), encryptionKey).catch(() => "")).trim();
+    if (!name || !localNames.has(name)) preserved.push(entry);
+  }
+  const merged = [...preserved, ...encoded];
+  return merged.length ? merged : null;
+}
+
 
 export async function encodeBitwardenPasskeyCipher(
   item: PasskeyItem,
@@ -324,6 +365,10 @@ function normalizePasskeyAlgorithm(value: string): PasskeyItem["algorithm"] {
 function dateValue(raw: unknown, fallback = new Date().toISOString()): string {
   if (typeof raw === "string" && !Number.isNaN(Date.parse(raw))) return new Date(raw).toISOString();
   return fallback;
+}
+
+function optionalDateValue(raw: unknown): string | undefined {
+  return typeof raw === "string" && !Number.isNaN(Date.parse(raw)) ? new Date(raw).toISOString() : undefined;
 }
 
 function lowerFirst(value: string): string {
