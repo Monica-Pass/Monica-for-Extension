@@ -314,11 +314,14 @@ function encryptOptional(value: string, key: BitwardenSymmetricKey): Promise<str
 
 function normalizePasskeyAlgorithm(value: string): PasskeyItem["algorithm"] {
   const normalized = value.trim().toLowerCase();
+  if (normalized === "ecdsa" || normalized === "es256") return -7;
   if (normalized === "rsa" || normalized === "rs256") return -257;
   if (normalized === "ps256") return -37;
   if (normalized === "eddsa" || normalized === "ed25519") return -8;
-  if (normalized === "ecdsa" || normalized === "es256") return -7;
-  return 0;
+  // Fail closed: unknown or empty algorithms must not masquerade as ES256.
+  // Use a non-ES256 COSE value so passkeyAvailability marks the item unsupported
+  // without claiming a concrete supported algorithm family.
+  return -257;
 }
 
 function dateValue(raw: unknown, fallback = new Date().toISOString()): string {

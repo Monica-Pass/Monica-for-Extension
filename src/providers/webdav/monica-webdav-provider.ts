@@ -24,8 +24,11 @@ export class MonicaWebDavProvider implements ProviderAdapter {
 
   async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
     const loaded = await this.loadLatest(account, context.signal);
-    const localScoped = context.localItems.filter((item) => hasProviderReference(item, account.id));
-    const unrelated = context.localItems.filter((item) => !hasProviderReference(item, account.id));
+    // Android serialization assigns missing path references as it writes. Never
+    // let that codec-side normalization leak back into the caller's baseline.
+    const localItems = structuredClone(context.localItems);
+    const localScoped = localItems.filter((item) => hasProviderReference(item, account.id));
+    const unrelated = localItems.filter((item) => !hasProviderReference(item, account.id));
     if (!loaded) {
       if (!localScoped.some((item) => !item.deletedAt)) {
         return {

@@ -1,3 +1,5 @@
+import { ProviderBodyReadNetworkError } from "./bounded-body";
+
 export type ProviderTransportCode = "cancelled" | "timeout" | "network" | "rate-limited" | "server" | "authentication" | "permission" | "not-found" | "conflict" | "client";
 
 export interface ProviderTransportErrorDetails {
@@ -55,13 +57,24 @@ export interface ResilientFetchOptions {
 }
 
 export type ProviderTransportPolicy = Omit<ResilientFetchOptions, "operation" | "fetcher" | "idempotent">;
+export type ProviderResponseConsumer<T> = (response: Response, signal: AbortSignal) => Promise<T> | T;
 
 const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PROPFIND", "MKCOL", "PUT", "DELETE"]);
 const NEVER_ABORTED = new AbortController().signal;
 const RESPONSE_METADATA = new WeakMap<Response, { attempts: number; retryAfterMs?: number }>();
 
-export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, options: ResilientFetchOptions): Promise<Response> {
+/**
+ * Fetch and consume a provider response while this transport owns the attempt
+ * controller.  Consumers must finish reading the body before returning, so a
+ * timeout or caller cancellation also reaches a stalled response stream.
+ */
+export async function resilientFetch<T>(
+  url: RequestInfo | URL,
+  init: RequestInit,
+  options: ResilientFetchOptions,
+  consume: ProviderResponseConsumer<T>
+): Promise<T> {
   const fetcher = options.fetcher || globalThis.fetch.bind(globalThis);
   const method = (init.method || "GET").toUpperCase();
   const idempotent = options.idempotent ?? IDEMPOTENT_METHODS.has(method);
@@ -75,15 +88,20 @@ export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, 
     if (externalSignal?.aborted) throw cancelledError(options.operation, attempt, externalSignal.reason);
     const startedAt = now();
     const attemptControl = createAttemptControl(externalSignal, timeoutMs);
+    let responseReceived = false;
+    let body: ManagedResponseBody | undefined;
     try {
-      const response = await fetcher(url, { ...init, signal: attemptControl.signal });
-      attemptControl.dispose();
+      const fetchedResponse = await fetcher(url, { ...init, signal: attemptControl.signal });
+      responseReceived = true;
+      const managed = manageResponseBody(fetchedResponse);
+      const response = managed.response;
+      body = managed.body;
       const durationMs = Math.max(0, now() - startedAt);
       if (TRANSIENT_STATUSES.has(response.status) && idempotent && attempt < maxAttempts) {
         const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), now(), options.maxRetryAfterMs ?? 30_000);
         const retryDelayMs = retryAfterMs ?? backoffDelay(attempt, options);
         options.onEvent?.({ operation: options.operation, attempt, outcome: "retry", status: response.status, code: response.status === 429 ? "rate-limited" : "server", retryDelayMs, durationMs });
-        await response.body?.cancel().catch(() => undefined);
+        cancelBody(body);
         await sleepOrCancel(retryDelayMs, externalSignal, sleep, options.operation, attempt);
         continue;
       }
@@ -91,16 +109,23 @@ export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, 
         attempts: attempt,
         retryAfterMs: response.status === 429 ? parseRetryAfter(response.headers.get("retry-after"), now(), options.maxRetryAfterMs ?? 30_000) : undefined
       });
-      options.onEvent?.({ operation: options.operation, attempt, outcome: response.ok ? "success" : "failure", status: response.status, durationMs });
-      return response;
+      const result = await consume(response, attemptControl.signal);
+      // A consumer that only needs headers must not leave a response stream
+      // detached from the attempt lifecycle.
+      cancelBody(body);
+      options.onEvent?.({ operation: options.operation, attempt, outcome: response.ok ? "success" : "failure", status: response.status, durationMs: Math.max(0, now() - startedAt) });
+      return result;
     } catch (cause) {
-      attemptControl.dispose();
       const durationMs = Math.max(0, now() - startedAt);
       if (externalSignal?.aborted) {
         options.onEvent?.({ operation: options.operation, attempt, outcome: "cancelled", code: "cancelled", durationMs });
         throw cancelledError(options.operation, attempt, externalSignal.reason);
       }
       if (cause instanceof ProviderTransportError) throw cause;
+      // A response consumer may reject for a semantic reason (for example a
+      // bounded-body limit). Only tagged body stream interruptions and
+      // transport aborts are retried/classified.
+      if (responseReceived && !attemptControl.timedOut() && !(cause instanceof ProviderBodyReadNetworkError)) throw cause;
       const code: ProviderTransportCode = attemptControl.timedOut() ? "timeout" : "network";
       const retryable = idempotent;
       if (retryable && attempt < maxAttempts) {
@@ -115,9 +140,70 @@ export async function resilientFetch(url: RequestInfo | URL, init: RequestInit, 
         operation: options.operation,
         attempts: attempt
       });
+    } finally {
+      cancelBody(body);
+      attemptControl.dispose();
     }
   }
   throw new ProviderTransportError("network", `${options.operation} 网络请求失败。`, { retryable: idempotent, operation: options.operation, attempts: maxAttempts });
+}
+
+interface ManagedResponseBody {
+  cancel(): Promise<void>;
+}
+
+function manageResponseBody(response: Response): { response: Response; body?: ManagedResponseBody } {
+  if (!response.body) return { response };
+  const source = response.body.getReader();
+  let ended = false;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await source.read();
+        if (result.done) {
+          ended = true;
+          controller.close();
+        } else {
+          controller.enqueue(result.value);
+        }
+      } catch (cause) {
+        ended = true;
+        controller.error(cause);
+      }
+    },
+    async cancel(reason) {
+      if (ended || cancelled) return;
+      cancelled = true;
+      try {
+        await source.cancel(reason);
+      } finally {
+        ended = true;
+        source.releaseLock();
+      }
+    }
+  });
+  return {
+    response: new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }),
+    body: {
+      async cancel() {
+        if (ended || cancelled) return;
+        cancelled = true;
+        try {
+          await source.cancel();
+        } finally {
+          ended = true;
+          source.releaseLock();
+        }
+      }
+    }
+  };
+}
+
+function cancelBody(body: ManagedResponseBody | undefined): void {
+  // Cancellation is cleanup only: it must neither replace the consumer error
+  // nor create an unhandled rejection when a provider stream rejects cancel.
+  void body?.cancel().catch(() => undefined);
 }
 
 export function providerHttpError(prefix: string, response: Response): ProviderTransportError {

@@ -5,6 +5,7 @@ describe("manager vault import", () => {
   it("accepts and normalizes non-login records", () => {
     expect(normalizeImportedVaultItem({ kind: "card", id: "card", title: "Visa", number: 4111, securityCode: 123 })).toMatchObject({ kind: "card", number: "4111", securityCode: "123", providerRefs: [] });
     expect(normalizeImportedVaultItem({ kind: "passkey", id: "pk", title: "Example", rpId: "example.com", sourceMode: "android-metadata-only", algorithm: -7 })).toMatchObject({ kind: "passkey", rpId: "example.com", sourceMode: "android-metadata-only" });
+    expect(normalizeImportedVaultItem({ kind: "totp", id: "yaotp", title: "Yandex", secret: "Q3GXYNZ7INQOWXTVKGKYBLKDU4", otpType: "YANDEX", pin: "0012", pinLength: "4" })).toMatchObject({ kind: "totp", otpType: "YANDEX", pin: "0012", pinLength: 4 });
   });
 
   it("preserves all Passkey compatibility metadata from extension JSON", () => {

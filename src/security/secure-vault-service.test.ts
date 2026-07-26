@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { createEmptyVaultState, createLoginItem, type VaultItem, type VaultState } from "../core/model";
+import { describe, expect, it, vi } from "vitest";
+import { createEmptyVaultState, createLoginItem, type LoginItem, type VaultItem, type VaultState } from "../core/model";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
 import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
 import { MemoryVaultStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore } from "./vault-device-key";
+import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
 
 describe("encrypted vault", () => {
   it("keeps a durable mutation successful when only session activity refresh fails", async () => {
@@ -371,7 +372,7 @@ describe("encrypted vault", () => {
     await source.setup("backup master password", [createLoginItem({ title: "Recovered", password: "item-secret", uris: ["example.com"] })]);
     await source.upsertProvider({ id: "webdav", kind: "monica-webdav", name: "WebDAV", enabled: true, isDefaultSaveTarget: true, config: { password: "provider-secret" } });
 
-    const backup = await source.exportEncryptedBackup();
+    const backup = await source.exportEncryptedBackup("backup master password");
     expect(backup).toMatchObject({ magic: "MONICA_EXTENSION_BACKUP", version: 1 });
     expect(JSON.stringify(backup)).not.toContain("item-secret");
     expect(JSON.stringify(backup)).not.toContain("provider-secret");
@@ -405,7 +406,7 @@ describe("encrypted vault", () => {
   it("authenticates the complete restore candidate before replacing any existing vault", async () => {
     const source = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await source.setup("source backup password", [createLoginItem({ title: "Source", password: "source-secret", uris: ["source.example.com"] })]);
-    const backup = await source.exportEncryptedBackup();
+    const backup = await source.exportEncryptedBackup("source backup password");
     const targetStorage = new MemoryVaultStorage();
     const target = new SecureVaultService(targetStorage, new MemoryVaultSessionStore());
     await target.setup("target current password", [createLoginItem({ title: "Target", password: "target-secret", uris: ["target.example.com"] })]);
@@ -436,6 +437,143 @@ describe("encrypted vault", () => {
     expect((await service.listItems()).map((item) => item.title).sort()).toEqual(["First import", "Second import"]);
   });
 
+  it("merges a provider result against its snapshot so interleaved local changes are never overwritten", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("snapshot merge password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const first = createLoginItem({ title: "First", password: "before", uris: ["first.example"], providerRefs: [{ providerId: "bw", remoteId: "first" }] });
+    const removed = createLoginItem({ title: "Removed", password: "before", uris: ["removed.example"], providerRefs: [{ providerId: "bw", remoteId: "removed" }] });
+    const untouched = createLoginItem({ title: "Untouched", password: "before", uris: ["untouched.example"], providerRefs: [{ providerId: "bw", remoteId: "untouched" }] });
+    await service.applyProviderSync("bw", [first, removed, untouched]);
+    const snapshot = (await service.readState()).items;
+
+    await service.upsertItem({ ...first, password: "local edit" });
+    await service.deleteItem(removed.id);
+    const added = await service.upsertItem(createLoginItem({ title: "Added during sync", password: "new", uris: ["new.example"], providerRefs: [{ providerId: "bw" }] }));
+    const remoteFirst = { ...first, password: "remote edit", updatedAt: "2026-07-26T00:00:00.000Z" };
+    const remoteUntouched = { ...untouched, title: "Remote update", updatedAt: "2026-07-26T00:00:00.000Z" };
+
+    await service.applyProviderSync("bw", [remoteFirst, remoteUntouched], undefined, [], undefined, snapshot);
+
+    const state = await service.readState();
+    expect(state.items.find((item) => item.id === first.id)).toMatchObject({ password: "local edit" });
+    expect(state.items.find((item) => item.id === removed.id)).toBeUndefined();
+    expect(state.items.find((item) => item.id === added.id)).toMatchObject({ title: "Added during sync" });
+    expect(state.items.find((item) => item.id === untouched.id)).toMatchObject({ title: "Remote update" });
+    expect(state.mutationQueue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ itemId: first.id, providerId: "bw" }),
+      expect.objectContaining({ itemId: added.id, providerId: "bw" })
+    ]));
+    expect(state.providerConflicts.find((conflict) => conflict.itemId === first.id)).toMatchObject({ local: { password: "local edit" }, remote: { password: "remote edit" } });
+    expect(state.providerConflicts.find((conflict) => conflict.itemId === removed.id)).toBeUndefined();
+  });
+
+  it("keeps a local edit made during Bitwarden creation under its original Monica ID", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("create acknowledgement password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const created = await service.upsertItem(createLoginItem({ title: "Created", password: "before", uris: ["created.example"], providerRefs: [{ providerId: "bw" }] })) as LoginItem;
+    const snapshot = structuredClone((await service.readState()).items);
+    const edited = await service.upsertItem({ ...created, password: "edited before create completed" });
+    const acknowledged = { ...created, updatedAt: "2026-07-26T00:00:00.000Z", providerRefs: [{ providerId: "bw", remoteId: "remote-created", revision: "2026-07-26T00:00:00.000Z" }] };
+
+    const summary = await service.applyProviderSync("bw", [acknowledged], undefined, [], undefined, snapshot);
+    const state = await service.readState();
+    expect(summary.conflicts).toBe(0);
+    expect(state.items.find((item) => item.id === edited.id)).toMatchObject({ password: "edited before create completed", providerRefs: [expect.objectContaining({ remoteId: "remote-created" })] });
+    expect(state.mutationQueue).toEqual([expect.objectContaining({ itemId: edited.id, operation: "update" })]);
+  });
+
+  it("turns create acknowledgement during a local delete into a remote delete mutation", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("create then delete password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const created = await service.upsertItem(createLoginItem({ title: "Created then deleted", password: "before", uris: ["created-deleted.example"], providerRefs: [{ providerId: "bw" }] })) as LoginItem;
+    const snapshot = structuredClone((await service.readState()).items);
+    await service.deleteItem(created.id);
+    const acknowledged = {
+      ...created,
+      updatedAt: "2026-07-26T00:00:00.000Z",
+      providerRefs: [{ providerId: "bw", remoteId: "remote-created-then-deleted", revision: "2026-07-26T00:00:00.000Z" }]
+    };
+
+    const summary = await service.applyProviderSync("bw", [acknowledged], undefined, [], undefined, snapshot);
+    const state = await service.readState();
+    const tombstone = state.items.find((item) => item.id === created.id);
+    expect(summary.conflicts).toBe(0);
+    expect(tombstone?.deletedAt).toBeTruthy();
+    expect(tombstone?.providerRefs).toEqual([expect.objectContaining({ remoteId: "remote-created-then-deleted" })]);
+    expect(state.mutationQueue).toEqual([expect.objectContaining({ itemId: created.id, operation: "delete" })]);
+  });
+
+  it("keeps the service baseline immutable through a real first WebDAV creation sync", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("webdav first creation password");
+    const account = { id: "webdav", kind: "monica-webdav" as const, name: "WebDAV", enabled: true, isDefaultSaveTarget: false, config: { baseUrl: "https://cloud.example/dav", username: "user", password: "secret" } };
+    await service.upsertProvider(account);
+    const local = await service.upsertItem(createLoginItem({ title: "First WebDAV item", password: "secret", uris: ["webdav.example"], providerRefs: [{ providerId: account.id }] }));
+    const snapshot = structuredClone((await service.readState()).items);
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method || "GET";
+      const headers = new Headers(init?.headers);
+      if (method === "PROPFIND" && headers.get("Depth") === "1") return new Response(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`, { status: 207 });
+      if (method === "PROPFIND") return new Response(null, { status: 207 });
+      if (method === "PUT") return new Response(null, { status: 201, headers: { etag: '"created"' } });
+      throw new Error(`Unexpected ${method}`);
+    }) as unknown as typeof fetch;
+
+    const result = await new MonicaWebDavProvider(fetcher).sync(account, { now: "2026-07-26T00:00:00.000Z", localItems: structuredClone(snapshot) });
+    expect(snapshot.find((item) => item.id === local.id)?.providerRefs[0]?.remoteId).toBeUndefined();
+    await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
+    expect((await service.readState()).items.find((item) => item.id === local.id)?.providerRefs[0]).toMatchObject({ remoteId: local.id, etag: '"created"' });
+  });
+
+  it("reports the persisted merge conflict count and retains a non-deleted local item missing remotely", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("persisted conflict count password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = createLoginItem({ title: "Missing", password: "secret", uris: ["missing.example"], providerRefs: [{ providerId: "bw", remoteId: "missing", revision: "2026-01-01T00:00:00.000Z" }] });
+    await service.applyProviderSync("bw", [item]);
+    const summary = await service.applyProviderSync("bw", [], undefined, [], undefined, structuredClone((await service.readState()).items));
+    expect(summary.conflicts).toBe(1);
+    expect((await service.readState()).providers.find((provider) => provider.id === "bw")?.lastError).toBe("发现 1 个同步冲突。");
+    expect((await service.readState()).items).toEqual(expect.arrayContaining([expect.objectContaining({ id: item.id })]));
+  });
+
+  it("imports mixed additions and replacements with the same ordering as the pre-batch import semantics", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("mixed import password");
+    const existing = createLoginItem({ title: "Existing", password: "old", uris: ["existing.example"] });
+    const trailing = createLoginItem({ title: "Trailing", password: "secret", uris: ["trailing.example"] });
+    await service.upsertItem(existing);
+    await service.upsertItem(trailing);
+    const firstNew = createLoginItem({ title: "First new", password: "secret", uris: ["first.example"] });
+    const replacement = { ...existing, title: "Replaced", password: "new" };
+    const secondNew = createLoginItem({ title: "Second new", password: "secret", uris: ["second.example"] });
+
+    await service.importItems([firstNew, replacement, secondNew]);
+    expect((await service.readState()).items.map((item) => item.id)).toEqual([secondNew.id, firstNew.id, trailing.id, existing.id]);
+    expect((await service.readState()).items.find((item) => item.id === existing.id)?.title).toBe("Replaced");
+  });
+
+  it("imports 10,000 items with legacy prepend ordering and one persistence commit", async () => {
+    const storage = new CountingMemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("large import password");
+    await service.upsertProvider({ id: "bulk-provider", kind: "bitwarden", name: "Bulk provider", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const imported = Array.from({ length: 10_000 }, (_, index) => createLoginItem({ title: `Import ${index}`, password: "secret", uris: [`${index}.example`], providerRefs: [{ providerId: "bulk-provider" }] }));
+    const startedAt = Date.now();
+
+    const committed = await service.importItems(imported);
+
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(committed.map((item) => item.id)).toEqual(imported.map((item) => item.id));
+    expect((await service.listItems()).map((item) => item.id)).toEqual([...imported].reverse().map((item) => item.id));
+    expect((await service.readState()).mutationQueue).toEqual(expect.arrayContaining([expect.objectContaining({ providerId: "bulk-provider", operation: "create" })]));
+    expect((await service.readState()).mutationQueue).toHaveLength(10_000);
+    expect(storage.writeCount).toBe(3);
+  });
+
   it("supports an optional master password with a session-aware device key", async () => {
     const storage = new MemoryVaultStorage();
     const deviceKeys = new MemoryVaultDeviceKeyStore();
@@ -454,6 +592,22 @@ describe("encrypted vault", () => {
     const restarted = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => Date.now(), deviceKeys);
     await deviceKeys.setAutoUnlockSuspended(false);
     await expect(restarted.status()).resolves.toBe("unlocked");
+  });
+
+  it("exports a device-key vault into a portable password-derived backup", async () => {
+    const source = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore(), () => Date.now(), new MemoryVaultDeviceKeyStore());
+    await source.setup("", [createLoginItem({ title: "Portable device vault", password: "device-secret", uris: ["device.example"] })]);
+
+    const backup = await source.exportEncryptedBackup("portable backup password");
+    expect(backup.envelope.kdf.name).not.toBe("DEVICE-KEY");
+    expect(JSON.stringify(backup)).not.toContain("device-secret");
+
+    const targetStorage = new MemoryVaultStorage();
+    const target = new SecureVaultService(targetStorage, new MemoryVaultSessionStore(), () => Date.now(), new MemoryVaultDeviceKeyStore());
+    await expect(target.restoreEncryptedBackup(backup, "portable backup password")).resolves.toMatchObject({ items: [expect.objectContaining({ title: "Portable device vault", password: "device-secret" })] });
+    expect(targetStorage.envelope?.kdf.name).toBe("ARGON2ID");
+    await target.lock();
+    await expect(target.unlock("portable backup password")).resolves.toMatchObject({ settings: { protectionMode: "master-password" } });
   });
 
   it("stores provider source records inside the encrypted vault without returning them from item APIs", async () => {
@@ -480,6 +634,15 @@ class FlakyMemoryVaultStorage extends MemoryVaultStorage {
       this.failNextWrite = false;
       throw new Error("simulated write failure");
     }
+    await super.write(envelope);
+  }
+}
+
+class CountingMemoryVaultStorage extends MemoryVaultStorage {
+  writeCount = 0;
+
+  override async write(envelope: NonNullable<MemoryVaultStorage["envelope"]>): Promise<void> {
+    this.writeCount += 1;
     await super.write(envelope);
   }
 }

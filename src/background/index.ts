@@ -179,7 +179,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.changeMasterPassword(request.currentPassword, request.newPassword);
     case "VAULT_EXPORT_ENCRYPTED":
       assertExtensionPage(sender);
-      return service.exportEncryptedBackup();
+      return service.exportEncryptedBackup(request.backupPassword);
     case "VAULT_RESTORE_ENCRYPTED": {
       assertExtensionPage(sender);
       abortProviderSyncs();

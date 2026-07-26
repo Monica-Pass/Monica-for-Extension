@@ -141,7 +141,7 @@ export type ExtensionRequest =
   | { type: "VAULT_UNLOCK"; masterPassword: string }
   | { type: "VAULT_LOCK" }
   | { type: "VAULT_CHANGE_MASTER_PASSWORD"; currentPassword: string; newPassword: string }
-  | { type: "VAULT_EXPORT_ENCRYPTED" }
+  | { type: "VAULT_EXPORT_ENCRYPTED"; backupPassword: string }
   | { type: "VAULT_RESTORE_ENCRYPTED"; backup: EncryptedVaultBackup; backupPassword: string; replaceExisting?: boolean; currentPassword?: string }
   | { type: "VAULT_IMPORT_ITEMS"; items: VaultItem[] }
   | { type: "VAULT_LIST_ITEMS" }

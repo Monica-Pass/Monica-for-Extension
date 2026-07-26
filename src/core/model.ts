@@ -116,6 +116,7 @@ export interface TotpItem extends VaultItemBase {
   otpType?: "TOTP" | "HOTP" | "STEAM" | "YANDEX" | "MOTP";
   counter?: number;
   pin?: string;
+  pinLength?: number;
   link?: string;
   associatedApp?: string;
   customIconType?: string;

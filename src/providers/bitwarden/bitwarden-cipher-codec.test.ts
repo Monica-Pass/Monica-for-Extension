@@ -62,6 +62,36 @@ describe("Bitwarden Cipher codec", () => {
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
 
+  it("retains a non-ES256 FIDO2 algorithm for the passkey availability policy to reject", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const decoded = await decodeBitwardenCipher({
+      Id: "cipher-rsa-passkey", Type: 1, Name: await enc("Example"), Notes: await enc(""), Favorite: false, RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Fido2Credentials: [{ CredentialId: await enc("credential-id"), KeyAlgorithm: await enc("RSA"), KeyValue: await enc("private-key"), RpId: await enc("example.com"), RpName: await enc("Example"), Counter: await enc("0"), UserHandle: await enc("user"), UserName: await enc("joy"), UserDisplayName: await enc("Joy"), Discoverable: await enc("true"), CreationDate: await enc(REVISION) }] }
+    }, "provider-1", KEY);
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({ kind: "passkey", algorithm: -257, sourceMode: "bitwarden" });
+  });
+
+  it("fails closed when FIDO2 KeyAlgorithm is empty or unknown", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const base = {
+      Type: 1, Name: await enc("Example"), Notes: await enc(""), Favorite: false, RevisionDate: REVISION, CreationDate: REVISION
+    };
+    const fields = {
+      KeyValue: await enc("private-key"), RpId: await enc("example.com"), RpName: await enc("Example"), Counter: await enc("0"),
+      UserHandle: await enc("user"), UserName: await enc("joy"), UserDisplayName: await enc("Joy"), Discoverable: await enc("true"), CreationDate: await enc(REVISION)
+    };
+    const empty = await decodeBitwardenCipher({
+      ...base, Id: "cipher-empty-alg",
+      Login: { Fido2Credentials: [{ CredentialId: await enc("empty"), KeyAlgorithm: await enc(""), ...fields }] }
+    }, "provider-1", KEY);
+    const unknown = await decodeBitwardenCipher({
+      ...base, Id: "cipher-unknown-alg",
+      Login: { Fido2Credentials: [{ CredentialId: await enc("unknown"), KeyAlgorithm: await enc("FUTURE-ALG"), ...fields }] }
+    }, "provider-1", KEY);
+    expect(empty.items.find((item) => item.kind === "passkey")).toMatchObject({ algorithm: -257 });
+    expect(unknown.items.find((item) => item.kind === "passkey")).toMatchObject({ algorithm: -257 });
+  });
+
   it("round-trips supported personal and organization Cipher types", async () => {
     const base = { favorite: false, notes: "notes", createdAt: REVISION, updatedAt: REVISION, providerRefs: [{ providerId: "provider-1" }] };
     const items: Array<LoginItem | CardItem | IdentityItem | SecureNoteItem> = [
@@ -183,7 +213,7 @@ describe("Bitwarden Cipher codec", () => {
       }] }
     };
     const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
-    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({ algorithm: 0, keyAlgorithm: "FUTURE-999" });
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({ algorithm: -257, keyAlgorithm: "FUTURE-999" });
     await expect(encodeBitwardenPasskeyCipher(decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")!, KEY, raw)).rejects.toThrow("ES256");
   });
 

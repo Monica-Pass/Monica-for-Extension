@@ -167,16 +167,20 @@ export class SecureVaultService {
     });
   }
 
-  async exportEncryptedBackup(): Promise<EncryptedVaultBackup> {
+  async exportEncryptedBackup(backupPassword: string): Promise<EncryptedVaultBackup> {
     return this.runExclusive(async () => {
       const { envelope, key } = await this.unlockedContext();
       const state = await decryptVaultState(envelope, key);
+      validateMasterPassword(backupPassword);
+      // A vault envelope can be tied to a device-local key.  Backups always get
+      // their own password-derived envelope so they can be restored elsewhere.
+      const backup = await deriveVaultKey(backupPassword);
       await this.touchSession(state.settings.autoLockMinutes);
       return {
         magic: "MONICA_EXTENSION_BACKUP",
         version: 1,
         exportedAt: new Date(this.now()).toISOString(),
-        envelope: structuredClone(envelope)
+        envelope: await encryptVaultState(state, backup.key, backup.kdf)
       };
     });
   }
@@ -200,6 +204,11 @@ export class SecureVaultService {
         throw new VaultUnlockError();
       }
 
+      // New exports are always password-derived. A restored device-key vault
+      // must therefore become a password-protected local vault rather than
+      // advertising a device key that does not exist on this installation.
+      if (backup.envelope.kdf.name !== "DEVICE-KEY") restoredState.settings.protectionMode = "master-password";
+
       if (existing) {
         try {
           const currentKey = existing.kdf.name === "DEVICE-KEY" ? await this.deviceKey(existing.kdf) : (await deriveVaultKey(options.currentPassword || "", existing.kdf)).key;
@@ -210,6 +219,9 @@ export class SecureVaultService {
       }
 
       let restoredEnvelope = structuredClone(backup.envelope);
+      if (backup.envelope.kdf.name !== "DEVICE-KEY") {
+        restoredEnvelope = await encryptVaultState(restoredState, backupKey, restoredEnvelope.kdf);
+      }
       if (restoredEnvelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(restoredEnvelope.kdf)) {
         try {
           const upgraded = await deriveVaultKey(backupPassword);
@@ -224,7 +236,7 @@ export class SecureVaultService {
         await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
       } catch {
         await this.sessions.clear();
-        throw new Error("加密备份已恢复，但无法继续当前会话；请使用备份主密码重新解锁。");
+        throw new Error("加密备份已恢复，但无法继续当前会话；请使用备份密码重新解锁。");
       }
       return restoredState;
     });
@@ -300,30 +312,67 @@ export class SecureVaultService {
     });
   }
 
-  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>, conflicts: ProviderConflictInput[] = [], sourceRecords?: ProviderSourceRecord[]): Promise<void> {
+  async applyProviderSync(providerId: string, items: VaultItem[], accountPatch?: Partial<ProviderAccount>, conflicts: ProviderConflictInput[] = [], sourceRecords?: ProviderSourceRecord[], syncSnapshot?: VaultItem[]): Promise<{ conflicts: number }> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
     const detectedAt = new Date(this.now()).toISOString();
-    const persistedConflicts: ProviderConflict[] = conflicts.slice(0, 500).map((conflict) => ({
+    const merge = syncSnapshot ? mergeProviderSyncItems(providerId, syncSnapshot, state.items, items) : { items, conflicts: [] as ProviderConflictInput[], locallyChangedIds: new Set<string>(), confirmedMutationIds: new Set<string>() };
+    const persistedConflicts: ProviderConflict[] = [...conflicts, ...merge.conflicts].slice(0, 500).map((conflict) => ({
       ...structuredClone(conflict),
       id: crypto.randomUUID(),
       providerId,
       detectedAt
     }));
     const globalConflict = persistedConflicts.find((conflict) => conflict.itemId === providerId || !conflict.local && !conflict.remote);
-    state.items = items;
+    state.items = merge.items;
     state.mutationQueue = state.mutationQueue.flatMap((mutation): PendingMutation[] => {
       if (mutation.providerId !== providerId) return [mutation];
+      if (merge.confirmedMutationIds.has(mutation.itemId)) return [];
       const conflict = globalConflict || persistedConflicts.find((candidate) => candidate.itemId === mutation.itemId);
-      return conflict ? [{ ...mutation, lastError: conflict.reason }] : [];
+      // A mutation made after the adapter took its snapshot was not acknowledged
+      // by this sync, even if the remote response otherwise looks successful.
+      if (conflict) return [{ ...mutation, lastError: conflict.reason }];
+      if (!merge.locallyChangedIds.has(mutation.itemId)) return [];
+      const mergedItem = merge.items.find((item) => item.id === mutation.itemId);
+      const reference = mergedItem?.providerRefs.find((candidate) => candidate.providerId === providerId);
+      // Create-in-flight + local delete must become a remote delete once the
+      // adapter has issued a remoteId; never promote a deleted item to update.
+      if (mergedItem?.deletedAt && reference?.remoteId) {
+        return [{ ...mutation, operation: "delete" }];
+      }
+      return [{ ...mutation, operation: mutation.operation === "create" && reference?.remoteId ? "update" : mutation.operation }];
     });
+    // Local delete during create cancels the create mutation before a remoteId
+    // exists. Once acknowledgement attaches that remoteId, re-queue delete so
+    // the remote copy is removed instead of being left orphaned.
+    for (const item of merge.items) {
+      if (!item.deletedAt || !merge.locallyChangedIds.has(item.id)) continue;
+      const reference = item.providerRefs.find((candidate) => candidate.providerId === providerId);
+      if (!reference?.remoteId) continue;
+      if (state.mutationQueue.some((mutation) => mutation.providerId === providerId && mutation.itemId === item.id)) continue;
+      state.mutationQueue = [...state.mutationQueue, {
+        id: crypto.randomUUID(),
+        providerId,
+        itemId: item.id,
+        operation: "delete",
+        createdAt: detectedAt,
+        attempts: 0
+      }];
+    }
     state.providerConflicts = [...state.providerConflicts.filter((conflict) => conflict.providerId !== providerId), ...persistedConflicts];
-    state.providers = state.providers.map((candidate) => (candidate.id === providerId ? { ...candidate, ...accountPatch, id: candidate.id, kind: candidate.kind } : candidate));
+    state.providers = state.providers.map((candidate) => candidate.id === providerId ? {
+      ...candidate,
+      ...accountPatch,
+      id: candidate.id,
+      kind: candidate.kind,
+      lastError: persistedConflicts.length ? `发现 ${persistedConflicts.length} 个同步冲突。` : accountPatch?.lastError
+    } : candidate);
     if (sourceRecords) replaceProviderSourceRecords(state, providerId, sourceRecords);
     state.updatedAt = new Date(this.now()).toISOString();
     await this.persist(state, key, envelope.kdf);
+    return { conflicts: persistedConflicts.length };
     });
   }
 
@@ -465,19 +514,30 @@ export class SecureVaultService {
         throw new Error("导入项目引用了当前密码库中不存在的密码源。");
       }
       const now = new Date(this.now()).toISOString();
+      const existingById = new Map(state.items.map((item) => [item.id, item]));
+      const replacements = new Map<string, VaultItem>();
+      const additions: VaultItem[] = [];
       const committed: VaultItem[] = [];
+      const providersById = new Map(state.providers.map((provider) => [provider.id, provider]));
+      const queuedByProviderItem = new Map(state.mutationQueue.map((mutation) => [`${mutation.providerId}\u0000${mutation.itemId}`, mutation]));
       for (const item of imported) {
-        const existing = state.items.find((candidate) => candidate.id === item.id);
+        const existing = existingById.get(item.id);
         const normalized = {
           ...item,
           createdAt: existing?.createdAt || item.createdAt || now,
           updatedAt: now,
           providerRefs: item.providerRefs || []
         } as VaultItem;
-        state.items = existing ? state.items.map((candidate) => candidate.id === item.id ? normalized : candidate) : [normalized, ...state.items];
-        queueProviderMutations(state, normalized, existing ? "update" : "create", now);
+        if (existing) replacements.set(item.id, normalized);
+        else additions.push(normalized);
+        queueImportedProviderMutations(normalized, providersById, queuedByProviderItem, now);
         committed.push(normalized);
       }
+
+      // Preserve the previous per-item prepend semantics for new imports while
+      // replacing existing records in place without repeated array rebuilds.
+      state.items = [...additions.reverse(), ...state.items.map((item) => replacements.get(item.id) || item)];
+      state.mutationQueue = [...queuedByProviderItem.values()];
       state.updatedAt = now;
       await this.persist(state, key, envelope.kdf);
       return committed;
@@ -612,6 +672,124 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
     const queued: PendingMutation = { id: existing?.id || crypto.randomUUID(), providerId: provider.id, itemId: item.id, operation: nextOperation, createdAt: existing?.createdAt || now, attempts: existing?.attempts || 0 };
     state.mutationQueue = existing ? state.mutationQueue.map((mutation) => mutation === existing ? queued : mutation) : [...state.mutationQueue, queued];
   }
+}
+
+function queueImportedProviderMutations(
+  item: VaultItem,
+  providersById: Map<string, ProviderAccount>,
+  queuedByProviderItem: Map<string, PendingMutation>,
+  now: string
+): void {
+  for (const reference of item.providerRefs) {
+    const provider = providersById.get(reference.providerId);
+    if (!provider || provider.kind === "local") continue;
+    const key = `${provider.id}\u0000${item.id}`;
+    const existing = queuedByProviderItem.get(key);
+    queuedByProviderItem.set(key, {
+      id: existing?.id || crypto.randomUUID(),
+      providerId: provider.id,
+      itemId: item.id,
+      operation: reference.remoteId ? "update" : "create",
+      createdAt: existing?.createdAt || now,
+      attempts: existing?.attempts || 0
+    });
+  }
+}
+
+function mergeProviderSyncItems(
+  providerId: string,
+  snapshot: VaultItem[],
+  current: VaultItem[],
+  remote: VaultItem[]
+): { items: VaultItem[]; conflicts: ProviderConflictInput[]; locallyChangedIds: Set<string>; confirmedMutationIds: Set<string> } {
+  const snapshotById = new Map(snapshot.map((item) => [item.id, item]));
+  const currentById = new Map(current.map((item) => [item.id, item]));
+  const remoteById = new Map(remote.map((item) => [item.id, item]));
+  const ids = new Set([...snapshotById.keys(), ...currentById.keys(), ...remoteById.keys()]);
+  const replacementById = new Map<string, VaultItem | undefined>();
+  const conflicts: ProviderConflictInput[] = [];
+  const locallyChangedIds = new Set<string>();
+  const confirmedMutationIds = new Set<string>();
+
+  for (const id of ids) {
+    const before = snapshotById.get(id);
+    const local = currentById.get(id);
+    const incoming = remoteById.get(id);
+    const localChanged = !sameVaultItem(local, before);
+    const remoteChanged = !sameVaultItem(incoming, before);
+    if (localChanged) locallyChangedIds.add(id);
+
+    if (!before) {
+      if (!local && incoming) replacementById.set(id, incoming);
+      else if (local && incoming && !sameVaultItem(local, incoming) && referencesProvider(providerId, local, incoming)) {
+        conflicts.push({ itemId: id, reason: "同步期间本地和远端同时新增了同一项目。", local, remote: incoming });
+      }
+      continue;
+    }
+    // The adapter has observed our delete: neither side needs to retain a
+    // tombstone or a pending delete mutation.
+    if (local?.deletedAt && !incoming) {
+      replacementById.set(id, undefined);
+      locallyChangedIds.delete(id);
+      confirmedMutationIds.add(id);
+      continue;
+    }
+    // Local delete during create: attach the newly issued remote ID so the
+    // remaining mutation becomes a remote delete, never an update that revives it.
+    if (local?.deletedAt && incoming && isRemoteReferenceAcknowledgement(providerId, before, incoming)) {
+      replacementById.set(id, withProviderReference(local, incoming, providerId));
+      continue;
+    }
+    // A create acknowledgement may add a remote ID/revision while the user is
+    // editing the local item. Keep the Monica ID and local payload stable, but
+    // attach the remote reference so the remaining mutation becomes an update.
+    if (local && !local.deletedAt && incoming && isRemoteReferenceAcknowledgement(providerId, before, incoming)) {
+      replacementById.set(id, withProviderReference(local, incoming, providerId));
+      continue;
+    }
+    if (local && !local.deletedAt && !incoming) {
+      conflicts.push({ itemId: id, reason: "此项目已在远端删除，但浏览器中仍保留本地版本。", local });
+      continue;
+    }
+    if (!localChanged) {
+      if (remoteChanged) replacementById.set(id, incoming);
+      continue;
+    }
+    if (remoteChanged && !sameVaultItem(local, incoming) && referencesProvider(providerId, before, local, incoming)) {
+      conflicts.push({ itemId: id, reason: "同步期间本地和远端同时修改了同一项目。", local, remote: incoming });
+    }
+  }
+
+  const merged = current.flatMap((item): VaultItem[] => {
+    if (!replacementById.has(item.id)) return [item];
+    const replacement = replacementById.get(item.id);
+    return replacement ? [replacement] : [];
+  });
+  for (const item of remote) if (!currentById.has(item.id) && replacementById.get(item.id) === item) merged.push(item);
+  return { items: merged, conflicts, locallyChangedIds, confirmedMutationIds };
+}
+
+function isRemoteReferenceAcknowledgement(providerId: string, before: VaultItem, incoming: VaultItem): boolean {
+  const previous = before.providerRefs.find((reference) => reference.providerId === providerId);
+  const acknowledged = incoming.providerRefs.find((reference) => reference.providerId === providerId);
+  return Boolean(!previous?.remoteId && acknowledged?.remoteId);
+}
+
+function withProviderReference(local: VaultItem, incoming: VaultItem, providerId: string): VaultItem {
+  const reference = incoming.providerRefs.find((candidate) => candidate.providerId === providerId);
+  if (!reference) return local;
+  return {
+    ...local,
+    providerRefs: [...local.providerRefs.filter((candidate) => candidate.providerId !== providerId), structuredClone(reference)]
+  } as VaultItem;
+}
+
+function sameVaultItem(left: VaultItem | undefined, right: VaultItem | undefined): boolean {
+  return left === right || Boolean(left && right) && JSON.stringify(left) === JSON.stringify(right);
+}
+
+function referencesProvider(providerId: string, ...items: Array<VaultItem | undefined>): boolean {
+  return items.some((item) => item?.providerRefs.some((reference) => reference.providerId === providerId));
 }
 
 function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {
