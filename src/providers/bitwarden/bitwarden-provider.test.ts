@@ -243,6 +243,43 @@ describe("Bitwarden provider", () => {
     expect(result.items.find((candidate) => candidate.kind === "passkey")?.providerRefs[0]).toMatchObject({ remoteId: "passkey-cipher#fido2:new-credential", revision: "2026-07-15T05:05:00.000Z" });
   });
 
+  it("preserves the Monica Passkey identity through create update and child-only delete", async () => {
+    let remote: Record<string, unknown> | undefined;
+    let putCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: remote ? [remote] : [] });
+      if (init?.method === "POST") {
+        remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), id: "stable-passkey-cipher", revisionDate: "2026-07-15T05:10:00.000Z", creationDate: OLD_REVISION };
+        return json(remote);
+      }
+      if (init?.method === "PUT") {
+        putCount += 1;
+        remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), id: "stable-passkey-cipher", revisionDate: `2026-07-15T05:1${putCount}:00.000Z`, creationDate: OLD_REVISION };
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const local = localPasskey("stable-credential");
+
+    const created = await provider.sync(account(), { now: "2026-07-15T05:10:30.000Z", localItems: [local] });
+    expect(created.conflicts).toEqual([]);
+    expect(created.items.find((item) => item.kind === "passkey")?.id).toBe(local.id);
+
+    const usedAt = "2026-07-15T05:10:45.000Z";
+    const used = created.items.map((item) => item.kind === "passkey" ? { ...item, useCount: 1, lastUsedAt: usedAt, updatedAt: usedAt } : item) as VaultItem[];
+    const updated = await provider.sync(account(), { now: "2026-07-15T05:11:30.000Z", localItems: used });
+    const updatedPasskey = updated.items.find((item): item is PasskeyItem => item.kind === "passkey")!;
+    expect(updated.conflicts).toEqual([]);
+    expect(updatedPasskey).toMatchObject({ id: local.id, useCount: 1, lastUsedAt: usedAt, publicKey: local.publicKey });
+
+    const deleted = updated.items.map((item) => item.kind === "passkey" ? { ...item, deletedAt: "2026-07-15T05:11:45.000Z", updatedAt: "2026-07-15T05:11:45.000Z" } : item) as VaultItem[];
+    const afterDelete = await provider.sync(account(), { now: "2026-07-15T05:12:30.000Z", localItems: deleted });
+    expect(afterDelete.conflicts).toEqual([]);
+    expect(afterDelete.items.map((item) => item.kind)).toEqual(["login"]);
+    expect(putCount).toBe(2);
+  });
+
   it("coalesces login and Passkey changes for the same Cipher into one update", async () => {
     let remote = await loginCipher("initial", OLD_REVISION, [await fidoCredential("credential-1", 3)]);
     let putCount = 0;

@@ -479,7 +479,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         name: request.input.name.trim() || request.input.fileName || "KeePass 数据库",
         enabled: true,
         isDefaultSaveTarget: Boolean(request.input.isDefaultSaveTarget),
-        config: { ...existing?.config, fileName: request.input.fileName },
+        config: {
+          ...existing?.config,
+          fileName: request.input.fileName,
+          protectionMode: request.input.keyFile
+            ? request.input.password ? "password-and-key-file" : "key-file"
+            : request.input.password ? "password" : "empty"
+        },
         lastSyncAt: existing?.lastSyncAt,
         lastError: undefined
       };

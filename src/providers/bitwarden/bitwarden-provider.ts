@@ -95,7 +95,7 @@ export class BitwardenProvider implements ProviderAdapter {
       }
       const changes = locals.filter((item) => itemChanged(item, account.id));
       if (!changes.length) {
-        merged.push(...remotes);
+        merged.push(...rebaseRemoteItems(remotes, locals));
         continue;
       }
       const concurrent = changes.flatMap((local) => {
@@ -131,7 +131,7 @@ export class BitwardenProvider implements ProviderAdapter {
         session = updated.session;
         const decoded = await decodeBitwardenCipher(updated.payload, account.id, ownerKey);
         if (!decoded.items.length) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
-        merged.push(...decoded.items);
+        merged.push(...rebaseRemoteItems(decoded.items, locals));
       } catch (error) {
         for (const local of changes) conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote: findEquivalent(local, remotes) });
         merged.push(...locals);
@@ -297,6 +297,36 @@ function itemChanged(item: VaultItem, providerId: string): boolean {
 function findEquivalent(local: VaultItem, remotes: VaultItem[]): VaultItem | undefined {
   if (local.kind === "passkey") return remotes.find((remote) => remote.kind === "passkey" && remote.credentialId === local.credentialId);
   return remotes.find((remote) => remote.kind === local.kind);
+}
+
+/**
+ * A Bitwarden FIDO2 credential is a child of its login Cipher, so decoding a server response derives a
+ * fresh deterministic item ID. Monica may already have assigned a different local ID when that Passkey
+ * was created in the browser. Preserve that identity across every later sync or the secure-vault merge
+ * sees one deletion plus one insertion, duplicates the credential, and a later delete becomes a false
+ * concurrent-edit conflict.
+ */
+function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[]): VaultItem[] {
+  return remotes.map((remote) => {
+    const local = locals.find((candidate) => Boolean(findEquivalent(candidate, [remote])));
+    if (!local) return remote;
+    if (local.kind === "passkey" && remote.kind === "passkey") {
+      return {
+        ...remote,
+        id: local.id,
+        publicKey: remote.publicKey || local.publicKey,
+        userVerificationRequired: local.userVerificationRequired,
+        transports: local.transports,
+        aaguid: local.aaguid,
+        lastUsedAt: local.lastUsedAt,
+        useCount: local.useCount,
+        iconUrl: local.iconUrl,
+        boundPasswordId: local.boundPasswordId,
+        passkeyMode: local.passkeyMode
+      };
+    }
+    return { ...remote, id: local.id } as VaultItem;
+  });
 }
 
 function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {

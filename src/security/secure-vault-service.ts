@@ -660,6 +660,18 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
       }
     };
   }
+  if (provider.kind === "keepass") {
+    const protectionMode = stringConfig(provider, "protectionMode");
+    return {
+      ...safe,
+      config: {
+        fileName: stringConfig(provider, "fileName") || undefined,
+        protectionMode: ["password", "key-file", "password-and-key-file", "empty"].includes(protectionMode)
+          ? protectionMode
+          : undefined
+      }
+    };
+  }
   return { ...safe, config: {} };
 }
 

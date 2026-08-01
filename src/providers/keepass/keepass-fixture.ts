@@ -1,6 +1,11 @@
 import * as kdbxweb from "kdbxweb";
 import { installKdbxCryptoEngine } from "./keepass-crypto";
 
+// Playwright loads kdbxweb through Node's CJS interop, where the public classes live on `default`;
+// Vite/Vitest expose the same object as the namespace. Keeping the test-only fixture bilingual avoids
+// baking a generated KDBX file into the repository and does not affect the provider bundle.
+const kdbxRuntime = ((kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb);
+
 /**
  * Test fixtures are built here with kdbxweb rather than exported from the Android project: the Android
  * repository is read-only for this work, so no fixture may be produced by modifying or running it.
@@ -30,11 +35,11 @@ export interface KeePassFixtureOptions {
 
 export function keePassCredentials(password: string | null | undefined, keyFile?: Uint8Array): kdbxweb.Credentials {
   installKdbxCryptoEngine();
-  const credentials = new kdbxweb.Credentials(
-    password === null || password === undefined ? null : kdbxweb.ProtectedValue.fromString(password)
+  const credentials = new kdbxRuntime.Credentials(
+    password === null || password === undefined ? null : kdbxRuntime.ProtectedValue.fromString(password)
   );
   // Installed directly so kdbxweb does not re-interpret the bytes as an XML or hex key file.
-  if (keyFile) credentials.keyFileHash = kdbxweb.ProtectedValue.fromBinary(keyFile.slice().buffer);
+  if (keyFile) credentials.keyFileHash = kdbxRuntime.ProtectedValue.fromBinary(keyFile.slice().buffer);
   return credentials;
 }
 
@@ -43,11 +48,11 @@ function useTestKdfParameters(db: kdbxweb.Kdbx): void {
   const parameters = db.header.kdfParameters;
   if (!parameters) return;
   if (parameters.get("M") !== undefined) {
-    parameters.set("M", kdbxweb.VarDictionary.ValueType.UInt64, new kdbxweb.Int64(1024 * 64));
-    parameters.set("I", kdbxweb.VarDictionary.ValueType.UInt64, new kdbxweb.Int64(1));
-    parameters.set("P", kdbxweb.VarDictionary.ValueType.UInt32, 1);
+    parameters.set("M", kdbxRuntime.VarDictionary.ValueType.UInt64, new kdbxRuntime.Int64(1024 * 64));
+    parameters.set("I", kdbxRuntime.VarDictionary.ValueType.UInt64, new kdbxRuntime.Int64(1));
+    parameters.set("P", kdbxRuntime.VarDictionary.ValueType.UInt32, 1);
   } else if (parameters.get("R") !== undefined) {
-    parameters.set("R", kdbxweb.VarDictionary.ValueType.UInt64, new kdbxweb.Int64(1000));
+    parameters.set("R", kdbxRuntime.VarDictionary.ValueType.UInt64, new kdbxRuntime.Int64(1000));
   }
 }
 
@@ -57,10 +62,10 @@ export async function buildKeePassFixture(options: KeePassFixtureOptions = {}): 
     options.password === undefined ? "fixture master password" : options.password,
     options.keyFile
   );
-  const db = kdbxweb.Kdbx.create(credentials, options.name ?? "Monica Fixture");
+  const db = kdbxRuntime.Kdbx.create(credentials, options.name ?? "Monica Fixture");
   db.setVersion(options.version ?? 4);
-  if (options.kdf === "aes") db.setKdf(kdbxweb.Consts.KdfId.Aes);
-  else if (options.kdf === "argon2id") db.setKdf(kdbxweb.Consts.KdfId.Argon2id);
+  if (options.kdf === "aes") db.setKdf(kdbxRuntime.Consts.KdfId.Aes);
+  else if (options.kdf === "argon2id") db.setKdf(kdbxRuntime.Consts.KdfId.Argon2id);
   useTestKdfParameters(db);
 
   const root = db.getDefaultGroup();
@@ -78,7 +83,7 @@ export async function buildKeePassFixture(options: KeePassFixtureOptions = {}): 
     entry.fields.set("Title", fixture.title);
     for (const [name, value] of Object.entries(fixture.fields ?? {})) entry.fields.set(name, value);
     for (const [name, value] of Object.entries(fixture.protectedFields ?? {})) {
-      entry.fields.set(name, kdbxweb.ProtectedValue.fromString(value));
+      entry.fields.set(name, kdbxRuntime.ProtectedValue.fromString(value));
     }
     for (const [name, value] of Object.entries(fixture.binaries ?? {})) {
       entry.binaries.set(name, await db.createBinary(value.slice().buffer));

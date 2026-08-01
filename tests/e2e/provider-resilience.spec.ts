@@ -1,6 +1,7 @@
 import { chromium, expect, test, type BrowserContext, type Download, type Page, type Route, type TestInfo } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
 import path from "node:path";
+import { buildKeePassFixture } from "../../src/providers/keepass/keepass-fixture";
 
 const BACKUP_NAME = "monica_backup_20260715_140000_browser.zip";
 const BACKUP_PATH = `folders/_root/passwords/password_42_1700000000000.json`;
@@ -157,6 +158,87 @@ test("Android WebDAV backup encryption password is optional and has no minimum l
 
     const configuredProviders = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "PROVIDER_LIST" })) as { ok: boolean; data?: Array<{ id: string; config: { backupPasswordConfigured?: boolean } }> };
     expect(configuredProviders.data?.find((provider) => provider.id === short.data!.id)?.config.backupPasswordConfigured).toBe(true);
+  } finally {
+    await context?.close();
+  }
+});
+
+test("KeePass UI unlocks with an empty password and key file, exposes dirty state, exports, and locks", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo);
+    context = launched.context;
+    const keyFile = Uint8Array.from({ length: 32 }, (_, index) => (index * 17 + 9) & 0xff);
+    const database = await buildKeePassFixture({
+      password: null,
+      keyFile,
+      name: "Key File Fixture",
+      entries: [{
+        title: "KeePass imported login",
+        fields: { UserName: "joy@example.com", URL: "https://keepass.example.test" },
+        protectedFields: { Password: "fixture-secret" }
+      }]
+    });
+
+    await launched.manager.getByRole("button", { name: "密码源" }).click();
+    await launched.manager.getByRole("button", { name: "打开 KeePass 文件" }).click();
+    const dialog = launched.manager.getByRole("dialog", { name: "打开 KeePass 文件" });
+    await dialog.getByLabel("KeePass 数据库文件").setInputFiles({ name: "key-file-fixture.kdbx", mimeType: "application/octet-stream", buffer: Buffer.from(database) });
+    await dialog.getByLabel("KeePass 密钥文件").setInputFiles({ name: "fixture.key", mimeType: "application/octet-stream", buffer: Buffer.from(keyFile) });
+    await expect(dialog.getByText("仅密钥文件", { exact: true })).toBeVisible();
+    await dialog.getByLabel("显示名称").fill("KeePass Key File");
+    await dialog.getByRole("button", { name: "解锁并连接" }).click();
+
+    const card = launched.manager.locator("m3e-card.source-card").filter({ has: launched.manager.getByRole("heading", { name: "KeePass Key File" }) });
+    await expect(card.getByText("已解锁", { exact: true })).toBeVisible();
+    await expect(card.getByText("仅密钥文件", { exact: true })).toBeVisible();
+    await expect(card.getByText("Twofish KDBX", { exact: false })).toBeVisible();
+
+    const providerResponse = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "PROVIDER_LIST" })) as { ok: boolean; data?: Array<{ id: string; name: string; config: Record<string, unknown> }> };
+    const provider = providerResponse.data?.find((candidate) => candidate.name === "KeePass Key File");
+    expect(provider).toBeTruthy();
+    expect(provider?.config).toMatchObject({ fileName: "key-file-fixture.kdbx", protectionMode: "key-file" });
+    expect(JSON.stringify(provider?.config)).not.toContain("fixture-secret");
+    expect(JSON.stringify(provider?.config)).not.toContain(Buffer.from(keyFile).toString("base64"));
+
+    await card.getByRole("button", { name: "立即同步" }).click();
+    await expect.poll(async () => (await listItems(launched.manager)).some((item) => item.title === "KeePass imported login")).toBe(true);
+
+    const now = new Date().toISOString();
+    const created = {
+      id: "keepass-browser-created",
+      kind: "login",
+      title: "Browser-created KeePass login",
+      favorite: false,
+      notes: "",
+      createdAt: now,
+      updatedAt: now,
+      providerRefs: [{ providerId: provider!.id }],
+      username: "browser-user",
+      password: "browser-secret",
+      uris: ["https://created.example.test"],
+      customFields: []
+    };
+    expect(await launched.manager.evaluate(async (item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), created)).toMatchObject({ ok: true });
+    await card.getByRole("button", { name: "立即同步" }).click();
+    await expect(card.getByText("有尚未导出的 KDBX 修改", { exact: true })).toBeVisible();
+
+    const downloadPromise = launched.manager.waitForEvent("download");
+    await card.getByRole("button", { name: "导出 KDBX" }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("key-file-fixture.kdbx");
+    const stream = await download.createReadStream();
+    let downloadedBytes = 0;
+    for await (const chunk of stream) downloadedBytes += Buffer.byteLength(chunk);
+    expect(downloadedBytes).toBeGreaterThan(100);
+    await expect(card.getByText("有尚未导出的 KDBX 修改", { exact: true })).toHaveCount(0);
+
+    await card.getByRole("button", { name: "锁定", exact: true }).click();
+    await expect(card.getByText("已锁定", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "立即同步" })).toBeDisabled();
+    const status = await launched.manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "KEEPASS_STATUS", providerId }), provider!.id) as { ok: boolean; data?: unknown };
+    expect(status.ok).toBe(true);
+    expect(status.data).toBeUndefined();
   } finally {
     await context?.close();
   }

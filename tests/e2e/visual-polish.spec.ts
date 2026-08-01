@@ -23,12 +23,17 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await page.reload();
 
     await page.getByRole("button", { name: "密码源" }).click();
-    await expect(page.locator(".provider-connect-grid .connect-source")).toHaveCount(2);
+    const connectionButtons = page.locator(".provider-connect-grid .connect-source");
+    await expect(connectionButtons).toHaveCount(3);
     await expect(page.locator(".provider-config-card")).toHaveCount(0);
     await expect(page.locator(".provider-list .source-card")).toHaveCount(1);
     expect((await page.locator(".provider-page").boundingBox())!.width).toBeLessThanOrEqual(820);
+    const [webDavBox, keePassBox, bitwardenBox] = await Promise.all([connectionButtons.nth(0).boundingBox(), connectionButtons.nth(1).boundingBox(), connectionButtons.nth(2).boundingBox()]);
+    expect(webDavBox!.width).toBeGreaterThan(keePassBox!.width);
+    expect(Math.abs(keePassBox!.width - bitwardenBox!.width)).toBeLessThanOrEqual(1);
     await expectCentered(page.locator(".source-icon").first(), page.locator(".source-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").first(), page.locator(".connect-icon m3e-icon").first());
+    await expectCentered(page.locator(".connect-icon").nth(1), page.locator(".connect-icon m3e-icon").nth(1));
     await expectRoundedAndClipped(page.locator(".connect-source-card").first());
     await expectRoundedAndClipped(page.locator(".provider-list .source-card").first());
     await expectAllRoundedAndClipped(page.locator("main m3e-card"));

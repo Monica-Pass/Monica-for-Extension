@@ -127,6 +127,8 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
     await expect(popup.getByText("仅兼容保留，不能登录", { exact: true })).toBeVisible();
     await expect(popup.getByRole("button", { name: /Ready parent account/ })).toHaveCount(0);
     expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 375, scroll: 375 });
+    await popup.setViewportSize({ width: 500, height: 667 });
+    expect(await popup.locator(".popup-shell").evaluate((element) => element.getBoundingClientRect().width)).toBe(390);
   } finally {
     await context?.close();
   }

@@ -106,6 +106,22 @@ describe("encrypted vault", () => {
     });
     expect(returned.config).toMatchObject({ vaultUrl: "https://vault.bitwarden.com", email: "joy@example.com", authenticated: true });
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/bitwarden-access-secret|bitwarden-refresh-secret|vault-key-secret/);
+
+    const keePass = await service.upsertProvider({
+      id: "keepass-1",
+      kind: "keepass",
+      name: "KeePass",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {
+        fileName: "personal.kdbx",
+        protectionMode: "password-and-key-file",
+        password: "keepass-password-secret",
+        keyFile: "keepass-key-secret"
+      }
+    });
+    expect(keePass.config).toEqual({ fileName: "personal.kdbx", protectionMode: "password-and-key-file" });
+    expect(JSON.stringify(await service.listProviders())).not.toMatch(/keepass-password-secret|keepass-key-secret/);
   });
 
   it("accepts four-character master passwords and rejects shorter values", async () => {

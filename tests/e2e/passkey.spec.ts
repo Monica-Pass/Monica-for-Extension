@@ -203,7 +203,9 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
     expect(postCount).toBe(1);
     let synced = await listVaultItems(manager);
-    expect(synced.map((item) => item.kind)).toEqual(["login", "passkey"]);
+    // Provider sync preserves the position of the locally created Passkey and appends the sibling
+    // login decoded from the same Bitwarden Cipher. Item order is UI history, not a codec contract.
+    expect(synced.map((item) => item.kind).sort()).toEqual(["login", "passkey"]);
     const syncedPasskey = synced.find((item) => item.kind === "passkey")!;
     expect(syncedPasskey).toMatchObject({ sourceMode: "bitwarden", signCount: 0, providerRefs: [{ remoteId: expect.stringContaining("#fido2:") }] });
 
