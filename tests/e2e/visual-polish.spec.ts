@@ -79,6 +79,75 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
   } finally { await context?.close(); }
 });
 
+test("MDBX2 conflict manager is flat explicit and usable at 375px with large text", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-conflict-polish-profile"), { channel: "chromium", headless: true, colorScheme: "dark", viewport: { width: 375, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 conflict visual password" }))).toMatchObject({ ok: true });
+    await page.addInitScript(() => {
+      const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: { type?: string }) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+      let conflictResolved = false;
+      Object.defineProperty(chrome.runtime, "sendMessage", {
+        configurable: true,
+        value: async (message: { type?: string; choice?: "local-wins" | "incoming-wins" }) => {
+          if (message.type === "PROVIDER_LIST") {
+            const response = await originalSend(message);
+            if (!response.ok || !Array.isArray(response.data)) return response;
+            return { ok: true, data: [...response.data, { id: "mdbx2-conflict-demo", kind: "mdbx2", name: "冲突演示库", enabled: true, isDefaultSaveTarget: false, config: { remotePath: "Monica/MDBX2/demo.mdbx", schemaVersion: 2, webDavBaseUrl: "https://dav.example.test", webDavUsername: "demo", webDavPasswordConfigured: true } }] };
+          }
+          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
+          if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
+          if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: conflictResolved, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 3 } };
+          if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: conflictResolved ? [] : [{ conflictId: "22222222-2222-4222-8222-222222222222", objectType: "entry", objectId: "33333333-3333-4333-8333-333333333333", displayTitle: "工作账号", contentType: "login", conflictingFields: ["title_ct", "payload", "project_id"], createdAt: "2026-08-02T00:00:00Z" }] } };
+          if (message.type === "MDBX2_CONFLICT_RESOLVE") {
+            conflictResolved = true;
+            return { ok: true, data: { resolved: true, alreadyResolved: false, conflictId: "22222222-2222-4222-8222-222222222222", objectType: "entry", objectId: "33333333-3333-4333-8333-333333333333", choice: message.choice, resolvedAt: "2026-08-02T00:01:00Z" } };
+          }
+          return originalSend(message);
+        }
+      });
+    });
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: "密码源" }).click();
+    await page.getByRole("button", { name: "管理 MDBX2" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "管理 冲突演示库" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /工作账号/ })).toBeVisible();
+    await expect(dialog).not.toContainText("22222222-2222-4222-8222-222222222222");
+    await expect(dialog).not.toContainText("33333333-3333-4333-8333-333333333333");
+    const panel = dialog.locator(".mdbx2-conflict-panel");
+    await expect(panel).toHaveCSS("border-radius", "8px");
+    await expect(panel).toHaveCSS("background-image", "none");
+    await expectCentered(dialog.locator(".mdbx2-conflict-icon"), dialog.locator(".mdbx2-conflict-icon m3e-icon"));
+    const closeButton = dialog.getByRole("button", { name: "关闭 MDBX2 设置" });
+    const closeIcon = closeButton.locator("m3e-icon");
+    await expect(closeButton).toHaveCSS("width", "44px");
+    await expect(closeButton).toHaveCSS("height", "44px");
+    await expect(closeIcon).toHaveCSS("font-size", "20px");
+    await expectCentered(closeButton, closeIcon);
+
+    const conflictRow = dialog.getByRole("button", { name: /工作账号/ });
+    await conflictRow.scrollIntoViewIfNeeded();
+    await conflictRow.click();
+    await expect(dialog.getByText("标题", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("内容", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("位置", { exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "采用传入版本" }).click();
+    const confirm = dialog.getByRole("button", { name: "确认采用传入版本" });
+    await expect(confirm).toBeFocused();
+    await expect(dialog.getByText("当前浏览器中的并发修改会被替换", { exact: false })).toBeVisible();
+    await expectNoHorizontalOverflow(dialog);
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-conflict-manager.png"), fullPage: true });
+    await confirm.click();
+    await expect(dialog.getByText("没有待处理的同步冲突。")).toBeVisible();
+  } finally { await context?.close(); }
+});
+
 for (const width of [375, 768, 1280, 1440]) {
   test(`manager has no horizontal overflow at ${width}px`, async ({}, testInfo) => {
     const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;

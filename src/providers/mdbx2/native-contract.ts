@@ -14,6 +14,8 @@ export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
 export const MDBX2_MAX_HISTORY_DIFF_ITEMS = 500;
 export const MDBX2_MAX_HISTORY_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_CONFLICT_PAGE_SIZE = 50;
+export const MDBX2_MAX_CONFLICT_RESULT_BYTES = 850 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
 export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
 export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
@@ -38,6 +40,8 @@ export type Mdbx2NativeMethod =
   | "object.operation.resolve"
   | "history.list"
   | "history.diff"
+  | "conflict.list"
+  | "conflict.resolve"
   | "transfer.read"
   | "transfer.release"
   | "sync.state.register"
@@ -394,6 +398,33 @@ export interface Mdbx2CommitDiffResult {
   items: Mdbx2CommitDiffItem[];
 }
 
+export type Mdbx2ConflictResolutionChoice = "local-wins" | "incoming-wins";
+
+export interface Mdbx2ConflictSummary {
+  conflictId: string;
+  objectType: string;
+  objectId: string;
+  displayTitle?: string;
+  contentType?: string;
+  conflictingFields: string[];
+  createdAt: string;
+}
+
+export interface Mdbx2ConflictSummaryPage {
+  items: Mdbx2ConflictSummary[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2ConflictResolutionResult {
+  resolved: true;
+  alreadyResolved: boolean;
+  conflictId: string;
+  objectType: string;
+  objectId: string;
+  choice: Mdbx2ConflictResolutionChoice;
+  resolvedAt?: string;
+}
+
 export interface Mdbx2NativeRequest<M extends Mdbx2NativeMethod = Mdbx2NativeMethod> {
   protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
   requestId: string;
@@ -429,6 +460,9 @@ export interface Mdbx2HostCapabilities {
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
   maxHistoryResultBytes: typeof MDBX2_MAX_HISTORY_RESULT_BYTES;
   supportsHistoryDiff: true;
+  maxConflictPageSize: typeof MDBX2_MAX_CONFLICT_PAGE_SIZE;
+  maxConflictResultBytes: typeof MDBX2_MAX_CONFLICT_RESULT_BYTES;
+  supportsConflictResolution: true;
   supportsDurableCloudSync: true;
   maxSyncSegmentPageSize: typeof MDBX2_SYNC_SEGMENT_PAGE_SIZE;
   maxBlobReferencePageSize: typeof MDBX2_BLOB_REFERENCE_PAGE_SIZE;
@@ -503,6 +537,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
   if (value.maxHistoryResultBytes !== MDBX2_MAX_HISTORY_RESULT_BYTES) throw incompatible("Native Host 历史响应限制与插件不一致。");
   if (value.supportsHistoryDiff !== true) throw incompatible("Native Host 未启用 MDBX2 历史差异能力。");
+  if (value.maxConflictPageSize !== MDBX2_MAX_CONFLICT_PAGE_SIZE) throw incompatible("Native Host 冲突分页限制与插件不一致。");
+  if (value.maxConflictResultBytes !== MDBX2_MAX_CONFLICT_RESULT_BYTES) throw incompatible("Native Host 冲突响应限制与插件不一致。");
+  if (value.supportsConflictResolution !== true) throw incompatible("Native Host 未启用 MDBX2 冲突解决能力。");
   if (value.supportsDurableCloudSync !== true) throw incompatible("Native Host 未启用 MDBX2 持久增量同步。");
   if (value.maxSyncSegmentPageSize !== MDBX2_SYNC_SEGMENT_PAGE_SIZE) throw incompatible("Native Host 增量段分页限制与插件不一致。");
   if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
@@ -530,6 +567,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
     maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
     supportsHistoryDiff: true,
+    maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
+    maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
+    supportsConflictResolution: true,
     supportsDurableCloudSync: true,
     maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
     maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,

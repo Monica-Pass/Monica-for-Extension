@@ -2731,4 +2731,334 @@ mod tests {
             blob_bytes
         );
     }
+
+    #[test]
+    fn divergent_devices_expose_and_durably_resolve_a_bounded_conflict() {
+        let source_root = TestRoot::new("monica-conflict-source");
+        let target_root = TestRoot::new("monica-conflict-target");
+        let password = "test-password";
+        let remote_binding = "cd".repeat(32);
+        let (mut source, source_vault_handle) = open_new_vault(&source_root, password);
+
+        let bootstrap = call(
+            &mut source,
+            "sync.bootstrap.prepare",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": null,
+                "remoteBinding": remote_binding
+            }),
+        );
+        let source_state_handle = bootstrap["stateHandle"].as_str().unwrap().to_string();
+        let bootstrap_handle = bootstrap["file"]["fileHandle"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let bootstrap_bytes = fs::read(output_path(&source, &bootstrap_handle)).unwrap();
+        call(
+            &mut source,
+            "sync.bootstrap.commit",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": source_state_handle,
+                "remoteBinding": remote_binding,
+                "fileHandle": bootstrap_handle
+            }),
+        );
+
+        let mut target = HostRuntime::new(target_root.0.clone()).unwrap();
+        let target_import_handle = fresh_uuid();
+        fs::write(
+            target
+                .root
+                .join("imports")
+                .join(format!("{target_import_handle}.mdbx")),
+            bootstrap_bytes,
+        )
+        .unwrap();
+        let target_opened = call(
+            &mut target,
+            "vault.open",
+            json!({
+                "source": { "kind": "file", "handle": target_import_handle },
+                "credential": { "method": "password", "password": password }
+            }),
+        );
+        let target_vault_handle = target_opened["vaultHandle"].as_str().unwrap().to_string();
+        let target_registered = call(
+            &mut target,
+            "sync.state.register",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "stateHandle": null,
+                "remoteBinding": remote_binding
+            }),
+        );
+        let target_state_handle = target_registered["stateHandle"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let logical_object_id = "password:conflict-fixture";
+        let write =
+            |runtime: &mut HostRuntime, vault_handle: &str, title: &str, password_value: &str| {
+                call(
+                    runtime,
+                    "object.upsert",
+                    json!({
+                        "vaultHandle": vault_handle,
+                        "operationId": fresh_uuid(),
+                        "logicalObjectId": logical_object_id,
+                        "collectionId": null,
+                        "objectTypeId": "login",
+                        "title": title,
+                        "payloadJson": json!({
+                            "kind": "password",
+                            "monica_entry_id": logical_object_id,
+                            "username": "conflict-user",
+                            "password_plain": password_value
+                        }).to_string()
+                    }),
+                )
+            };
+        write(
+            &mut source,
+            &source_vault_handle,
+            "Shared version",
+            "shared-secret",
+        );
+
+        let baseline = call(
+            &mut source,
+            "sync.segment.prepare",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": source_state_handle,
+                "remoteBinding": remote_binding,
+                "pageSize": SEGMENT_PAGE_SIZE
+            }),
+        );
+        let baseline_source_handle = baseline["file"]["fileHandle"].as_str().unwrap().to_string();
+        let baseline_target_handle = fresh_uuid();
+        fs::copy(
+            output_path(&source, &baseline_source_handle),
+            target.sync_inbound_segment_path(&baseline_target_handle),
+        )
+        .unwrap();
+        call(
+            &mut source,
+            "sync.segment.commit",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": source_state_handle,
+                "remoteBinding": remote_binding,
+                "fileHandle": baseline_source_handle,
+                "payloadSha256": baseline["payloadSha256"]
+            }),
+        );
+        call(
+            &mut target,
+            "sync.segment.apply",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "stateHandle": target_state_handle,
+                "remoteBinding": remote_binding,
+                "fileHandle": baseline_target_handle,
+                "deviceId": baseline["sourceDeviceId"],
+                "generationId": baseline["transferId"],
+                "sequence": baseline["segmentIndex"],
+                "digest": baseline["payloadSha256"]
+            }),
+        );
+        call(
+            &mut target,
+            "sync.segment.acknowledge",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "stateHandle": target_state_handle,
+                "remoteBinding": remote_binding,
+                "deviceId": baseline["sourceDeviceId"],
+                "generationId": baseline["transferId"],
+                "sequence": baseline["segmentIndex"],
+                "digest": baseline["payloadSha256"]
+            }),
+        );
+
+        write(
+            &mut target,
+            &target_vault_handle,
+            "Local version",
+            "local-secret",
+        );
+        write(
+            &mut source,
+            &source_vault_handle,
+            "Incoming version",
+            "incoming-secret",
+        );
+        let divergent = call(
+            &mut source,
+            "sync.segment.prepare",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": source_state_handle,
+                "remoteBinding": remote_binding,
+                "pageSize": SEGMENT_PAGE_SIZE
+            }),
+        );
+        let divergent_source_handle = divergent["file"]["fileHandle"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let divergent_target_handle = fresh_uuid();
+        fs::copy(
+            output_path(&source, &divergent_source_handle),
+            target.sync_inbound_segment_path(&divergent_target_handle),
+        )
+        .unwrap();
+        call(
+            &mut source,
+            "sync.segment.commit",
+            json!({
+                "vaultHandle": source_vault_handle,
+                "stateHandle": source_state_handle,
+                "remoteBinding": remote_binding,
+                "fileHandle": divergent_source_handle,
+                "payloadSha256": divergent["payloadSha256"]
+            }),
+        );
+        let applied = call(
+            &mut target,
+            "sync.segment.apply",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "stateHandle": target_state_handle,
+                "remoteBinding": remote_binding,
+                "fileHandle": divergent_target_handle,
+                "deviceId": divergent["sourceDeviceId"],
+                "generationId": divergent["transferId"],
+                "sequence": divergent["segmentIndex"],
+                "digest": divergent["payloadSha256"]
+            }),
+        );
+        assert!(applied["conflictCount"].as_u64().unwrap() > 0);
+
+        let conflicts = call(
+            &mut target,
+            "conflict.list",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "pageSize": 20,
+                "cursor": null
+            }),
+        );
+        let conflict = conflicts["items"].as_array().unwrap().first().unwrap();
+        assert_eq!(conflict["displayTitle"], "Local version");
+        assert_eq!(conflict["contentType"], "login");
+        let exposed = serde_json::to_string(&conflicts).unwrap();
+        assert!(!exposed.contains("local-secret"));
+        assert!(!exposed.contains("incoming-secret"));
+        assert!(!exposed.contains("baseCommitId"));
+        assert!(!exposed.contains("localCommitId"));
+        assert!(!exposed.contains("incomingCommitId"));
+
+        let conflict_id = conflict["conflictId"].as_str().unwrap().to_string();
+        let operation_id = fresh_uuid();
+        let resolved = call(
+            &mut target,
+            "conflict.resolve",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "operationId": operation_id,
+                "conflictId": conflict_id,
+                "choice": "incoming-wins"
+            }),
+        );
+        assert_eq!(resolved["resolved"], true);
+        assert_eq!(resolved["alreadyResolved"], false);
+        assert_eq!(resolved["choice"], "incoming-wins");
+        assert!(call(
+            &mut target,
+            "conflict.list",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "pageSize": 20,
+                "cursor": null
+            }),
+        )["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+
+        let mismatch = target
+            .handle(
+                "conflict.resolve",
+                json!({
+                    "vaultHandle": target_vault_handle,
+                    "operationId": operation_id,
+                    "conflictId": conflict_id,
+                    "choice": "local-wins"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(mismatch.code, "conflict-resolution-operation-mismatch");
+
+        let collections = call(
+            &mut target,
+            "collection.list",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "deleted": false,
+                "pageSize": 200,
+                "cursor": null
+            }),
+        );
+        let collection_id = collections["items"][0]["collectionId"].as_str().unwrap();
+        let objects = call(
+            &mut target,
+            "object.list",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "collectionId": collection_id,
+                "objectTypeId": null,
+                "deleted": false,
+                "pageSize": 200,
+                "cursor": null
+            }),
+        );
+        assert!(objects["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["title"] == "Incoming version"));
+
+        drop(target);
+        let mut target = open_existing_vault(&target_root, &target_vault_handle, password);
+        let retry = call(
+            &mut target,
+            "conflict.resolve",
+            json!({
+                "vaultHandle": target_vault_handle,
+                "operationId": operation_id,
+                "conflictId": conflict_id,
+                "choice": "incoming-wins"
+            }),
+        );
+        assert_eq!(retry["alreadyResolved"], true);
+        let receipts = fs::read_dir(target.root.join("operations"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("conflict-resolutions.state.")
+            })
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect::<String>();
+        assert!(!receipts.contains("Local version"));
+        assert!(!receipts.contains("Incoming version"));
+        assert!(!receipts.contains("local-secret"));
+        assert!(!receipts.contains("incoming-secret"));
+    }
 }

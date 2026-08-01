@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import type { ProviderAccount } from "../core/model";
 import {
   MDBX2_MAX_INBOUND_FILE_BYTES,
   type Mdbx2CommitDiffItem,
   type Mdbx2CommitHistoryItem,
+  type Mdbx2ConflictResolutionChoice,
+  type Mdbx2ConflictSummary,
   type Mdbx2HostStatus,
   type Mdbx2UnlockMethod,
   type Mdbx2VaultCredential,
@@ -13,11 +15,13 @@ import {
   type Mdbx2VaultSource
 } from "../providers/mdbx2/native-contract";
 import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from "../providers/mdbx2/mdbx2-history";
+import { mdbx2ConflictChoiceDescription, mdbx2ConflictChoiceLabel, presentMdbx2Conflict } from "../providers/mdbx2/mdbx2-conflicts";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
 type NewSourceMode = "local" | "remote";
 type BusyState = "" | "probe" | "upload" | "download" | "open" | "save" | "publish";
+interface PendingConflictResolution { item: Mdbx2ConflictSummary; choice: Mdbx2ConflictResolutionChoice; operationId: string }
 
 const props = defineProps<{
   provider?: ProviderAccount;
@@ -55,6 +59,14 @@ const historyBusy = ref<"" | "list" | "diff">("");
 const historyError = ref("");
 const selectedCommitId = ref("");
 const commitDiffItems = ref<Mdbx2CommitDiffItem[]>([]);
+const conflictItems = ref<Mdbx2ConflictSummary[]>([]);
+const conflictCursor = ref<string | undefined>();
+const conflictLoaded = ref(false);
+const conflictBusy = ref<"" | "list" | "resolve">("");
+const conflictError = ref("");
+const selectedConflictId = ref("");
+const pendingConflictResolution = ref<PendingConflictResolution | undefined>();
+const confirmConflictButton = ref<HTMLElement | null>(null);
 
 const config = props.provider?.config || {};
 const form = reactive({
@@ -77,6 +89,7 @@ const remoteFieldsComplete = computed(() => Boolean(form.baseUrl.trim() && form.
 const needsSecurityKey = computed(() => form.unlockMethod !== "password");
 const canPublish = computed(() => isExisting.value && vaultOpen.value && remoteFieldsComplete.value && !syncStatus.value?.initialized);
 const selectedHistoryItem = computed(() => historyItems.value.find((item) => item.commitId === selectedCommitId.value));
+const selectedConflict = computed(() => conflictItems.value.find((item) => item.conflictId === selectedConflictId.value));
 const dialogTitle = computed(() => {
   if (isExisting.value) return `管理 ${activeProvider.value?.name || form.name}`;
   return form.mode === "remote" ? "从 WebDAV 加入 MDBX2" : "打开 MDBX2 保险库";
@@ -107,6 +120,7 @@ async function refreshStatus() {
     ]);
     runtimeStatus.value = nextRuntime;
     syncStatus.value = nextSync;
+    if (nextRuntime?.open) await loadConflicts(true);
   } catch (cause) {
     error.value = errorMessage(cause);
   } finally {
@@ -196,7 +210,7 @@ async function unlockExisting() {
     runtimeStatus.value = { vaultHandle: opened.session.vaultHandle, open: true, available: true };
     emit("changed");
     clearSecrets();
-    await loadHistory(true);
+    await Promise.all([loadHistory(true), loadConflicts(true)]);
     emit("notice", `${opened.account.name} 已解锁；现在可以查看提交历史或执行增量同步。`);
   } catch (cause) {
     error.value = errorMessage(cause);
@@ -293,6 +307,76 @@ async function selectHistory(item: Mdbx2CommitHistoryItem) {
   }
 }
 
+async function loadConflicts(reset = false) {
+  if (!providerId.value || !vaultOpen.value || conflictBusy.value) return;
+  conflictBusy.value = "list";
+  conflictError.value = "";
+  if (reset) {
+    conflictItems.value = [];
+    conflictCursor.value = undefined;
+    conflictLoaded.value = false;
+    selectedConflictId.value = "";
+    pendingConflictResolution.value = undefined;
+  }
+  try {
+    const page = await vaultClient.listMdbx2Conflicts(providerId.value, {
+      pageSize: 20,
+      cursor: reset ? undefined : conflictCursor.value
+    });
+    const merged = reset ? page.items : [...conflictItems.value, ...page.items];
+    conflictItems.value = [...new Map(merged.map((item) => [item.conflictId, item])).values()];
+    conflictCursor.value = page.nextCursor;
+    conflictLoaded.value = true;
+  } catch (cause) {
+    conflictError.value = conflictErrorMessage(cause);
+  } finally {
+    conflictBusy.value = "";
+  }
+}
+
+function selectConflict(item: Mdbx2ConflictSummary) {
+  selectedConflictId.value = selectedConflictId.value === item.conflictId ? "" : item.conflictId;
+  pendingConflictResolution.value = undefined;
+  conflictError.value = "";
+}
+
+async function requestConflictResolution(item: Mdbx2ConflictSummary, choice: Mdbx2ConflictResolutionChoice) {
+  pendingConflictResolution.value = { item, choice, operationId: crypto.randomUUID() };
+  conflictError.value = "";
+  await nextTick();
+  confirmConflictButton.value?.focus();
+}
+
+function cancelConflictResolution() {
+  pendingConflictResolution.value = undefined;
+  conflictError.value = "";
+}
+
+async function confirmConflictResolution() {
+  const pending = pendingConflictResolution.value;
+  if (!pending || !providerId.value || conflictBusy.value) return;
+  conflictBusy.value = "resolve";
+  conflictError.value = "";
+  try {
+    await vaultClient.resolveMdbx2Conflict(
+      providerId.value,
+      pending.operationId,
+      pending.item.conflictId,
+      pending.choice
+    );
+    conflictItems.value = conflictItems.value.filter((item) => item.conflictId !== pending.item.conflictId);
+    selectedConflictId.value = "";
+    pendingConflictResolution.value = undefined;
+    syncStatus.value = await vaultClient.mdbx2SyncStatus(providerId.value).catch(() => syncStatus.value);
+    emit("changed");
+    emit("notice", `${mdbx2ConflictChoiceLabel(pending.choice)}；此决定将在下次增量同步时发布。`);
+  } catch (cause) {
+    conflictError.value = conflictErrorMessage(cause);
+  } finally {
+    conflictBusy.value = "";
+  }
+}
+
 async function stageLocalFile(): Promise<Mdbx2VaultSource> {
   const file = vaultFile.value;
   if (!file) throw new Error("请选择 MDBX2 .mdbx 文件。");
@@ -371,10 +455,11 @@ function webDavSettings(): Mdbx2WebDavSettingsInput {
 }
 
 function closeDialog() {
-  if (busy.value) return;
+  if (busy.value || conflictBusy.value === "resolve") return;
   void releasePendingSource();
   clearSecrets();
   clearHistory();
+  clearConflicts();
   emit("close");
 }
 
@@ -393,6 +478,16 @@ function clearHistory() {
   historyError.value = "";
   selectedCommitId.value = "";
   commitDiffItems.value = [];
+}
+
+function clearConflicts() {
+  conflictItems.value = [];
+  conflictCursor.value = undefined;
+  conflictLoaded.value = false;
+  conflictBusy.value = "";
+  conflictError.value = "";
+  selectedConflictId.value = "";
+  pendingConflictResolution.value = undefined;
 }
 
 function hostStateLabel(status: Mdbx2HostStatus | null): string {
@@ -433,6 +528,14 @@ function historyErrorMessage(cause: unknown): string {
   if (code === "history-result-too-large") return "历史记录内容超过单次安全上限，请缩小分页后重试。";
   return errorMessage(cause);
 }
+
+function conflictErrorMessage(cause: unknown): string {
+  const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
+  if (code === "conflict-result-too-large") return "冲突记录超过单次安全上限，请缩小分页后重试。";
+  if (code === "conflict-resolution-state-unknown") return "Native Host 在写入冲突决定时异常中断，无法确认最终采用了哪个版本。请先刷新数据库，不要立即选择相反版本。";
+  if (code === "conflict-not-found") return "这个冲突已被其他操作处理，请刷新冲突列表。";
+  return errorMessage(cause);
+}
 </script>
 
 <template>
@@ -443,7 +546,7 @@ function historyErrorMessage(cause: unknown): string {
           <h2 id="mdbx2-dialog-title">{{ dialogTitle }}</h2>
           <p>浏览器保存本机加密工作副本，网盘只交换可移植备份、增量段和加密 Blob。</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭 MDBX2 设置" :disabled="Boolean(busy)" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close aria-label="关闭 MDBX2 设置" :disabled="Boolean(busy) || conflictBusy === 'resolve'" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
       <form class="provider-form mdbx2-form" @submit.prevent="isExisting ? saveSettings() : connectNewSource()">
@@ -496,6 +599,68 @@ function historyErrorMessage(cause: unknown): string {
           <span><strong>{{ syncStatus?.blockedStreamCount || 0 }} 个受阻 stream</strong><small>{{ syncStatus?.remoteStreamCount || 0 }} 个远端 stream</small></span>
         </div>
 
+        <section v-if="isExisting && vaultOpen" class="mdbx2-conflict-panel field-wide" aria-labelledby="mdbx2-conflict-title">
+          <div class="mdbx2-conflict-header">
+            <div>
+              <strong id="mdbx2-conflict-title">同步冲突</strong>
+              <small>{{ conflictLoaded ? `${conflictItems.length}${conflictCursor ? '+' : ''} 项待处理` : '检查多个设备同时修改的项目' }}；这里只显示字段名称和本机标题，不显示 payload 或 Commit ID。</small>
+            </div>
+            <m3e-button variant="tonal" type="button" :disabled="Boolean(conflictBusy)" @click="loadConflicts(true)"><m3e-icon slot="icon" name="sync_problem"></m3e-icon>{{ conflictLoaded ? '刷新' : '检查冲突' }}</m3e-button>
+          </div>
+          <p v-if="conflictError" class="form-error mdbx2-conflict-error" role="alert">{{ conflictError }}</p>
+          <div v-if="conflictBusy === 'list' && !conflictItems.length" class="mdbx2-conflict-empty" role="status"><m3e-icon name="progress_activity" /><span>正在读取冲突队列…</span></div>
+          <div v-else-if="conflictLoaded && !conflictItems.length" class="mdbx2-conflict-empty"><m3e-icon name="check_circle" /><span>没有待处理的同步冲突。</span></div>
+          <div v-if="conflictItems.length" class="mdbx2-conflict-list" aria-label="MDBX2 同步冲突列表">
+            <button
+              v-for="item in conflictItems"
+              :key="item.conflictId"
+              type="button"
+              class="mdbx2-conflict-row"
+              :class="{ selected: selectedConflictId === item.conflictId }"
+              :aria-expanded="selectedConflictId === item.conflictId"
+              :disabled="Boolean(conflictBusy)"
+              @click="selectConflict(item)"
+            >
+              <span class="mdbx2-conflict-icon"><m3e-icon :name="presentMdbx2Conflict(item).icon" /></span>
+              <span class="mdbx2-conflict-copy"><strong>{{ presentMdbx2Conflict(item).title }}</strong><small>{{ presentMdbx2Conflict(item).supportingText }}</small></span>
+              <time :datetime="item.createdAt">{{ presentMdbx2Conflict(item).timeLabel }}</time>
+              <m3e-icon :name="selectedConflictId === item.conflictId ? 'expand_less' : 'chevron_right'" />
+            </button>
+          </div>
+          <div v-if="selectedConflict" class="mdbx2-conflict-detail" aria-live="polite">
+            <div class="mdbx2-conflict-detail-heading">
+              <strong>{{ presentMdbx2Conflict(selectedConflict).title }}</strong>
+              <small>{{ presentMdbx2Conflict(selectedConflict).objectLabel }}在本机和另一台设备上被同时修改。请选择最终版本；选择本身会生成新的 MDBX2 同步变更。</small>
+            </div>
+            <ul v-if="presentMdbx2Conflict(selectedConflict).fieldLabels.length" class="mdbx2-conflict-fields" aria-label="发生冲突的字段">
+              <li v-for="field in presentMdbx2Conflict(selectedConflict).fieldLabels" :key="field">{{ field }}</li>
+            </ul>
+            <div v-if="!pendingConflictResolution" class="mdbx2-conflict-actions">
+              <m3e-button variant="tonal" type="button" :disabled="Boolean(conflictBusy)" @click="requestConflictResolution(selectedConflict, 'local-wins')">保留本机版本</m3e-button>
+              <m3e-button variant="filled" type="button" :disabled="Boolean(conflictBusy)" @click="requestConflictResolution(selectedConflict, 'incoming-wins')">采用传入版本</m3e-button>
+            </div>
+            <div v-else class="mdbx2-conflict-confirmation" role="group" aria-labelledby="mdbx2-conflict-confirm-title" aria-live="assertive">
+              <span class="mdbx2-conflict-confirm-icon"><m3e-icon name="warning" /></span>
+              <div>
+                <strong id="mdbx2-conflict-confirm-title">确认{{ mdbx2ConflictChoiceLabel(pendingConflictResolution.choice) }}？</strong>
+                <small>{{ mdbx2ConflictChoiceDescription(pendingConflictResolution.choice) }}</small>
+              </div>
+              <div class="mdbx2-conflict-confirm-actions">
+                <m3e-button variant="text" type="button" :disabled="conflictBusy === 'resolve'" @click="cancelConflictResolution">返回比较</m3e-button>
+                <m3e-button
+                  ref="confirmConflictButton"
+                  variant="filled"
+                  type="button"
+                  :aria-label="`确认${mdbx2ConflictChoiceLabel(pendingConflictResolution.choice)}`"
+                  :disabled="conflictBusy === 'resolve'"
+                  @click="confirmConflictResolution"
+                >{{ conflictBusy === 'resolve' ? '正在保存…' : pendingConflictResolution.choice === 'local-wins' ? '确认保留' : '确认采用' }}</m3e-button>
+              </div>
+            </div>
+          </div>
+          <div v-if="conflictCursor" class="mdbx2-conflict-more"><m3e-button variant="text" type="button" :disabled="Boolean(conflictBusy)" @click="loadConflicts(false)">加载更多冲突</m3e-button></div>
+        </section>
+
         <section v-if="isExisting && vaultOpen" class="mdbx2-history-panel field-wide" aria-labelledby="mdbx2-history-title">
           <div class="mdbx2-history-header">
             <div><strong id="mdbx2-history-title">提交历史</strong><small>只显示可读操作摘要；密码和原始 payload 不会进入此页面。</small></div>
@@ -545,13 +710,13 @@ function historyErrorMessage(cause: unknown): string {
         <p v-if="error" class="form-error field-wide" role="alert">{{ error }}</p>
 
         <footer class="provider-actions field-wide">
-          <m3e-button variant="text" type="button" :disabled="Boolean(busy)" @click="closeDialog">取消</m3e-button>
+          <m3e-button variant="text" type="button" :disabled="Boolean(busy) || conflictBusy === 'resolve'" @click="closeDialog">取消</m3e-button>
           <template v-if="isExisting">
-            <m3e-button v-if="!vaultOpen" variant="tonal" type="button" :disabled="Boolean(busy) || !hostReady" @click="unlockExisting">解锁本机副本</m3e-button>
-            <m3e-button variant="tonal" type="button" :disabled="Boolean(busy) || !remoteFieldsComplete" @click="saveSettings">保存设置</m3e-button>
-            <m3e-button v-if="canPublish" variant="filled" type="button" :disabled="Boolean(busy) || !hostReady" @click="publishBootstrap">保存并发布本机保险库</m3e-button>
+            <m3e-button v-if="!vaultOpen" variant="tonal" type="button" :disabled="Boolean(busy) || conflictBusy === 'resolve' || !hostReady" @click="unlockExisting">解锁本机副本</m3e-button>
+            <m3e-button variant="tonal" type="button" :disabled="Boolean(busy) || conflictBusy === 'resolve' || !remoteFieldsComplete" @click="saveSettings">保存设置</m3e-button>
+            <m3e-button v-if="canPublish" variant="filled" type="button" :disabled="Boolean(busy) || conflictBusy === 'resolve' || !hostReady" @click="publishBootstrap">保存并发布本机保险库</m3e-button>
           </template>
-          <m3e-button v-else variant="filled" type="submit" :disabled="Boolean(busy) || !hostReady">{{ form.mode === 'remote' ? '下载并加入' : '验证、解锁并导入' }}</m3e-button>
+          <m3e-button v-else variant="filled" type="submit" :disabled="Boolean(busy) || conflictBusy === 'resolve' || !hostReady">{{ form.mode === 'remote' ? '下载并加入' : '验证、解锁并导入' }}</m3e-button>
         </footer>
       </form>
     </section>
@@ -560,6 +725,22 @@ function historyErrorMessage(cause: unknown): string {
 
 <style scoped>
 .mdbx2-form { gap: 16px; }
+.mdbx2-form > * { min-block-size: max-content; }
+.mdbx2-dialog > header { min-width: 0; }
+.mdbx2-dialog > header > div { min-width: 0; flex: 1 1 auto; }
+.mdbx2-dialog > header > m3e-icon-button {
+  flex: 0 0 44px;
+  inline-size: 44px;
+  block-size: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: clip;
+  --m3e-icon-button-container-height: 44px;
+  --m3e-icon-button-icon-size: 20px;
+  --m3e-icon-button-default-leading-space: 0px;
+  --m3e-icon-button-default-trailing-space: 0px;
+}
 .mdbx2-host-row { min-height: 64px; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-surface-container-highest, var(--app-surface-high)); }
 .mdbx2-host-row > m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-host-row > div { min-width: 0; display: grid; gap: 2px; }
@@ -583,6 +764,41 @@ function historyErrorMessage(cause: unknown): string {
 .mdbx2-runtime-summary small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-progress { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--app-muted); }
 .mdbx2-progress progress { width: min(220px, 40%); accent-color: var(--app-primary); }
+.mdbx2-conflict-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-conflict-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.mdbx2-conflict-header > div,
+.mdbx2-conflict-copy,
+.mdbx2-conflict-detail-heading,
+.mdbx2-conflict-confirmation > div:first-of-type { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-conflict-header small,
+.mdbx2-conflict-copy small,
+.mdbx2-conflict-detail small,
+.mdbx2-conflict-confirmation small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-conflict-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-conflict-row { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-text); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.mdbx2-conflict-row:last-child { border-bottom: 0; }
+.mdbx2-conflict-row:hover,
+.mdbx2-conflict-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-conflict-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--md-sys-color-error, var(--app-primary)) 45%, transparent); outline-offset: -3px; }
+.mdbx2-conflict-row:disabled { cursor: progress; opacity: .72; }
+.mdbx2-conflict-row time { color: var(--app-muted); font-size: .78rem; white-space: nowrap; }
+.mdbx2-conflict-icon,
+.mdbx2-conflict-confirm-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-conflict-icon m3e-icon,
+.mdbx2-conflict-confirm-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-conflict-detail { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 12px 16px; display: grid; gap: 12px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-conflict-fields { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+.mdbx2-conflict-fields li { max-width: 100%; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; padding: 6px 10px; overflow-wrap: anywhere; background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
+.mdbx2-conflict-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mdbx2-conflict-actions m3e-button,
+.mdbx2-conflict-confirm-actions m3e-button { min-height: 44px; }
+.mdbx2-conflict-confirmation { border: 1px solid var(--md-sys-color-error, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-conflict-confirmation small { color: inherit; opacity: .82; }
+.mdbx2-conflict-confirm-actions { display: flex; align-items: center; gap: 8px; }
+.mdbx2-conflict-empty { min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
+.mdbx2-conflict-empty m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-conflict-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
+.mdbx2-conflict-error { margin: 0 16px 12px; }
 .mdbx2-history-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .mdbx2-history-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-history-header > div,
@@ -612,6 +828,7 @@ function historyErrorMessage(cause: unknown): string {
 .mdbx2-history-error { margin: 0 16px 12px; }
 code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 @media (max-width: 700px) {
+  .mdbx2-form { display: flex; align-items: stretch; flex-direction: column; }
   .mdbx2-host-row { grid-template-columns: 24px minmax(0, 1fr); }
   .mdbx2-host-row > small { grid-column: 2; }
   .mdbx2-mode-picker > div,
@@ -621,6 +838,12 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-runtime-summary span + span { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-progress { align-items: stretch; flex-direction: column; }
   .mdbx2-progress progress { width: 100%; }
+  .mdbx2-conflict-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-conflict-row { grid-template-columns: 32px minmax(0, 1fr) 24px; }
+  .mdbx2-conflict-row time { grid-column: 2; white-space: normal; }
+  .mdbx2-conflict-actions { grid-template-columns: 1fr; }
+  .mdbx2-conflict-confirmation { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-conflict-confirm-actions { grid-column: 1 / -1; align-items: stretch; flex-direction: column; }
   .mdbx2-history-header { align-items: stretch; flex-direction: column; }
   .mdbx2-history-row { grid-template-columns: 32px minmax(0, 1fr) 24px; }
   .mdbx2-history-row time { grid-column: 2; white-space: normal; }

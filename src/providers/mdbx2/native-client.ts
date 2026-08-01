@@ -2,6 +2,7 @@ import {
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
+  MDBX2_MAX_CONFLICT_PAGE_SIZE,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_DIFF_ITEMS,
   MDBX2_MAX_HISTORY_PAGE_SIZE,
@@ -21,6 +22,9 @@ import {
   type Mdbx2HostStatus,
   type Mdbx2CommitDiffResult,
   type Mdbx2CommitHistoryPage,
+  type Mdbx2ConflictResolutionChoice,
+  type Mdbx2ConflictResolutionResult,
+  type Mdbx2ConflictSummaryPage,
   type Mdbx2ExternalBlobChunk,
   type Mdbx2ExternalBlobReceiveState,
   type Mdbx2ExternalBlobReferencePage,
@@ -266,6 +270,33 @@ export class Mdbx2NativeClient {
     return commitDiffResult(await this.request("history.diff", {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       commitId: opaqueHandle(commitId, "Commit")
+    }, timeoutMs));
+  }
+
+  async listConflicts(
+    vaultHandle: string,
+    input: { pageSize?: number; cursor?: string } = {},
+    timeoutMs = 30_000
+  ): Promise<Mdbx2ConflictSummaryPage> {
+    return conflictSummaryPage(await this.request("conflict.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      pageSize: conflictPageSizeValue(input.pageSize),
+      cursor: input.cursor || null
+    }, timeoutMs));
+  }
+
+  async resolveConflict(
+    vaultHandle: string,
+    operationId: string,
+    conflictId: string,
+    choice: Mdbx2ConflictResolutionChoice,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2ConflictResolutionResult> {
+    return conflictResolutionResult(await this.request("conflict.resolve", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: opaqueHandle(operationId, "冲突解决操作"),
+      conflictId: opaqueHandle(conflictId, "冲突"),
+      choice: conflictResolutionChoiceValue(choice)
     }, timeoutMs));
   }
 
@@ -987,6 +1018,42 @@ function commitDiffResult(input: unknown): Mdbx2CommitDiffResult {
   };
 }
 
+function conflictSummaryPage(input: unknown): Mdbx2ConflictSummaryPage {
+  const value = objectResult(input, "Native Host MDBX2 冲突分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_CONFLICT_PAGE_SIZE) {
+    throw incompatibleResult("Native Host MDBX2 冲突分页大小无效。");
+  }
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 冲突项目无效。");
+      return {
+        conflictId: opaqueHandle(item.conflictId, "冲突"),
+        objectType: textResult(item.objectType, 128, false, "MDBX2 冲突 Object 类型无效。"),
+        objectId: opaqueHandle(item.objectId, "冲突 Object"),
+        displayTitle: optionalTextResult(item.displayTitle, 64 * 1024, true, "MDBX2 冲突标题无效。"),
+        contentType: optionalString(item.contentType, 512, "MDBX2 冲突内容类型"),
+        conflictingFields: boundedTextArray(item.conflictingFields, 256, 4096, "MDBX2 冲突字段"),
+        createdAt: textResult(item.createdAt, 128, false, "MDBX2 冲突时间无效。")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "MDBX2 冲突游标")
+  };
+}
+
+function conflictResolutionResult(input: unknown): Mdbx2ConflictResolutionResult {
+  const value = objectResult(input, "Native Host MDBX2 冲突解决响应无效。");
+  if (value.resolved !== true) throw incompatibleResult("Native Host MDBX2 冲突解决状态无效。");
+  return {
+    resolved: true,
+    alreadyResolved: booleanResult(value.alreadyResolved, "MDBX2 冲突重试状态无效。"),
+    conflictId: opaqueHandle(value.conflictId, "冲突"),
+    objectType: textResult(value.objectType, 128, false, "MDBX2 冲突 Object 类型无效。"),
+    objectId: opaqueHandle(value.objectId, "冲突 Object"),
+    choice: conflictResolutionChoiceResult(value.choice),
+    resolvedAt: optionalString(value.resolvedAt, 128, "MDBX2 冲突解决时间")
+  };
+}
+
 function objectBatchResult(input: unknown): Mdbx2ObjectBatchResult {
   const value = objectResult(input, "Native Host Object 批量响应无效。");
   const changed = booleanResult(value.changed, "Object 批量变更状态无效。");
@@ -1145,6 +1212,24 @@ function historyPageSizeValue(value: number | undefined): number {
     throw new Mdbx2NativeHostError("history-page-size-invalid", "MDBX2 历史分页大小无效。", false);
   }
   return pageSize;
+}
+
+function conflictPageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? 20;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_CONFLICT_PAGE_SIZE) {
+    throw new Mdbx2NativeHostError("conflict-page-size-invalid", "MDBX2 冲突分页大小无效。", false);
+  }
+  return pageSize;
+}
+
+function conflictResolutionChoiceValue(value: unknown): Mdbx2ConflictResolutionChoice {
+  if (value === "local-wins" || value === "incoming-wins") return value;
+  throw new Mdbx2NativeHostError("conflict-choice-invalid", "MDBX2 冲突解决方式无效。", false);
+}
+
+function conflictResolutionChoiceResult(value: unknown): Mdbx2ConflictResolutionChoice {
+  if (value === "local-wins" || value === "incoming-wins") return value;
+  throw incompatibleResult("Native Host MDBX2 冲突解决方式无效。");
 }
 
 function optionalInteger(value: unknown, label: string): number | undefined {

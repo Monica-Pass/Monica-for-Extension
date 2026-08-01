@@ -2,12 +2,19 @@ import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, Pro
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { bytesToBase64 } from "../security/encoding";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2HostStatus, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+
+export class ExtensionRuntimeError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "ExtensionRuntimeError";
+  }
+}
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
   const response = (await chrome.runtime.sendMessage(request)) as ExtensionResponse<T>;
-  if (!response?.ok) throw new Error(response?.error || "插件后台没有返回有效响应。");
+  if (!response?.ok) throw new ExtensionRuntimeError(response?.error || "插件后台没有返回有效响应。", response?.code);
   return response.data;
 }
 
@@ -87,6 +94,8 @@ export const vaultClient = {
   deleteMdbx2Object: (providerId: string, operationId: string, logicalObjectId: string) => send<Mdbx2ObjectDeleteResult>({ type: "MDBX2_OBJECT_DELETE", providerId, operationId, logicalObjectId }),
   listMdbx2History: (providerId: string, input: { pageSize?: number; cursor?: string } = {}) => send<Mdbx2CommitHistoryPage>({ type: "MDBX2_HISTORY_LIST", providerId, ...input }),
   listMdbx2CommitDiff: (providerId: string, commitId: string) => send<Mdbx2CommitDiffResult>({ type: "MDBX2_HISTORY_DIFF", providerId, commitId }),
+  listMdbx2Conflicts: (providerId: string, input: { pageSize?: number; cursor?: string } = {}) => send<Mdbx2ConflictSummaryPage>({ type: "MDBX2_CONFLICT_LIST", providerId, ...input }),
+  resolveMdbx2Conflict: (providerId: string, operationId: string, conflictId: string, choice: Mdbx2ConflictResolutionChoice) => send<Mdbx2ConflictResolutionResult>({ type: "MDBX2_CONFLICT_RESOLVE", providerId, operationId, conflictId, choice }),
   openKeePass: (input: KeePassOpenInput) => send<{ account: ProviderAccount; session: KeePassSessionSummary }>({ type: "KEEPASS_OPEN", input }),
   keePassStatus: (providerId: string) => send<KeePassSessionSummary | undefined>({ type: "KEEPASS_STATUS", providerId }),
   exportKeePassFile: (providerId: string) => send<KeePassFileExport>({ type: "KEEPASS_EXPORT_FILE", providerId }),

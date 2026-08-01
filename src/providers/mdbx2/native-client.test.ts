@@ -6,6 +6,8 @@ import {
   MDBX2_MAX_ACTIVE_TRANSFERS,
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
+  MDBX2_MAX_CONFLICT_PAGE_SIZE,
+  MDBX2_MAX_CONFLICT_RESULT_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_PAGE_SIZE,
   MDBX2_MAX_HISTORY_RESULT_BYTES,
@@ -74,6 +76,9 @@ const HELLO = {
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
   maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
   supportsHistoryDiff: true,
+  maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
+  maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
+  supportsConflictResolution: true,
   supportsDurableCloudSync: true,
   maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,
@@ -211,6 +216,27 @@ describe("MDBX2 Native Messaging client", () => {
             contentType: "login",
             createdAt: "2026-08-02T00:00:00Z"
           }]
+        },
+        "conflict.list": {
+          items: [{
+            conflictId: handle,
+            objectType: "entry",
+            objectId: handle,
+            displayTitle: "Local account",
+            contentType: "login",
+            conflictingFields: ["payload", "title_ct"],
+            createdAt: "2026-08-02T00:00:00Z"
+          }],
+          nextCursor: null
+        },
+        "conflict.resolve": {
+          resolved: true,
+          alreadyResolved: false,
+          conflictId: handle,
+          objectType: "entry",
+          objectId: handle,
+          choice: "incoming-wins",
+          resolvedAt: "2026-08-02T00:01:00Z"
         }
       }[request.method] as Record<string, unknown>;
       runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
@@ -236,6 +262,8 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.resolveObjectOperation(handle, "ab".repeat(32))).resolves.toEqual({ known: true, committed: true, operationId: handle, commitId: "commit-5" });
     await expect(client.listCommitHistory(handle)).resolves.toMatchObject({ items: [{ commitId: handle, operationKind: "monica-extension-batch-objects", changes: [{ fields: ["payload"] }] }] });
     await expect(client.listCommitDiff(handle, handle)).resolves.toMatchObject({ items: [{ commitId: handle, currentTitle: "After", payloadChanged: true, contentType: "login" }] });
+    await expect(client.listConflicts(handle)).resolves.toMatchObject({ items: [{ conflictId: handle, displayTitle: "Local account", conflictingFields: ["payload", "title_ct"] }] });
+    await expect(client.resolveConflict(handle, handle, handle, "incoming-wins")).resolves.toMatchObject({ resolved: true, alreadyResolved: false, choice: "incoming-wins" });
     await expect(client.lockVault(handle)).resolves.toBe(true);
     expect((runtime.port.messages[4] as { params: unknown }).params).toEqual({
       source: { kind: "file", handle },
@@ -336,6 +364,19 @@ describe("MDBX2 Native Messaging client", () => {
     };
     await expect(client.listCommitHistory(handle, { pageSize: MDBX2_MAX_HISTORY_PAGE_SIZE }))
       .rejects.toMatchObject({ code: "native-host-incompatible" });
+    client.close();
+  });
+
+  it("rejects unbounded conflict requests and unsupported resolution choices", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const client = new Mdbx2NativeClient(runtime, () => "conflict-request");
+
+    await expect(client.listConflicts(handle, { pageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE + 1 }))
+      .rejects.toMatchObject({ code: "conflict-page-size-invalid" });
+    await expect(client.resolveConflict(handle, handle, handle, "custom" as never))
+      .rejects.toMatchObject({ code: "conflict-choice-invalid" });
+    expect(runtime.port.messages).toHaveLength(0);
     client.close();
   });
 

@@ -38,6 +38,8 @@ object.operation.status
 object.operation.resolve
 history.list
 history.diff
+conflict.list
+conflict.resolve
 transfer.read
 transfer.release
 sync.state.register
@@ -59,7 +61,7 @@ sync.blob.receive.chunk
 sync.blob.receive.abort
 ```
 
-The handshake reports the Host version, exact core revision, MDBX2 format generation, build capability manifest, 256 KiB chunk limit, 2 GiB file limit, 50-item history page limit, 850 KiB history response limit and supported unlock methods. It explicitly reports `supportsMdbx1: false`.
+The handshake reports the Host version, exact core revision, MDBX2 format generation, build capability manifest, 256 KiB chunk limit, 2 GiB file limit, 50-item history/conflict page limits, 850 KiB history/conflict response limits and supported unlock methods. It explicitly reports `supportsMdbx1: false`.
 
 Native Messaging messages are framed as four native-endian length bytes followed by UTF-8 JSON. Input control frames are limited to 1 MiB and Host output frames to 900 KiB. Binary transfers use at most 256 KiB of raw bytes per Base64 chunk.
 
@@ -73,9 +75,11 @@ Provider reconciliation groups up to 50 Object mutations into one bounded user-l
 
 Commit history is exposed read-only in pages of at most 50 records. Commit diffs use the core's 500-Object bound. The Host returns titles, deletion state, changed-field names and a `payloadChanged` boolean, but deliberately removes decrypted payload previews before crossing into the manager page. Oversized results fail before the 900 KiB Native Messaging frame boundary.
 
+Unresolved conflicts are exposed in pages of at most 50 records. Summary responses omit base/local/incoming Commit IDs and payload previews. Resolution supports explicit local-wins or incoming-wins only. Random operation IDs are persisted in alternating bounded receipt files; reuse with another conflict or choice fails, completed retries are idempotent, and an incomplete receipt after the conflict disappears returns an unknown-outcome error instead of applying another winner.
+
 Synchronization state uses two alternating durable slots. A portable `.mdbx` file initializes a device; normal multi-device operation exchanges authenticated bundle v8 segments, state deltas and encrypted external Blobs. Export checkpoints advance only after immutable publication, and remote stream cursors advance only after atomic apply and Blob completion.
 
-The extension registers the Host-backed Provider only in the privileged background. Raw Collection, Object and history commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
+The extension registers the Host-backed Provider only in the privileged background. Raw Collection, Object, history and conflict commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
 
 ## Build
 

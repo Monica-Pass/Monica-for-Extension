@@ -5,7 +5,7 @@ import { ProviderRegistry } from "../core/provider";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
-import { MDBX2_MAX_BINARY_CHUNK_BYTES, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
+import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
 import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
@@ -162,7 +162,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-            : undefined;
+                : error instanceof Mdbx2NativeHostError
+                  ? error.code
+                  : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
     });
   return true;
@@ -605,6 +607,16 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.listCommitDiff(vaultHandle, request.commitId);
+    }
+    case "MDBX2_CONFLICT_LIST": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listConflicts(vaultHandle, request);
+    }
+    case "MDBX2_CONFLICT_RESOLVE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.resolveConflict(vaultHandle, request.operationId, request.conflictId, request.choice);
     }
     case "KEEPASS_OPEN": {
       assertExtensionPage(sender);

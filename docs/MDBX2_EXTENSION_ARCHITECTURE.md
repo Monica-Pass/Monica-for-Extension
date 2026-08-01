@@ -93,9 +93,11 @@ Large transfers use explicit begin, chunk, finish and abort methods. A transfer 
 
 The background uses `chrome.runtime.connectNative()`. The port keeps an MV3 Service Worker alive on supported Chrome versions; disconnect handlers reopen the port only when an active native task still exists.
 
-Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release, synchronization status, bounded commit history and commit diff are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
+Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release, synchronization status, bounded commit history/diff and conflict list/resolution are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
 
 History pages contain at most 50 commits and are additionally capped at 850 KiB before framing. Commit diffs inherit the core's 500-Object limit. The Host removes decrypted previous/current payload previews and returns only a `payloadChanged` flag, titles, deletion state and changed-field names. The M3E list presents human operation labels and times without showing technical Object or Commit IDs in the primary view.
+
+Conflict pages contain at most 50 unresolved summaries and are capped at 850 KiB. The Host removes base/local/incoming Commit IDs and never returns payload previews; it exposes only an opaque conflict handle, Object kind, current local display metadata, conflicting field names and time. Resolution accepts only the core-equivalent `local-wins` and `incoming-wins` choices. Each mutation uses a random durable operation receipt, rejects changed retry intent and fails closed with an unknown-outcome error if the core transaction completed but the receipt could not be persisted.
 
 ## Local files
 
@@ -110,9 +112,10 @@ Monica Extension/MDBX2/
   transfers/<opaque-transfer-id>.state.<slot>.json
   sync/states/<opaque-state-handle>.state.<slot>.json
   operations/object-operations.state.<slot>.json
+  operations/conflict-resolutions.state.<slot>.json
 ```
 
-User-controlled titles, domains and account names never appear in file names. Operation receipts contain random IDs, bounded hashes, changed indexes and Commit IDs, never decrypted Object payloads. Local sync state also contains no decrypted payload. Windows ACLs and user scope provide the outer filesystem boundary; MDBX2 remains encrypted at rest.
+User-controlled titles, domains and account names never appear in file names. Object-operation receipts contain random IDs, bounded hashes, changed indexes and Commit IDs. Conflict receipts contain only opaque IDs, Object type, the selected winner and timestamps. Neither receipt format stores decrypted titles or Object payloads. Local sync state also contains no decrypted payload. Windows ACLs and user scope provide the outer filesystem boundary; MDBX2 remains encrypted at rest.
 
 ## WebDAV rules
 

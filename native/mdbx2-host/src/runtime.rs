@@ -1,6 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use md5::{Digest, Md5};
-use mdbx_ffi::{MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxVault, MdbxWriteCommand};
+use mdbx_ffi::{
+    MdbxConflictChoice, MdbxConflictSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits,
+    MdbxVault, MdbxWriteCommand,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
@@ -44,6 +47,12 @@ const MAX_OBJECT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_OPERATION_HISTORY_PAGES: usize = 16;
 const MAX_HISTORY_PAGE_SIZE: u32 = 50;
 pub const MAX_HISTORY_RESULT_BYTES: usize = 850 * 1024;
+const CONFLICT_RESOLUTION_STATE_VERSION: u32 = 1;
+const MAX_CONFLICT_PAGE_SIZE: u32 = 50;
+pub const MAX_CONFLICT_RESULT_BYTES: usize = 850 * 1024;
+const MAX_CONFLICT_SCAN_PAGES: usize = 64;
+const MAX_CONFLICT_RESOLUTION_RECEIPTS: usize = 2048;
+const MAX_CONFLICT_RESOLUTION_STATE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug)]
 pub struct RpcFailure {
@@ -129,6 +138,45 @@ impl Default for ObjectOperationState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ConflictResolutionChoice {
+    LocalWins,
+    IncomingWins,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConflictResolutionReceipt {
+    vault_handle: String,
+    operation_id: String,
+    conflict_id: String,
+    object_type: String,
+    object_id: String,
+    choice: ConflictResolutionChoice,
+    completed: bool,
+    resolved_at: Option<String>,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConflictResolutionState {
+    version: u32,
+    revision: u64,
+    receipts: Vec<ConflictResolutionReceipt>,
+}
+
+impl Default for ConflictResolutionState {
+    fn default() -> Self {
+        Self {
+            version: CONFLICT_RESOLUTION_STATE_VERSION,
+            revision: 0,
+            receipts: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ObjectMutation {
     Upsert {
@@ -190,6 +238,7 @@ pub struct HostRuntime {
     transfers: HashMap<String, TransferMetadata>,
     pub(crate) vaults: HashMap<String, Arc<MdbxVault>>,
     object_operations: ObjectOperationState,
+    conflict_resolutions: ConflictResolutionState,
 }
 
 impl HostRuntime {
@@ -218,12 +267,14 @@ impl HostRuntime {
         let device_id = load_or_create_device_id(&root)?;
         let transfers = load_transfers(&root)?;
         let object_operations = load_object_operation_state(&root)?;
+        let conflict_resolutions = load_conflict_resolution_state(&root)?;
         Ok(Self {
             root,
             device_id,
             transfers,
             vaults: HashMap::new(),
             object_operations,
+            conflict_resolutions,
         })
     }
 
@@ -248,6 +299,8 @@ impl HostRuntime {
             "object.operation.resolve" => self.object_operation_resolve(params),
             "history.list" => self.history_list(params),
             "history.diff" => self.history_diff(params),
+            "conflict.list" => self.conflict_list(params),
+            "conflict.resolve" => self.conflict_resolve(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
@@ -278,6 +331,9 @@ impl HostRuntime {
             "maxHistoryPageSize": MAX_HISTORY_PAGE_SIZE,
             "maxHistoryResultBytes": MAX_HISTORY_RESULT_BYTES,
             "supportsHistoryDiff": true,
+            "maxConflictPageSize": MAX_CONFLICT_PAGE_SIZE,
+            "maxConflictResultBytes": MAX_CONFLICT_RESULT_BYTES,
+            "supportsConflictResolution": true,
             "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
             "supportsDurableCloudSync": true,
             "maxSyncSegmentPageSize": cloud_sync::SEGMENT_PAGE_SIZE,
@@ -923,6 +979,214 @@ impl HostRuntime {
             })
             .collect::<Vec<_>>();
         bounded_history_result(json!({ "items": items }))
+    }
+
+    fn conflict_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "conflict.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let page_size = take_bounded_page_size(
+            &mut params,
+            MAX_CONFLICT_PAGE_SIZE,
+            "pageSize exceeds the MDBX2 conflict limit.",
+        )?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let page = vault
+            .list_unresolved_conflict_summaries(None, page_size, cursor)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "conflict-list-failed",
+                    "MDBX2 unresolved conflicts could not be read.",
+                    false,
+                )
+            })?;
+        let mut items = Vec::with_capacity(page.items.len());
+        for item in page.items {
+            let local = if item.object_type.eq_ignore_ascii_case("entry") {
+                vault
+                    .get_object_summary(item.object_id.clone())
+                    .map_err(|_| {
+                        RpcFailure::new(
+                            "conflict-list-failed",
+                            "MDBX2 conflict display metadata could not be read.",
+                            false,
+                        )
+                    })?
+            } else {
+                None
+            };
+            items.push(json!({
+                "conflictId": item.conflict_id,
+                "objectType": item.object_type,
+                "objectId": item.object_id,
+                "displayTitle": local.as_ref().map(|summary| summary.title.clone()),
+                "contentType": local.as_ref().map(|summary| summary.object_type_id.clone()),
+                "conflictingFields": item.conflicting_fields,
+                "createdAt": item.created_at
+            }));
+        }
+        bounded_conflict_result(json!({
+            "items": items,
+            "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn conflict_resolve(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "conflict.resolve params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let conflict_id = take_uuid(&mut params, "conflictId")?;
+        let choice = take_conflict_resolution_choice(&mut params)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+
+        if let Some(receipt) = self
+            .conflict_resolutions
+            .receipts
+            .iter()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .cloned()
+        {
+            if receipt.conflict_id != conflict_id || receipt.choice != choice {
+                return Err(RpcFailure::new(
+                    "conflict-resolution-operation-mismatch",
+                    "MDBX2 conflict resolution operation was reused with a different intent.",
+                    false,
+                ));
+            }
+            if receipt.completed {
+                return Ok(conflict_resolution_json(&receipt, true));
+            }
+            if find_unresolved_conflict(&vault, &conflict_id)?.is_none() {
+                return Err(RpcFailure::new(
+                    "conflict-resolution-state-unknown",
+                    "MDBX2 conflict is no longer unresolved, but the durable resolution receipt is incomplete. Refresh the vault before making another choice.",
+                    false,
+                ));
+            }
+            let resolved = vault
+                .resolve_conflict(conflict_id, conflict_choice_to_ffi(choice))
+                .map_err(|_| {
+                    RpcFailure::new(
+                        "conflict-resolution-failed",
+                        "MDBX2 conflict could not be resolved.",
+                        false,
+                    )
+                })?;
+            let receipt = self.complete_conflict_resolution(
+                &vault_handle,
+                &operation_id,
+                resolved.resolved_at,
+            )?;
+            return Ok(conflict_resolution_json(&receipt, false));
+        }
+
+        let summary = find_unresolved_conflict(&vault, &conflict_id)?.ok_or_else(|| {
+            RpcFailure::new(
+                "conflict-not-found",
+                "MDBX2 conflict is no longer available for resolution.",
+                false,
+            )
+        })?;
+        self.prepare_conflict_resolution(&vault_handle, &operation_id, &summary, choice)?;
+        let resolved = vault
+            .resolve_conflict(conflict_id, conflict_choice_to_ffi(choice))
+            .map_err(|_| {
+                RpcFailure::new(
+                    "conflict-resolution-failed",
+                    "MDBX2 conflict could not be resolved.",
+                    false,
+                )
+            })?;
+        let receipt =
+            self.complete_conflict_resolution(&vault_handle, &operation_id, resolved.resolved_at)?;
+        Ok(conflict_resolution_json(&receipt, false))
+    }
+
+    fn prepare_conflict_resolution(
+        &mut self,
+        vault_handle: &str,
+        operation_id: &str,
+        summary: &MdbxConflictSummary,
+        choice: ConflictResolutionChoice,
+    ) -> Result<ConflictResolutionReceipt, RpcFailure> {
+        let mut next_state = self.conflict_resolutions.clone();
+        prune_conflict_resolution_receipts(&mut next_state.receipts)?;
+        let receipt = ConflictResolutionReceipt {
+            vault_handle: vault_handle.to_string(),
+            operation_id: operation_id.to_string(),
+            conflict_id: summary.conflict_id.clone(),
+            object_type: summary.object_type.clone(),
+            object_id: summary.object_id.clone(),
+            choice,
+            completed: false,
+            resolved_at: None,
+            updated_at_unix_secs: unix_seconds()?,
+        };
+        next_state.receipts.push(receipt.clone());
+        let previous_state = std::mem::replace(&mut self.conflict_resolutions, next_state);
+        if let Err(cause) = self.persist_conflict_resolutions() {
+            self.conflict_resolutions = previous_state;
+            return Err(cause);
+        }
+        Ok(receipt)
+    }
+
+    fn complete_conflict_resolution(
+        &mut self,
+        vault_handle: &str,
+        operation_id: &str,
+        resolved_at: Option<String>,
+    ) -> Result<ConflictResolutionReceipt, RpcFailure> {
+        let mut next_state = self.conflict_resolutions.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 conflict resolution receipt is missing."))?;
+        receipt.completed = true;
+        receipt.resolved_at = resolved_at;
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let result = receipt.clone();
+        let previous_state = std::mem::replace(&mut self.conflict_resolutions, next_state);
+        if let Err(cause) = self.persist_conflict_resolutions() {
+            self.conflict_resolutions = previous_state;
+            return Err(cause);
+        }
+        Ok(result)
+    }
+
+    fn persist_conflict_resolutions(&mut self) -> Result<(), RpcFailure> {
+        self.conflict_resolutions.revision = self
+            .conflict_resolutions
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RpcFailure::storage("MDBX2 conflict receipt revision overflowed."))?;
+        let bytes = serde_json::to_vec(&self.conflict_resolutions)
+            .map_err(|_| RpcFailure::storage("MDBX2 conflict receipts could not be encoded."))?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_CONFLICT_RESOLUTION_STATE_BYTES {
+            return Err(RpcFailure::new(
+                "conflict-resolution-receipt-limit",
+                "MDBX2 conflict receipts exceed the reviewed storage limit.",
+                false,
+            ));
+        }
+        let path =
+            conflict_resolution_state_path(&self.root, self.conflict_resolutions.revision % 2);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|_| RpcFailure::storage("MDBX2 conflict receipts could not be opened."))?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| RpcFailure::storage("MDBX2 conflict receipts could not be persisted."))
     }
 
     fn object_upsert(&mut self, params: Value) -> Result<Value, RpcFailure> {
@@ -1891,6 +2155,80 @@ fn object_operation_state_path(root: &Path, slot: u64) -> PathBuf {
         .join(format!("object-operations.state.{slot}.json"))
 }
 
+fn prune_conflict_resolution_receipts(
+    receipts: &mut Vec<ConflictResolutionReceipt>,
+) -> Result<(), RpcFailure> {
+    if receipts.len() < MAX_CONFLICT_RESOLUTION_RECEIPTS {
+        return Ok(());
+    }
+    receipts.sort_by_key(|receipt| (!receipt.completed, receipt.updated_at_unix_secs));
+    while receipts.len() >= MAX_CONFLICT_RESOLUTION_RECEIPTS {
+        if receipts.first().is_some_and(|receipt| receipt.completed) {
+            receipts.remove(0);
+        } else {
+            return Err(RpcFailure::new(
+                "conflict-resolution-receipt-limit",
+                "MDBX2 has too many unfinished conflict resolutions.",
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_conflict_resolution_state(root: &Path) -> std::io::Result<ConflictResolutionState> {
+    let mut candidates = Vec::new();
+    for slot in [0_u64, 1_u64] {
+        let path = conflict_resolution_state_path(root, slot);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(bytes) = read_bounded(&path, MAX_CONFLICT_RESOLUTION_STATE_BYTES) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_slice::<ConflictResolutionState>(&bytes) else {
+            continue;
+        };
+        if state.version != CONFLICT_RESOLUTION_STATE_VERSION || state.revision % 2 != slot {
+            continue;
+        }
+        if validate_conflict_resolution_state(&state) {
+            candidates.push(state);
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by_key(|state| state.revision)
+        .unwrap_or_default())
+}
+
+fn validate_conflict_resolution_state(state: &ConflictResolutionState) -> bool {
+    if state.receipts.len() > MAX_CONFLICT_RESOLUTION_RECEIPTS {
+        return false;
+    }
+    let mut identities = HashSet::new();
+    state.receipts.iter().all(|receipt| {
+        canonical_uuid(&receipt.vault_handle).as_deref() == Some(receipt.vault_handle.as_str())
+            && canonical_uuid(&receipt.operation_id).as_deref()
+                == Some(receipt.operation_id.as_str())
+            && canonical_uuid(&receipt.conflict_id).as_deref() == Some(receipt.conflict_id.as_str())
+            && canonical_uuid(&receipt.object_id).as_deref() == Some(receipt.object_id.as_str())
+            && !receipt.object_type.is_empty()
+            && receipt.object_type.len() <= 128
+            && (receipt.completed || receipt.resolved_at.is_none())
+            && receipt
+                .resolved_at
+                .as_deref()
+                .is_none_or(|value| !value.is_empty() && value.len() <= 128)
+            && identities.insert((receipt.vault_handle.clone(), receipt.operation_id.clone()))
+    })
+}
+
+fn conflict_resolution_state_path(root: &Path, slot: u64) -> PathBuf {
+    root.join("operations")
+        .join(format!("conflict-resolutions.state.{slot}.json"))
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -2285,6 +2623,92 @@ fn bounded_history_result(value: Value) -> Result<Value, RpcFailure> {
         ));
     }
     Ok(value)
+}
+
+fn bounded_conflict_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 conflict response could not be encoded."))?
+        .len();
+    if size > MAX_CONFLICT_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "conflict-result-too-large",
+            "MDBX2 conflict response exceeds the Native Messaging safety limit; request a smaller page.",
+            false,
+        ));
+    }
+    Ok(value)
+}
+
+fn find_unresolved_conflict(
+    vault: &Arc<MdbxVault>,
+    conflict_id: &str,
+) -> Result<Option<MdbxConflictSummary>, RpcFailure> {
+    let mut cursor = None;
+    for _ in 0..MAX_CONFLICT_SCAN_PAGES {
+        let page = vault
+            .list_unresolved_conflict_summaries(None, MAX_CONFLICT_PAGE_SIZE, cursor)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "conflict-list-failed",
+                    "MDBX2 unresolved conflicts could not be inspected.",
+                    false,
+                )
+            })?;
+        if let Some(summary) = page
+            .items
+            .into_iter()
+            .find(|summary| summary.conflict_id == conflict_id)
+        {
+            return Ok(Some(summary));
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(None);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(RpcFailure::new(
+        "conflict-queue-scan-limit",
+        "MDBX2 conflict queue is too large to safely locate this item in one operation.",
+        false,
+    ))
+}
+
+fn take_conflict_resolution_choice(
+    params: &mut Map<String, Value>,
+) -> Result<ConflictResolutionChoice, RpcFailure> {
+    match take_string(params, "choice", 32, false)?.as_str() {
+        "local-wins" => Ok(ConflictResolutionChoice::LocalWins),
+        "incoming-wins" => Ok(ConflictResolutionChoice::IncomingWins),
+        _ => Err(RpcFailure::invalid(
+            "MDBX2 conflict resolution choice is unsupported.",
+        )),
+    }
+}
+
+fn conflict_choice_to_ffi(choice: ConflictResolutionChoice) -> MdbxConflictChoice {
+    match choice {
+        ConflictResolutionChoice::LocalWins => MdbxConflictChoice::LocalWins,
+        ConflictResolutionChoice::IncomingWins => MdbxConflictChoice::IncomingWins,
+    }
+}
+
+fn conflict_choice_value(choice: ConflictResolutionChoice) -> &'static str {
+    match choice {
+        ConflictResolutionChoice::LocalWins => "local-wins",
+        ConflictResolutionChoice::IncomingWins => "incoming-wins",
+    }
+}
+
+fn conflict_resolution_json(receipt: &ConflictResolutionReceipt, already_resolved: bool) -> Value {
+    json!({
+        "resolved": true,
+        "alreadyResolved": already_resolved,
+        "conflictId": receipt.conflict_id,
+        "objectType": receipt.object_type,
+        "objectId": receipt.object_id,
+        "choice": conflict_choice_value(receipt.choice),
+        "resolvedAt": receipt.resolved_at
+    })
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -2857,6 +3281,78 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.code, "params-invalid");
+    }
+
+    #[test]
+    fn conflict_resolution_receipts_rollback_when_persistence_fails() {
+        let (root, mut runtime) = runtime();
+        let vault_handle = fresh_uuid();
+        let operation_id = fresh_uuid();
+        let summary = MdbxConflictSummary {
+            conflict_id: fresh_uuid(),
+            object_type: "entry".to_string(),
+            object_id: fresh_uuid(),
+            base_commit_id: fresh_uuid(),
+            local_commit_id: fresh_uuid(),
+            incoming_commit_id: fresh_uuid(),
+            conflicting_fields: vec!["payload".to_string()],
+            resolution: "unresolved".to_string(),
+            created_at: "2026-08-02T00:00:00Z".to_string(),
+            resolved_at: None,
+        };
+
+        let first_slot = conflict_resolution_state_path(&root.0, 1);
+        fs::create_dir(&first_slot).unwrap();
+        let prepare_error = runtime
+            .prepare_conflict_resolution(
+                &vault_handle,
+                &operation_id,
+                &summary,
+                ConflictResolutionChoice::IncomingWins,
+            )
+            .unwrap_err();
+        assert_eq!(prepare_error.code, "host-storage-error");
+        assert_eq!(runtime.conflict_resolutions.revision, 0);
+        assert!(runtime.conflict_resolutions.receipts.is_empty());
+
+        fs::remove_dir(&first_slot).unwrap();
+        runtime
+            .prepare_conflict_resolution(
+                &vault_handle,
+                &operation_id,
+                &summary,
+                ConflictResolutionChoice::IncomingWins,
+            )
+            .unwrap();
+        assert_eq!(runtime.conflict_resolutions.revision, 1);
+        assert!(!runtime.conflict_resolutions.receipts[0].completed);
+
+        let second_slot = conflict_resolution_state_path(&root.0, 0);
+        fs::create_dir(&second_slot).unwrap();
+        let complete_error = runtime
+            .complete_conflict_resolution(
+                &vault_handle,
+                &operation_id,
+                Some("2026-08-02T00:01:00Z".to_string()),
+            )
+            .unwrap_err();
+        assert_eq!(complete_error.code, "host-storage-error");
+        assert_eq!(runtime.conflict_resolutions.revision, 1);
+        assert!(!runtime.conflict_resolutions.receipts[0].completed);
+        assert!(runtime.conflict_resolutions.receipts[0]
+            .resolved_at
+            .is_none());
+
+        fs::remove_dir(&second_slot).unwrap();
+        let completed = runtime
+            .complete_conflict_resolution(
+                &vault_handle,
+                &operation_id,
+                Some("2026-08-02T00:01:00Z".to_string()),
+            )
+            .unwrap();
+        assert!(completed.completed);
+        assert_eq!(runtime.conflict_resolutions.revision, 2);
     }
 
     #[test]

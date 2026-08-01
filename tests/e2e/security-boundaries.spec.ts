@@ -79,6 +79,22 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(historyResponse.ok).toBe(false);
     expect(historyResponse.error).toContain("只允许 Monica 管理页调用");
+    const conflictListResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
+      type: "MDBX2_CONFLICT_LIST",
+      providerId: "manager-only-provider",
+      pageSize: 20
+    })) as RuntimeResponse;
+    expect(conflictListResponse.ok).toBe(false);
+    expect(conflictListResponse.error).toContain("只允许 Monica 管理页调用");
+    const conflictResolveResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
+      type: "MDBX2_CONFLICT_RESOLVE",
+      providerId: "manager-only-provider",
+      operationId: "11111111-1111-4111-8111-111111111111",
+      conflictId: "22222222-2222-4222-8222-222222222222",
+      choice: "local-wins"
+    })) as RuntimeResponse;
+    expect(conflictResolveResponse.ok).toBe(false);
+    expect(conflictResolveResponse.error).toContain("只允许 Monica 管理页调用");
   } finally {
     await context?.close();
   }
