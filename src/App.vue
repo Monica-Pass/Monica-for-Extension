@@ -681,7 +681,7 @@ async function exportProviderDiagnostics() {
 }
 
 async function removeProvider(provider: ProviderAccount) {
-  const remoteName = { bitwarden: "Bitwarden 密码库", mdbx: "MDBX 数据库", keepass: "KeePass 数据库" }[provider.kind as string] || "WebDAV 文件";
+  const remoteName = { bitwarden: "Bitwarden 密码库", mdbx2: "MDBX2 保险库", "mdbx-legacy": "旧 MDBX1 数据库", keepass: "KeePass 数据库" }[provider.kind as string] || "WebDAV 文件";
   const unsavedWarning = provider.kind === "keepass" && keePassSessionFor(provider.id)?.dirty
     ? "此数据库还有未导出的内存修改，移除后这些修改会丢失。"
     : "";

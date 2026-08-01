@@ -66,4 +66,42 @@ describe("vault schema migrations", () => {
 
     expect(migrated.sourceRecords).toEqual([valid]);
   });
+
+  it("retires MDBX1 accounts without discarding their encrypted configuration", () => {
+    const current = createEmptyVaultState("2026-08-01T00:00:00.000Z");
+    const local = current.providers[0];
+    const legacy = {
+      id: "mdbx-old",
+      kind: "mdbx",
+      name: "旧 MDBX",
+      enabled: true,
+      isDefaultSaveTarget: true,
+      config: { fileName: "personal.mdbx", unlockMethod: "password", deviceId: "device-old" },
+      lastError: "旧错误"
+    };
+    const state = {
+      ...current,
+      providers: [{ ...local, isDefaultSaveTarget: false }, legacy],
+      settings: { ...current.settings, defaultProviderId: legacy.id }
+    };
+
+    const migrated = migrateVaultState(state);
+    expect(migrated.providers.find((provider) => provider.id === legacy.id)).toEqual({
+      ...legacy,
+      kind: "mdbx-legacy",
+      enabled: false,
+      isDefaultSaveTarget: false,
+      config: {
+        ...legacy.config,
+        mdbxGeneration: 1,
+        formatVersion: "MDBX-1",
+        supportState: "unsupported",
+        legacyLastError: "旧错误"
+      },
+      lastError: "此密码源使用 Monica Extension 已停用的 MDBX1 实现。请使用 Monica Android 或桌面端升级为 MDBX2 后重新连接。"
+    });
+    expect(migrated.settings.defaultProviderId).toBe(local.id);
+    expect(migrated.providers.find((provider) => provider.id === local.id)?.isDefaultSaveTarget).toBe(true);
+    expect(migrateVaultState(migrated)).toEqual(migrated);
+  });
 });

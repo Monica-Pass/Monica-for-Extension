@@ -40,6 +40,6 @@ describe("provider registry", () => {
   });
 
   it("names the missing kind when an adapter was never registered", () => {
-    expect(() => new ProviderRegistry().get("mdbx")).toThrow("mdbx");
+    expect(() => new ProviderRegistry().get("mdbx2")).toThrow("mdbx2");
   });
 });

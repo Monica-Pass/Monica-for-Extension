@@ -645,7 +645,7 @@ describe("encrypted vault", () => {
   it("refuses an oversized source envelope instead of writing a vault that can no longer be decrypted", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await service.setup("source budget password");
-    await service.upsertProvider({ id: "big-source", kind: "mdbx", name: "MDBX", enabled: true, isDefaultSaveTarget: false, config: {} });
+    await service.upsertProvider({ id: "big-source", kind: "mdbx2", name: "MDBX2", enabled: true, isDefaultSaveTarget: false, config: {} });
     const oversized = { providerId: "big-source", remoteId: "row-1", format: "mdbx-row", encoding: "json", payload: "x".repeat(MAX_SOURCE_RECORD_PAYLOAD_BYTES + 1), contentHash: "hash" };
 
     await expect(service.applyProviderSync("big-source", [], undefined, [], [oversized])).rejects.toThrow("超过单条");

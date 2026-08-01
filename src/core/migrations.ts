@@ -1,6 +1,7 @@
 import type { LoginItem, LoginUriMatchType, ProviderSourceRecord, VaultItem, VaultState } from "./model";
 
 const URI_MATCH_TYPES = new Set<LoginUriMatchType>(["base-domain", "domain", "starts-with", "exact", "regex", "never"]);
+const LEGACY_MDBX_MESSAGE = "此密码源使用 Monica Extension 已停用的 MDBX1 实现。请使用 Monica Android 或桌面端升级为 MDBX2 后重新连接。";
 export const MAX_SOURCE_RECORD_TAG_LENGTH = 64;
 
 export function migrateVaultState(input: unknown): VaultState {
@@ -10,20 +11,73 @@ export function migrateVaultState(input: unknown): VaultState {
   if (version !== 1 && version !== 2) throw new Error("Vault payload is invalid or unsupported");
 
   const items = Array.isArray(raw.items) ? raw.items.map(migrateItem) : raw.items;
-  const settings = raw.settings && typeof raw.settings === "object" && !Array.isArray(raw.settings)
+  let providers = Array.isArray(raw.providers) ? raw.providers.map(migrateProvider) : raw.providers;
+  let settings = raw.settings && typeof raw.settings === "object" && !Array.isArray(raw.settings)
     ? { ...(raw.settings as Record<string, unknown>), protectionMode: normalizeProtectionMode((raw.settings as Record<string, unknown>).protectionMode) }
     : raw.settings;
+  ({ providers, settings } = normalizeDefaultProvider(providers, settings));
   const sourceRecords = Array.isArray(raw.sourceRecords) ? raw.sourceRecords.filter(validSourceRecord).map((record) => ({ ...record })) : [];
 
   return {
     ...raw,
     schemaVersion: 2,
     items,
+    providers,
     settings,
     providerConflicts: Array.isArray(raw.providerConflicts) ? raw.providerConflicts : [],
     providerDiagnostics: Array.isArray(raw.providerDiagnostics) ? raw.providerDiagnostics : [],
     sourceRecords
   } as VaultState;
+}
+
+function migrateProvider(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const provider = value as Record<string, unknown>;
+  const config = provider.config && typeof provider.config === "object" && !Array.isArray(provider.config)
+    ? provider.config as Record<string, unknown>
+    : {};
+  if (provider.kind === "mdbx" || provider.kind === "mdbx-legacy") {
+    const previousError = typeof provider.lastError === "string" && provider.lastError !== LEGACY_MDBX_MESSAGE
+      ? provider.lastError
+      : typeof config.legacyLastError === "string" ? config.legacyLastError : undefined;
+    return {
+      ...provider,
+      kind: "mdbx-legacy",
+      enabled: false,
+      isDefaultSaveTarget: false,
+      config: {
+        ...config,
+        mdbxGeneration: 1,
+        formatVersion: "MDBX-1",
+        supportState: "unsupported",
+        ...(previousError ? { legacyLastError: previousError } : {})
+      },
+      lastError: LEGACY_MDBX_MESSAGE
+    };
+  }
+  if (provider.kind === "mdbx2") {
+    return { ...provider, config: { ...config, mdbxGeneration: 2, formatVersion: "MDBX-2" } };
+  }
+  return provider;
+}
+
+function normalizeDefaultProvider(providers: unknown, settings: unknown): { providers: unknown; settings: unknown } {
+  if (!Array.isArray(providers) || !settings || typeof settings !== "object" || Array.isArray(settings)) return { providers, settings };
+  const providerRecords = providers.filter((provider): provider is Record<string, unknown> => Boolean(provider) && typeof provider === "object" && !Array.isArray(provider));
+  const currentId = typeof (settings as Record<string, unknown>).defaultProviderId === "string"
+    ? (settings as Record<string, unknown>).defaultProviderId as string
+    : "";
+  const current = providerRecords.find((provider) => provider.id === currentId);
+  const currentUsable = current && current.kind !== "mdbx-legacy" && current.enabled !== false;
+  const local = providerRecords.find((provider) => provider.kind === "local" && typeof provider.id === "string");
+  const defaultProviderId = currentUsable ? currentId : typeof local?.id === "string" ? local.id : currentId;
+  if (!defaultProviderId) return { providers, settings };
+  return {
+    providers: providers.map((provider) => provider && typeof provider === "object" && !Array.isArray(provider) && typeof (provider as Record<string, unknown>).id === "string"
+      ? { ...(provider as Record<string, unknown>), isDefaultSaveTarget: (provider as Record<string, unknown>).id === defaultProviderId }
+      : provider),
+    settings: { ...(settings as Record<string, unknown>), defaultProviderId }
+  };
 }
 
 function migrateItem(value: unknown): unknown {

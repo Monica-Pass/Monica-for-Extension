@@ -8,7 +8,7 @@ export type VaultItemKind =
   | "payment-account"
   | "passkey";
 
-export type ProviderKind = "local" | "monica-webdav" | "bitwarden" | "mdbx" | "keepass";
+export type ProviderKind = "local" | "monica-webdav" | "bitwarden" | "mdbx2" | "mdbx-legacy" | "keepass";
 
 export interface ProviderReference {
   providerId: string;

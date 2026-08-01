@@ -672,6 +672,26 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
       }
     };
   }
+  if (provider.kind === "mdbx-legacy") {
+    return {
+      ...safe,
+      config: {
+        fileName: stringConfig(provider, "fileName") || undefined,
+        formatVersion: "MDBX-1",
+        supportState: "unsupported"
+      }
+    };
+  }
+  if (provider.kind === "mdbx2") {
+    return {
+      ...safe,
+      config: {
+        formatVersion: "MDBX-2",
+        remotePath: stringConfig(provider, "remotePath") || undefined,
+        hostVerifiedAt: stringConfig(provider, "hostVerifiedAt") || undefined
+      }
+    };
+  }
   return { ...safe, config: {} };
 }
 
