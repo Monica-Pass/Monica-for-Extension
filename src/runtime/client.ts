@@ -2,7 +2,7 @@ import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, Pro
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { bytesToBase64 } from "../security/encoding";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2CollectionSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2CollectionSummaryPage, Mdbx2HostStatus, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -65,14 +65,21 @@ export const vaultClient = {
   sendBitwardenEmailCode: (vaultUrl: string, email: string, masterPassword: string, providerId?: string) =>
     send<void>({ type: "BITWARDEN_SEND_EMAIL_CODE", vaultUrl, email, masterPassword, providerId }),
   mdbx2HostStatus: () => send<Mdbx2HostStatus>({ type: "MDBX2_HOST_STATUS" }),
-  beginMdbx2Transfer: (sizeBytes: number, sha256: string) => send<Mdbx2TransferBeginResult>({ type: "MDBX2_TRANSFER_BEGIN", sizeBytes, sha256 }),
+  beginMdbx2Transfer: (sizeBytes: number, sha256?: string) => send<Mdbx2TransferBeginResult>({ type: "MDBX2_TRANSFER_BEGIN", sizeBytes, sha256 }),
   sendMdbx2Chunk: (transferId: string, offset: number, bytes: Uint8Array) => send<Mdbx2TransferChunkResult>({ type: "MDBX2_TRANSFER_CHUNK", transferId, offset, dataBase64: bytesToBase64(bytes) }),
   finishMdbx2Transfer: (transferId: string) => send<Mdbx2TransferFinishResult>({ type: "MDBX2_TRANSFER_FINISH", transferId }),
   abortMdbx2Transfer: (transferId: string) => send<boolean>({ type: "MDBX2_TRANSFER_ABORT", transferId }),
+  releaseMdbx2File: (fileHandle: string) => send<boolean>({ type: "MDBX2_FILE_RELEASE", fileHandle }),
   inspectMdbx2Vault: (source: Mdbx2VaultSource) => send<Mdbx2VaultInspection>({ type: "MDBX2_VAULT_INSPECT", source }),
   openMdbx2Vault: (input: Mdbx2VaultOpenInput) => send<{ account: ProviderAccount; session: Mdbx2VaultSessionSummary }>({ type: "MDBX2_VAULT_OPEN", input }),
   mdbx2VaultStatus: (providerId: string) => send<Mdbx2VaultRuntimeStatus>({ type: "MDBX2_VAULT_STATUS", providerId }),
   lockMdbx2Vault: (providerId: string) => send<boolean>({ type: "MDBX2_VAULT_LOCK", providerId }),
+  saveMdbx2WebDav: (providerId: string, name: string, config: Mdbx2WebDavSettingsInput, isDefaultSaveTarget = false) =>
+    send<ProviderAccount>({ type: "MDBX2_WEBDAV_SAVE", providerId, name, config, isDefaultSaveTarget }),
+  downloadMdbx2Bootstrap: (config: Mdbx2WebDavSettingsInput) => send<Mdbx2TransferFinishResult>({ type: "MDBX2_BOOTSTRAP_DOWNLOAD", config }),
+  publishMdbx2Bootstrap: (providerId: string) => send<Mdbx2ManagerSyncStatus>({ type: "MDBX2_BOOTSTRAP_PUBLISH", providerId }),
+  registerMdbx2Bootstrap: (providerId: string) => send<Mdbx2ManagerSyncStatus>({ type: "MDBX2_BOOTSTRAP_REGISTER", providerId }),
+  mdbx2SyncStatus: (providerId: string) => send<Mdbx2ManagerSyncStatus>({ type: "MDBX2_SYNC_STATUS", providerId }),
   listMdbx2Collections: (providerId: string, input: { deleted?: boolean; pageSize?: number; cursor?: string } = {}) => send<Mdbx2CollectionSummaryPage>({ type: "MDBX2_COLLECTION_LIST", providerId, ...input }),
   listMdbx2Objects: (providerId: string, collectionId: string, input: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string } = {}) => send<Mdbx2ObjectSummaryPage>({ type: "MDBX2_OBJECT_LIST", providerId, collectionId, ...input }),
   revealMdbx2Object: (providerId: string, objectId: string) => send<Mdbx2ObjectRecord>({ type: "MDBX2_OBJECT_REVEAL", providerId, objectId }),

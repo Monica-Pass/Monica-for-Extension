@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createLoginItem, type ProviderAccount } from "../../core/model";
-import { Mdbx2Provider, type Mdbx2RuntimeClient } from "./mdbx2-provider";
+import { Mdbx2Provider, type Mdbx2CloudSynchronizer, type Mdbx2RuntimeClient } from "./mdbx2-provider";
 import type { Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult } from "./native-contract";
 
 const HANDLE = "11111111-1111-4111-8111-111111111111";
@@ -100,5 +100,49 @@ describe("MDBX2 provider", () => {
 
     await expect(provider.sync(account, { now: "2026-08-02T00:02:00Z", localItems: [], signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     expect(runtime.writes).toHaveLength(0);
+  });
+
+  it("runs WebDAV bundle synchronization before and after local reconciliation and reloads the final Host state", async () => {
+    const runtime = new FakeRuntime();
+    const calls: unknown[] = [];
+    let count = 0;
+    const cloud: Mdbx2CloudSynchronizer = {
+      async synchronize(input) {
+        calls.push(input);
+        count += 1;
+        runtime.head = count === 1 ? "commit-android" : "commit-final";
+        return {
+          uploadedSegments: 0,
+          downloadedSegments: count === 1 ? 1 : 0,
+          uploadedBlobs: 0,
+          downloadedBlobs: 0,
+          appliedCommits: count === 1 ? 1 : 0,
+          skippedCommits: 0,
+          conflicts: count === 2 ? 1 : 0,
+          blockedStreams: count === 2 ? 1 : 0
+        };
+      }
+    };
+    const provider = new Mdbx2Provider(runtime, cloud);
+    const cloudAccount: ProviderAccount = {
+      ...account,
+      config: {
+        ...account.config,
+        webDavBaseUrl: "https://vault.test/dav",
+        webDavUsername: "joyins",
+        webDavPassword: "secret",
+        remotePath: "vaults/main.mdbx",
+        syncStateHandle: "66666666-6666-4666-8666-666666666666"
+      }
+    };
+    const result = await provider.sync(cloudAccount, { now: "2026-08-02T00:03:00Z", localItems: [] });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ vaultHandle: HANDLE, remotePath: "vaults/main.mdbx", username: "joyins" });
+    expect(result.items[0].providerRefs[0].revision).toBe("commit-final");
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("记录了 1 个冲突"),
+      expect.stringContaining("1 个远端设备流")
+    ]));
   });
 });

@@ -145,6 +145,27 @@ export interface Mdbx2VaultOpenInput {
   isDefaultSaveTarget?: boolean;
 }
 
+export interface Mdbx2WebDavSettingsInput {
+  baseUrl: string;
+  username: string;
+  password: string;
+  remotePath: string;
+}
+
+export interface Mdbx2ManagerSyncStatus {
+  configured: boolean;
+  registered: boolean;
+  initialized: boolean;
+  hasLocalChanges: boolean;
+  pendingBootstrap: boolean;
+  pendingSegment: boolean;
+  pendingRemoteAcknowledgement: boolean;
+  remoteStreamCount: number;
+  blockedStreamCount: number;
+  blobTransferCount: number;
+  verifiedRemoteBlobCount: number;
+}
+
 /**
  * A `.kdbx` file the user picks in an extension page, so the bytes travel as Base64 through the
  * runtime channel. Neither the password nor the key file is persisted: the unlocked session lives in
@@ -233,14 +254,20 @@ export type ExtensionRequest =
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
   | { type: "MDBX2_HOST_STATUS" }
-  | { type: "MDBX2_TRANSFER_BEGIN"; sizeBytes: number; sha256: string }
+  | { type: "MDBX2_TRANSFER_BEGIN"; sizeBytes: number; sha256?: string }
   | { type: "MDBX2_TRANSFER_CHUNK"; transferId: string; offset: number; dataBase64: string }
   | { type: "MDBX2_TRANSFER_FINISH"; transferId: string }
   | { type: "MDBX2_TRANSFER_ABORT"; transferId: string }
+  | { type: "MDBX2_FILE_RELEASE"; fileHandle: string }
   | { type: "MDBX2_VAULT_INSPECT"; source: Mdbx2VaultSource }
   | { type: "MDBX2_VAULT_OPEN"; input: Mdbx2VaultOpenInput }
   | { type: "MDBX2_VAULT_STATUS"; providerId: string }
   | { type: "MDBX2_VAULT_LOCK"; providerId: string }
+  | { type: "MDBX2_WEBDAV_SAVE"; providerId: string; name: string; config: Mdbx2WebDavSettingsInput; isDefaultSaveTarget?: boolean }
+  | { type: "MDBX2_BOOTSTRAP_DOWNLOAD"; config: Mdbx2WebDavSettingsInput }
+  | { type: "MDBX2_BOOTSTRAP_PUBLISH"; providerId: string }
+  | { type: "MDBX2_BOOTSTRAP_REGISTER"; providerId: string }
+  | { type: "MDBX2_SYNC_STATUS"; providerId: string }
   | { type: "MDBX2_COLLECTION_LIST"; providerId: string; deleted?: boolean; pageSize?: number; cursor?: string }
   | { type: "MDBX2_OBJECT_LIST"; providerId: string; collectionId: string; objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string }
   | { type: "MDBX2_OBJECT_REVEAL"; providerId: string; objectId: string }

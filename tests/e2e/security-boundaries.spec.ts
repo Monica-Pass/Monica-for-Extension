@@ -58,6 +58,25 @@ async function fillLogin(manager: Page, itemId: string, tabId: number): Promise<
   });
 }
 
+test("MDBX2 bootstrap and synchronization commands are restricted to the manager page", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo, "mdbx2-manager-policy-profile");
+    context = launched.context;
+    const extensionId = new URL(launched.manager.url()).host;
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+    const response = await popup.evaluate(async () => chrome.runtime.sendMessage({
+      type: "MDBX2_BOOTSTRAP_DOWNLOAD",
+      config: { baseUrl: "https://dav.example.test", username: "private-user", password: "private-password", remotePath: "vaults/main.mdbx" }
+    })) as RuntimeResponse;
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain("只允许 Monica 管理页调用");
+  } finally {
+    await context?.close();
+  }
+});
+
 test("non-loopback HTTP login submissions are rejected without retaining a password", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {

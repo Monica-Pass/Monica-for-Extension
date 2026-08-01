@@ -1,3 +1,4 @@
+mod cloud_sync;
 mod runtime;
 
 use runtime::{HostRuntime, RpcFailure, PROTOCOL_VERSION};
@@ -265,6 +266,11 @@ mod tests {
         assert_eq!(result["mdbxCoreRevision"], runtime::MDBX_CORE_REVISION);
         assert_eq!(result["mdbxFormatVersion"], "MDBX-2");
         assert_eq!(result["supportsMdbx1"], false);
+        assert_eq!(result["supportsDurableCloudSync"], true);
+        assert_eq!(
+            result["maxSyncSegmentPageSize"],
+            cloud_sync::SEGMENT_PAGE_SIZE
+        );
         assert_eq!(
             result["maxBinaryChunkBytes"],
             runtime::MAX_BINARY_CHUNK_BYTES

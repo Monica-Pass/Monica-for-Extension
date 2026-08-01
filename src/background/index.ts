@@ -5,15 +5,18 @@ import { ProviderRegistry } from "../core/provider";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
-import { MDBX2_MAX_BINARY_CHUNK_BYTES } from "../providers/mdbx2/native-contract";
+import { MDBX2_MAX_BINARY_CHUNK_BYTES, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
+import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
+import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
+import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
-import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
@@ -32,7 +35,8 @@ const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const mdbx2NativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime());
-const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient);
+const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);
+const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);
 providers.register(mdbx2Provider);
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
@@ -444,6 +448,9 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "MDBX2_TRANSFER_ABORT":
       assertManagerPage(sender);
       return mdbx2NativeClient.abortInboundTransfer(request.transferId);
+    case "MDBX2_FILE_RELEASE":
+      assertManagerPage(sender);
+      return mdbx2NativeClient.releaseFile(request.fileHandle);
     case "MDBX2_VAULT_INSPECT":
       assertManagerPage(sender);
       return mdbx2NativeClient.inspectVault(request.source);
@@ -497,6 +504,72 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       } finally {
         mdbx2Provider.lockAccount(request.providerId);
       }
+    }
+    case "MDBX2_WEBDAV_SAVE": {
+      assertManagerPage(sender);
+      const account = await requireMdbx2Account(request.providerId);
+      const previous = account.config;
+      const config = effectiveMdbx2WebDavSettings(request.config, previous);
+      const previousBaseUrl = stringAccountConfig(account, "webDavBaseUrl");
+      const previousRemotePath = stringAccountConfig(account, "remotePath");
+      const remoteBindingChanged = Boolean(previousBaseUrl || previousRemotePath)
+        && (previousBaseUrl !== config.baseUrl || previousRemotePath !== config.remotePath);
+      return service.upsertProvider({
+        ...account,
+        name: request.name.trim() || account.name || "Monica MDBX2",
+        isDefaultSaveTarget: Boolean(request.isDefaultSaveTarget),
+        config: {
+          ...previous,
+          webDavBaseUrl: config.baseUrl,
+          webDavUsername: config.username,
+          webDavPassword: config.password,
+          remotePath: config.remotePath,
+          syncStateHandle: remoteBindingChanged ? undefined : previous.syncStateHandle
+        },
+        lastSyncAt: remoteBindingChanged ? undefined : account.lastSyncAt,
+        lastError: undefined
+      });
+    }
+    case "MDBX2_BOOTSTRAP_DOWNLOAD": {
+      assertManagerPage(sender);
+      return mdbx2SyncCoordinator.downloadBootstrap(effectiveMdbx2WebDavSettings(request.config));
+    }
+    case "MDBX2_BOOTSTRAP_PUBLISH": {
+      assertManagerPage(sender);
+      const account = await requireMdbx2Account(request.providerId);
+      const input = mdbx2CloudSyncInput(account, false);
+      const published = await mdbx2SyncCoordinator.publishBootstrap(input);
+      await service.upsertProvider({
+        ...account,
+        config: { ...account.config, syncStateHandle: published.stateHandle },
+        lastError: undefined
+      });
+      return managerSyncStatus(published.status, true, true);
+    }
+    case "MDBX2_BOOTSTRAP_REGISTER": {
+      assertManagerPage(sender);
+      const account = await requireMdbx2Account(request.providerId);
+      const config = mdbx2WebDavSyncConfig(account);
+      const vaultHandle = stringAccountConfig(account, "vaultHandle");
+      if (!vaultHandle) throw new Error("MDBX2 密码源缺少本机工作副本。");
+      const status = await mdbx2SyncCoordinator.registerDownloadedBootstrap(
+        vaultHandle,
+        config
+      );
+      await service.upsertProvider({
+        ...account,
+        config: { ...account.config, syncStateHandle: status.stateHandle },
+        lastError: undefined
+      });
+      return managerSyncStatus(status, true, true);
+    }
+    case "MDBX2_SYNC_STATUS": {
+      assertManagerPage(sender);
+      const account = await requireMdbx2Account(request.providerId);
+      const configured = Boolean(stringAccountConfig(account, "webDavBaseUrl") && stringAccountConfig(account, "remotePath"));
+      const syncStateHandle = stringAccountConfig(account, "syncStateHandle");
+      if (!configured || !syncStateHandle) return managerSyncStatus(undefined, configured, false);
+      return managerSyncStatus(await mdbx2SyncCoordinator.status(mdbx2CloudSyncInput(account, true)), true, true);
     }
     case "MDBX2_COLLECTION_LIST": {
       assertManagerPage(sender);
@@ -1410,6 +1483,69 @@ function documentLabel(type: IdentityItem["documentType"]): string {
 function unmaskedAccountNumber(value: string): string | undefined {
   const normalized = value.trim();
   return normalized && !/[x*•]/i.test(normalized) ? normalized : undefined;
+}
+
+function effectiveMdbx2WebDavSettings(
+  config: Mdbx2WebDavSettingsInput,
+  previous: Record<string, unknown> = {}
+): Mdbx2WebDavSyncConfig {
+  return {
+    baseUrl: normalizeServerUrl(config.baseUrl),
+    username: config.username.trim(),
+    password: config.password || (typeof previous.webDavPassword === "string" ? previous.webDavPassword : ""),
+    remotePath: normalizeMdbx2RemotePath(config.remotePath),
+    syncStateHandle: typeof previous.syncStateHandle === "string" ? previous.syncStateHandle : undefined
+  };
+}
+
+async function requireMdbx2Account(providerId: string): Promise<ProviderAccount> {
+  const account = await service.getProvider(providerId);
+  if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
+  return account;
+}
+
+function mdbx2WebDavSyncConfig(account: ProviderAccount): Mdbx2WebDavSyncConfig {
+  const baseUrl = stringAccountConfig(account, "webDavBaseUrl");
+  const remotePath = stringAccountConfig(account, "remotePath");
+  if (!baseUrl) throw new Error("MDBX2 WebDAV 地址未配置。");
+  if (!remotePath) throw new Error("MDBX2 WebDAV 远端文件位置未配置。");
+  return {
+    baseUrl,
+    username: stringAccountConfig(account, "webDavUsername"),
+    password: stringAccountConfig(account, "webDavPassword"),
+    remotePath,
+    syncStateHandle: stringAccountConfig(account, "syncStateHandle") || undefined
+  };
+}
+
+function mdbx2CloudSyncInput(account: ProviderAccount, requireState: true): Mdbx2CloudSyncInput;
+function mdbx2CloudSyncInput(account: ProviderAccount, requireState: false): Omit<Mdbx2CloudSyncInput, "syncStateHandle"> & { syncStateHandle?: string };
+function mdbx2CloudSyncInput(account: ProviderAccount, requireState: boolean): Mdbx2CloudSyncInput | (Omit<Mdbx2CloudSyncInput, "syncStateHandle"> & { syncStateHandle?: string }) {
+  const config = mdbx2WebDavSyncConfig(account);
+  const vaultHandle = stringAccountConfig(account, "vaultHandle");
+  if (!vaultHandle) throw new Error("MDBX2 密码源缺少本机工作副本。");
+  if (requireState && !config.syncStateHandle) throw new Error("MDBX2 WebDAV 尚未完成 bootstrap 注册。");
+  return { ...config, vaultHandle, syncStateHandle: config.syncStateHandle };
+}
+
+function managerSyncStatus(status: Mdbx2SyncStateStatus | undefined, configured: boolean, registered: boolean): Mdbx2ManagerSyncStatus {
+  return {
+    configured,
+    registered,
+    initialized: status?.initialized || false,
+    hasLocalChanges: status?.hasLocalChanges || false,
+    pendingBootstrap: status?.pendingBootstrap || false,
+    pendingSegment: status?.pendingSegment || false,
+    pendingRemoteAcknowledgement: status?.pendingRemoteAcknowledgement || false,
+    remoteStreamCount: status?.remoteStreamCount || 0,
+    blockedStreamCount: status?.blockedStreamCount || 0,
+    blobTransferCount: status?.blobTransferCount || 0,
+    verifiedRemoteBlobCount: status?.verifiedRemoteBlobCount || 0
+  };
+}
+
+function stringAccountConfig(account: ProviderAccount, key: string): string {
+  return typeof account.config[key] === "string" ? account.config[key] as string : "";
 }
 
 async function requireMdbx2VaultHandle(providerId: string): Promise<string> {

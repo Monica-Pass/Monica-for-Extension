@@ -2,6 +2,7 @@ import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultIte
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
 import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
+import type { Mdbx2CloudSyncInput, Mdbx2CloudSyncReport } from "./mdbx2-sync-coordinator";
 import type {
   Mdbx2CollectionSummary,
   Mdbx2CollectionSummaryPage,
@@ -27,6 +28,10 @@ export interface Mdbx2RuntimeClient {
   revealObject(vaultHandle: string, objectId: string): Promise<Mdbx2ObjectRecord>;
   upsertObject(vaultHandle: string, operationId: string, input: Mdbx2ObjectUpsertInput): Promise<Mdbx2ObjectWriteResult>;
   deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string): Promise<Mdbx2ObjectDeleteResult>;
+}
+
+export interface Mdbx2CloudSynchronizer {
+  synchronize(input: Mdbx2CloudSyncInput, signal?: AbortSignal): Promise<Mdbx2CloudSyncReport>;
 }
 
 interface RemoteObject {
@@ -57,7 +62,10 @@ export class Mdbx2Provider implements ProviderAdapter {
   readonly kind = "mdbx2" as const;
   private readonly sessions = new Map<string, Mdbx2ProviderSession>();
 
-  constructor(private readonly runtime: Mdbx2RuntimeClient) {}
+  constructor(
+    private readonly runtime: Mdbx2RuntimeClient,
+    private readonly cloudSync?: Mdbx2CloudSynchronizer
+  ) {}
 
   async testConnection(account: ProviderAccount): Promise<void> {
     const status = await this.runtime.vaultStatus(vaultHandleOf(account));
@@ -66,6 +74,20 @@ export class Mdbx2Provider implements ProviderAdapter {
   }
 
   async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
+    const cloud = cloudSyncInput(account);
+    const cloudReports: Mdbx2CloudSyncReport[] = [];
+    if (cloud) {
+      if (!this.cloudSync) throw new Error("MDBX2 WebDAV 同步协调器尚未初始化。");
+      cloudReports.push(await this.cloudSync.synchronize(cloud, context.signal));
+    }
+    const result = await this.syncLocal(account, context);
+    if (!cloud) return result;
+    cloudReports.push(await this.cloudSync!.synchronize(cloud, context.signal));
+    const finalRemote = await this.loadRemote(account, context.signal);
+    return materializeCloudResult(account, context.now, result, finalRemote, cloudReports);
+  }
+
+  private async syncLocal(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
     context.signal?.throwIfAborted();
     await this.testConnection(account);
     const remote = await this.loadRemote(account, context.signal);
@@ -377,4 +399,83 @@ function fingerprint(item: VaultItem): string {
   return JSON.stringify(content, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))
     : value);
+}
+
+function cloudSyncInput(account: ProviderAccount): Mdbx2CloudSyncInput | undefined {
+  const baseUrl = stringConfig(account, "webDavBaseUrl");
+  const syncStateHandle = stringConfig(account, "syncStateHandle");
+  const remotePath = stringConfig(account, "remotePath");
+  const username = stringConfig(account, "webDavUsername");
+  const password = stringConfig(account, "webDavPassword");
+  if (!baseUrl && !syncStateHandle && !username && !password) return undefined;
+  if (!baseUrl) throw new Error("MDBX2 WebDAV 地址未配置。");
+  if (!remotePath) throw new Error("MDBX2 WebDAV 远端文件位置未配置。");
+  if (!syncStateHandle) throw new Error("MDBX2 WebDAV 尚未完成 bootstrap 注册。");
+  return {
+    vaultHandle: vaultHandleOf(account),
+    syncStateHandle,
+    baseUrl,
+    username,
+    password,
+    remotePath
+  };
+}
+
+function stringConfig(account: ProviderAccount, key: string): string {
+  return typeof account.config[key] === "string" ? account.config[key] as string : "";
+}
+
+function materializeCloudResult(
+  account: ProviderAccount,
+  now: string,
+  result: ProviderSyncResult,
+  remote: RemoteSnapshot,
+  reports: Mdbx2CloudSyncReport[]
+): ProviderSyncResult {
+  const unrelated = result.items.filter((item) => !referenceOf(item, account.id));
+  const scoped = result.items.filter((item) => referenceOf(item, account.id));
+  const localByRemote = new Map(scoped.flatMap((item) => {
+    const remoteId = referenceOf(item, account.id)?.remoteId;
+    return remoteId ? [[remoteId, item] as const] : [];
+  }));
+  const conflictIds = new Set(result.conflicts.map((conflict) => conflict.itemId));
+  const items = [...unrelated];
+  const retained = new Set<string>();
+  for (const [remoteId, object] of remote.active) {
+    const local = localByRemote.get(remoteId);
+    if (object.item) {
+      const item = finalizeRemote(object.item, local, account.id, object.summary);
+      items.push(item);
+      retained.add(item.id);
+    } else if (local) {
+      items.push(local);
+      retained.add(local.id);
+    }
+  }
+  for (const local of scoped) {
+    if (retained.has(local.id)) continue;
+    const remoteId = referenceOf(local, account.id)?.remoteId;
+    if (!remoteId || conflictIds.has(local.id)) items.push(local);
+  }
+  const warnings = [...new Set([
+    ...result.warnings,
+    ...remote.warnings,
+    ...reports.flatMap(cloudReportWarnings)
+  ])];
+  return {
+    ...result,
+    items,
+    accountPatch: result.conflicts.length
+      ? { ...result.accountPatch, lastError: `发现 ${result.conflicts.length} 个 MDBX2 同步冲突。` }
+      : { ...result.accountPatch, lastSyncAt: now, lastError: undefined },
+    warnings,
+    sourceRecords: remote.sourceRecords
+  };
+}
+
+function cloudReportWarnings(report: Mdbx2CloudSyncReport): string[] {
+  const warnings: string[] = [];
+  if (report.conflicts) warnings.push(`MDBX2 核心在增量应用中记录了 ${report.conflicts} 个冲突。`);
+  if (report.blockedStreams) warnings.push(`MDBX2 有 ${report.blockedStreams} 个远端设备流正在等待缺失增量段或父 Commit。`);
+  return warnings;
 }

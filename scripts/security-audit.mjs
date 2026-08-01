@@ -52,7 +52,11 @@ for (const type of mdbx2Types) {
   if (start < 0 || !backgroundSource.slice(start, start + 500).includes("assertManagerPage(sender)")) throw new Error(`MDBX2 request ${type} is not restricted to the manager page.`);
 }
 if (!backgroundSource.includes('chrome.runtime.getURL("index.html")')) throw new Error("MDBX2 manager-page origin check is missing.");
-if (!backgroundSource.includes("const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient);") || !backgroundSource.includes("providers.register(mdbx2Provider);")) {
+if (
+  !backgroundSource.includes("const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);")
+  || !backgroundSource.includes("const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);")
+  || !backgroundSource.includes("providers.register(mdbx2Provider);")
+) {
   throw new Error("MDBX2 Provider is not registered through the reviewed Native Host client.");
 }
 if (!backgroundSource.includes("mdbx2Provider.lock();") || !backgroundSource.includes("mdbx2Provider.lockAccount(request.providerId);")) {

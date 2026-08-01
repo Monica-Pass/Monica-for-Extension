@@ -14,7 +14,7 @@ Monica 的单一用途是安全管理并按用户明确操作保存、同步和�
 
 | 权限 | 使用目的 |
 | --- | --- |
-| `http://*/*` | 在用户访问的 HTTP 网页/frame 中检测字段、显示保存/Passkey 确认 UI，并支持用户明确配置的 HTTP WebDAV 或本地 Bitwarden 开发服务。HTTP 不提供传输机密性，不建议用于真实凭据。 |
+| `http://*/*` | 在用户访问的 HTTP 网页/frame 中检测字段、显示保存/Passkey 确认 UI，并支持回环地址上的本地 WebDAV 或 Bitwarden 开发服务。远端密码源连接要求 HTTPS。 |
 | `https://*/*` | 在 HTTPS 网页/frame 中检测和填充字段，并连接用户选择的 WebDAV、Bitwarden US/EU 或自托管服务。 |
 
 广泛的 HTTP/HTTPS 主机范围是密码管理器跨网站工作的必要条件。插件不会因为拥有主机权限就把完整密码库注入网页；Content Script 只能扫描字段、提交候选并接收用户单次选择后的填充载荷。

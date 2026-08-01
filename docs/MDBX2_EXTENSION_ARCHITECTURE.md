@@ -79,7 +79,7 @@ Every request contains:
 
 ```json
 {
-  "protocol": 1,
+  "protocol": 2,
   "requestId": "uuid",
   "method": "host.hello",
   "params": {}
@@ -91,6 +91,8 @@ Every response contains the same request ID and either a result or a stable erro
 Large transfers use explicit begin, chunk, finish and abort methods. A transfer ID binds direction, vault, declared size, expected SHA-256 and durable offset. Chunks must arrive at the next exact offset. Completion verifies size and digest before publication. Retry of an accepted chunk is idempotent.
 
 The background uses `chrome.runtime.connectNative()`. The port keeps an MV3 Service Worker alive on supported Chrome versions; disconnect handlers reopen the port only when an active native task still exists.
+
+Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release and synchronization status are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
 
 ## Local files
 
@@ -147,6 +149,8 @@ The old extension `mdbx` provider is retired. Existing persisted accounts are ke
 Adding `nativeMessaging` changes the extension permission surface and requires updates to the manifest audit. The Host manifest uses exact `allowed_origins`; installers never use a wildcard. Release checks build and test the Host from a pinned core revision and verify the executable hash included in the installer metadata.
 
 The Native Host is part of the trusted computing base. Release packaging therefore includes Cargo dependency locking, license review, source revision verification, unit tests, protocol fuzz-style boundary tests and a Windows installer verification step.
+
+The Windows x64 release is a separate reproducible ZIP containing the exact tested executable, per-user Chrome and Edge installer, uninstaller, manifest template, lockfile, license and executable metadata. Installation requires one or two explicit 32-character extension IDs and writes exact Native Messaging origins under `HKCU`.
 
 ## Compatibility claim
 

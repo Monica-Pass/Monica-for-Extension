@@ -689,7 +689,11 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
         formatVersion: "MDBX-2",
         vaultHandle: stringConfig(provider, "vaultHandle") || undefined,
         schemaVersion: typeof provider.config.schemaVersion === "number" ? provider.config.schemaVersion : undefined,
+        webDavBaseUrl: stringConfig(provider, "webDavBaseUrl") || undefined,
+        webDavUsername: stringConfig(provider, "webDavUsername") || undefined,
+        webDavPasswordConfigured: Boolean(stringConfig(provider, "webDavPassword")),
         remotePath: stringConfig(provider, "remotePath") || undefined,
+        syncConfigured: Boolean(stringConfig(provider, "syncStateHandle")),
         hostVerifiedAt: stringConfig(provider, "hostVerifiedAt") || undefined
       }
     };

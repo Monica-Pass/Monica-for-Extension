@@ -8,6 +8,7 @@ import "@m3e/web/icon-button";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
+import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
@@ -19,9 +20,10 @@ import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, 
 import { normalizeImportedVaultItem } from "./manager/import-items";
 import { parseCsvToVaultItems } from "./manager/csv-import";
 import { passkeyAvailability, passkeyAvailabilityLabel } from "./passkey/source-policy";
+import type { Mdbx2HostStatus, Mdbx2VaultRuntimeStatus } from "./providers/mdbx2/native-contract";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { vaultClient } from "./runtime/client";
-import type { KeePassSessionSummary } from "./runtime/messages";
+import type { KeePassSessionSummary, Mdbx2ManagerSyncStatus } from "./runtime/messages";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
@@ -94,6 +96,14 @@ const keePassFileInput = ref<HTMLInputElement | null>(null);
 const keePassKeyFileInput = ref<HTMLInputElement | null>(null);
 const revealKeePassPassword = ref(false);
 const keePassSessions = ref<Record<string, KeePassSessionSummary>>({});
+const mdbx2DialogOpen = ref(false);
+const mdbx2DialogMode = ref<"local" | "remote">("local");
+const editingMdbx2Id = ref<string | undefined>();
+const mdbx2HostStatus = ref<Mdbx2HostStatus | null>(null);
+const mdbx2RuntimeStatuses = ref<Record<string, Mdbx2VaultRuntimeStatus>>({});
+const mdbx2SyncStatuses = ref<Record<string, Mdbx2ManagerSyncStatus>>({});
+const mdbx2Busy = ref<"" | "lock">("");
+const activeMdbx2ProviderId = ref("");
 const securityBusy = ref<"" | "password" | "export" | "restore">("");
 const securityError = ref("");
 const selectedEncryptedBackup = ref<EncryptedVaultBackup | null>(null);
@@ -141,6 +151,8 @@ const filteredSectionItems = computed(() => {
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
 const keePassProviders = computed(() => providers.value.filter((provider) => provider.kind === "keepass"));
+const mdbx2Providers = computed(() => providers.value.filter((provider) => provider.kind === "mdbx2"));
+const editingMdbx2Provider = computed(() => providers.value.find((provider) => provider.id === editingMdbx2Id.value && provider.kind === "mdbx2"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
@@ -155,7 +167,7 @@ const keePassProtectionPreview = computed(() => {
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || exportBackupDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || exportBackupDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -193,6 +205,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault();
     if (exportBackupDialogOpen.value) closeExportBackupDialog();
+    else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassDialogOpen.value) closeKeePassDialog();
     else if (bitwardenDialogOpen.value) closeBitwardenDialog();
     else if (webDavDialogOpen.value) closeWebDavDialog();
@@ -290,8 +303,12 @@ async function lockVault() {
   vaultEditorOpen.value = false;
   webDavDialogOpen.value = false;
   bitwardenDialogOpen.value = false;
+  mdbx2DialogOpen.value = false;
+  editingMdbx2Id.value = undefined;
   closeKeePassDialog();
   keePassSessions.value = {};
+  mdbx2RuntimeStatuses.value = {};
+  mdbx2SyncStatuses.value = {};
 }
 
 async function refreshItems() {
@@ -307,7 +324,7 @@ async function refreshProviders() {
   providers.value = nextProviders;
   providerQueues.value = nextQueues;
   providerConflicts.value = nextConflicts;
-  await refreshKeePassSessions(nextProviders);
+  await Promise.all([refreshKeePassSessions(nextProviders), refreshMdbx2Statuses(nextProviders)]);
 }
 
 async function refreshKeePassSessions(accounts = providers.value) {
@@ -319,6 +336,35 @@ async function refreshKeePassSessions(accounts = providers.value) {
     }
   }));
   keePassSessions.value = Object.fromEntries(sessions.filter((entry): entry is readonly [string, KeePassSessionSummary] => Boolean(entry[1])));
+}
+
+async function refreshMdbx2Statuses(accounts = providers.value) {
+  const mdbx2Accounts = accounts.filter((provider) => provider.kind === "mdbx2");
+  if (!mdbx2Accounts.length) {
+    mdbx2RuntimeStatuses.value = {};
+    mdbx2SyncStatuses.value = {};
+    return;
+  }
+  try {
+    const host = await vaultClient.mdbx2HostStatus();
+    mdbx2HostStatus.value = host;
+    if (host.availability !== "ready") {
+      mdbx2RuntimeStatuses.value = {};
+      mdbx2SyncStatuses.value = {};
+      return;
+    }
+  } catch {
+    mdbx2RuntimeStatuses.value = {};
+    mdbx2SyncStatuses.value = {};
+    return;
+  }
+  const entries = await Promise.all(mdbx2Accounts.map(async (provider) => {
+    const runtime = await vaultClient.mdbx2VaultStatus(provider.id).catch(() => undefined);
+    const sync = await vaultClient.mdbx2SyncStatus(provider.id).catch(() => undefined);
+    return { providerId: provider.id, runtime, sync };
+  }));
+  mdbx2RuntimeStatuses.value = Object.fromEntries(entries.flatMap((entry) => entry.runtime ? [[entry.providerId, entry.runtime]] : []));
+  mdbx2SyncStatuses.value = Object.fromEntries(entries.flatMap((entry) => entry.sync ? [[entry.providerId, entry.sync]] : []));
 }
 
 function queueFor(providerId: string) {
@@ -344,7 +390,7 @@ function sectionTitle(section: Section): string {
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
 }
 
 function providerName(item: VaultItem): string {
@@ -581,6 +627,67 @@ async function removeCredential(item: LoginItem) {
   showNotice("登录项已删除。");
 }
 
+function openMdbx2Dialog(provider?: ProviderAccount, mode: "local" | "remote" = "local") {
+  editingMdbx2Id.value = provider?.id;
+  mdbx2DialogMode.value = mode;
+  mdbx2DialogOpen.value = true;
+}
+
+function closeMdbx2Dialog() {
+  mdbx2DialogOpen.value = false;
+  editingMdbx2Id.value = undefined;
+}
+
+async function handleMdbx2Changed() {
+  await Promise.all([refreshItems(), refreshProviders()]);
+}
+
+function mdbx2RuntimeFor(providerId: string): Mdbx2VaultRuntimeStatus | undefined {
+  return mdbx2RuntimeStatuses.value[providerId];
+}
+
+function mdbx2SyncFor(providerId: string): Mdbx2ManagerSyncStatus | undefined {
+  return mdbx2SyncStatuses.value[providerId];
+}
+
+function mdbx2StateLabel(provider: ProviderAccount): string {
+  const runtime = mdbx2RuntimeFor(provider.id);
+  const sync = mdbx2SyncFor(provider.id);
+  if (provider.lastError || conflictsFor(provider.id).length || sync?.blockedStreamCount) return "需要处理";
+  if (mdbx2HostStatus.value && mdbx2HostStatus.value.availability !== "ready") return "Host 未就绪";
+  if (!runtime?.available) return "本机副本缺失";
+  if (!runtime.open) return "已锁定";
+  if (!sync?.initialized) return sync?.configured ? "待发布" : "仅本机";
+  if (sync.hasLocalChanges || sync.pendingSegment || sync.pendingRemoteAcknowledgement) return "待同步";
+  return provider.lastSyncAt ? "已同步" : "已连接";
+}
+
+function mdbx2StateClass(provider: ProviderAccount): string {
+  const state = mdbx2StateLabel(provider);
+  if (state === "已同步" || state === "已连接") return "state-healthy";
+  if (state === "已锁定" || state === "仅本机") return "state-local-only";
+  return "state-attention";
+}
+
+function mdbx2CanSync(provider: ProviderAccount): boolean {
+  return Boolean(mdbx2RuntimeFor(provider.id)?.open && mdbx2SyncFor(provider.id)?.initialized);
+}
+
+async function lockMdbx2(provider: ProviderAccount) {
+  mdbx2Busy.value = "lock";
+  activeMdbx2ProviderId.value = provider.id;
+  try {
+    await vaultClient.lockMdbx2Vault(provider.id);
+    await refreshMdbx2Statuses();
+    showNotice(`${provider.name} 已锁定；本机工作副本仍保持 MDBX2 加密。`);
+  } catch (error) {
+    showNotice(errorMessage(error));
+  } finally {
+    mdbx2Busy.value = "";
+    activeMdbx2ProviderId.value = "";
+  }
+}
+
 function newWebDav() {
   editingWebDavId.value = undefined;
   Object.assign(webDavForm, { name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
@@ -692,10 +799,19 @@ async function removeProvider(provider: ProviderAccount) {
     if (editingWebDavId.value === provider.id) closeWebDavDialog();
     if (editingBitwardenId.value === provider.id) closeBitwardenDialog();
     if (editingKeePassId.value === provider.id) closeKeePassDialog();
+    if (editingMdbx2Id.value === provider.id) closeMdbx2Dialog();
     if (provider.kind === "keepass") {
       const next = { ...keePassSessions.value };
       delete next[provider.id];
       keePassSessions.value = next;
+    }
+    if (provider.kind === "mdbx2") {
+      const nextRuntime = { ...mdbx2RuntimeStatuses.value };
+      const nextSync = { ...mdbx2SyncStatuses.value };
+      delete nextRuntime[provider.id];
+      delete nextSync[provider.id];
+      mdbx2RuntimeStatuses.value = nextRuntime;
+      mdbx2SyncStatuses.value = nextSync;
     }
     showNotice(`${provider.name} 已从插件中移除，远端数据未改动。`);
   });
@@ -1243,12 +1359,37 @@ function errorMessage(error: unknown) {
 
         <section v-else-if="activeSection === 'providers'" class="provider-page">
           <div class="provider-connect-grid" aria-label="添加密码源">
+            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openMdbx2Dialog()"><span class="connect-icon"><m3e-icon name="database"></m3e-icon></span><span><strong>连接 MDBX2 保险库</strong><small>打开本机文件或从 WebDAV 增量加入</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="newWebDav"><span class="connect-icon"><m3e-icon name="folder_copy"></m3e-icon></span><span><strong>连接 Monica Android WebDAV</strong><small>读取并无损写回 Monica_Backups 快照</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openKeePassDialog()"><span class="connect-icon"><m3e-icon name="key"></m3e-icon></span><span><strong>打开 KeePass 文件</strong><small>支持密码、密钥文件或两者组合</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openBitwarden()"><span class="connect-icon"><m3e-icon name="shield"></m3e-icon></span><span><strong>连接 Bitwarden</strong><small>官方 US/EU 或标准自托管服务</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
           </div>
 
           <div class="provider-list" aria-label="已连接的密码源">
+            <m3e-card v-for="provider in mdbx2Providers" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
+              <div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.remotePath || '本机加密工作副本') }}</p></div></div>
+              <span class="state" :class="mdbx2StateClass(provider)">{{ mdbx2StateLabel(provider) }}</span>
+              <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+              <div class="mdbx2-card-facts" aria-label="MDBX2 状态摘要">
+                <span><strong>{{ mdbx2RuntimeFor(provider.id)?.open ? '已解锁' : '已锁定' }}</strong><small>本机副本</small></span>
+                <span><strong>Schema {{ String(provider.config.schemaVersion ?? '—') }}</strong><small>MDBX-2</small></span>
+                <span><strong>{{ mdbx2SyncFor(provider.id)?.remoteStreamCount || 0 }}</strong><small>远端 stream</small></span>
+                <span><strong>{{ mdbx2SyncFor(provider.id)?.blockedStreamCount || 0 }}</strong><small>受阻 stream</small></span>
+              </div>
+              <p v-if="mdbx2SyncFor(provider.id)?.hasLocalChanges" class="supporting">本机存在尚未发布的 Commit 或 state delta。</p>
+              <div v-if="mdbx2SyncFor(provider.id)?.blockedStreamCount" class="provider-conflict"><strong>远端 stream 已受阻</strong><p>检测到序号缺口、摘要碰撞、缺失父 Commit 或 Blob 未完成。同步不会跳过该位置，也不会静默覆盖。</p></div>
+              <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 MDBX2 版本' : '接受远端删除' }}</m3e-button></div></div>
+              <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>可移植 .mdbx 只用于首次加入与完整备份；日常多设备同步使用 Commit DAG、不可变增量段和加密 Blob。MDBX1 不受支持。</span></p>
+              <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : mdbx2SyncFor(provider.id)?.initialized ? '增量同步已注册，尚未执行首次同步。' : '尚未发布或注册 WebDAV bootstrap。' }}</p>
+              <div class="source-actions">
+                <m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
+                <m3e-button v-else-if="mdbx2CanSync(provider)" variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button>
+                <m3e-button v-else variant="tonal" :disabled="Boolean(mdbx2Busy)" @click="openMdbx2Dialog(provider)"><m3e-icon slot="icon" :name="mdbx2RuntimeFor(provider.id)?.open ? 'cloud_upload' : 'lock_open'"></m3e-icon>{{ mdbx2RuntimeFor(provider.id)?.open ? '配置并发布' : '解锁并设置' }}</m3e-button>
+                <m3e-button v-if="mdbx2RuntimeFor(provider.id)?.open" variant="text" :disabled="Boolean(mdbx2Busy)" @click="lockMdbx2(provider)"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ activeMdbx2ProviderId === provider.id && mdbx2Busy === 'lock' ? '锁定中…' : '锁定' }}</m3e-button>
+                <m3e-icon-button aria-label="管理 MDBX2" @click="openMdbx2Dialog(provider)"><m3e-icon name="settings"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button aria-label="移除 MDBX2" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+              </div>
+            </div></m3e-card>
             <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
               <div class="source-title"><span class="source-icon"><m3e-icon name="folder_copy"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div>
               <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
@@ -1320,6 +1461,19 @@ function errorMessage(error: unknown) {
     </div>
 
     <VaultItemEditor v-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" @cancel="vaultEditorOpen = false" @save="saveVaultItem" />
+
+    <Mdbx2SourceDialog
+      v-if="mdbx2DialogOpen"
+      :provider="editingMdbx2Provider"
+      :initial-mode="mdbx2DialogMode"
+      :host-status="mdbx2HostStatus"
+      :runtime-status="editingMdbx2Id ? mdbx2RuntimeFor(editingMdbx2Id) : undefined"
+      :sync-status="editingMdbx2Id ? mdbx2SyncFor(editingMdbx2Id) : undefined"
+      @close="closeMdbx2Dialog"
+      @changed="handleMdbx2Changed"
+      @notice="showNotice"
+      @host-status="mdbx2HostStatus = $event"
+    />
 
     <div v-if="webDavDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeWebDavDialog"><section class="editor-dialog provider-dialog" role="dialog" aria-modal="true" aria-labelledby="webdav-dialog-title"><header><div><h2 id="webdav-dialog-title">{{ editingWebDavId ? '编辑 WebDAV' : '连接 Monica Android WebDAV' }}</h2><p>读取并无损写回 Android 的 Monica_Backups 快照。</p></div><m3e-icon-button aria-label="关闭 WebDAV 设置" @click="closeWebDavDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
       <form class="provider-form" @submit.prevent="saveWebDav">

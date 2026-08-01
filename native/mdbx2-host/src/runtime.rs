@@ -13,7 +13,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+use crate::cloud_sync;
+
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const HOST_NAME: &str = "com.monica_pass.mdbx2";
 pub const MDBX_CORE_REVISION: &str = "aafa22f195c626a8d8288d712bf42bccea134847";
 pub const MDBX_FORMAT_VERSION: &str = "MDBX-2";
@@ -24,7 +26,7 @@ pub const MAX_ACTIVE_TRANSFERS: usize = 4;
 const TRANSFER_METADATA_VERSION: u32 = 1;
 const DEVICE_METADATA_VERSION: u32 = 1;
 const MAX_SECRET_BYTES: usize = 64 * 1024;
-const MAX_BASE64_CHUNK_BYTES: usize = ((MAX_BINARY_CHUNK_BYTES + 2) / 3) * 4;
+const MAX_BASE64_CHUNK_BYTES: usize = MAX_BINARY_CHUNK_BYTES.div_ceil(3) * 4;
 const MAX_METADATA_BYTES: u64 = 16 * 1024;
 const MAX_SUMMARY_PAGE_SIZE: u32 = 200;
 const MAX_CURSOR_BYTES: usize = 4096;
@@ -41,7 +43,7 @@ pub struct RpcFailure {
 }
 
 impl RpcFailure {
-    fn new(code: &'static str, message: impl Into<String>, retryable: bool) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>, retryable: bool) -> Self {
         Self {
             code,
             message: message.into(),
@@ -49,11 +51,11 @@ impl RpcFailure {
         }
     }
 
-    fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self::new("params-invalid", message, false)
     }
 
-    fn storage(message: impl Into<String>) -> Self {
+    pub(crate) fn storage(message: impl Into<String>) -> Self {
         Self::new("host-storage-error", message, true)
     }
 }
@@ -62,6 +64,7 @@ impl RpcFailure {
 #[serde(rename_all = "kebab-case")]
 enum TransferPurpose {
     VaultBootstrap,
+    SyncSegment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +75,7 @@ struct TransferMetadata {
     transfer_id: String,
     purpose: TransferPurpose,
     size_bytes: u64,
-    sha256: String,
+    sha256: Option<String>,
     received_bytes: u64,
 }
 
@@ -96,10 +99,10 @@ struct VaultSource {
 }
 
 pub struct HostRuntime {
-    root: PathBuf,
-    device_id: String,
+    pub(crate) root: PathBuf,
+    pub(crate) device_id: String,
     transfers: HashMap<String, TransferMetadata>,
-    vaults: HashMap<String, Arc<MdbxVault>>,
+    pub(crate) vaults: HashMap<String, Arc<MdbxVault>>,
 }
 
 impl HostRuntime {
@@ -120,6 +123,9 @@ impl HostRuntime {
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(root)?;
         for directory in ["transfers", "imports", "vaults", "backups"] {
+            fs::create_dir_all(root.join(directory))?;
+        }
+        for directory in ["sync/incoming", "sync/outbound", "sync/states"] {
             fs::create_dir_all(root.join(directory))?;
         }
         let device_id = load_or_create_device_id(&root)?;
@@ -148,6 +154,7 @@ impl HostRuntime {
             "object.reveal" => self.object_reveal(params),
             "object.upsert" => self.object_upsert(params),
             "object.delete" => self.object_delete(params),
+            _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
                 "Native method is not supported by this Host version.",
@@ -173,6 +180,10 @@ impl HostRuntime {
             "maxActiveTransfers": MAX_ACTIVE_TRANSFERS,
             "maxObjectPayloadBytes": MAX_OBJECT_PAYLOAD_BYTES,
             "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
+            "supportsDurableCloudSync": true,
+            "maxSyncSegmentPageSize": cloud_sync::SEGMENT_PAGE_SIZE,
+            "maxBlobReferencePageSize": cloud_sync::MAX_BLOB_PAGE_SIZE,
+            "maxRemoteBlobBytes": cloud_sync::MAX_REMOTE_BLOB_BYTES,
             "supportedUnlockMethods": ["password", "security-key", "password-security-key"],
             "storageProfile": capabilities.storage_profile,
             "syncProfile": capabilities.sync_profile,
@@ -199,6 +210,7 @@ impl HostRuntime {
         }
         let purpose = match take_string(&mut params, "purpose", 64, false)?.as_str() {
             "vault-bootstrap" => TransferPurpose::VaultBootstrap,
+            "sync-segment" => TransferPurpose::SyncSegment,
             _ => {
                 return Err(RpcFailure::invalid(
                     "transfer.begin purpose is unsupported.",
@@ -211,7 +223,12 @@ impl HostRuntime {
                 "transfer.begin size exceeds the reviewed limit.",
             ));
         }
-        let sha256 = take_sha256(&mut params, "sha256")?;
+        let sha256 = take_optional_string(&mut params, "sha256", 64)?;
+        if sha256.as_deref().is_some_and(|value| !valid_sha256(value)) {
+            return Err(RpcFailure::invalid(
+                "transfer.begin sha256 must be a lowercase SHA-256 digest or null.",
+            ));
+        }
         reject_unknown(params)?;
 
         let transfer_id = fresh_uuid();
@@ -380,7 +397,11 @@ impl HostRuntime {
             ));
         }
         let actual_sha256 = hash_file(file)?;
-        if actual_sha256 != metadata.sha256 {
+        if metadata
+            .sha256
+            .as_deref()
+            .is_some_and(|expected| actual_sha256 != expected)
+        {
             self.delete_transfer(&transfer_id);
             return Err(RpcFailure::new(
                 "transfer-digest-mismatch",
@@ -391,7 +412,10 @@ impl HostRuntime {
 
         let (file_handle, destination) = loop {
             let handle = fresh_uuid();
-            let destination = self.import_file_path(&handle);
+            let destination = match metadata.purpose {
+                TransferPurpose::VaultBootstrap => self.import_file_path(&handle),
+                TransferPurpose::SyncSegment => self.sync_inbound_segment_path(&handle),
+            };
             if !destination.exists() {
                 break (handle, destination);
             }
@@ -402,6 +426,7 @@ impl HostRuntime {
         self.delete_transfer_states(&transfer_id);
         Ok(json!({
             "fileHandle": file_handle,
+            "purpose": metadata.purpose,
             "sizeBytes": metadata.size_bytes,
             "sha256": actual_sha256
         }))
@@ -878,7 +903,10 @@ impl HostRuntime {
         }))
     }
 
-    fn require_open_vault(&self, vault_handle: &str) -> Result<Arc<MdbxVault>, RpcFailure> {
+    pub(crate) fn require_open_vault(
+        &self,
+        vault_handle: &str,
+    ) -> Result<Arc<MdbxVault>, RpcFailure> {
         self.vaults.get(vault_handle).cloned().ok_or_else(|| {
             RpcFailure::new(
                 "vault-locked",
@@ -980,6 +1008,13 @@ impl HostRuntime {
         self.root
             .join("imports")
             .join(format!("{file_handle}.mdbx"))
+    }
+
+    pub(crate) fn sync_inbound_segment_path(&self, file_handle: &str) -> PathBuf {
+        self.root
+            .join("sync")
+            .join("incoming")
+            .join(format!("{file_handle}.mdbxsync"))
     }
 }
 
@@ -1091,7 +1126,7 @@ fn valid_transfer_metadata(metadata: &TransferMetadata) -> bool {
         && metadata.size_bytes > 0
         && metadata.size_bytes <= MAX_INBOUND_FILE_BYTES
         && metadata.received_bytes <= metadata.size_bytes
-        && valid_sha256(&metadata.sha256)
+        && metadata.sha256.as_deref().is_none_or(valid_sha256)
 }
 
 fn inspect_exact_mdbx2(path: &Path) -> Result<MdbxMigrationInfo, RpcFailure> {
@@ -1208,7 +1243,7 @@ fn take_key_material(params: &mut Map<String, Value>) -> Result<Zeroizing<Vec<u8
     let encoded = Zeroizing::new(take_string(
         params,
         "keyMaterialBase64",
-        ((MAX_SECRET_BYTES + 2) / 3) * 4,
+        MAX_SECRET_BYTES.div_ceil(3) * 4,
         false,
     )?);
     let decoded = BASE64
@@ -1332,16 +1367,6 @@ fn take_uuid(params: &mut Map<String, Value>, key: &'static str) -> Result<Strin
     canonical_uuid(&value)
         .filter(|canonical| canonical == &value)
         .ok_or_else(|| RpcFailure::invalid(format!("{key} is not a canonical opaque handle.")))
-}
-
-fn take_sha256(params: &mut Map<String, Value>, key: &'static str) -> Result<String, RpcFailure> {
-    let value = take_string(params, key, 64, false)?;
-    if !valid_sha256(&value) {
-        return Err(RpcFailure::invalid(format!(
-            "{key} must be a lowercase SHA-256 digest."
-        )));
-    }
-    Ok(value)
 }
 
 fn reject_unknown(params: Map<String, Value>) -> Result<(), RpcFailure> {

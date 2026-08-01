@@ -1,5 +1,5 @@
 export const MDBX2_NATIVE_HOST_NAME = "com.monica_pass.mdbx2";
-export const MDBX2_NATIVE_PROTOCOL_VERSION = 1;
+export const MDBX2_NATIVE_PROTOCOL_VERSION = 2;
 export const MDBX2_CORE_REVISION = "aafa22f195c626a8d8288d712bf42bccea134847";
 export const MDBX2_ENGINE_VERSION = "0.2.0";
 export const MDBX2_FORMAT_VERSION = "MDBX-2";
@@ -9,6 +9,9 @@ export const MDBX2_MAX_INBOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MDBX2_MAX_ACTIVE_TRANSFERS = 4;
 export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
 export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
+export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
+export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
+export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
 
 export type Mdbx2NativeMethod =
   | "host.hello"
@@ -24,7 +27,29 @@ export type Mdbx2NativeMethod =
   | "object.list"
   | "object.reveal"
   | "object.upsert"
-  | "object.delete";
+  | "object.delete"
+  | "transfer.read"
+  | "transfer.release"
+  | "sync.state.register"
+  | "sync.state.status"
+  | "sync.bootstrap.prepare"
+  | "sync.bootstrap.commit"
+  | "sync.segment.prepare"
+  | "sync.segment.commit"
+  | "sync.stream.list"
+  | "sync.stream.block"
+  | "sync.segment.inspect"
+  | "sync.segment.apply"
+  | "sync.segment.acknowledge"
+  | "sync.blob.list"
+  | "sync.blob.read"
+  | "sync.blob.remote.verify"
+  | "sync.blob.receive.begin"
+  | "sync.blob.receive.chunk"
+  | "sync.blob.receive.abort";
+
+export type Mdbx2InboundTransferPurpose = "vault-bootstrap" | "sync-segment";
+export type Mdbx2OutputFilePurpose = "sync-bootstrap" | "sync-segment";
 
 export type Mdbx2UnlockMethod = "password" | "security-key" | "password-security-key";
 
@@ -52,8 +77,113 @@ export interface Mdbx2TransferChunkResult {
 
 export interface Mdbx2TransferFinishResult {
   fileHandle: string;
+  purpose: Mdbx2InboundTransferPurpose;
   sizeBytes: number;
   sha256: string;
+}
+
+export interface Mdbx2OutputFileDescriptor {
+  fileHandle: string;
+  purpose: Mdbx2OutputFilePurpose;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface Mdbx2TransferReadResult extends Mdbx2OutputFileDescriptor {
+  offset: number;
+  dataBase64: string;
+  nextOffset: number;
+  eof: boolean;
+}
+
+export interface Mdbx2SyncStateStatus {
+  stateHandle: string;
+  vaultHandle: string;
+  vaultId: string;
+  deviceId: string;
+  initialized: boolean;
+  hasLocalChanges: boolean;
+  pendingBootstrap: boolean;
+  pendingSegment: boolean;
+  pendingRemoteAcknowledgement: boolean;
+  remoteStreamCount: number;
+  blockedStreamCount: number;
+  blobTransferCount: number;
+  verifiedRemoteBlobCount: number;
+}
+
+export interface Mdbx2SyncBootstrapPrepareResult {
+  stateHandle: string;
+  vaultId: string;
+  deviceId: string;
+  file: Mdbx2OutputFileDescriptor;
+}
+
+export interface Mdbx2SyncSegmentDescriptor {
+  file: Mdbx2OutputFileDescriptor;
+  vaultId: string;
+  sourceDeviceId: string;
+  transferId: string;
+  segmentIndex: number;
+  isLast: boolean;
+  commitCount: number;
+  deltaCount: number;
+  payloadSha256: string;
+}
+
+export type Mdbx2SyncSegmentPrepareResult =
+  | { hasSegment: false; stateHandle: string }
+  | ({ hasSegment: true; stateHandle: string } & Mdbx2SyncSegmentDescriptor);
+
+export interface Mdbx2RemoteStreamSummary {
+  streamId: string;
+  deviceId: string;
+  generationId: string;
+  nextSequence: number;
+  lastAppliedDigest?: string;
+  blockedReason?: string;
+}
+
+export interface Mdbx2SyncSegmentApplyResult {
+  status: "applied" | "duplicate" | "blocked";
+  appliedCommits: number;
+  skippedCommits: number;
+  conflictCount: number;
+  missingParentCount: number;
+  pendingAcknowledgement: boolean;
+  blockedReason?: string;
+}
+
+export type Mdbx2ExternalBlobState = "available" | "missing" | "size-mismatch";
+
+export interface Mdbx2ExternalBlobReference {
+  blobId: string;
+  totalSize?: number;
+  state: Mdbx2ExternalBlobState;
+  remoteVerified: boolean;
+}
+
+export interface Mdbx2ExternalBlobReferencePage {
+  rawReferenceCount: number;
+  uniqueReferenceCount: number;
+  items: Mdbx2ExternalBlobReference[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2ExternalBlobChunk {
+  blobId: string;
+  totalSize: number;
+  offset: number;
+  dataBase64: string;
+  nextOffset: number;
+  isLast: boolean;
+}
+
+export interface Mdbx2ExternalBlobReceiveState {
+  blobId: string;
+  totalSize: number;
+  nextOffset: number;
+  complete: boolean;
 }
 
 export interface Mdbx2VaultInspection {
@@ -206,6 +336,10 @@ export interface Mdbx2HostCapabilities {
   maxActiveTransfers: typeof MDBX2_MAX_ACTIVE_TRANSFERS;
   maxObjectPayloadBytes: typeof MDBX2_MAX_OBJECT_PAYLOAD_BYTES;
   maxSummaryPageSize: typeof MDBX2_MAX_SUMMARY_PAGE_SIZE;
+  supportsDurableCloudSync: true;
+  maxSyncSegmentPageSize: typeof MDBX2_SYNC_SEGMENT_PAGE_SIZE;
+  maxBlobReferencePageSize: typeof MDBX2_BLOB_REFERENCE_PAGE_SIZE;
+  maxRemoteBlobBytes: typeof MDBX2_MAX_REMOTE_BLOB_BYTES;
   supportedUnlockMethods: Mdbx2UnlockMethod[];
   storageProfile: string;
   syncProfile: string;
@@ -271,6 +405,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxActiveTransfers !== MDBX2_MAX_ACTIVE_TRANSFERS) throw incompatible("Native Host 并发传输限制与插件不一致。");
   if (value.maxObjectPayloadBytes !== MDBX2_MAX_OBJECT_PAYLOAD_BYTES) throw incompatible("Native Host Object 载荷限制与插件不一致。");
   if (value.maxSummaryPageSize !== MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatible("Native Host 摘要分页限制与插件不一致。");
+  if (value.supportsDurableCloudSync !== true) throw incompatible("Native Host 未启用 MDBX2 持久增量同步。");
+  if (value.maxSyncSegmentPageSize !== MDBX2_SYNC_SEGMENT_PAGE_SIZE) throw incompatible("Native Host 增量段分页限制与插件不一致。");
+  if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
+  if (value.maxRemoteBlobBytes !== MDBX2_MAX_REMOTE_BLOB_BYTES) throw incompatible("Native Host Blob 大小限制与插件不一致。");
   if (value.syncProtocolVersion !== MDBX2_SYNC_PROTOCOL_VERSION) throw incompatible("Native Host 同步协议版本与插件不一致。");
   const supportedUnlockMethods = stringArray(value.supportedUnlockMethods, 8, 64, "Native Host 解锁方式列表无效。") as Mdbx2UnlockMethod[];
   if (JSON.stringify(supportedUnlockMethods) !== JSON.stringify(["password", "security-key", "password-security-key"])) {
@@ -289,6 +427,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
     maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
     maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+    supportsDurableCloudSync: true,
+    maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
+    maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,
+    maxRemoteBlobBytes: MDBX2_MAX_REMOTE_BLOB_BYTES,
     supportedUnlockMethods,
     storageProfile: boundedString(value.storageProfile, 128, "Native Host 存储能力配置无效。"),
     syncProfile: boundedString(value.syncProfile, 128, "Native Host 同步能力配置无效。"),

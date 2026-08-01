@@ -133,6 +133,11 @@ describe("encrypted vault", () => {
         vaultHandle: "11111111-1111-4111-8111-111111111111",
         schemaVersion: 17,
         hostVerifiedAt: "2026-08-01T00:00:00.000Z",
+        webDavBaseUrl: "https://vault.example/dav",
+        webDavUsername: "joyins",
+        webDavPassword: "mdbx2-webdav-secret",
+        remotePath: "vaults/main.mdbx",
+        syncStateHandle: "22222222-2222-4222-8222-222222222222",
         password: "mdbx2-password-secret",
         keyMaterialBase64: "mdbx2-key-secret"
       }
@@ -141,10 +146,14 @@ describe("encrypted vault", () => {
       formatVersion: "MDBX-2",
       vaultHandle: "11111111-1111-4111-8111-111111111111",
       schemaVersion: 17,
-      remotePath: undefined,
+      webDavBaseUrl: "https://vault.example/dav",
+      webDavUsername: "joyins",
+      webDavPasswordConfigured: true,
+      remotePath: "vaults/main.mdbx",
+      syncConfigured: true,
       hostVerifiedAt: "2026-08-01T00:00:00.000Z"
     });
-    expect(JSON.stringify(await service.listProviders())).not.toMatch(/mdbx2-password-secret|mdbx2-key-secret/);
+    expect(JSON.stringify(await service.listProviders())).not.toMatch(/mdbx2-password-secret|mdbx2-key-secret|mdbx2-webdav-secret|22222222-2222-4222-8222-222222222222/);
   });
 
   it("accepts four-character master passwords and rejects shorter values", async () => {

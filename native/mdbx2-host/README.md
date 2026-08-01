@@ -16,7 +16,7 @@ The Rust toolchain is pinned to `1.86.0` to match the MDBX2 release build.
 
 Host name: `com.monica_pass.mdbx2`
 
-Protocol version 1 exposes the pinned capability handshake, durable inbound file staging and the first MDBX2 vault lifecycle methods:
+Protocol version 2 exposes the pinned capability handshake, durable file staging, MDBX2 vault access and Android-compatible incremental synchronization:
 
 ```text
 host.hello
@@ -33,6 +33,25 @@ object.list
 object.reveal
 object.upsert
 object.delete
+transfer.read
+transfer.release
+sync.state.register
+sync.state.status
+sync.bootstrap.prepare
+sync.bootstrap.commit
+sync.segment.prepare
+sync.segment.commit
+sync.stream.list
+sync.stream.block
+sync.segment.inspect
+sync.segment.apply
+sync.segment.acknowledge
+sync.blob.list
+sync.blob.read
+sync.blob.remote.verify
+sync.blob.receive.begin
+sync.blob.receive.chunk
+sync.blob.receive.abort
 ```
 
 The handshake reports the Host version, exact core revision, MDBX2 format generation, build capability manifest, 256 KiB chunk limit, 2 GiB file limit and supported unlock methods. It explicitly reports `supportsMdbx1: false`.
@@ -45,6 +64,8 @@ Inbound transfer state uses two alternating durable metadata slots. Chunks requi
 
 Collection and Object summaries are paged at no more than 200 records. Object disclosure is capped at 512 KiB and remains subject to the core Tiga policy. Writes use only the pinned core's typed `MdbxWriteCommand` operations and one idempotent operation UUID; no SQL surface is exported. Monica logical IDs are stored in `payload.monica_entry_id`, while physical IDs use the same `UUID.nameUUIDFromBytes` algorithm as Android.
 
+Synchronization state uses two alternating durable slots. A portable `.mdbx` file initializes a device; normal multi-device operation exchanges authenticated bundle v8 segments, state deltas and encrypted external Blobs. Export checkpoints advance only after immutable publication, and remote stream cursors advance only after atomic apply and Blob completion.
+
 The extension registers the Host-backed Provider only in the privileged background. Raw Collection and Object commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
 
 ## Build
@@ -54,15 +75,27 @@ cargo test --manifest-path native/mdbx2-host/Cargo.toml
 cargo build --release --manifest-path native/mdbx2-host/Cargo.toml
 ```
 
+## Windows installation
+
+Build and package the reviewed Windows x64 Host:
+
+```powershell
+npm run package:mdbx2-host
+npm run package:verify:mdbx2-host
+```
+
+Extract `release/monica-mdbx2-host-windows-x64-<version>.zip`, copy the extension ID from `chrome://extensions` or `edge://extensions`, then run one of:
+
+```powershell
+.\install-host.ps1 -ChromeExtensionId <32-character-id>
+.\install-host.ps1 -EdgeExtensionId <32-character-id>
+.\install-host.ps1 -ChromeExtensionId <chrome-id> -EdgeExtensionId <edge-id>
+```
+
+The installer writes only under the current user's `%LOCALAPPDATA%` and `HKCU`. It creates exact `chrome-extension://<id>/` origins and never uses a wildcard. Fully exit and reopen the browser after installation. `uninstall-host.ps1` removes both per-user registry entries and the verified Host directory.
+
 ## Installation security
 
-The native-host manifest must contain the absolute executable path and exact `chrome-extension://<id>/` origins. Wildcards are forbidden. A later release step will generate the final Chrome and Edge manifests from reviewed extension IDs and register them per user.
+The native-host manifest contains the absolute executable path and only installer-supplied exact extension origins. The installer rejects malformed IDs. Chrome and Edge registration stays per user and does not require administrator privileges.
 
-The Host writes protocol frames only to stdout. Diagnostics go to stderr and must never contain credentials, decrypted payloads, epoch keys, integrity keys, transfer ciphertext or user field values.
-
-## Planned API groups
-
-1. Incremental bootstrap, authenticated segment and encrypted Blob operations.
-2. Conflict, snapshot and history summaries.
-
-Raw SQL will not be exposed.
+The Host writes protocol frames only to stdout. Diagnostics go to stderr and must never contain credentials, decrypted payloads, epoch keys, integrity keys, transfer ciphertext or user field values. Raw SQL is not exposed.

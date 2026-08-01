@@ -24,13 +24,12 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
 
     await page.getByRole("button", { name: "密码源" }).click();
     const connectionButtons = page.locator(".provider-connect-grid .connect-source");
-    await expect(connectionButtons).toHaveCount(3);
+    await expect(connectionButtons).toHaveCount(4);
     await expect(page.locator(".provider-config-card")).toHaveCount(0);
     await expect(page.locator(".provider-list .source-card")).toHaveCount(1);
     expect((await page.locator(".provider-page").boundingBox())!.width).toBeLessThanOrEqual(820);
-    const [webDavBox, keePassBox, bitwardenBox] = await Promise.all([connectionButtons.nth(0).boundingBox(), connectionButtons.nth(1).boundingBox(), connectionButtons.nth(2).boundingBox()]);
-    expect(webDavBox!.width).toBeGreaterThan(keePassBox!.width);
-    expect(Math.abs(keePassBox!.width - bitwardenBox!.width)).toBeLessThanOrEqual(1);
+    const connectionBoxes = await Promise.all(Array.from({ length: 4 }, (_, index) => connectionButtons.nth(index).boundingBox()));
+    for (const box of connectionBoxes.slice(1)) expect(Math.abs(connectionBoxes[0]!.width - box!.width)).toBeLessThanOrEqual(1);
     await expectCentered(page.locator(".source-icon").first(), page.locator(".source-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").first(), page.locator(".connect-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").nth(1), page.locator(".connect-icon m3e-icon").nth(1));
@@ -43,6 +42,21 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
       button: getComputedStyle(host.querySelector(".connect-source")!).borderRadius
     }));
     expect(connectionShape.button).toBe(connectionShape.host);
+
+    await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
+    const mdbx2Dialog = page.getByRole("dialog", { name: "打开 MDBX2 保险库" });
+    await expect(mdbx2Dialog).toBeVisible();
+    await expect(mdbx2Dialog).toHaveCSS("border-radius", "16px");
+    await expect(mdbx2Dialog.getByLabel("MDBX2 可移植备份")).toBeVisible();
+    await mdbx2Dialog.getByRole("button", { name: "从 WebDAV 加入" }).click();
+    const remoteMdbx2Dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    await expect(remoteMdbx2Dialog).toBeVisible();
+    await expect(remoteMdbx2Dialog.getByLabel("Android 兼容远端位置 *")).toBeVisible();
+    await expect(remoteMdbx2Dialog.getByText("日常同步对象自动写入同名", { exact: false })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-dialog.png"), fullPage: true });
+    await remoteMdbx2Dialog.getByRole("button", { name: "关闭 MDBX2 设置" }).click();
+    await expect(page.getByRole("dialog", { name: /MDBX2/ })).toHaveCount(0);
+
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).hover();
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();

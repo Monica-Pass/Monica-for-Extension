@@ -36,3 +36,27 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: release/monica-extension-*.zip
+
+  mdbx2-host-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run verify:supply-chain
+      - run: npm run test:mdbx2-host
+      - run: npm run lint:mdbx2-host
+      - run: npm run package:mdbx2-host
+      - run: npm run package:verify:mdbx2-host
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: monica-mdbx2-host-windows-x64
+          path: release/monica-mdbx2-host-windows-x64-*
+          if-no-files-found: error

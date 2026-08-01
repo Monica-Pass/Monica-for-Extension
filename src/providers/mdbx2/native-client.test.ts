@@ -4,13 +4,16 @@ import {
   MDBX2_ENGINE_VERSION,
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_ACTIVE_TRANSFERS,
+  MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+  MDBX2_MAX_REMOTE_BLOB_BYTES,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
+  MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   Mdbx2NativeHostError,
   validateMdbx2HostCapabilities
 } from "./native-contract";
@@ -62,6 +65,10 @@ const HELLO = {
   maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
   maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+  supportsDurableCloudSync: true,
+  maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
+  maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,
+  maxRemoteBlobBytes: MDBX2_MAX_REMOTE_BLOB_BYTES,
   supportedUnlockMethods: ["password", "security-key", "password-security-key"],
   storageProfile: "full",
   syncProfile: "full",
@@ -133,7 +140,7 @@ describe("MDBX2 Native Messaging client", () => {
       const result: Record<string, unknown> = {
         "transfer.begin": { transferId: handle, nextOffset: 0, maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES },
         "transfer.chunk": { nextOffset: 3, acceptedBytes: 3, repeated: false },
-        "transfer.finish": { fileHandle: handle, sizeBytes: 3, sha256: "a".repeat(64) },
+        "transfer.finish": { fileHandle: handle, purpose: "vault-bootstrap", sizeBytes: 3, sha256: "a".repeat(64) },
         "vault.inspect": {
           source: { kind: "file", handle }, initialized: true, formatVersion: MDBX2_FORMAT_VERSION, schemaVersion: 17,
           minReaderVersion: "MDBX-2", minWriterVersion: "MDBX-2", requiresUpgrade: false,
@@ -171,6 +178,78 @@ describe("MDBX2 Native Messaging client", () => {
       source: { kind: "file", handle },
       credential: { method: "password", password: "" }
     });
+    client.close();
+  });
+
+  it("validates durable sync files, streams, segments and Blob RPC responses", async () => {
+    const runtime = new FakeRuntime();
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const stateHandle = "22222222-2222-4222-8222-222222222222";
+    const fileHandle = "33333333-3333-4333-8333-333333333333";
+    const remoteBinding = "ab".repeat(32);
+    const digest = "cd".repeat(32);
+    const blobId = "ef".repeat(32);
+    let requestNumber = 0;
+    const status = {
+      stateHandle, vaultHandle, vaultId: "vault-a", deviceId: "device-a", initialized: true,
+      hasLocalChanges: false, pendingBootstrap: false, pendingSegment: false,
+      pendingRemoteAcknowledgement: false, remoteStreamCount: 1, blockedStreamCount: 0,
+      blobTransferCount: 0, verifiedRemoteBlobCount: 0
+    };
+    const file = { fileHandle, purpose: "sync-segment", sizeBytes: 3, sha256: digest };
+    const segment = {
+      file, vaultId: "vault-a", sourceDeviceId: "device-a", transferId: "transfer-a",
+      segmentIndex: 0, isLast: true, commitCount: 1, deltaCount: 1, payloadSha256: digest
+    };
+    const stream = {
+      streamId: "device-a/transfer-a", deviceId: "device-a", generationId: "transfer-a",
+      nextSequence: 1, lastAppliedDigest: digest, blockedReason: null
+    };
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string; method: string };
+      const result: Record<string, unknown> = {
+        "transfer.read": { ...file, offset: 0, dataBase64: "AQID", nextOffset: 3, eof: true },
+        "transfer.release": { released: true },
+        "sync.state.register": status,
+        "sync.state.status": status,
+        "sync.bootstrap.prepare": { stateHandle, vaultId: "vault-a", deviceId: "device-a", file: { ...file, purpose: "sync-bootstrap" } },
+        "sync.bootstrap.commit": status,
+        "sync.segment.prepare": { hasSegment: true, stateHandle, ...segment },
+        "sync.segment.commit": { committed: true, hasMore: false },
+        "sync.stream.list": { items: [stream] },
+        "sync.stream.block": { ...stream, blockedReason: "missing segment 0" },
+        "sync.segment.inspect": segment,
+        "sync.segment.apply": { status: "applied", appliedCommits: 1, skippedCommits: 0, conflictCount: 0, missingParentCount: 0, pendingAcknowledgement: true, blockedReason: null },
+        "sync.segment.acknowledge": stream,
+        "sync.blob.list": { rawReferenceCount: 1, uniqueReferenceCount: 1, items: [{ blobId, totalSize: 3, state: "available", remoteVerified: false }], nextCursor: null },
+        "sync.blob.read": { blobId, totalSize: 3, offset: 0, dataBase64: "AQID", nextOffset: 3, isLast: true },
+        "sync.blob.remote.verify": { blobId, totalSize: 3, remoteVerified: true },
+        "sync.blob.receive.begin": { blobId, totalSize: 3, nextOffset: 0, complete: false },
+        "sync.blob.receive.chunk": { blobId, totalSize: 3, nextOffset: 3, complete: true },
+        "sync.blob.receive.abort": { aborted: true }
+      }[request.method] as Record<string, unknown>;
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime, () => `sync-request-${++requestNumber}`);
+
+    await expect(client.readOutputFile(vaultHandle, stateHandle, remoteBinding, fileHandle, 0)).resolves.toMatchObject({ nextOffset: 3, eof: true });
+    await expect(client.releaseFile(fileHandle)).resolves.toBe(true);
+    await expect(client.registerSyncState(vaultHandle, remoteBinding)).resolves.toMatchObject({ stateHandle, initialized: true });
+    await expect(client.syncStateStatus(vaultHandle, stateHandle, remoteBinding)).resolves.toMatchObject({ remoteStreamCount: 1 });
+    await expect(client.prepareSyncBootstrap(vaultHandle, remoteBinding, stateHandle)).resolves.toMatchObject({ file: { purpose: "sync-bootstrap" } });
+    await expect(client.commitSyncBootstrap(vaultHandle, stateHandle, remoteBinding, fileHandle)).resolves.toMatchObject({ initialized: true });
+    await expect(client.prepareSyncSegment(vaultHandle, stateHandle, remoteBinding)).resolves.toMatchObject({ hasSegment: true, payloadSha256: digest });
+    await expect(client.commitSyncSegment(vaultHandle, stateHandle, remoteBinding, fileHandle, digest)).resolves.toEqual({ committed: true, hasMore: false });
+    await expect(client.listSyncStreams(vaultHandle, stateHandle, remoteBinding)).resolves.toMatchObject([{ streamId: stream.streamId, nextSequence: 1, lastAppliedDigest: digest }]);
+    await expect(client.inspectSyncSegment(vaultHandle, fileHandle)).resolves.toMatchObject({ transferId: "transfer-a" });
+    await expect(client.applySyncSegment(vaultHandle, stateHandle, remoteBinding, fileHandle, { deviceId: "device-a", generationId: "transfer-a", sequence: 0, digest })).resolves.toMatchObject({ status: "applied", pendingAcknowledgement: true });
+    await expect(client.acknowledgeSyncSegment(vaultHandle, stateHandle, remoteBinding, { deviceId: "device-a", generationId: "transfer-a", sequence: 0, digest })).resolves.toMatchObject({ nextSequence: 1 });
+    await expect(client.listExternalBlobs(vaultHandle, stateHandle, remoteBinding)).resolves.toMatchObject({ items: [{ blobId, state: "available" }] });
+    await expect(client.readExternalBlob(vaultHandle, stateHandle, remoteBinding, blobId, 3, 0)).resolves.toMatchObject({ nextOffset: 3, isLast: true });
+    await expect(client.markRemoteBlobVerified(vaultHandle, stateHandle, remoteBinding, blobId, 3)).resolves.toBeUndefined();
+    await expect(client.beginExternalBlobReceive(vaultHandle, stateHandle, remoteBinding, blobId, 3)).resolves.toMatchObject({ nextOffset: 0, complete: false });
+    await expect(client.writeExternalBlobReceiveChunk(vaultHandle, stateHandle, remoteBinding, blobId, 3, 0, new Uint8Array([1, 2, 3]), true)).resolves.toMatchObject({ complete: true });
+    await expect(client.abortExternalBlobReceive(vaultHandle, stateHandle, remoteBinding, blobId)).resolves.toBe(true);
     client.close();
   });
 

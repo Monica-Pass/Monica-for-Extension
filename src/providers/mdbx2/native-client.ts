@@ -1,17 +1,24 @@
 import {
+  MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+  MDBX2_MAX_REMOTE_BLOB_BYTES,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
+  MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   Mdbx2NativeHostError,
   mdbx2NativeConnectionError,
   parseMdbx2NativeResponse,
   validateMdbx2HostCapabilities,
   type Mdbx2HostCapabilities,
   type Mdbx2HostStatus,
+  type Mdbx2ExternalBlobChunk,
+  type Mdbx2ExternalBlobReceiveState,
+  type Mdbx2ExternalBlobReferencePage,
+  type Mdbx2InboundTransferPurpose,
   type Mdbx2CollectionSummaryPage,
   type Mdbx2NativeMethod,
   type Mdbx2NativeRequest,
@@ -20,16 +27,24 @@ import {
   type Mdbx2ObjectSummaryPage,
   type Mdbx2ObjectUpsertInput,
   type Mdbx2ObjectWriteResult,
+  type Mdbx2OutputFileDescriptor,
+  type Mdbx2RemoteStreamSummary,
+  type Mdbx2SyncBootstrapPrepareResult,
+  type Mdbx2SyncSegmentApplyResult,
+  type Mdbx2SyncSegmentDescriptor,
+  type Mdbx2SyncSegmentPrepareResult,
+  type Mdbx2SyncStateStatus,
   type Mdbx2TransferBeginResult,
   type Mdbx2TransferChunkResult,
   type Mdbx2TransferFinishResult,
+  type Mdbx2TransferReadResult,
   type Mdbx2VaultCredential,
   type Mdbx2VaultInspection,
   type Mdbx2VaultRuntimeStatus,
   type Mdbx2VaultSessionSummary,
   type Mdbx2VaultSource
 } from "./native-contract";
-import { bytesToBase64 } from "../../security/encoding";
+import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 
 interface NativeEvent<Listener extends (...args: never[]) => void> {
   addListener(listener: Listener): void;
@@ -67,16 +82,22 @@ export class Mdbx2NativeClient {
     return validateMdbx2HostCapabilities(await this.request("host.hello", {}, timeoutMs));
   }
 
-  async beginInboundTransfer(sizeBytes: number, sha256: string, timeoutMs = 15_000): Promise<Mdbx2TransferBeginResult> {
+  async beginInboundTransfer(
+    sizeBytes: number,
+    sha256?: string,
+    purpose: Mdbx2InboundTransferPurpose = "vault-bootstrap",
+    timeoutMs = 15_000
+  ): Promise<Mdbx2TransferBeginResult> {
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > MDBX2_MAX_INBOUND_FILE_BYTES) {
       throw new Mdbx2NativeHostError("transfer-size-invalid", "MDBX2 文件大小超出允许范围。", false);
     }
-    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Mdbx2NativeHostError("transfer-digest-invalid", "MDBX2 文件摘要无效。", false);
+    if (sha256 !== undefined && !/^[a-f0-9]{64}$/.test(sha256)) throw new Mdbx2NativeHostError("transfer-digest-invalid", "MDBX2 文件摘要无效。", false);
+    if (purpose !== "vault-bootstrap" && purpose !== "sync-segment") throw new Mdbx2NativeHostError("transfer-purpose-invalid", "MDBX2 文件用途无效。", false);
     return transferBeginResult(await this.request("transfer.begin", {
       direction: "extension-to-host",
-      purpose: "vault-bootstrap",
+      purpose,
       sizeBytes,
-      sha256
+      sha256: sha256 || null
     }, timeoutMs));
   }
 
@@ -173,6 +194,222 @@ export class Mdbx2NativeClient {
       operationId: opaqueHandle(operationId, "操作"),
       logicalObjectId: textResult(logicalObjectId, 4096, false, "逻辑 Object ID 无效。")
     }, timeoutMs));
+  }
+
+  async readOutputFile(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    fileHandle: string,
+    offset: number,
+    maxBytes = MDBX2_MAX_BINARY_CHUNK_BYTES,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2TransferReadResult> {
+    const result = transferReadResult(await this.request("transfer.read", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      stateHandle: opaqueHandle(stateHandle, "同步状态"),
+      remoteBinding: sha256Value(remoteBinding, "远端绑定"),
+      fileHandle: opaqueHandle(fileHandle, "文件"),
+      offset: safeInteger(offset, "文件偏移"),
+      maxBytes: binaryChunkSize(maxBytes)
+    }, timeoutMs));
+    if (result.offset !== offset) throw incompatibleResult("Native Host 文件读取偏移发生变化。");
+    return result;
+  }
+
+  async releaseFile(fileHandle: string, timeoutMs = 15_000): Promise<boolean> {
+    const result = objectResult(await this.request("transfer.release", {
+      fileHandle: opaqueHandle(fileHandle, "文件")
+    }, timeoutMs), "Native Host 文件释放响应无效。");
+    return booleanResult(result.released, "Native Host 文件释放状态无效。");
+  }
+
+  async registerSyncState(vaultHandle: string, remoteBinding: string, stateHandle?: string, timeoutMs = 30_000): Promise<Mdbx2SyncStateStatus> {
+    return syncStateStatus(await this.request("sync.state.register", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      stateHandle: stateHandle ? opaqueHandle(stateHandle, "同步状态") : null,
+      remoteBinding: sha256Value(remoteBinding, "远端绑定")
+    }, timeoutMs));
+  }
+
+  async syncStateStatus(vaultHandle: string, stateHandle: string, remoteBinding: string, timeoutMs = 15_000): Promise<Mdbx2SyncStateStatus> {
+    return syncStateStatus(await this.request("sync.state.status", syncStateParams(vaultHandle, stateHandle, remoteBinding), timeoutMs));
+  }
+
+  async prepareSyncBootstrap(vaultHandle: string, remoteBinding: string, stateHandle?: string, timeoutMs = 5 * 60_000): Promise<Mdbx2SyncBootstrapPrepareResult> {
+    const value = objectResult(await this.request("sync.bootstrap.prepare", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      stateHandle: stateHandle ? opaqueHandle(stateHandle, "同步状态") : null,
+      remoteBinding: sha256Value(remoteBinding, "远端绑定")
+    }, timeoutMs), "Native Host MDBX2 bootstrap 响应无效。");
+    return {
+      stateHandle: opaqueHandle(value.stateHandle, "同步状态"),
+      vaultId: textResult(value.vaultId, 128, false, "MDBX2 vault ID 无效。"),
+      deviceId: textResult(value.deviceId, 128, false, "MDBX2 device ID 无效。"),
+      file: outputFileDescriptor(value.file, "sync-bootstrap")
+    };
+  }
+
+  async commitSyncBootstrap(vaultHandle: string, stateHandle: string, remoteBinding: string, fileHandle: string, timeoutMs = 30_000): Promise<Mdbx2SyncStateStatus> {
+    return syncStateStatus(await this.request("sync.bootstrap.commit", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      fileHandle: opaqueHandle(fileHandle, "文件")
+    }, timeoutMs));
+  }
+
+  async prepareSyncSegment(vaultHandle: string, stateHandle: string, remoteBinding: string, timeoutMs = 60_000): Promise<Mdbx2SyncSegmentPrepareResult> {
+    return syncSegmentPrepareResult(await this.request("sync.segment.prepare", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      pageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE
+    }, timeoutMs));
+  }
+
+  async commitSyncSegment(vaultHandle: string, stateHandle: string, remoteBinding: string, fileHandle: string, payloadSha256: string, timeoutMs = 30_000): Promise<{ committed: true; hasMore: boolean }> {
+    const value = objectResult(await this.request("sync.segment.commit", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      fileHandle: opaqueHandle(fileHandle, "文件"),
+      payloadSha256: sha256Value(payloadSha256, "增量段摘要")
+    }, timeoutMs), "Native Host MDBX2 增量段提交响应无效。");
+    if (value.committed !== true) throw incompatibleResult("Native Host MDBX2 增量段提交状态无效。");
+    return { committed: true, hasMore: booleanResult(value.hasMore, "MDBX2 后续增量段状态无效。") };
+  }
+
+  async listSyncStreams(vaultHandle: string, stateHandle: string, remoteBinding: string, timeoutMs = 15_000): Promise<Mdbx2RemoteStreamSummary[]> {
+    const value = objectResult(await this.request("sync.stream.list", syncStateParams(vaultHandle, stateHandle, remoteBinding), timeoutMs), "Native Host MDBX2 远端流列表无效。");
+    if (!Array.isArray(value.items) || value.items.length > 4_096) throw incompatibleResult("Native Host MDBX2 远端流数量无效。");
+    return value.items.map(remoteStreamSummary);
+  }
+
+  async blockSyncStream(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    descriptor: { deviceId: string; generationId: string; sequence: number; digest: string; reason: string },
+    timeoutMs = 15_000
+  ): Promise<Mdbx2RemoteStreamSummary> {
+    return remoteStreamSummary(await this.request("sync.stream.block", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      deviceId: remoteComponent(descriptor.deviceId, "设备 ID"),
+      generationId: remoteComponent(descriptor.generationId, "传输 ID"),
+      sequence: safeInteger(descriptor.sequence, "增量段序号"),
+      digest: sha256Value(descriptor.digest, "增量段摘要"),
+      reason: textResult(descriptor.reason, 512, false, "远端流阻止原因无效。")
+    }, timeoutMs));
+  }
+
+  async inspectSyncSegment(vaultHandle: string, fileHandle: string, timeoutMs = 30_000): Promise<Mdbx2SyncSegmentDescriptor> {
+    return syncSegmentDescriptor(await this.request("sync.segment.inspect", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      fileHandle: opaqueHandle(fileHandle, "文件")
+    }, timeoutMs));
+  }
+
+  async applySyncSegment(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    fileHandle: string,
+    descriptor: { deviceId: string; generationId: string; sequence: number; digest: string },
+    timeoutMs = 60_000
+  ): Promise<Mdbx2SyncSegmentApplyResult> {
+    return syncSegmentApplyResult(await this.request("sync.segment.apply", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      fileHandle: opaqueHandle(fileHandle, "文件"),
+      deviceId: remoteComponent(descriptor.deviceId, "设备 ID"),
+      generationId: remoteComponent(descriptor.generationId, "传输 ID"),
+      sequence: safeInteger(descriptor.sequence, "增量段序号"),
+      digest: sha256Value(descriptor.digest, "增量段摘要")
+    }, timeoutMs));
+  }
+
+  async acknowledgeSyncSegment(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    descriptor: { deviceId: string; generationId: string; sequence: number; digest: string },
+    timeoutMs = 15_000
+  ): Promise<Mdbx2RemoteStreamSummary> {
+    return remoteStreamSummary(await this.request("sync.segment.acknowledge", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      deviceId: remoteComponent(descriptor.deviceId, "设备 ID"),
+      generationId: remoteComponent(descriptor.generationId, "传输 ID"),
+      sequence: safeInteger(descriptor.sequence, "增量段序号"),
+      digest: sha256Value(descriptor.digest, "增量段摘要")
+    }, timeoutMs));
+  }
+
+  async listExternalBlobs(vaultHandle: string, stateHandle: string, remoteBinding: string, cursor?: string, timeoutMs = 30_000): Promise<Mdbx2ExternalBlobReferencePage> {
+    return externalBlobReferencePage(await this.request("sync.blob.list", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      cursor: cursor ? sha256Value(cursor, "Blob 游标") : null,
+      pageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE
+    }, timeoutMs));
+  }
+
+  async readExternalBlob(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    blobId: string,
+    totalSize: number,
+    offset: number,
+    maxBytes = MDBX2_MAX_BINARY_CHUNK_BYTES,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2ExternalBlobChunk> {
+    return externalBlobChunk(await this.request("sync.blob.read", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      blobId: sha256Value(blobId, "Blob ID"),
+      totalSize: remoteBlobSize(totalSize),
+      offset: safeInteger(offset, "Blob 偏移"),
+      maxBytes: binaryChunkSize(maxBytes)
+    }, timeoutMs));
+  }
+
+  async markRemoteBlobVerified(vaultHandle: string, stateHandle: string, remoteBinding: string, blobId: string, totalSize: number, timeoutMs = 15_000): Promise<void> {
+    const value = objectResult(await this.request("sync.blob.remote.verify", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      blobId: sha256Value(blobId, "Blob ID"),
+      totalSize: remoteBlobSize(totalSize)
+    }, timeoutMs), "Native Host MDBX2 Blob 验证响应无效。");
+    if (value.remoteVerified !== true || value.blobId !== blobId || value.totalSize !== totalSize) throw incompatibleResult("Native Host MDBX2 Blob 验证状态无效。");
+  }
+
+  async beginExternalBlobReceive(vaultHandle: string, stateHandle: string, remoteBinding: string, blobId: string, totalSize: number, timeoutMs = 15_000): Promise<Mdbx2ExternalBlobReceiveState> {
+    return externalBlobReceiveState(await this.request("sync.blob.receive.begin", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      blobId: sha256Value(blobId, "Blob ID"),
+      totalSize: remoteBlobSize(totalSize)
+    }, timeoutMs));
+  }
+
+  async writeExternalBlobReceiveChunk(
+    vaultHandle: string,
+    stateHandle: string,
+    remoteBinding: string,
+    blobId: string,
+    totalSize: number,
+    offset: number,
+    bytes: Uint8Array,
+    finalize: boolean,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2ExternalBlobReceiveState> {
+    if (!bytes.length || bytes.length > MDBX2_MAX_BINARY_CHUNK_BYTES) throw new Mdbx2NativeHostError("blob-chunk-invalid", "MDBX2 Blob 分块大小无效。", false);
+    return externalBlobReceiveState(await this.request("sync.blob.receive.chunk", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      blobId: sha256Value(blobId, "Blob ID"),
+      totalSize: remoteBlobSize(totalSize),
+      offset: safeInteger(offset, "Blob 偏移"),
+      dataBase64: bytesToBase64(bytes),
+      finalize
+    }, timeoutMs));
+  }
+
+  async abortExternalBlobReceive(vaultHandle: string, stateHandle: string, remoteBinding: string, blobId: string, timeoutMs = 15_000): Promise<boolean> {
+    const value = objectResult(await this.request("sync.blob.receive.abort", {
+      ...syncStateParams(vaultHandle, stateHandle, remoteBinding),
+      blobId: sha256Value(blobId, "Blob ID")
+    }, timeoutMs), "Native Host MDBX2 Blob 中止响应无效。");
+    return booleanResult(value.aborted, "Native Host MDBX2 Blob 中止状态无效。");
   }
 
   async probe(timeoutMs = 5_000): Promise<Mdbx2HostStatus> {
@@ -319,9 +556,157 @@ function transferFinishResult(input: unknown): Mdbx2TransferFinishResult {
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw incompatibleResult("Native Host 文件摘要无效。");
   return {
     fileHandle: opaqueHandle(value.fileHandle, "文件"),
+    purpose: transferPurpose(value.purpose),
     sizeBytes: safeInteger(value.sizeBytes, "文件大小"),
     sha256
   };
+}
+
+function transferReadResult(input: unknown): Mdbx2TransferReadResult {
+  const value = objectResult(input, "Native Host 文件读取响应无效。");
+  const descriptor = outputFileDescriptor(value, value.purpose === "sync-bootstrap" ? "sync-bootstrap" : "sync-segment");
+  const dataBase64 = textResult(value.dataBase64, Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4 + 4, false, "Native Host 文件分块无效。");
+  const bytes = decodeBoundedBase64(dataBase64, MDBX2_MAX_BINARY_CHUNK_BYTES, "Native Host 文件分块无效。");
+  const offset = safeInteger(value.offset, "文件偏移");
+  const nextOffset = safeInteger(value.nextOffset, "文件下一偏移");
+  if (nextOffset !== offset + bytes.length || nextOffset > descriptor.sizeBytes) throw incompatibleResult("Native Host 文件分块边界无效。");
+  const eof = booleanResult(value.eof, "Native Host 文件结束状态无效。");
+  if (eof !== (nextOffset === descriptor.sizeBytes)) throw incompatibleResult("Native Host 文件结束边界无效。");
+  return { ...descriptor, offset, dataBase64, nextOffset, eof };
+}
+
+function outputFileDescriptor(input: unknown, expectedPurpose?: Mdbx2OutputFileDescriptor["purpose"]): Mdbx2OutputFileDescriptor {
+  const value = objectResult(input, "Native Host 文件描述无效。");
+  const purpose = value.purpose === "sync-bootstrap" || value.purpose === "sync-segment" ? value.purpose : undefined;
+  if (!purpose || expectedPurpose && purpose !== expectedPurpose) throw incompatibleResult("Native Host 文件用途无效。");
+  return {
+    fileHandle: opaqueHandle(value.fileHandle, "文件"),
+    purpose,
+    sizeBytes: positiveSafeInteger(value.sizeBytes, "文件大小"),
+    sha256: sha256Result(value.sha256, "文件摘要")
+  };
+}
+
+function syncStateStatus(input: unknown): Mdbx2SyncStateStatus {
+  const value = objectResult(input, "Native Host MDBX2 同步状态无效。");
+  return {
+    stateHandle: opaqueHandle(value.stateHandle, "同步状态"),
+    vaultHandle: opaqueHandle(value.vaultHandle, "保险库"),
+    vaultId: textResult(value.vaultId, 128, false, "MDBX2 vault ID 无效。"),
+    deviceId: textResult(value.deviceId, 128, false, "MDBX2 device ID 无效。"),
+    initialized: booleanResult(value.initialized, "MDBX2 初始化状态无效。"),
+    hasLocalChanges: booleanResult(value.hasLocalChanges, "MDBX2 本机修改状态无效。"),
+    pendingBootstrap: booleanResult(value.pendingBootstrap, "MDBX2 bootstrap 等待状态无效。"),
+    pendingSegment: booleanResult(value.pendingSegment, "MDBX2 增量段等待状态无效。"),
+    pendingRemoteAcknowledgement: booleanResult(value.pendingRemoteAcknowledgement, "MDBX2 远端确认状态无效。"),
+    remoteStreamCount: safeInteger(value.remoteStreamCount, "MDBX2 远端流数量"),
+    blockedStreamCount: safeInteger(value.blockedStreamCount, "MDBX2 受阻远端流数量"),
+    blobTransferCount: safeInteger(value.blobTransferCount, "MDBX2 Blob 传输数量"),
+    verifiedRemoteBlobCount: safeInteger(value.verifiedRemoteBlobCount, "MDBX2 已验证 Blob 数量")
+  };
+}
+
+function syncSegmentPrepareResult(input: unknown): Mdbx2SyncSegmentPrepareResult {
+  const value = objectResult(input, "Native Host MDBX2 增量段准备响应无效。");
+  const stateHandle = opaqueHandle(value.stateHandle, "同步状态");
+  const hasSegment = booleanResult(value.hasSegment, "MDBX2 增量段存在状态无效。");
+  if (!hasSegment) return { hasSegment: false, stateHandle };
+  return { hasSegment: true, stateHandle, ...syncSegmentDescriptor(value) };
+}
+
+function syncSegmentDescriptor(input: unknown): Mdbx2SyncSegmentDescriptor {
+  const value = objectResult(input, "Native Host MDBX2 增量段描述无效。");
+  return {
+    file: outputFileDescriptor(value.file, "sync-segment"),
+    vaultId: textResult(value.vaultId, 128, false, "MDBX2 增量段 vault ID 无效。"),
+    sourceDeviceId: remoteComponentResult(value.sourceDeviceId, "MDBX2 增量段设备 ID"),
+    transferId: remoteComponentResult(value.transferId, "MDBX2 增量段传输 ID"),
+    segmentIndex: safeInteger(value.segmentIndex, "MDBX2 增量段序号"),
+    isLast: booleanResult(value.isLast, "MDBX2 增量段结束状态无效。"),
+    commitCount: safeInteger(value.commitCount, "MDBX2 Commit 数量"),
+    deltaCount: safeInteger(value.deltaCount, "MDBX2 state delta 数量"),
+    payloadSha256: sha256Result(value.payloadSha256, "MDBX2 增量段载荷摘要")
+  };
+}
+
+function remoteStreamSummary(input: unknown): Mdbx2RemoteStreamSummary {
+  const value = objectResult(input, "Native Host MDBX2 远端流摘要无效。");
+  const deviceId = remoteComponentResult(value.deviceId, "MDBX2 远端流设备 ID");
+  const generationId = remoteComponentResult(value.generationId, "MDBX2 远端流传输 ID");
+  const streamId = textResult(value.streamId, 513, false, "MDBX2 远端流 ID 无效。");
+  if (streamId !== `${deviceId}/${generationId}`) throw incompatibleResult("Native Host MDBX2 远端流 ID 不一致。");
+  return {
+    streamId,
+    deviceId,
+    generationId,
+    nextSequence: safeInteger(value.nextSequence, "MDBX2 远端流下一序号"),
+    lastAppliedDigest: optionalSha256(value.lastAppliedDigest, "MDBX2 远端流最近摘要"),
+    blockedReason: optionalString(value.blockedReason, 512, "MDBX2 远端流受阻原因")
+  };
+}
+
+function syncSegmentApplyResult(input: unknown): Mdbx2SyncSegmentApplyResult {
+  const value = objectResult(input, "Native Host MDBX2 增量段应用响应无效。");
+  const status = value.status === "applied" || value.status === "duplicate" || value.status === "blocked" ? value.status : undefined;
+  if (!status) throw incompatibleResult("Native Host MDBX2 增量段应用状态无效。");
+  return {
+    status,
+    appliedCommits: safeInteger(value.appliedCommits, "MDBX2 已应用 Commit 数量"),
+    skippedCommits: safeInteger(value.skippedCommits, "MDBX2 已跳过 Commit 数量"),
+    conflictCount: safeInteger(value.conflictCount, "MDBX2 冲突数量"),
+    missingParentCount: safeInteger(value.missingParentCount, "MDBX2 缺失父 Commit 数量"),
+    pendingAcknowledgement: booleanResult(value.pendingAcknowledgement, "MDBX2 远端确认等待状态无效。"),
+    blockedReason: optionalString(value.blockedReason, 512, "MDBX2 增量段受阻原因")
+  };
+}
+
+function externalBlobReferencePage(input: unknown): Mdbx2ExternalBlobReferencePage {
+  const value = objectResult(input, "Native Host MDBX2 Blob 分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatibleResult("Native Host MDBX2 Blob 分页大小无效。");
+  return {
+    rawReferenceCount: safeInteger(value.rawReferenceCount, "MDBX2 Blob 原始引用数量"),
+    uniqueReferenceCount: safeInteger(value.uniqueReferenceCount, "MDBX2 Blob 唯一引用数量"),
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 Blob 引用无效。");
+      const state = item.state === "available" || item.state === "missing" || item.state === "size-mismatch" ? item.state : undefined;
+      if (!state) throw incompatibleResult("Native Host MDBX2 Blob 状态无效。");
+      return {
+        blobId: sha256Result(item.blobId, "MDBX2 Blob ID"),
+        totalSize: optionalRemoteBlobSize(item.totalSize),
+        state,
+        remoteVerified: booleanResult(item.remoteVerified, "MDBX2 Blob 远端验证状态无效。")
+      };
+    }),
+    nextCursor: optionalSha256(value.nextCursor, "MDBX2 Blob 游标")
+  };
+}
+
+function externalBlobChunk(input: unknown): Mdbx2ExternalBlobChunk {
+  const value = objectResult(input, "Native Host MDBX2 Blob 分块响应无效。");
+  const dataBase64 = textResult(value.dataBase64, Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4 + 4, false, "MDBX2 Blob 分块无效。");
+  const bytes = decodeBoundedBase64(dataBase64, MDBX2_MAX_BINARY_CHUNK_BYTES, "MDBX2 Blob 分块无效。");
+  const offset = safeInteger(value.offset, "MDBX2 Blob 偏移");
+  const nextOffset = safeInteger(value.nextOffset, "MDBX2 Blob 下一偏移");
+  const totalSize = remoteBlobSize(value.totalSize);
+  if (nextOffset !== offset + bytes.length || nextOffset > totalSize) throw incompatibleResult("Native Host MDBX2 Blob 分块边界无效。");
+  const isLast = booleanResult(value.isLast, "MDBX2 Blob 结束状态无效。");
+  if (isLast !== (nextOffset === totalSize)) throw incompatibleResult("Native Host MDBX2 Blob 结束边界无效。");
+  return { blobId: sha256Result(value.blobId, "MDBX2 Blob ID"), totalSize, offset, dataBase64, nextOffset, isLast };
+}
+
+function externalBlobReceiveState(input: unknown): Mdbx2ExternalBlobReceiveState {
+  const value = objectResult(input, "Native Host MDBX2 Blob 接收状态无效。");
+  const totalSize = remoteBlobSize(value.totalSize);
+  const nextOffset = safeInteger(value.nextOffset, "MDBX2 Blob 接收偏移");
+  if (nextOffset > totalSize) throw incompatibleResult("Native Host MDBX2 Blob 接收偏移无效。");
+  const complete = booleanResult(value.complete, "MDBX2 Blob 接收完成状态无效。");
+  if (complete !== (nextOffset === totalSize)) throw incompatibleResult("Native Host MDBX2 Blob 接收完成边界无效。");
+  return { blobId: sha256Result(value.blobId, "MDBX2 Blob ID"), totalSize, nextOffset, complete };
+}
+
+function transferPurpose(value: unknown): Mdbx2InboundTransferPurpose {
+  if (value === "vault-bootstrap" || value === "sync-segment") return value;
+  throw incompatibleResult("Native Host 文件用途无效。");
 }
 
 function vaultInspection(input: unknown): Mdbx2VaultInspection {
@@ -467,6 +852,72 @@ function objectDeleteResult(input: unknown): Mdbx2ObjectDeleteResult {
 function vaultSource(source: Mdbx2VaultSource): Mdbx2VaultSource {
   if (source.kind !== "file" && source.kind !== "vault") throw new Mdbx2NativeHostError("vault-source-invalid", "MDBX2 保险库来源无效。", false);
   return { kind: source.kind, handle: opaqueHandle(source.handle, "来源") };
+}
+
+function syncStateParams(vaultHandle: string, stateHandle: string, remoteBinding: string): Record<string, unknown> {
+  return {
+    vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+    stateHandle: opaqueHandle(stateHandle, "同步状态"),
+    remoteBinding: sha256Value(remoteBinding, "远端绑定")
+  };
+}
+
+function sha256Value(value: string, label: string): string {
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Mdbx2NativeHostError("digest-invalid", `${label}无效。`, false);
+  return value;
+}
+
+function sha256Result(value: unknown, label: string): string {
+  const digest = stringResult(value, 64, `${label}无效。`);
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw incompatibleResult(`${label}无效。`);
+  return digest;
+}
+
+function optionalSha256(value: unknown, label: string): string | undefined {
+  return value === null || value === undefined ? undefined : sha256Result(value, label);
+}
+
+function remoteComponent(value: string, label: string): string {
+  const normalized = textResult(value.trim(), 256, false, `${label}无效。`);
+  if (normalized === "." || normalized === ".." || /[\\/\0]/.test(normalized)) throw new Mdbx2NativeHostError("remote-component-invalid", `${label}无效。`, false);
+  return normalized;
+}
+
+function remoteComponentResult(value: unknown, label: string): string {
+  const component = textResult(value, 256, false, `${label}无效。`);
+  if (component !== component.trim() || component === "." || component === ".." || /[\\/\0]/.test(component)) throw incompatibleResult(`${label}无效。`);
+  return component;
+}
+
+function binaryChunkSize(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > MDBX2_MAX_BINARY_CHUNK_BYTES) throw new Mdbx2NativeHostError("chunk-size-invalid", "MDBX2 分块大小无效。", false);
+  return value;
+}
+
+function remoteBlobSize(value: unknown): number {
+  const size = positiveSafeInteger(value, "MDBX2 Blob 大小");
+  if (size > MDBX2_MAX_REMOTE_BLOB_BYTES) throw incompatibleResult("MDBX2 Blob 大小超过允许范围。");
+  return size;
+}
+
+function optionalRemoteBlobSize(value: unknown): number | undefined {
+  return value === null || value === undefined ? undefined : remoteBlobSize(value);
+}
+
+function positiveSafeInteger(value: unknown, label: string): number {
+  const number = safeInteger(value, label);
+  if (number < 1) throw incompatibleResult(`${label}无效。`);
+  return number;
+}
+
+function decodeBoundedBase64(value: string, maximum: number, message: string): Uint8Array {
+  try {
+    const bytes = base64ToBytes(value);
+    if (!bytes.length || bytes.length > maximum) throw new Error();
+    return bytes;
+  } catch {
+    throw incompatibleResult(message);
+  }
 }
 
 function objectResult(value: unknown, message: string): Record<string, unknown> {
