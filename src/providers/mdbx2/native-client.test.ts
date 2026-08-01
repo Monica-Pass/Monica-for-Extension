@@ -15,6 +15,11 @@ import {
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   MDBX2_MAX_REMOTE_BLOB_BYTES,
+  MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+  MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
+  MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
+  MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES,
+  MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
@@ -76,6 +81,12 @@ const HELLO = {
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
   maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
   supportsHistoryDiff: true,
+  maxSnapshotPageSize: MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
+  maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
+  maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
+  maxSnapshotNameBytes: MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+  supportsSnapshotStructure: true,
+  supportsSnapshotMutation: true,
   maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
   maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
   supportsConflictResolution: true,
@@ -217,6 +228,41 @@ describe("MDBX2 Native Messaging client", () => {
             createdAt: "2026-08-02T00:00:00Z"
           }]
         },
+        "snapshot.list": {
+          items: [{
+            snapshotId: handle,
+            baseCommitId: handle,
+            name: "手动快照",
+            kind: "manual",
+            isFull: true,
+            payloadBytes: 128,
+            createdAt: "2026-08-02T00:00:00Z",
+            createdByDeviceId: "device-a",
+            autoPrune: false,
+            integrityOk: true
+          }],
+          nextCursor: null
+        },
+        "snapshot.structure": {
+          snapshotId: handle,
+          side: "snapshot",
+          currentItemCount: 2,
+          snapshotItemCount: 1,
+          totalNodes: 1,
+          items: [{
+            nodeId: handle,
+            parentNodeId: null,
+            name: "工作账号",
+            nodeType: "entry",
+            path: "登录/工作账号",
+            status: "modified",
+            childCount: 0
+          }],
+          nextCursor: null
+        },
+        "snapshot.create": { operationId: handle, snapshotId: handle, commitId: handle, alreadyCompleted: false },
+        "snapshot.delete": { operationId: handle, snapshotId: handle, commitId: null, alreadyCompleted: true },
+        "snapshot.restore": { operationId: handle, snapshotId: handle, commitId: handle, affectedObjectCount: 2, alreadyCompleted: false },
         "conflict.list": {
           items: [{
             conflictId: handle,
@@ -262,6 +308,11 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.resolveObjectOperation(handle, "ab".repeat(32))).resolves.toEqual({ known: true, committed: true, operationId: handle, commitId: "commit-5" });
     await expect(client.listCommitHistory(handle)).resolves.toMatchObject({ items: [{ commitId: handle, operationKind: "monica-extension-batch-objects", changes: [{ fields: ["payload"] }] }] });
     await expect(client.listCommitDiff(handle, handle)).resolves.toMatchObject({ items: [{ commitId: handle, currentTitle: "After", payloadChanged: true, contentType: "login" }] });
+    await expect(client.listSnapshots(handle)).resolves.toMatchObject({ items: [{ snapshotId: handle, name: "手动快照", integrityOk: true }] });
+    await expect(client.listSnapshotStructure(handle, handle, "snapshot")).resolves.toMatchObject({ side: "snapshot", totalNodes: 1, items: [{ name: "工作账号", status: "modified" }] });
+    await expect(client.createSnapshot(handle, handle, " 手动快照 ")).resolves.toMatchObject({ operationId: handle, alreadyCompleted: false });
+    await expect(client.deleteSnapshot(handle, handle, handle)).resolves.toEqual({ operationId: handle, snapshotId: handle, commitId: undefined, alreadyCompleted: true });
+    await expect(client.restoreSnapshot(handle, handle, handle)).resolves.toMatchObject({ operationId: handle, affectedObjectCount: 2 });
     await expect(client.listConflicts(handle)).resolves.toMatchObject({ items: [{ conflictId: handle, displayTitle: "Local account", conflictingFields: ["payload", "title_ct"] }] });
     await expect(client.resolveConflict(handle, handle, handle, "incoming-wins")).resolves.toMatchObject({ resolved: true, alreadyResolved: false, choice: "incoming-wins" });
     await expect(client.lockVault(handle)).resolves.toBe(true);
@@ -377,6 +428,62 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.resolveConflict(handle, handle, handle, "custom" as never))
       .rejects.toMatchObject({ code: "conflict-choice-invalid" });
     expect(runtime.port.messages).toHaveLength(0);
+    client.close();
+  });
+
+  it("rejects unbounded snapshot requests and malformed snapshot pages", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+
+    await expect(client.listSnapshots(handle, { pageSize: MDBX2_MAX_SNAPSHOT_PAGE_SIZE + 1 }))
+      .rejects.toMatchObject({ code: "snapshot-page-size-invalid" });
+    await expect(client.listSnapshotStructure(handle, handle, "snapshot", { pageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE + 1 }))
+      .rejects.toMatchObject({ code: "snapshot-structure-page-size-invalid" });
+    await expect(client.listSnapshotStructure(handle, handle, "both" as never))
+      .rejects.toMatchObject({ code: "snapshot-structure-side-invalid" });
+    await expect(client.createSnapshot(handle, handle, "x".repeat(MDBX2_MAX_SNAPSHOT_NAME_BYTES + 1)))
+      .rejects.toMatchObject({ code: "snapshot-name-invalid" });
+    expect(runtime.port.messages).toHaveLength(0);
+
+    let responseNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      responseNumber += 1;
+      const result = responseNumber === 1
+        ? { items: Array.from({ length: MDBX2_MAX_SNAPSHOT_PAGE_SIZE + 1 }, () => ({})), nextCursor: null }
+        : responseNumber === 2
+          ? { snapshotId: handle, side: "snapshot", currentItemCount: 1, snapshotItemCount: 1, totalNodes: MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES + 1, items: [], nextCursor: null }
+          : { snapshotId: handle, side: "snapshot", currentItemCount: 1, snapshotItemCount: 1, totalNodes: 1, items: [{ nodeId: handle, parentNodeId: null, name: "项目", nodeType: "entry", path: "项目", status: "custom", childCount: 0 }], nextCursor: null };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+
+    await expect(client.listSnapshots(handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.listSnapshotStructure(handle, handle, "snapshot")).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.listSnapshotStructure(handle, handle, "snapshot")).rejects.toMatchObject({ code: "native-host-incompatible" });
+    client.close();
+  });
+
+  it("rejects snapshot responses that do not match the requested mutation intent", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const otherHandle = "22222222-2222-4222-8222-222222222222";
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+    let responseNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      responseNumber += 1;
+      const result = responseNumber === 1
+        ? { operationId: otherHandle, snapshotId: handle, commitId: handle, alreadyCompleted: false }
+        : responseNumber === 2
+          ? { operationId: handle, snapshotId: otherHandle, commitId: null, alreadyCompleted: false }
+          : { operationId: otherHandle, snapshotId: handle, commitId: handle, affectedObjectCount: 1, alreadyCompleted: false };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+
+    await expect(client.createSnapshot(handle, handle, "快照")).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.deleteSnapshot(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.restoreSnapshot(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 

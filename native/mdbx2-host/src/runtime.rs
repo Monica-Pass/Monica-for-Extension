@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use md5::{Digest, Md5};
 use mdbx_ffi::{
-    MdbxConflictChoice, MdbxConflictSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits,
-    MdbxVault, MdbxWriteCommand,
+    MdbxCommitHistoryItem, MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance,
+    MdbxDeviceContext, MdbxManagedSnapshotSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits,
+    MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxVault, MdbxWriteCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -47,6 +48,19 @@ const MAX_OBJECT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_OPERATION_HISTORY_PAGES: usize = 16;
 const MAX_HISTORY_PAGE_SIZE: u32 = 50;
 pub const MAX_HISTORY_RESULT_BYTES: usize = 850 * 1024;
+const MAX_SNAPSHOT_PAGE_SIZE: u32 = 50;
+const MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE: u32 = 100;
+pub const MAX_SNAPSHOT_RESULT_BYTES: usize = 850 * 1024;
+const SNAPSHOT_STRUCTURE_CURSOR_VERSION: u32 = 1;
+const MAX_SNAPSHOT_TEXT_BYTES: usize = 4096;
+const MAX_SNAPSHOT_NAME_BYTES: usize = 96;
+const MONICA_ROOT_PROJECT_TITLE: &str = ".monica-root";
+const SNAPSHOT_OPERATION_STATE_VERSION: u32 = 1;
+const MAX_SNAPSHOT_OPERATION_RECEIPTS: usize = 2048;
+const MAX_SNAPSHOT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_SNAPSHOT_HISTORY_SCAN_PAGES: usize = 64;
+const MAX_SNAPSHOT_INVENTORY_PAGES: usize = 64;
+const MAX_SNAPSHOT_BRANCHES: usize = 64;
 const CONFLICT_RESOLUTION_STATE_VERSION: u32 = 1;
 const MAX_CONFLICT_PAGE_SIZE: u32 = 50;
 pub const MAX_CONFLICT_RESULT_BYTES: usize = 850 * 1024;
@@ -145,6 +159,84 @@ enum ConflictResolutionChoice {
     IncomingWins,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum SnapshotStructureSide {
+    Current,
+    Snapshot,
+}
+
+impl SnapshotStructureSide {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Snapshot => "snapshot",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SnapshotStructureCursor {
+    version: u32,
+    vault_handle: String,
+    snapshot_id: String,
+    side: SnapshotStructureSide,
+    offset: u32,
+    total_nodes: u32,
+    fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum SnapshotOperationKind {
+    Create,
+    Delete,
+    Restore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SnapshotOperationReceipt {
+    vault_handle: String,
+    operation_id: String,
+    kind: SnapshotOperationKind,
+    intent_sha256: String,
+    target_snapshot_id: Option<String>,
+    target_base_commit_id: Option<String>,
+    pre_branch_state_sha256: String,
+    pre_device_local_seq: u64,
+    completed: bool,
+    outcome_unknown: bool,
+    result_snapshot_id: Option<String>,
+    result_commit_id: Option<String>,
+    affected_object_count: Option<u32>,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SnapshotOperationState {
+    version: u32,
+    revision: u64,
+    receipts: Vec<SnapshotOperationReceipt>,
+}
+
+impl Default for SnapshotOperationState {
+    fn default() -> Self {
+        Self {
+            version: SNAPSHOT_OPERATION_STATE_VERSION,
+            revision: 0,
+            receipts: Vec::new(),
+        }
+    }
+}
+
+struct SnapshotOperationBaseline {
+    branch_state_sha256: String,
+    device_local_seq: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConflictResolutionReceipt {
@@ -238,6 +330,7 @@ pub struct HostRuntime {
     transfers: HashMap<String, TransferMetadata>,
     pub(crate) vaults: HashMap<String, Arc<MdbxVault>>,
     object_operations: ObjectOperationState,
+    snapshot_operations: SnapshotOperationState,
     conflict_resolutions: ConflictResolutionState,
 }
 
@@ -267,6 +360,7 @@ impl HostRuntime {
         let device_id = load_or_create_device_id(&root)?;
         let transfers = load_transfers(&root)?;
         let object_operations = load_object_operation_state(&root)?;
+        let snapshot_operations = load_snapshot_operation_state(&root)?;
         let conflict_resolutions = load_conflict_resolution_state(&root)?;
         Ok(Self {
             root,
@@ -274,6 +368,7 @@ impl HostRuntime {
             transfers,
             vaults: HashMap::new(),
             object_operations,
+            snapshot_operations,
             conflict_resolutions,
         })
     }
@@ -299,6 +394,11 @@ impl HostRuntime {
             "object.operation.resolve" => self.object_operation_resolve(params),
             "history.list" => self.history_list(params),
             "history.diff" => self.history_diff(params),
+            "snapshot.list" => self.snapshot_list(params),
+            "snapshot.structure" => self.snapshot_structure(params),
+            "snapshot.create" => self.snapshot_create(params),
+            "snapshot.delete" => self.snapshot_delete(params),
+            "snapshot.restore" => self.snapshot_restore(params),
             "conflict.list" => self.conflict_list(params),
             "conflict.resolve" => self.conflict_resolve(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
@@ -331,6 +431,12 @@ impl HostRuntime {
             "maxHistoryPageSize": MAX_HISTORY_PAGE_SIZE,
             "maxHistoryResultBytes": MAX_HISTORY_RESULT_BYTES,
             "supportsHistoryDiff": true,
+            "maxSnapshotPageSize": MAX_SNAPSHOT_PAGE_SIZE,
+            "maxSnapshotStructurePageSize": MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
+            "maxSnapshotResultBytes": MAX_SNAPSHOT_RESULT_BYTES,
+            "maxSnapshotNameBytes": MAX_SNAPSHOT_NAME_BYTES,
+            "supportsSnapshotStructure": true,
+            "supportsSnapshotMutation": true,
             "maxConflictPageSize": MAX_CONFLICT_PAGE_SIZE,
             "maxConflictResultBytes": MAX_CONFLICT_RESULT_BYTES,
             "supportsConflictResolution": true,
@@ -979,6 +1085,698 @@ impl HostRuntime {
             })
             .collect::<Vec<_>>();
         bounded_history_result(json!({ "items": items }))
+    }
+
+    fn snapshot_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let page_size = take_bounded_page_size(
+            &mut params,
+            MAX_SNAPSHOT_PAGE_SIZE,
+            "pageSize exceeds the MDBX2 snapshot limit.",
+        )?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let page = vault
+            .list_managed_snapshots(page_size, cursor)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "snapshot-list-failed",
+                    "MDBX2 managed snapshots could not be read.",
+                    false,
+                )
+            })?;
+        let items = page
+            .items
+            .into_iter()
+            .map(snapshot_summary_json)
+            .collect::<Result<Vec<_>, _>>()?;
+        bounded_snapshot_result(json!({
+            "items": items,
+            "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn snapshot_structure(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.structure params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let snapshot_id = take_uuid(&mut params, "snapshotId")?;
+        let side = take_snapshot_structure_side(&mut params)?;
+        let page_size = take_bounded_page_size(
+            &mut params,
+            MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
+            "pageSize exceeds the MDBX2 snapshot structure limit.",
+        )?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let preview = vault
+            .get_snapshot_structure_preview(snapshot_id.clone())
+            .map_err(snapshot_structure_failure)?;
+        let current_item_count = preview.current_item_count;
+        let snapshot_item_count = preview.snapshot_item_count;
+        let root_ids = preview
+            .current_nodes
+            .iter()
+            .chain(preview.snapshot_nodes.iter())
+            .filter(|node| {
+                node.node_type.eq_ignore_ascii_case("folder")
+                    && node.name == MONICA_ROOT_PROJECT_TITLE
+            })
+            .map(|node| node.id.clone())
+            .collect::<HashSet<_>>();
+        let nodes = normalize_snapshot_structure_nodes(
+            match side {
+                SnapshotStructureSide::Current => preview.current_nodes,
+                SnapshotStructureSide::Snapshot => preview.snapshot_nodes,
+            },
+            &root_ids,
+        );
+        for node in &nodes {
+            validate_snapshot_structure_node(node)?;
+        }
+        let total_nodes = u32::try_from(nodes.len()).map_err(|_| {
+            RpcFailure::new(
+                "snapshot-structure-too-large",
+                "MDBX2 snapshot structure exceeds the browser node limit.",
+                false,
+            )
+        })?;
+        let fingerprint = snapshot_structure_fingerprint(
+            &snapshot_id,
+            side,
+            current_item_count,
+            snapshot_item_count,
+            &nodes,
+        );
+        let offset = match cursor {
+            Some(value) => {
+                let decoded = decode_snapshot_structure_cursor(&value)?;
+                if decoded.vault_handle != vault_handle
+                    || decoded.snapshot_id != snapshot_id
+                    || decoded.side != side
+                {
+                    return Err(RpcFailure::invalid(
+                        "snapshot structure cursor does not match the request.",
+                    ));
+                }
+                if decoded.total_nodes != total_nodes || decoded.fingerprint != fingerprint {
+                    return Err(RpcFailure::new(
+                        "snapshot-structure-stale",
+                        "MDBX2 snapshot structure changed while it was being paged; reload the preview.",
+                        true,
+                    ));
+                }
+                if decoded.offset >= total_nodes {
+                    return Err(RpcFailure::invalid(
+                        "snapshot structure cursor is beyond the available nodes.",
+                    ));
+                }
+                decoded.offset as usize
+            }
+            None => 0,
+        };
+        let end = offset.saturating_add(page_size as usize).min(nodes.len());
+        let items = nodes[offset..end]
+            .iter()
+            .map(snapshot_structure_node_json)
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = if end < nodes.len() {
+            Some(encode_snapshot_structure_cursor(
+                &vault_handle,
+                &snapshot_id,
+                side,
+                end as u32,
+                total_nodes,
+                &fingerprint,
+            )?)
+        } else {
+            None
+        };
+        bounded_snapshot_result(json!({
+            "snapshotId": snapshot_id,
+            "side": side.as_str(),
+            "currentItemCount": current_item_count,
+            "snapshotItemCount": snapshot_item_count,
+            "totalNodes": total_nodes,
+            "items": items,
+            "nextCursor": next_cursor
+        }))
+    }
+
+    fn snapshot_create(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.create params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let name = take_string(&mut params, "name", MAX_SNAPSHOT_TEXT_BYTES, true)?;
+        reject_unknown(params)?;
+        let name = name.trim().to_string();
+        if name.len() > MAX_SNAPSHOT_NAME_BYTES {
+            return Err(RpcFailure::invalid(
+                "name exceeds the MDBX2 snapshot display-name limit.",
+            ));
+        }
+        let intent_sha256 = snapshot_operation_intent_sha256(json!({
+            "kind": "create",
+            "name": name
+        }))?;
+        let vault = self.require_open_vault(&vault_handle)?;
+
+        if let Some(receipt) = self
+            .snapshot_operation_receipt(&vault_handle, &operation_id)
+            .or_else(|| {
+                self.pending_snapshot_operation_by_intent(
+                    &vault_handle,
+                    SnapshotOperationKind::Create,
+                    &intent_sha256,
+                    None,
+                )
+            })
+        {
+            validate_snapshot_operation_intent(
+                &receipt,
+                SnapshotOperationKind::Create,
+                &intent_sha256,
+                None,
+            )?;
+            if receipt.completed {
+                return snapshot_create_result_json(&receipt, true);
+            }
+            if receipt.outcome_unknown {
+                return Err(snapshot_operation_unknown_failure());
+            }
+            return self.resume_snapshot_create(&vault, &receipt, &name);
+        }
+
+        self.ensure_no_pending_snapshot_operation(&vault_handle)?;
+        let baseline = snapshot_operation_baseline(&vault, &self.device_id)?;
+        self.prepare_snapshot_operation(SnapshotOperationReceipt {
+            vault_handle: vault_handle.clone(),
+            operation_id: operation_id.clone(),
+            kind: SnapshotOperationKind::Create,
+            intent_sha256,
+            target_snapshot_id: None,
+            target_base_commit_id: None,
+            pre_branch_state_sha256: baseline.branch_state_sha256,
+            pre_device_local_seq: baseline.device_local_seq,
+            completed: false,
+            outcome_unknown: false,
+            result_snapshot_id: None,
+            result_commit_id: None,
+            affected_object_count: None,
+            updated_at_unix_secs: unix_seconds()?,
+        })?;
+        self.execute_snapshot_create(&vault, &vault_handle, &operation_id, &name)
+    }
+
+    fn snapshot_delete(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.delete params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let snapshot_id = take_uuid(&mut params, "snapshotId")?;
+        reject_unknown(params)?;
+        let intent_sha256 = snapshot_operation_intent_sha256(json!({
+            "kind": "delete",
+            "snapshotId": snapshot_id
+        }))?;
+        let vault = self.require_open_vault(&vault_handle)?;
+
+        if let Some(receipt) = self
+            .snapshot_operation_receipt(&vault_handle, &operation_id)
+            .or_else(|| {
+                self.pending_snapshot_operation_by_intent(
+                    &vault_handle,
+                    SnapshotOperationKind::Delete,
+                    &intent_sha256,
+                    Some(&snapshot_id),
+                )
+            })
+        {
+            validate_snapshot_operation_intent(
+                &receipt,
+                SnapshotOperationKind::Delete,
+                &intent_sha256,
+                Some(&snapshot_id),
+            )?;
+            if receipt.completed {
+                return snapshot_delete_result_json(&receipt, true);
+            }
+            if receipt.outcome_unknown {
+                return Err(snapshot_operation_unknown_failure());
+            }
+            let current = find_managed_snapshot(&vault, &snapshot_id)?;
+            if current.is_none() {
+                let commit_id = find_snapshot_delete_commit(
+                    &vault,
+                    &self.device_id,
+                    receipt.pre_device_local_seq,
+                    &snapshot_id,
+                )?;
+                let completed = self.complete_snapshot_operation(
+                    &vault_handle,
+                    &receipt.operation_id,
+                    None,
+                    commit_id,
+                    None,
+                )?;
+                return snapshot_delete_result_json(&completed, true);
+            }
+            if current.as_ref().is_some_and(|summary| {
+                Some(summary.base_commit_id.as_str()) != receipt.target_base_commit_id.as_deref()
+            }) {
+                return self.mark_snapshot_operation_unknown(&vault_handle, &operation_id);
+            }
+            return self.execute_snapshot_delete(
+                &vault,
+                &vault_handle,
+                &receipt.operation_id,
+                &snapshot_id,
+            );
+        }
+
+        self.ensure_no_pending_snapshot_operation(&vault_handle)?;
+        let summary = find_managed_snapshot(&vault, &snapshot_id)?.ok_or_else(|| {
+            RpcFailure::new(
+                "snapshot-not-found",
+                "MDBX2 snapshot is no longer available.",
+                false,
+            )
+        })?;
+        let baseline = snapshot_operation_baseline(&vault, &self.device_id)?;
+        self.prepare_snapshot_operation(SnapshotOperationReceipt {
+            vault_handle: vault_handle.clone(),
+            operation_id: operation_id.clone(),
+            kind: SnapshotOperationKind::Delete,
+            intent_sha256,
+            target_snapshot_id: Some(snapshot_id.clone()),
+            target_base_commit_id: Some(summary.base_commit_id),
+            pre_branch_state_sha256: baseline.branch_state_sha256,
+            pre_device_local_seq: baseline.device_local_seq,
+            completed: false,
+            outcome_unknown: false,
+            result_snapshot_id: None,
+            result_commit_id: None,
+            affected_object_count: None,
+            updated_at_unix_secs: unix_seconds()?,
+        })?;
+        self.execute_snapshot_delete(&vault, &vault_handle, &operation_id, &snapshot_id)
+    }
+
+    fn snapshot_restore(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.restore params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let snapshot_id = take_uuid(&mut params, "snapshotId")?;
+        reject_unknown(params)?;
+        let intent_sha256 = snapshot_operation_intent_sha256(json!({
+            "kind": "restore",
+            "snapshotId": snapshot_id
+        }))?;
+        let vault = self.require_open_vault(&vault_handle)?;
+
+        if let Some(receipt) = self
+            .snapshot_operation_receipt(&vault_handle, &operation_id)
+            .or_else(|| {
+                self.pending_snapshot_operation_by_intent(
+                    &vault_handle,
+                    SnapshotOperationKind::Restore,
+                    &intent_sha256,
+                    Some(&snapshot_id),
+                )
+            })
+        {
+            validate_snapshot_operation_intent(
+                &receipt,
+                SnapshotOperationKind::Restore,
+                &intent_sha256,
+                Some(&snapshot_id),
+            )?;
+            if receipt.completed {
+                return snapshot_restore_result_json(&receipt, true);
+            }
+            if receipt.outcome_unknown {
+                return Err(snapshot_operation_unknown_failure());
+            }
+            return self.resume_snapshot_restore(&vault, &receipt, &snapshot_id);
+        }
+
+        self.ensure_no_pending_snapshot_operation(&vault_handle)?;
+        let summary = require_restorable_snapshot(&vault, &snapshot_id)?;
+        let baseline = snapshot_operation_baseline(&vault, &self.device_id)?;
+        self.prepare_snapshot_operation(SnapshotOperationReceipt {
+            vault_handle: vault_handle.clone(),
+            operation_id: operation_id.clone(),
+            kind: SnapshotOperationKind::Restore,
+            intent_sha256,
+            target_snapshot_id: Some(snapshot_id.clone()),
+            target_base_commit_id: Some(summary.base_commit_id),
+            pre_branch_state_sha256: baseline.branch_state_sha256,
+            pre_device_local_seq: baseline.device_local_seq,
+            completed: false,
+            outcome_unknown: false,
+            result_snapshot_id: None,
+            result_commit_id: None,
+            affected_object_count: None,
+            updated_at_unix_secs: unix_seconds()?,
+        })?;
+        self.execute_snapshot_restore(&vault, &vault_handle, &operation_id, &snapshot_id)
+    }
+
+    fn resume_snapshot_create(
+        &mut self,
+        vault: &Arc<MdbxVault>,
+        receipt: &SnapshotOperationReceipt,
+        requested_name: &str,
+    ) -> Result<Value, RpcFailure> {
+        let commits =
+            match snapshot_commits_after(vault, &self.device_id, receipt.pre_device_local_seq) {
+                Ok(commits) => commits,
+                Err(error) if error.code == "snapshot-operation-state-unknown" => {
+                    return self.mark_snapshot_operation_unknown(
+                        &receipt.vault_handle,
+                        &receipt.operation_id,
+                    )
+                }
+                Err(error) => return Err(error),
+            };
+        let mut candidates = Vec::new();
+        for commit in commits
+            .iter()
+            .filter(|commit| is_legacy_snapshot_commit(commit))
+        {
+            if commit.changes.len() != 1 {
+                continue;
+            }
+            let snapshot_id = &commit.changes[0].object_id;
+            let Some(summary) = find_managed_snapshot(vault, snapshot_id)? else {
+                continue;
+            };
+            if summary.base_commit_id == commit.commit_id
+                && summary.created_by_device_id == self.device_id
+                && summary.kind == MdbxSnapshotKind::Manual
+                && summary.is_full
+                && !summary.auto_prune
+                && snapshot_name_matches_request(&summary, requested_name)
+            {
+                candidates.push((summary.snapshot_id, commit.commit_id.clone()));
+            }
+        }
+        if candidates.len() == 1 {
+            let (snapshot_id, commit_id) = candidates.remove(0);
+            let completed = self.complete_snapshot_operation(
+                &receipt.vault_handle,
+                &receipt.operation_id,
+                Some(snapshot_id),
+                Some(commit_id),
+                None,
+            )?;
+            return snapshot_create_result_json(&completed, true);
+        }
+        if !candidates.is_empty()
+            || snapshot_branch_state_sha256(vault)? != receipt.pre_branch_state_sha256
+        {
+            return self
+                .mark_snapshot_operation_unknown(&receipt.vault_handle, &receipt.operation_id);
+        }
+        self.execute_snapshot_create(
+            vault,
+            &receipt.vault_handle,
+            &receipt.operation_id,
+            requested_name,
+        )
+    }
+
+    fn resume_snapshot_restore(
+        &mut self,
+        vault: &Arc<MdbxVault>,
+        receipt: &SnapshotOperationReceipt,
+        snapshot_id: &str,
+    ) -> Result<Value, RpcFailure> {
+        let summary = require_restorable_snapshot(vault, snapshot_id)?;
+        if Some(summary.base_commit_id.as_str()) != receipt.target_base_commit_id.as_deref() {
+            return self
+                .mark_snapshot_operation_unknown(&receipt.vault_handle, &receipt.operation_id);
+        }
+        let commits =
+            match snapshot_commits_after(vault, &self.device_id, receipt.pre_device_local_seq) {
+                Ok(commits) => commits,
+                Err(error) if error.code == "snapshot-operation-state-unknown" => {
+                    return self.mark_snapshot_operation_unknown(
+                        &receipt.vault_handle,
+                        &receipt.operation_id,
+                    )
+                }
+                Err(error) => return Err(error),
+            };
+        let mut candidates = commits
+            .into_iter()
+            .filter(|commit| {
+                is_legacy_snapshot_commit(commit)
+                    && receipt
+                        .target_base_commit_id
+                        .as_ref()
+                        .is_some_and(|base| commit.parent_ids.iter().any(|parent| parent == base))
+                    && commit
+                        .changes
+                        .iter()
+                        .any(|change| change.object_id == snapshot_id)
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            let commit = candidates.remove(0);
+            let affected_object_count = restore_affected_object_count(&commit, snapshot_id)?;
+            let completed = self.complete_snapshot_operation(
+                &receipt.vault_handle,
+                &receipt.operation_id,
+                None,
+                Some(commit.commit_id),
+                Some(affected_object_count),
+            )?;
+            return snapshot_restore_result_json(&completed, true);
+        }
+        if !candidates.is_empty()
+            || snapshot_branch_state_sha256(vault)? != receipt.pre_branch_state_sha256
+        {
+            return self
+                .mark_snapshot_operation_unknown(&receipt.vault_handle, &receipt.operation_id);
+        }
+        self.execute_snapshot_restore(
+            vault,
+            &receipt.vault_handle,
+            &receipt.operation_id,
+            snapshot_id,
+        )
+    }
+
+    fn execute_snapshot_create(
+        &mut self,
+        vault: &Arc<MdbxVault>,
+        vault_handle: &str,
+        operation_id: &str,
+        name: &str,
+    ) -> Result<Value, RpcFailure> {
+        let created = vault
+            .create_manual_snapshot(name.to_string(), browser_snapshot_device_context())
+            .map_err(|error| snapshot_mutation_failure(SnapshotOperationKind::Create, error))?;
+        let completed = self.complete_snapshot_operation(
+            vault_handle,
+            operation_id,
+            Some(created.snapshot_id),
+            Some(created.base_commit_id),
+            None,
+        )?;
+        snapshot_create_result_json(&completed, false)
+    }
+
+    fn execute_snapshot_delete(
+        &mut self,
+        vault: &Arc<MdbxVault>,
+        vault_handle: &str,
+        operation_id: &str,
+        snapshot_id: &str,
+    ) -> Result<Value, RpcFailure> {
+        let deleted = vault
+            .delete_snapshot(snapshot_id.to_string(), browser_snapshot_device_context())
+            .map_err(|error| snapshot_mutation_failure(SnapshotOperationKind::Delete, error))?;
+        let completed = self.complete_snapshot_operation(
+            vault_handle,
+            operation_id,
+            None,
+            Some(deleted.commit_id),
+            None,
+        )?;
+        snapshot_delete_result_json(&completed, false)
+    }
+
+    fn execute_snapshot_restore(
+        &mut self,
+        vault: &Arc<MdbxVault>,
+        vault_handle: &str,
+        operation_id: &str,
+        snapshot_id: &str,
+    ) -> Result<Value, RpcFailure> {
+        let restored = vault
+            .restore_snapshot(snapshot_id.to_string(), browser_snapshot_device_context())
+            .map_err(|error| snapshot_mutation_failure(SnapshotOperationKind::Restore, error))?;
+        let completed = self.complete_snapshot_operation(
+            vault_handle,
+            operation_id,
+            None,
+            Some(restored.commit_id),
+            Some(restored.affected_object_count),
+        )?;
+        snapshot_restore_result_json(&completed, false)
+    }
+
+    fn snapshot_operation_receipt(
+        &self,
+        vault_handle: &str,
+        operation_id: &str,
+    ) -> Option<SnapshotOperationReceipt> {
+        self.snapshot_operations
+            .receipts
+            .iter()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .cloned()
+    }
+
+    fn pending_snapshot_operation_by_intent(
+        &self,
+        vault_handle: &str,
+        kind: SnapshotOperationKind,
+        intent_sha256: &str,
+        target_snapshot_id: Option<&str>,
+    ) -> Option<SnapshotOperationReceipt> {
+        self.snapshot_operations
+            .receipts
+            .iter()
+            .filter(|receipt| {
+                receipt.vault_handle == vault_handle
+                    && receipt.kind == kind
+                    && receipt.intent_sha256 == intent_sha256
+                    && receipt.target_snapshot_id.as_deref() == target_snapshot_id
+                    && !receipt.completed
+                    && !receipt.outcome_unknown
+            })
+            .max_by_key(|receipt| receipt.updated_at_unix_secs)
+            .cloned()
+    }
+
+    fn ensure_no_pending_snapshot_operation(&self, vault_handle: &str) -> Result<(), RpcFailure> {
+        if self.snapshot_operations.receipts.iter().any(|receipt| {
+            receipt.vault_handle == vault_handle && !receipt.completed && !receipt.outcome_unknown
+        }) {
+            return Err(RpcFailure::new(
+                "snapshot-operation-pending",
+                "MDBX2 has an unfinished snapshot operation for this vault; retry that operation first.",
+                false,
+            ));
+        }
+        Ok(())
+    }
+
+    fn prepare_snapshot_operation(
+        &mut self,
+        receipt: SnapshotOperationReceipt,
+    ) -> Result<(), RpcFailure> {
+        let mut next_state = self.snapshot_operations.clone();
+        prune_snapshot_operation_receipts(&mut next_state.receipts)?;
+        next_state.receipts.push(receipt);
+        let previous_state = std::mem::replace(&mut self.snapshot_operations, next_state);
+        if let Err(cause) = self.persist_snapshot_operations() {
+            self.snapshot_operations = previous_state;
+            return Err(cause);
+        }
+        Ok(())
+    }
+
+    fn complete_snapshot_operation(
+        &mut self,
+        vault_handle: &str,
+        operation_id: &str,
+        result_snapshot_id: Option<String>,
+        result_commit_id: Option<String>,
+        affected_object_count: Option<u32>,
+    ) -> Result<SnapshotOperationReceipt, RpcFailure> {
+        let mut next_state = self.snapshot_operations.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 snapshot operation receipt is missing."))?;
+        receipt.completed = true;
+        receipt.outcome_unknown = false;
+        receipt.result_snapshot_id = result_snapshot_id;
+        receipt.result_commit_id = result_commit_id;
+        receipt.affected_object_count = affected_object_count;
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let result = receipt.clone();
+        let previous_state = std::mem::replace(&mut self.snapshot_operations, next_state);
+        if let Err(cause) = self.persist_snapshot_operations() {
+            self.snapshot_operations = previous_state;
+            return Err(cause);
+        }
+        Ok(result)
+    }
+
+    fn mark_snapshot_operation_unknown(
+        &mut self,
+        vault_handle: &str,
+        operation_id: &str,
+    ) -> Result<Value, RpcFailure> {
+        let mut next_state = self.snapshot_operations.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 snapshot operation receipt is missing."))?;
+        receipt.outcome_unknown = true;
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let previous_state = std::mem::replace(&mut self.snapshot_operations, next_state);
+        if let Err(cause) = self.persist_snapshot_operations() {
+            self.snapshot_operations = previous_state;
+            return Err(cause);
+        }
+        Err(snapshot_operation_unknown_failure())
+    }
+
+    fn persist_snapshot_operations(&mut self) -> Result<(), RpcFailure> {
+        self.snapshot_operations.revision = self
+            .snapshot_operations
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RpcFailure::storage("MDBX2 snapshot operation revision overflowed."))?;
+        let bytes = serde_json::to_vec(&self.snapshot_operations).map_err(|_| {
+            RpcFailure::storage("MDBX2 snapshot operation state could not be encoded.")
+        })?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_SNAPSHOT_OPERATION_STATE_BYTES {
+            return Err(RpcFailure::new(
+                "snapshot-operation-state-too-large",
+                "MDBX2 snapshot operation state exceeds the reviewed limit.",
+                false,
+            ));
+        }
+        let path = snapshot_operation_state_path(&self.root, self.snapshot_operations.revision % 2);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|_| {
+                RpcFailure::storage("MDBX2 snapshot operation state could not be opened.")
+            })?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| {
+                RpcFailure::storage("MDBX2 snapshot operation state could not be persisted.")
+            })
     }
 
     fn conflict_list(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -2601,6 +3399,16 @@ fn take_uuid(params: &mut Map<String, Value>, key: &'static str) -> Result<Strin
         .ok_or_else(|| RpcFailure::invalid(format!("{key} is not a canonical opaque handle.")))
 }
 
+fn take_snapshot_structure_side(
+    params: &mut Map<String, Value>,
+) -> Result<SnapshotStructureSide, RpcFailure> {
+    match take_string(params, "side", 16, false)?.as_str() {
+        "current" => Ok(SnapshotStructureSide::Current),
+        "snapshot" => Ok(SnapshotStructureSide::Snapshot),
+        _ => Err(RpcFailure::invalid("side must be current or snapshot.")),
+    }
+}
+
 fn reject_unknown(params: Map<String, Value>) -> Result<(), RpcFailure> {
     if params.is_empty() {
         Ok(())
@@ -2625,6 +3433,20 @@ fn bounded_history_result(value: Value) -> Result<Value, RpcFailure> {
     Ok(value)
 }
 
+fn bounded_snapshot_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 snapshot response could not be encoded."))?
+        .len();
+    if size > MAX_SNAPSHOT_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "snapshot-result-too-large",
+            "MDBX2 snapshot response exceeds the Native Messaging safety limit; request a smaller page.",
+            false,
+        ));
+    }
+    Ok(value)
+}
+
 fn bounded_conflict_result(value: Value) -> Result<Value, RpcFailure> {
     let size = serde_json::to_vec(&value)
         .map_err(|_| RpcFailure::storage("MDBX2 conflict response could not be encoded."))?
@@ -2637,6 +3459,741 @@ fn bounded_conflict_result(value: Value) -> Result<Value, RpcFailure> {
         ));
     }
     Ok(value)
+}
+
+fn snapshot_summary_json(summary: MdbxManagedSnapshotSummary) -> Result<Value, RpcFailure> {
+    for (label, value) in [
+        ("snapshot ID", summary.snapshot_id.as_str()),
+        ("snapshot base commit ID", summary.base_commit_id.as_str()),
+        ("snapshot name", summary.name.as_str()),
+        ("snapshot created-at", summary.created_at.as_str()),
+        (
+            "snapshot creator device ID",
+            summary.created_by_device_id.as_str(),
+        ),
+    ] {
+        validate_snapshot_text(label, value)?;
+    }
+    let kind = match summary.kind {
+        MdbxSnapshotKind::Manual => "manual",
+        MdbxSnapshotKind::Automatic => "automatic",
+    };
+    Ok(json!({
+        "snapshotId": summary.snapshot_id,
+        "baseCommitId": summary.base_commit_id,
+        "name": summary.name,
+        "kind": kind,
+        "isFull": summary.is_full,
+        "payloadBytes": summary.payload_bytes,
+        "createdAt": summary.created_at,
+        "createdByDeviceId": summary.created_by_device_id,
+        "autoPrune": summary.auto_prune,
+        "integrityOk": summary.integrity_ok
+    }))
+}
+
+fn validate_snapshot_structure_node(node: &MdbxSnapshotStructureNode) -> Result<(), RpcFailure> {
+    validate_snapshot_text("snapshot structure node ID", &node.id)?;
+    if let Some(parent_id) = &node.parent_id {
+        validate_snapshot_text("snapshot structure parent ID", parent_id)?;
+    }
+    for (label, value) in [
+        ("snapshot structure name", node.name.as_str()),
+        ("snapshot structure type", node.node_type.as_str()),
+        ("snapshot structure path", node.path.as_str()),
+        ("snapshot structure status", node.status.as_str()),
+    ] {
+        validate_snapshot_text(label, value)?;
+    }
+    Ok(())
+}
+
+fn validate_snapshot_text(label: &str, value: &str) -> Result<(), RpcFailure> {
+    if value.len() > MAX_SNAPSHOT_TEXT_BYTES {
+        return Err(RpcFailure::new(
+            "snapshot-metadata-too-large",
+            format!("{label} exceeds the reviewed browser disclosure limit."),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn snapshot_structure_node_json(node: &MdbxSnapshotStructureNode) -> Result<Value, RpcFailure> {
+    validate_snapshot_structure_node(node)?;
+    Ok(json!({
+        "nodeId": node.id,
+        "parentNodeId": node.parent_id,
+        "name": node.name,
+        "nodeType": node.node_type,
+        "path": node.path,
+        "status": node.status,
+        "childCount": node.child_count
+    }))
+}
+
+fn normalize_snapshot_structure_nodes(
+    nodes: Vec<MdbxSnapshotStructureNode>,
+    root_ids: &HashSet<String>,
+) -> Vec<MdbxSnapshotStructureNode> {
+    nodes
+        .into_iter()
+        .filter_map(|mut node| {
+            if node.node_type.eq_ignore_ascii_case("folder") && root_ids.contains(&node.id) {
+                return None;
+            }
+            if node
+                .parent_id
+                .as_ref()
+                .is_some_and(|parent_id| root_ids.contains(parent_id))
+            {
+                node.parent_id = None;
+                node.path = node
+                    .path
+                    .split_once('/')
+                    .map(|(_, path)| {
+                        if path.is_empty() {
+                            node.name.clone()
+                        } else {
+                            path.to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| node.name.clone());
+            }
+            Some(node)
+        })
+        .collect()
+}
+
+fn snapshot_structure_fingerprint(
+    snapshot_id: &str,
+    side: SnapshotStructureSide,
+    current_item_count: u32,
+    snapshot_item_count: u32,
+    nodes: &[MdbxSnapshotStructureNode],
+) -> String {
+    let mut hasher = Sha256::new();
+    update_snapshot_fingerprint_part(&mut hasher, snapshot_id.as_bytes());
+    update_snapshot_fingerprint_part(&mut hasher, side.as_str().as_bytes());
+    update_snapshot_fingerprint_part(&mut hasher, &current_item_count.to_le_bytes());
+    update_snapshot_fingerprint_part(&mut hasher, &snapshot_item_count.to_le_bytes());
+    update_snapshot_fingerprint_part(&mut hasher, &(nodes.len() as u64).to_le_bytes());
+    for node in nodes {
+        update_snapshot_fingerprint_part(&mut hasher, node.id.as_bytes());
+        update_snapshot_fingerprint_part(
+            &mut hasher,
+            node.parent_id.as_deref().unwrap_or_default().as_bytes(),
+        );
+        update_snapshot_fingerprint_part(&mut hasher, node.name.as_bytes());
+        update_snapshot_fingerprint_part(&mut hasher, node.node_type.as_bytes());
+        update_snapshot_fingerprint_part(&mut hasher, node.path.as_bytes());
+        update_snapshot_fingerprint_part(&mut hasher, node.status.as_bytes());
+        update_snapshot_fingerprint_part(&mut hasher, &node.child_count.to_le_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn update_snapshot_fingerprint_part(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
+
+fn encode_snapshot_structure_cursor(
+    vault_handle: &str,
+    snapshot_id: &str,
+    side: SnapshotStructureSide,
+    offset: u32,
+    total_nodes: u32,
+    fingerprint: &str,
+) -> Result<String, RpcFailure> {
+    let bytes = serde_json::to_vec(&SnapshotStructureCursor {
+        version: SNAPSHOT_STRUCTURE_CURSOR_VERSION,
+        vault_handle: vault_handle.to_string(),
+        snapshot_id: snapshot_id.to_string(),
+        side,
+        offset,
+        total_nodes,
+        fingerprint: fingerprint.to_string(),
+    })
+    .map_err(|_| RpcFailure::storage("MDBX2 snapshot cursor could not be encoded."))?;
+    let encoded = BASE64.encode(bytes);
+    if encoded.len() > MAX_CURSOR_BYTES {
+        return Err(RpcFailure::new(
+            "snapshot-cursor-too-large",
+            "MDBX2 snapshot cursor exceeds the reviewed browser limit.",
+            false,
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_snapshot_structure_cursor(value: &str) -> Result<SnapshotStructureCursor, RpcFailure> {
+    let bytes = BASE64
+        .decode(value.as_bytes())
+        .map_err(|_| RpcFailure::invalid("snapshot structure cursor is not valid base64."))?;
+    let cursor: SnapshotStructureCursor = serde_json::from_slice(&bytes)
+        .map_err(|_| RpcFailure::invalid("snapshot structure cursor is malformed."))?;
+    if cursor.version != SNAPSHOT_STRUCTURE_CURSOR_VERSION {
+        return Err(RpcFailure::invalid(
+            "snapshot structure cursor version is unsupported.",
+        ));
+    }
+    if canonical_uuid(&cursor.vault_handle).as_deref() != Some(cursor.vault_handle.as_str())
+        || canonical_uuid(&cursor.snapshot_id).as_deref() != Some(cursor.snapshot_id.as_str())
+        || cursor.fingerprint.len() != 64
+        || !cursor
+            .fingerprint
+            .bytes()
+            .all(|value| value.is_ascii_hexdigit())
+    {
+        return Err(RpcFailure::invalid(
+            "snapshot structure cursor contains invalid identity data.",
+        ));
+    }
+    Ok(cursor)
+}
+
+fn snapshot_structure_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("integrity descriptor mismatch")
+        || diagnostic.contains("failed integrity verification")
+    {
+        RpcFailure::new(
+            "snapshot-integrity-failed",
+            "MDBX2 snapshot failed integrity verification and cannot be previewed.",
+            false,
+        )
+    } else if diagnostic.contains("snapshot structure nodes")
+        || diagnostic.contains("resource limit")
+    {
+        RpcFailure::new(
+            "snapshot-structure-too-large",
+            "MDBX2 snapshot structure exceeds the Core preview limit.",
+            false,
+        )
+    } else if diagnostic.contains("not found") {
+        RpcFailure::new(
+            "snapshot-not-found",
+            "MDBX2 snapshot is no longer available.",
+            false,
+        )
+    } else {
+        RpcFailure::new(
+            "snapshot-structure-failed",
+            "MDBX2 snapshot structure could not be read.",
+            false,
+        )
+    }
+}
+
+fn snapshot_operation_intent_sha256(value: Value) -> Result<String, RpcFailure> {
+    let bytes = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 snapshot intent could not be encoded."))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn validate_snapshot_operation_intent(
+    receipt: &SnapshotOperationReceipt,
+    kind: SnapshotOperationKind,
+    intent_sha256: &str,
+    target_snapshot_id: Option<&str>,
+) -> Result<(), RpcFailure> {
+    if receipt.kind != kind
+        || receipt.intent_sha256 != intent_sha256
+        || receipt.target_snapshot_id.as_deref() != target_snapshot_id
+    {
+        return Err(RpcFailure::new(
+            "snapshot-operation-mismatch",
+            "MDBX2 snapshot operation was reused with a different intent.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn snapshot_create_result_json(
+    receipt: &SnapshotOperationReceipt,
+    already_completed: bool,
+) -> Result<Value, RpcFailure> {
+    let snapshot_id = receipt.result_snapshot_id.as_deref().ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot creation has no Snapshot ID.")
+    })?;
+    let commit_id = receipt.result_commit_id.as_deref().ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot creation has no Commit ID.")
+    })?;
+    Ok(json!({
+        "operationId": receipt.operation_id,
+        "snapshotId": snapshot_id,
+        "commitId": commit_id,
+        "alreadyCompleted": already_completed
+    }))
+}
+
+fn snapshot_delete_result_json(
+    receipt: &SnapshotOperationReceipt,
+    already_completed: bool,
+) -> Result<Value, RpcFailure> {
+    let snapshot_id = receipt.target_snapshot_id.as_deref().ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot deletion has no target Snapshot ID.")
+    })?;
+    Ok(json!({
+        "operationId": receipt.operation_id,
+        "snapshotId": snapshot_id,
+        "commitId": receipt.result_commit_id,
+        "alreadyCompleted": already_completed
+    }))
+}
+
+fn snapshot_restore_result_json(
+    receipt: &SnapshotOperationReceipt,
+    already_completed: bool,
+) -> Result<Value, RpcFailure> {
+    let snapshot_id = receipt.target_snapshot_id.as_deref().ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot restoration has no target Snapshot ID.")
+    })?;
+    let commit_id = receipt.result_commit_id.as_deref().ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot restoration has no Commit ID.")
+    })?;
+    let affected_object_count = receipt.affected_object_count.ok_or_else(|| {
+        RpcFailure::storage("MDBX2 completed snapshot restoration has no affected Object count.")
+    })?;
+    Ok(json!({
+        "operationId": receipt.operation_id,
+        "snapshotId": snapshot_id,
+        "commitId": commit_id,
+        "affectedObjectCount": affected_object_count,
+        "alreadyCompleted": already_completed
+    }))
+}
+
+fn snapshot_operation_unknown_failure() -> RpcFailure {
+    RpcFailure::new(
+        "snapshot-operation-state-unknown",
+        "MDBX2 snapshot operation outcome cannot be proven safely. Refresh the vault before taking another snapshot action.",
+        false,
+    )
+}
+
+fn snapshot_mutation_failure(
+    kind: SnapshotOperationKind,
+    error: mdbx_ffi::MdbxFfiError,
+) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("integrity descriptor mismatch")
+        || diagnostic.contains("failed integrity verification")
+    {
+        return RpcFailure::new(
+            "snapshot-integrity-failed",
+            "MDBX2 snapshot failed integrity verification.",
+            false,
+        );
+    }
+    if diagnostic.contains("authorization")
+        || diagnostic.contains("fresh authentication")
+        || diagnostic.contains("authentication")
+    {
+        return RpcFailure::new(
+            "snapshot-authorization-required",
+            "MDBX2 security policy requires the vault to be freshly unlocked for this snapshot action.",
+            true,
+        );
+    }
+    if diagnostic.contains("not found") {
+        return RpcFailure::new(
+            "snapshot-not-found",
+            "MDBX2 snapshot is no longer available.",
+            false,
+        );
+    }
+    let (code, message) = match kind {
+        SnapshotOperationKind::Create => (
+            "snapshot-create-failed",
+            "MDBX2 manual snapshot could not be created.",
+        ),
+        SnapshotOperationKind::Delete => (
+            "snapshot-delete-failed",
+            "MDBX2 snapshot could not be deleted.",
+        ),
+        SnapshotOperationKind::Restore => (
+            "snapshot-restore-failed",
+            "MDBX2 snapshot could not be restored.",
+        ),
+    };
+    RpcFailure::new(code, message, false)
+}
+
+fn browser_snapshot_device_context() -> MdbxDeviceContext {
+    MdbxDeviceContext {
+        assurance: MdbxDeviceAssurance::Standard,
+        secure_clipboard_available: false,
+        screen_capture_protection_available: false,
+        secure_temp_files_available: true,
+    }
+}
+
+fn snapshot_operation_baseline(
+    vault: &Arc<MdbxVault>,
+    device_id: &str,
+) -> Result<SnapshotOperationBaseline, RpcFailure> {
+    Ok(SnapshotOperationBaseline {
+        branch_state_sha256: snapshot_branch_state_sha256(vault)?,
+        device_local_seq: snapshot_latest_device_sequence(vault, device_id)?,
+    })
+}
+
+fn snapshot_branch_state_sha256(vault: &Arc<MdbxVault>) -> Result<String, RpcFailure> {
+    let mut branches = vault.list_branches().map_err(|_| {
+        RpcFailure::new(
+            "snapshot-operation-history-failed",
+            "MDBX2 branch state could not be inspected for snapshot recovery.",
+            false,
+        )
+    })?;
+    if branches.len() > MAX_SNAPSHOT_BRANCHES {
+        return Err(RpcFailure::new(
+            "snapshot-operation-inventory-too-large",
+            "MDBX2 has too many branches for bounded snapshot recovery.",
+            false,
+        ));
+    }
+    branches.sort_by(|left, right| {
+        left.branch_id
+            .cmp(&right.branch_id)
+            .then_with(|| left.head_commit_id.cmp(&right.head_commit_id))
+    });
+    let values = branches
+        .into_iter()
+        .map(|branch| {
+            if branch.branch_id.is_empty()
+                || branch.branch_id.len() > MAX_SNAPSHOT_TEXT_BYTES
+                || branch.head_commit_id.is_empty()
+                || branch.head_commit_id.len() > MAX_SNAPSHOT_TEXT_BYTES
+            {
+                return Err(RpcFailure::new(
+                    "snapshot-operation-history-invalid",
+                    "MDBX2 branch state contains oversized recovery metadata.",
+                    false,
+                ));
+            }
+            Ok(json!({
+                "branchId": branch.branch_id,
+                "headCommitId": branch.head_commit_id
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let bytes = serde_json::to_vec(&values)
+        .map_err(|_| RpcFailure::storage("MDBX2 branch state could not be encoded."))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn snapshot_latest_device_sequence(
+    vault: &Arc<MdbxVault>,
+    device_id: &str,
+) -> Result<u64, RpcFailure> {
+    let mut cursor = None;
+    for _ in 0..MAX_SNAPSHOT_HISTORY_SCAN_PAGES {
+        let page = vault.list_commit_history(100, cursor).map_err(|_| {
+            RpcFailure::new(
+                "snapshot-operation-history-failed",
+                "MDBX2 commit history could not be inspected for snapshot recovery.",
+                false,
+            )
+        })?;
+        if let Some(sequence) = page
+            .items
+            .iter()
+            .filter(|item| item.device_id == device_id)
+            .map(|item| item.local_seq)
+            .max()
+        {
+            return Ok(sequence);
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(0);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(RpcFailure::new(
+        "snapshot-operation-inventory-too-large",
+        "MDBX2 history is too large to establish a bounded snapshot recovery baseline.",
+        false,
+    ))
+}
+
+fn snapshot_commits_after(
+    vault: &Arc<MdbxVault>,
+    device_id: &str,
+    baseline_local_seq: u64,
+) -> Result<Vec<MdbxCommitHistoryItem>, RpcFailure> {
+    let mut cursor = None;
+    let mut commits = Vec::new();
+    for _ in 0..MAX_SNAPSHOT_HISTORY_SCAN_PAGES {
+        let page = vault.list_commit_history(100, cursor).map_err(|_| {
+            RpcFailure::new(
+                "snapshot-operation-history-failed",
+                "MDBX2 commit history could not be inspected for snapshot recovery.",
+                false,
+            )
+        })?;
+        for item in page.items {
+            if item.device_id != device_id {
+                continue;
+            }
+            if item.local_seq <= baseline_local_seq {
+                return Ok(commits);
+            }
+            commits.push(item);
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(commits);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(snapshot_operation_unknown_failure())
+}
+
+fn find_managed_snapshot(
+    vault: &Arc<MdbxVault>,
+    snapshot_id: &str,
+) -> Result<Option<MdbxManagedSnapshotSummary>, RpcFailure> {
+    let mut cursor = None;
+    for _ in 0..MAX_SNAPSHOT_INVENTORY_PAGES {
+        let page = vault
+            .list_managed_snapshots(MAX_SNAPSHOT_PAGE_SIZE, cursor)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "snapshot-list-failed",
+                    "MDBX2 managed snapshots could not be inspected.",
+                    false,
+                )
+            })?;
+        if let Some(summary) = page
+            .items
+            .into_iter()
+            .find(|summary| summary.snapshot_id == snapshot_id)
+        {
+            return Ok(Some(summary));
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(None);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(RpcFailure::new(
+        "snapshot-operation-inventory-too-large",
+        "MDBX2 snapshot inventory is too large for bounded mutation recovery.",
+        false,
+    ))
+}
+
+fn require_restorable_snapshot(
+    vault: &Arc<MdbxVault>,
+    snapshot_id: &str,
+) -> Result<MdbxManagedSnapshotSummary, RpcFailure> {
+    let summary = find_managed_snapshot(vault, snapshot_id)?.ok_or_else(|| {
+        RpcFailure::new(
+            "snapshot-not-found",
+            "MDBX2 snapshot is no longer available.",
+            false,
+        )
+    })?;
+    if !summary.integrity_ok {
+        return Err(RpcFailure::new(
+            "snapshot-integrity-failed",
+            "MDBX2 snapshot failed integrity verification and cannot be restored.",
+            false,
+        ));
+    }
+    Ok(summary)
+}
+
+fn snapshot_name_matches_request(
+    summary: &MdbxManagedSnapshotSummary,
+    requested_name: &str,
+) -> bool {
+    if requested_name.is_empty() {
+        summary.name == format!("Snapshot {}", summary.created_at)
+    } else {
+        summary.name == requested_name
+    }
+}
+
+fn is_legacy_snapshot_commit(commit: &MdbxCommitHistoryItem) -> bool {
+    commit.commit_kind == "snapshot"
+        && commit.change_scope == "multi"
+        && commit.operation_kind.as_deref() == Some("legacy-snapshot")
+}
+
+fn restore_affected_object_count(
+    commit: &MdbxCommitHistoryItem,
+    snapshot_id: &str,
+) -> Result<u32, RpcFailure> {
+    let count = commit
+        .changes
+        .iter()
+        .filter(|change| change.object_id != snapshot_id)
+        .map(|change| change.object_id.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    u32::try_from(count).map_err(|_| {
+        RpcFailure::new(
+            "snapshot-operation-state-unknown",
+            "MDBX2 restored Object count exceeds the browser recovery limit.",
+            false,
+        )
+    })
+}
+
+fn find_snapshot_delete_commit(
+    vault: &Arc<MdbxVault>,
+    device_id: &str,
+    baseline_local_seq: u64,
+    snapshot_id: &str,
+) -> Result<Option<String>, RpcFailure> {
+    let commits = match snapshot_commits_after(vault, device_id, baseline_local_seq) {
+        Ok(commits) => commits,
+        Err(error) if error.code == "snapshot-operation-state-unknown" => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut matches = commits.into_iter().filter(|commit| {
+        commit.operation_kind.as_deref() == Some("delete-snapshot")
+            && commit.changes.iter().any(|change| {
+                change.object_id == snapshot_id
+                    && change.object_type == "snapshot"
+                    && change.action == "delete"
+            })
+    });
+    let first = matches.next().map(|commit| commit.commit_id);
+    if matches.next().is_some() {
+        Ok(None)
+    } else {
+        Ok(first)
+    }
+}
+
+fn prune_snapshot_operation_receipts(
+    receipts: &mut Vec<SnapshotOperationReceipt>,
+) -> Result<(), RpcFailure> {
+    if receipts.len() < MAX_SNAPSHOT_OPERATION_RECEIPTS {
+        return Ok(());
+    }
+    receipts.sort_by_key(|receipt| {
+        (
+            !(receipt.completed || receipt.outcome_unknown),
+            receipt.updated_at_unix_secs,
+        )
+    });
+    while receipts.len() >= MAX_SNAPSHOT_OPERATION_RECEIPTS {
+        if receipts
+            .first()
+            .is_some_and(|receipt| receipt.completed || receipt.outcome_unknown)
+        {
+            receipts.remove(0);
+        } else {
+            return Err(RpcFailure::new(
+                "snapshot-operation-receipt-limit",
+                "MDBX2 has too many unfinished snapshot operations.",
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_snapshot_operation_state(root: &Path) -> std::io::Result<SnapshotOperationState> {
+    let mut candidates = Vec::new();
+    for slot in [0_u64, 1_u64] {
+        let path = snapshot_operation_state_path(root, slot);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(bytes) = read_bounded(&path, MAX_SNAPSHOT_OPERATION_STATE_BYTES) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_slice::<SnapshotOperationState>(&bytes) else {
+            continue;
+        };
+        if state.version != SNAPSHOT_OPERATION_STATE_VERSION || state.revision % 2 != slot {
+            continue;
+        }
+        if validate_snapshot_operation_state(&state) {
+            candidates.push(state);
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by_key(|state| state.revision)
+        .unwrap_or_default())
+}
+
+fn validate_snapshot_operation_state(state: &SnapshotOperationState) -> bool {
+    if state.receipts.len() > MAX_SNAPSHOT_OPERATION_RECEIPTS {
+        return false;
+    }
+    let mut identities = HashSet::new();
+    state.receipts.iter().all(|receipt| {
+        let target_valid = receipt
+            .target_snapshot_id
+            .as_deref()
+            .is_none_or(|value| canonical_uuid(value).as_deref() == Some(value));
+        let target_base_valid = receipt
+            .target_base_commit_id
+            .as_deref()
+            .is_none_or(|value| canonical_uuid(value).as_deref() == Some(value));
+        let result_snapshot_valid = receipt
+            .result_snapshot_id
+            .as_deref()
+            .is_none_or(|value| canonical_uuid(value).as_deref() == Some(value));
+        let result_commit_valid = receipt
+            .result_commit_id
+            .as_deref()
+            .is_none_or(|value| canonical_uuid(value).as_deref() == Some(value));
+        let shape_valid = match receipt.kind {
+            SnapshotOperationKind::Create => {
+                receipt.target_snapshot_id.is_none()
+                    && receipt.target_base_commit_id.is_none()
+                    && receipt.affected_object_count.is_none()
+                    && (!receipt.completed
+                        || (receipt.result_snapshot_id.is_some()
+                            && receipt.result_commit_id.is_some()))
+            }
+            SnapshotOperationKind::Delete => {
+                receipt.target_snapshot_id.is_some()
+                    && receipt.target_base_commit_id.is_some()
+                    && receipt.result_snapshot_id.is_none()
+                    && receipt.affected_object_count.is_none()
+            }
+            SnapshotOperationKind::Restore => {
+                receipt.target_snapshot_id.is_some()
+                    && receipt.target_base_commit_id.is_some()
+                    && receipt.result_snapshot_id.is_none()
+                    && (!receipt.completed
+                        || (receipt.result_commit_id.is_some()
+                            && receipt.affected_object_count.is_some()))
+            }
+        };
+        canonical_uuid(&receipt.vault_handle).as_deref() == Some(receipt.vault_handle.as_str())
+            && canonical_uuid(&receipt.operation_id).as_deref()
+                == Some(receipt.operation_id.as_str())
+            && valid_sha256(&receipt.intent_sha256)
+            && valid_sha256(&receipt.pre_branch_state_sha256)
+            && target_valid
+            && target_base_valid
+            && result_snapshot_valid
+            && result_commit_valid
+            && shape_valid
+            && !(receipt.completed && receipt.outcome_unknown)
+            && (receipt.completed
+                || (receipt.result_snapshot_id.is_none()
+                    && receipt.result_commit_id.is_none()
+                    && receipt.affected_object_count.is_none()))
+            && identities.insert((receipt.vault_handle.clone(), receipt.operation_id.clone()))
+    })
+}
+
+fn snapshot_operation_state_path(root: &Path, slot: u64) -> PathBuf {
+    root.join("operations")
+        .join(format!("snapshot-operations.state.{slot}.json"))
 }
 
 fn find_unresolved_conflict(
@@ -2844,6 +4401,68 @@ mod tests {
         (root, runtime)
     }
 
+    fn open_test_vault(runtime: &mut HostRuntime, password: &str) -> String {
+        let source_path = runtime.root.join(format!("source-{}.mdbx", fresh_uuid()));
+        let source = mdbx_ffi::create_vault(
+            path_string(&source_path).unwrap(),
+            password.to_string(),
+            "snapshot-fixture-device".to_string(),
+        )
+        .unwrap();
+        let file_handle = fresh_uuid();
+        source
+            .create_backup(path_string(&runtime.import_file_path(&file_handle)).unwrap())
+            .unwrap();
+        drop(source);
+        call(
+            runtime,
+            "vault.open",
+            json!({
+                "source": { "kind": "file", "handle": file_handle },
+                "credential": { "method": "password", "password": password }
+            }),
+        )["vaultHandle"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn reopen_test_vault(runtime: &mut HostRuntime, vault_handle: &str, password: &str) {
+        call(
+            runtime,
+            "vault.open",
+            json!({
+                "source": { "kind": "vault", "handle": vault_handle },
+                "credential": { "method": "password", "password": password }
+            }),
+        );
+    }
+
+    fn upsert_test_login(
+        runtime: &mut HostRuntime,
+        vault_handle: &str,
+        logical_object_id: &str,
+        title: &str,
+    ) -> Value {
+        call(
+            runtime,
+            "object.upsert",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "logicalObjectId": logical_object_id,
+                "collectionId": null,
+                "objectTypeId": "login",
+                "title": title,
+                "payloadJson": json!({
+                    "kind": "password",
+                    "monica_entry_id": logical_object_id,
+                    "password_plain": "snapshot-test-secret"
+                }).to_string()
+            }),
+        )
+    }
+
     fn call(runtime: &mut HostRuntime, method: &str, params: Value) -> Value {
         runtime.handle(method, params).unwrap()
     }
@@ -2883,6 +4502,43 @@ mod tests {
 
     fn sha256_bytes(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))
+    }
+
+    #[test]
+    fn snapshot_structure_hides_android_synthetic_root_and_promotes_children() {
+        let root_id = fresh_uuid();
+        let child_id = fresh_uuid();
+        let root_ids = HashSet::from([root_id.clone()]);
+        let normalized = normalize_snapshot_structure_nodes(
+            vec![
+                MdbxSnapshotStructureNode {
+                    id: root_id.clone(),
+                    parent_id: None,
+                    name: MONICA_ROOT_PROJECT_TITLE.to_string(),
+                    node_type: "folder".to_string(),
+                    path: MONICA_ROOT_PROJECT_TITLE.to_string(),
+                    status: "unchanged".to_string(),
+                    child_count: 1,
+                    metadata: "internal root".to_string(),
+                },
+                MdbxSnapshotStructureNode {
+                    id: child_id.clone(),
+                    parent_id: Some(root_id),
+                    name: "工作账号".to_string(),
+                    node_type: "entry".to_string(),
+                    path: ".monica-root/工作账号".to_string(),
+                    status: "modified".to_string(),
+                    child_count: 0,
+                    metadata: "login".to_string(),
+                },
+            ],
+            &root_ids,
+        );
+
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].id, child_id);
+        assert_eq!(normalized[0].parent_id, None);
+        assert_eq!(normalized[0].path, "工作账号");
     }
 
     #[test]
@@ -3281,6 +4937,659 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.code, "params-invalid");
+    }
+
+    #[test]
+    fn snapshot_methods_page_payload_free_metadata_and_bounded_structure() {
+        let (_root, mut runtime) = runtime();
+        let source_path = runtime.root.join("snapshot-source.mdbx");
+        let source = mdbx_ffi::create_vault(
+            path_string(&source_path).unwrap(),
+            "snapshot-password".to_string(),
+            "snapshot-fixture-device".to_string(),
+        )
+        .unwrap();
+        let file_handle = fresh_uuid();
+        source
+            .create_backup(path_string(&runtime.import_file_path(&file_handle)).unwrap())
+            .unwrap();
+        drop(source);
+        let opened = call(
+            &mut runtime,
+            "vault.open",
+            json!({
+                "source": { "kind": "file", "handle": file_handle },
+                "credential": { "method": "password", "password": "snapshot-password" }
+            }),
+        );
+        let vault_handle = opened["vaultHandle"].as_str().unwrap().to_string();
+        for (logical_id, title) in [
+            ("password:snapshot-a", "Snapshot A"),
+            ("password:snapshot-b", "Snapshot B"),
+        ] {
+            call(
+                &mut runtime,
+                "object.upsert",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": fresh_uuid(),
+                    "logicalObjectId": logical_id,
+                    "collectionId": null,
+                    "objectTypeId": "login",
+                    "title": title,
+                    "payloadJson": json!({
+                        "kind": "password",
+                        "monica_entry_id": logical_id,
+                        "password_plain": "must-not-cross-snapshot-rpc"
+                    }).to_string()
+                }),
+            );
+        }
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let first_snapshot = vault
+            .create_manual_snapshot(
+                "Before browser update".to_string(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        let first_snapshot_id = first_snapshot.snapshot_id.clone();
+        vault
+            .create_manual_snapshot(
+                "Second browser snapshot".to_string(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        drop(vault);
+
+        let first_page = call(
+            &mut runtime,
+            "snapshot.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": 1,
+                "cursor": null
+            }),
+        );
+        assert_eq!(first_page["items"].as_array().unwrap().len(), 1);
+        assert!(first_page["nextCursor"].is_string());
+        let second_page = call(
+            &mut runtime,
+            "snapshot.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": 1,
+                "cursor": first_page["nextCursor"].clone()
+            }),
+        );
+        assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
+        let listed_text = serde_json::to_string(&json!([first_page, second_page])).unwrap();
+        assert!(!listed_text.contains("snapshotHash"));
+        assert!(!listed_text.contains("snapshotCiphertext"));
+        assert!(!listed_text.contains("must-not-cross-snapshot-rpc"));
+
+        let structure = call(
+            &mut runtime,
+            "snapshot.structure",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "snapshotId": first_snapshot_id.clone(),
+                "side": "snapshot",
+                "pageSize": 1,
+                "cursor": null
+            }),
+        );
+        assert_eq!(structure["side"], "snapshot");
+        assert_eq!(structure["items"].as_array().unwrap().len(), 1);
+        assert!(structure["totalNodes"].as_u64().unwrap() >= 2);
+        assert!(structure["nextCursor"].is_string());
+        let structure_text = serde_json::to_string(&structure).unwrap();
+        assert!(!structure_text.contains("metadata"));
+        assert!(!structure_text.contains("must-not-cross-snapshot-rpc"));
+
+        call(
+            &mut runtime,
+            "object.upsert",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": fresh_uuid(),
+                "logicalObjectId": "password:snapshot-a",
+                "collectionId": null,
+                "objectTypeId": "login",
+                "title": "Snapshot A changed",
+                "payloadJson": json!({
+                    "kind": "password",
+                    "monica_entry_id": "password:snapshot-a",
+                    "password_plain": "changed-after-preview"
+                }).to_string()
+            }),
+        );
+        let stale = runtime
+            .handle(
+                "snapshot.structure",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "snapshotId": first_snapshot_id.clone(),
+                    "side": "snapshot",
+                    "pageSize": 1,
+                    "cursor": structure["nextCursor"].clone()
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(stale.code, "snapshot-structure-stale");
+
+        let connection = Connection::open(
+            runtime
+                .root
+                .join("vaults")
+                .join(&vault_handle)
+                .join("vault.mdbx"),
+        )
+        .unwrap();
+        let mut corrupted_ciphertext: Vec<u8> = connection
+            .query_row(
+                "SELECT snapshot_ct FROM snapshots WHERE snapshot_id = ?1",
+                rusqlite::params![&first_snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        corrupted_ciphertext[0] ^= 0x01;
+        connection
+            .execute(
+                "UPDATE snapshots SET snapshot_ct = ?1 WHERE snapshot_id = ?2",
+                rusqlite::params![corrupted_ciphertext, &first_snapshot_id],
+            )
+            .unwrap();
+        drop(connection);
+        let corrupted_list = call(
+            &mut runtime,
+            "snapshot.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": MAX_SNAPSHOT_PAGE_SIZE,
+                "cursor": null
+            }),
+        );
+        let corrupted = corrupted_list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["snapshotId"] == first_snapshot_id)
+            .unwrap();
+        assert_eq!(corrupted["integrityOk"], false);
+        let integrity_error = runtime
+            .handle(
+                "snapshot.structure",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "snapshotId": first_snapshot_id.clone(),
+                    "side": "snapshot",
+                    "pageSize": 1,
+                    "cursor": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(integrity_error.code, "snapshot-integrity-failed");
+        let restore_operation_id = fresh_uuid();
+        let restore_error = runtime
+            .handle(
+                "snapshot.restore",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": restore_operation_id.clone(),
+                    "snapshotId": first_snapshot_id
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(restore_error.code, "snapshot-integrity-failed");
+        assert!(runtime
+            .snapshot_operation_receipt(&vault_handle, &restore_operation_id)
+            .is_none());
+    }
+
+    #[test]
+    fn snapshot_methods_reject_unbounded_requests_and_invalid_structure_sides() {
+        let (_root, mut runtime) = runtime();
+        let error = runtime
+            .handle(
+                "snapshot.list",
+                json!({
+                    "vaultHandle": fresh_uuid(),
+                    "pageSize": MAX_SNAPSHOT_PAGE_SIZE + 1,
+                    "cursor": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "params-invalid");
+
+        let error = runtime
+            .handle(
+                "snapshot.structure",
+                json!({
+                    "vaultHandle": fresh_uuid(),
+                    "snapshotId": fresh_uuid(),
+                    "side": "both",
+                    "pageSize": 1,
+                    "cursor": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "params-invalid");
+
+        let oversized = json!({ "items": ["x".repeat(MAX_SNAPSHOT_RESULT_BYTES)] });
+        let error = bounded_snapshot_result(oversized).unwrap_err();
+        assert_eq!(error.code, "snapshot-result-too-large");
+    }
+
+    #[test]
+    fn snapshot_mutations_round_trip_and_reject_operation_reuse() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "snapshot-round-trip-password");
+        let written = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:snapshot-round-trip",
+            "Before snapshot",
+        );
+        let object_id = written["objectId"].as_str().unwrap().to_string();
+
+        let create_operation_id = fresh_uuid();
+        let created = call(
+            &mut runtime,
+            "snapshot.create",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": create_operation_id.clone(),
+                "name": ""
+            }),
+        );
+        assert_eq!(created["alreadyCompleted"], false);
+        let snapshot_id = created["snapshotId"].as_str().unwrap().to_string();
+        let create_commit_id = created["commitId"].as_str().unwrap().to_string();
+        let repeated_create = call(
+            &mut runtime,
+            "snapshot.create",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": create_operation_id.clone(),
+                "name": ""
+            }),
+        );
+        assert_eq!(repeated_create["alreadyCompleted"], true);
+        assert_eq!(repeated_create["snapshotId"], snapshot_id);
+        assert_eq!(repeated_create["commitId"], create_commit_id);
+        let mismatch = runtime
+            .handle(
+                "snapshot.create",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": create_operation_id,
+                    "name": "different intent"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(mismatch.code, "snapshot-operation-mismatch");
+
+        upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:snapshot-round-trip",
+            "After snapshot",
+        );
+        let restore_operation_id = fresh_uuid();
+        let restored = call(
+            &mut runtime,
+            "snapshot.restore",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": restore_operation_id.clone(),
+                "snapshotId": snapshot_id.clone()
+            }),
+        );
+        assert_eq!(restored["alreadyCompleted"], false);
+        assert!(restored["affectedObjectCount"].as_u64().unwrap() >= 1);
+        let restore_commit_id = restored["commitId"].as_str().unwrap().to_string();
+        let revealed = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": vault_handle.clone(), "objectId": object_id }),
+        );
+        assert_eq!(revealed["title"], "Before snapshot");
+        let repeated_restore = call(
+            &mut runtime,
+            "snapshot.restore",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": restore_operation_id,
+                "snapshotId": snapshot_id.clone()
+            }),
+        );
+        assert_eq!(repeated_restore["alreadyCompleted"], true);
+        assert_eq!(repeated_restore["commitId"], restore_commit_id);
+
+        let delete_operation_id = fresh_uuid();
+        let deleted = call(
+            &mut runtime,
+            "snapshot.delete",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": delete_operation_id.clone(),
+                "snapshotId": snapshot_id.clone()
+            }),
+        );
+        assert_eq!(deleted["alreadyCompleted"], false);
+        assert!(deleted["commitId"].is_string());
+        let repeated_delete = call(
+            &mut runtime,
+            "snapshot.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": delete_operation_id,
+                "snapshotId": snapshot_id
+            }),
+        );
+        assert_eq!(repeated_delete["alreadyCompleted"], true);
+        assert_eq!(repeated_delete["commitId"], deleted["commitId"]);
+    }
+
+    #[test]
+    fn snapshot_create_recovers_without_duplication_after_receipt_completion_loss() {
+        let (root, mut runtime) = runtime();
+        let password = "snapshot-create-recovery-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let operation_id = fresh_uuid();
+        let private_name = "Private recovery snapshot";
+        let blocked_slot = snapshot_operation_state_path(&root.0, 0);
+        fs::create_dir(&blocked_slot).unwrap();
+        let error = runtime
+            .handle(
+                "snapshot.create",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": operation_id.clone(),
+                    "name": private_name
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "host-storage-error");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let page = vault.list_managed_snapshots(50, None).unwrap();
+        assert_eq!(page.items.len(), 1);
+        let created_snapshot_id = page.items[0].snapshot_id.clone();
+        let operation_text = fs::read_to_string(snapshot_operation_state_path(&root.0, 1)).unwrap();
+        assert!(!operation_text.contains(private_name));
+        drop(vault);
+        fs::remove_dir(&blocked_slot).unwrap();
+        drop(runtime);
+
+        let mut resumed = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut resumed, &vault_handle, password);
+        let recovered = call(
+            &mut resumed,
+            "snapshot.create",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": fresh_uuid(),
+                "name": private_name
+            }),
+        );
+        assert_eq!(recovered["alreadyCompleted"], true);
+        assert_eq!(recovered["operationId"], operation_id);
+        assert_eq!(recovered["snapshotId"], created_snapshot_id);
+        let vault = resumed.require_open_vault(&vault_handle).unwrap();
+        assert_eq!(
+            vault.list_managed_snapshots(50, None).unwrap().items.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn snapshot_delete_recovers_from_target_absence_after_receipt_completion_loss() {
+        let (root, mut runtime) = runtime();
+        let password = "snapshot-delete-recovery-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let snapshot = vault
+            .create_manual_snapshot(
+                "Delete recovery".to_string(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        drop(vault);
+        let operation_id = fresh_uuid();
+        let blocked_slot = snapshot_operation_state_path(&root.0, 0);
+        fs::create_dir(&blocked_slot).unwrap();
+        let error = runtime
+            .handle(
+                "snapshot.delete",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": operation_id.clone(),
+                    "snapshotId": snapshot.snapshot_id.clone()
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "host-storage-error");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        assert!(find_managed_snapshot(&vault, &snapshot.snapshot_id)
+            .unwrap()
+            .is_none());
+        drop(vault);
+        fs::remove_dir(&blocked_slot).unwrap();
+        drop(runtime);
+
+        let mut resumed = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut resumed, &vault_handle, password);
+        let recovered = call(
+            &mut resumed,
+            "snapshot.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "snapshotId": snapshot.snapshot_id
+            }),
+        );
+        assert_eq!(recovered["alreadyCompleted"], true);
+        assert_eq!(recovered["operationId"], operation_id);
+    }
+
+    #[test]
+    fn snapshot_restore_recovers_the_original_commit_after_receipt_completion_loss() {
+        let (root, mut runtime) = runtime();
+        let password = "snapshot-restore-recovery-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let written = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:snapshot-restore-recovery",
+            "Restore original",
+        );
+        let object_id = written["objectId"].as_str().unwrap().to_string();
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let snapshot = vault
+            .create_manual_snapshot(
+                "Restore recovery".to_string(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        drop(vault);
+        upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:snapshot-restore-recovery",
+            "Restore changed",
+        );
+
+        let operation_id = fresh_uuid();
+        let blocked_slot = snapshot_operation_state_path(&root.0, 0);
+        fs::create_dir(&blocked_slot).unwrap();
+        let error = runtime
+            .handle(
+                "snapshot.restore",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": operation_id.clone(),
+                    "snapshotId": snapshot.snapshot_id.clone()
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "host-storage-error");
+        let revealed = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": vault_handle.clone(), "objectId": object_id }),
+        );
+        assert_eq!(revealed["title"], "Restore original");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let matching_before = vault
+            .list_commit_history(100, None)
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|commit| {
+                is_legacy_snapshot_commit(commit)
+                    && commit
+                        .parent_ids
+                        .iter()
+                        .any(|parent| parent == &snapshot.base_commit_id)
+                    && commit
+                        .changes
+                        .iter()
+                        .any(|change| change.object_id == snapshot.snapshot_id)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matching_before.len(), 1);
+        let restore_commit_id = matching_before[0].commit_id.clone();
+        drop(vault);
+        fs::remove_dir(&blocked_slot).unwrap();
+        drop(runtime);
+
+        let mut resumed = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut resumed, &vault_handle, password);
+        let recovered = call(
+            &mut resumed,
+            "snapshot.restore",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": fresh_uuid(),
+                "snapshotId": snapshot.snapshot_id.clone()
+            }),
+        );
+        assert_eq!(recovered["alreadyCompleted"], true);
+        assert_eq!(recovered["operationId"], operation_id);
+        assert_eq!(recovered["commitId"], restore_commit_id);
+        let vault = resumed.require_open_vault(&vault_handle).unwrap();
+        let matching_after = vault
+            .list_commit_history(100, None)
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|commit| {
+                is_legacy_snapshot_commit(commit)
+                    && commit
+                        .parent_ids
+                        .iter()
+                        .any(|parent| parent == &snapshot.base_commit_id)
+                    && commit
+                        .changes
+                        .iter()
+                        .any(|change| change.object_id == snapshot.snapshot_id)
+            })
+            .count();
+        assert_eq!(matching_after, 1);
+    }
+
+    #[test]
+    fn snapshot_create_marks_ambiguous_changed_baselines_unknown_without_replay() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "snapshot-unknown-password");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let baseline = snapshot_operation_baseline(&vault, &runtime.device_id).unwrap();
+        drop(vault);
+        let operation_id = fresh_uuid();
+        let name = "Ambiguous snapshot";
+        let intent_sha256 = snapshot_operation_intent_sha256(json!({
+            "kind": "create",
+            "name": name
+        }))
+        .unwrap();
+        runtime
+            .prepare_snapshot_operation(SnapshotOperationReceipt {
+                vault_handle: vault_handle.clone(),
+                operation_id: operation_id.clone(),
+                kind: SnapshotOperationKind::Create,
+                intent_sha256,
+                target_snapshot_id: None,
+                target_base_commit_id: None,
+                pre_branch_state_sha256: baseline.branch_state_sha256,
+                pre_device_local_seq: baseline.device_local_seq,
+                completed: false,
+                outcome_unknown: false,
+                result_snapshot_id: None,
+                result_commit_id: None,
+                affected_object_count: None,
+                updated_at_unix_secs: unix_seconds().unwrap(),
+            })
+            .unwrap();
+        let pending = runtime
+            .handle(
+                "snapshot.create",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": fresh_uuid(),
+                    "name": "A different pending snapshot"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(pending.code, "snapshot-operation-pending");
+        upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:snapshot-unknown",
+            "Unrelated later edit",
+        );
+        let error = runtime
+            .handle(
+                "snapshot.create",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": operation_id.clone(),
+                    "name": name
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "snapshot-operation-state-unknown");
+        assert!(
+            runtime
+                .snapshot_operation_receipt(&vault_handle, &operation_id)
+                .unwrap()
+                .outcome_unknown
+        );
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        assert!(vault
+            .list_managed_snapshots(50, None)
+            .unwrap()
+            .items
+            .is_empty());
+        drop(vault);
+        let new_operation = call(
+            &mut runtime,
+            "snapshot.create",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "name": "Fresh explicit snapshot"
+            }),
+        );
+        assert_eq!(new_operation["alreadyCompleted"], false);
+    }
+
+    #[test]
+    fn browser_snapshot_context_does_not_claim_clipboard_or_capture_protection() {
+        let context = browser_snapshot_device_context();
+        assert_eq!(context.assurance, MdbxDeviceAssurance::Standard);
+        assert!(!context.secure_clipboard_available);
+        assert!(!context.screen_capture_protection_available);
+        assert!(context.secure_temp_files_available);
     }
 
     #[test]

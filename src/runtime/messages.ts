@@ -1,5 +1,5 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
-import type { Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource } from "../providers/mdbx2/native-contract";
+import type { Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource } from "../providers/mdbx2/native-contract";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
@@ -275,6 +275,11 @@ export type ExtensionRequest =
   | { type: "MDBX2_OBJECT_DELETE"; providerId: string; operationId: string; logicalObjectId: string }
   | { type: "MDBX2_HISTORY_LIST"; providerId: string; pageSize?: number; cursor?: string }
   | { type: "MDBX2_HISTORY_DIFF"; providerId: string; commitId: string }
+  | { type: "MDBX2_SNAPSHOT_LIST"; providerId: string; pageSize?: number; cursor?: string }
+  | { type: "MDBX2_SNAPSHOT_STRUCTURE"; providerId: string; snapshotId: string; side: Mdbx2SnapshotStructureSide; pageSize?: number; cursor?: string }
+  | { type: "MDBX2_SNAPSHOT_CREATE"; providerId: string; operationId: string; name: string }
+  | { type: "MDBX2_SNAPSHOT_DELETE"; providerId: string; operationId: string; snapshotId: string }
+  | { type: "MDBX2_SNAPSHOT_RESTORE"; providerId: string; operationId: string; snapshotId: string }
   | { type: "MDBX2_CONFLICT_LIST"; providerId: string; pageSize?: number; cursor?: string }
   | { type: "MDBX2_CONFLICT_RESOLVE"; providerId: string; operationId: string; conflictId: string; choice: Mdbx2ConflictResolutionChoice }
   | { type: "KEEPASS_OPEN"; input: KeePassOpenInput }
@@ -291,5 +296,5 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
-export type { Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, KeePassSessionSummary };
+export type { Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, KeePassSessionSummary };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

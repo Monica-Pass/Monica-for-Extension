@@ -608,6 +608,31 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.listCommitDiff(vaultHandle, request.commitId);
     }
+    case "MDBX2_SNAPSHOT_LIST": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listSnapshots(vaultHandle, request);
+    }
+    case "MDBX2_SNAPSHOT_STRUCTURE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listSnapshotStructure(vaultHandle, request.snapshotId, request.side, request);
+    }
+    case "MDBX2_SNAPSHOT_CREATE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.createSnapshot(vaultHandle, request.operationId, request.name);
+    }
+    case "MDBX2_SNAPSHOT_DELETE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.deleteSnapshot(vaultHandle, request.operationId, request.snapshotId);
+    }
+    case "MDBX2_SNAPSHOT_RESTORE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.restoreSnapshot(vaultHandle, request.operationId, request.snapshotId);
+    }
     case "MDBX2_CONFLICT_LIST": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);

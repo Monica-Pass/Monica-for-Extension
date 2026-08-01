@@ -14,6 +14,11 @@ export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
 export const MDBX2_MAX_HISTORY_DIFF_ITEMS = 500;
 export const MDBX2_MAX_HISTORY_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_SNAPSHOT_PAGE_SIZE = 50;
+export const MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE = 100;
+export const MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES = 10_000;
+export const MDBX2_MAX_SNAPSHOT_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_SNAPSHOT_NAME_BYTES = 96;
 export const MDBX2_MAX_CONFLICT_PAGE_SIZE = 50;
 export const MDBX2_MAX_CONFLICT_RESULT_BYTES = 850 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
@@ -40,6 +45,11 @@ export type Mdbx2NativeMethod =
   | "object.operation.resolve"
   | "history.list"
   | "history.diff"
+  | "snapshot.list"
+  | "snapshot.structure"
+  | "snapshot.create"
+  | "snapshot.delete"
+  | "snapshot.restore"
   | "conflict.list"
   | "conflict.resolve"
   | "transfer.read"
@@ -398,6 +408,71 @@ export interface Mdbx2CommitDiffResult {
   items: Mdbx2CommitDiffItem[];
 }
 
+export type Mdbx2SnapshotKind = "manual" | "automatic";
+export type Mdbx2SnapshotStructureSide = "current" | "snapshot";
+export type Mdbx2SnapshotNodeType = "folder" | "entry";
+export type Mdbx2SnapshotNodeStatus = "unchanged" | "added" | "removed" | "modified";
+
+export interface Mdbx2ManagedSnapshotSummary {
+  snapshotId: string;
+  baseCommitId: string;
+  name: string;
+  kind: Mdbx2SnapshotKind;
+  isFull: boolean;
+  payloadBytes: number;
+  createdAt: string;
+  createdByDeviceId: string;
+  autoPrune: boolean;
+  integrityOk: boolean;
+}
+
+export interface Mdbx2ManagedSnapshotPage {
+  items: Mdbx2ManagedSnapshotSummary[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2SnapshotStructureNode {
+  nodeId: string;
+  parentNodeId?: string;
+  name: string;
+  nodeType: Mdbx2SnapshotNodeType;
+  path: string;
+  status: Mdbx2SnapshotNodeStatus;
+  childCount: number;
+}
+
+export interface Mdbx2SnapshotStructurePage {
+  snapshotId: string;
+  side: Mdbx2SnapshotStructureSide;
+  currentItemCount: number;
+  snapshotItemCount: number;
+  totalNodes: number;
+  items: Mdbx2SnapshotStructureNode[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2SnapshotCreateResult {
+  operationId: string;
+  snapshotId: string;
+  commitId: string;
+  alreadyCompleted: boolean;
+}
+
+export interface Mdbx2SnapshotDeleteResult {
+  operationId: string;
+  snapshotId: string;
+  commitId?: string;
+  alreadyCompleted: boolean;
+}
+
+export interface Mdbx2SnapshotRestoreResult {
+  operationId: string;
+  snapshotId: string;
+  commitId: string;
+  affectedObjectCount: number;
+  alreadyCompleted: boolean;
+}
+
 export type Mdbx2ConflictResolutionChoice = "local-wins" | "incoming-wins";
 
 export interface Mdbx2ConflictSummary {
@@ -460,6 +535,12 @@ export interface Mdbx2HostCapabilities {
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
   maxHistoryResultBytes: typeof MDBX2_MAX_HISTORY_RESULT_BYTES;
   supportsHistoryDiff: true;
+  maxSnapshotPageSize: typeof MDBX2_MAX_SNAPSHOT_PAGE_SIZE;
+  maxSnapshotStructurePageSize: typeof MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE;
+  maxSnapshotResultBytes: typeof MDBX2_MAX_SNAPSHOT_RESULT_BYTES;
+  maxSnapshotNameBytes: typeof MDBX2_MAX_SNAPSHOT_NAME_BYTES;
+  supportsSnapshotStructure: true;
+  supportsSnapshotMutation: true;
   maxConflictPageSize: typeof MDBX2_MAX_CONFLICT_PAGE_SIZE;
   maxConflictResultBytes: typeof MDBX2_MAX_CONFLICT_RESULT_BYTES;
   supportsConflictResolution: true;
@@ -537,6 +618,12 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
   if (value.maxHistoryResultBytes !== MDBX2_MAX_HISTORY_RESULT_BYTES) throw incompatible("Native Host 历史响应限制与插件不一致。");
   if (value.supportsHistoryDiff !== true) throw incompatible("Native Host 未启用 MDBX2 历史差异能力。");
+  if (value.maxSnapshotPageSize !== MDBX2_MAX_SNAPSHOT_PAGE_SIZE) throw incompatible("Native Host 快照分页限制与插件不一致。");
+  if (value.maxSnapshotStructurePageSize !== MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE) throw incompatible("Native Host 快照结构分页限制与插件不一致。");
+  if (value.maxSnapshotResultBytes !== MDBX2_MAX_SNAPSHOT_RESULT_BYTES) throw incompatible("Native Host 快照响应限制与插件不一致。");
+  if (value.maxSnapshotNameBytes !== MDBX2_MAX_SNAPSHOT_NAME_BYTES) throw incompatible("Native Host 快照名称限制与插件不一致。");
+  if (value.supportsSnapshotStructure !== true) throw incompatible("Native Host 未启用 MDBX2 快照结构能力。");
+  if (value.supportsSnapshotMutation !== true) throw incompatible("Native Host 未启用 MDBX2 快照管理能力。");
   if (value.maxConflictPageSize !== MDBX2_MAX_CONFLICT_PAGE_SIZE) throw incompatible("Native Host 冲突分页限制与插件不一致。");
   if (value.maxConflictResultBytes !== MDBX2_MAX_CONFLICT_RESULT_BYTES) throw incompatible("Native Host 冲突响应限制与插件不一致。");
   if (value.supportsConflictResolution !== true) throw incompatible("Native Host 未启用 MDBX2 冲突解决能力。");
@@ -567,6 +654,12 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
     maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
     supportsHistoryDiff: true,
+    maxSnapshotPageSize: MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
+    maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
+    maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
+    maxSnapshotNameBytes: MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+    supportsSnapshotStructure: true,
+    supportsSnapshotMutation: true,
     maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
     maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
     supportsConflictResolution: true,

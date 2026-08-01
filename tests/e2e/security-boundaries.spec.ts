@@ -79,6 +79,18 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(historyResponse.ok).toBe(false);
     expect(historyResponse.error).toContain("只允许 Monica 管理页调用");
+    const snapshotRequests = [
+      { type: "MDBX2_SNAPSHOT_LIST", providerId: "manager-only-provider", pageSize: 20 },
+      { type: "MDBX2_SNAPSHOT_STRUCTURE", providerId: "manager-only-provider", snapshotId: "11111111-1111-4111-8111-111111111111", side: "snapshot", pageSize: 100 },
+      { type: "MDBX2_SNAPSHOT_CREATE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "" },
+      { type: "MDBX2_SNAPSHOT_DELETE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", snapshotId: "22222222-2222-4222-8222-222222222222" },
+      { type: "MDBX2_SNAPSHOT_RESTORE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", snapshotId: "22222222-2222-4222-8222-222222222222" }
+    ];
+    for (const request of snapshotRequests) {
+      const snapshotResponse = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as RuntimeResponse;
+      expect(snapshotResponse.ok).toBe(false);
+      expect(snapshotResponse.error).toContain("只允许 Monica 管理页调用");
+    }
     const conflictListResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_CONFLICT_LIST",
       providerId: "manager-only-provider",

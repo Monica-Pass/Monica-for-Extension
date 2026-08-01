@@ -267,6 +267,12 @@ mod tests {
         assert_eq!(result["mdbxFormatVersion"], "MDBX-2");
         assert_eq!(result["supportsMdbx1"], false);
         assert_eq!(result["supportsDurableCloudSync"], true);
+        assert_eq!(result["maxSnapshotPageSize"], 50);
+        assert_eq!(result["maxSnapshotStructurePageSize"], 100);
+        assert_eq!(result["maxSnapshotResultBytes"], 850 * 1024);
+        assert_eq!(result["maxSnapshotNameBytes"], 96);
+        assert_eq!(result["supportsSnapshotStructure"], true);
+        assert_eq!(result["supportsSnapshotMutation"], true);
         assert_eq!(
             result["maxSyncSegmentPageSize"],
             cloud_sync::SEGMENT_PAGE_SIZE

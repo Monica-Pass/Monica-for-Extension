@@ -10,6 +10,10 @@ import {
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   MDBX2_MAX_REMOTE_BLOB_BYTES,
+  MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+  MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
+  MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES,
+  MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
@@ -25,6 +29,7 @@ import {
   type Mdbx2ConflictResolutionChoice,
   type Mdbx2ConflictResolutionResult,
   type Mdbx2ConflictSummaryPage,
+  type Mdbx2ManagedSnapshotPage,
   type Mdbx2ExternalBlobChunk,
   type Mdbx2ExternalBlobReceiveState,
   type Mdbx2ExternalBlobReferencePage,
@@ -43,6 +48,11 @@ import {
   type Mdbx2ObjectWriteResult,
   type Mdbx2OutputFileDescriptor,
   type Mdbx2RemoteStreamSummary,
+  type Mdbx2SnapshotCreateResult,
+  type Mdbx2SnapshotDeleteResult,
+  type Mdbx2SnapshotRestoreResult,
+  type Mdbx2SnapshotStructurePage,
+  type Mdbx2SnapshotStructureSide,
   type Mdbx2SyncBootstrapPrepareResult,
   type Mdbx2SyncSegmentApplyResult,
   type Mdbx2SyncSegmentDescriptor,
@@ -271,6 +281,98 @@ export class Mdbx2NativeClient {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       commitId: opaqueHandle(commitId, "Commit")
     }, timeoutMs));
+  }
+
+  async listSnapshots(
+    vaultHandle: string,
+    input: { pageSize?: number; cursor?: string } = {},
+    timeoutMs = 30_000
+  ): Promise<Mdbx2ManagedSnapshotPage> {
+    return managedSnapshotPage(await this.request("snapshot.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      pageSize: snapshotPageSizeValue(input.pageSize),
+      cursor: input.cursor ? textResult(input.cursor, 4096, false, "MDBX2 快照游标无效。") : null
+    }, timeoutMs));
+  }
+
+  async listSnapshotStructure(
+    vaultHandle: string,
+    snapshotId: string,
+    side: Mdbx2SnapshotStructureSide,
+    input: { pageSize?: number; cursor?: string } = {},
+    timeoutMs = 30_000
+  ): Promise<Mdbx2SnapshotStructurePage> {
+    const normalizedSnapshotId = opaqueHandle(snapshotId, "快照");
+    const normalizedSide = snapshotStructureSideValue(side);
+    const result = snapshotStructurePage(await this.request("snapshot.structure", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      snapshotId: normalizedSnapshotId,
+      side: normalizedSide,
+      pageSize: snapshotStructurePageSizeValue(input.pageSize),
+      cursor: input.cursor ? textResult(input.cursor, 4096, false, "MDBX2 快照结构游标无效。") : null
+    }, timeoutMs));
+    if (result.snapshotId !== normalizedSnapshotId || result.side !== normalizedSide) {
+      throw incompatibleResult("Native Host MDBX2 快照结构响应与请求不匹配。");
+    }
+    return result;
+  }
+
+  async createSnapshot(
+    vaultHandle: string,
+    operationId: string,
+    name: string,
+    timeoutMs = 120_000
+  ): Promise<Mdbx2SnapshotCreateResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "快照操作");
+    const normalizedName = name.trim();
+    if (new TextEncoder().encode(normalizedName).byteLength > MDBX2_MAX_SNAPSHOT_NAME_BYTES) {
+      throw new Mdbx2NativeHostError("snapshot-name-invalid", "MDBX2 快照名称超过 96 字节。", false);
+    }
+    const result = snapshotCreateResult(await this.request("snapshot.create", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: normalizedOperationId,
+      name: normalizedName
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId) throw incompatibleResult("Native Host MDBX2 快照创建响应与请求不匹配。");
+    return result;
+  }
+
+  async deleteSnapshot(
+    vaultHandle: string,
+    operationId: string,
+    snapshotId: string,
+    timeoutMs = 120_000
+  ): Promise<Mdbx2SnapshotDeleteResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "快照操作");
+    const normalizedSnapshotId = opaqueHandle(snapshotId, "快照");
+    const result = snapshotDeleteResult(await this.request("snapshot.delete", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: normalizedOperationId,
+      snapshotId: normalizedSnapshotId
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId || result.snapshotId !== normalizedSnapshotId) {
+      throw incompatibleResult("Native Host MDBX2 快照删除响应与请求不匹配。");
+    }
+    return result;
+  }
+
+  async restoreSnapshot(
+    vaultHandle: string,
+    operationId: string,
+    snapshotId: string,
+    timeoutMs = 5 * 60_000
+  ): Promise<Mdbx2SnapshotRestoreResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "快照操作");
+    const normalizedSnapshotId = opaqueHandle(snapshotId, "快照");
+    const result = snapshotRestoreResult(await this.request("snapshot.restore", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: normalizedOperationId,
+      snapshotId: normalizedSnapshotId
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId || result.snapshotId !== normalizedSnapshotId) {
+      throw incompatibleResult("Native Host MDBX2 快照恢复响应与请求不匹配。");
+    }
+    return result;
   }
 
   async listConflicts(
@@ -1018,6 +1120,96 @@ function commitDiffResult(input: unknown): Mdbx2CommitDiffResult {
   };
 }
 
+function managedSnapshotPage(input: unknown): Mdbx2ManagedSnapshotPage {
+  const value = objectResult(input, "Native Host MDBX2 快照分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_SNAPSHOT_PAGE_SIZE) {
+    throw incompatibleResult("Native Host MDBX2 快照分页大小无效。");
+  }
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 快照项目无效。");
+      const kind = snapshotKindResult(item.kind);
+      const autoPrune = booleanResult(item.autoPrune, "MDBX2 快照自动清理标记无效。");
+      if (autoPrune !== (kind === "automatic")) throw incompatibleResult("MDBX2 快照类型与自动清理标记不一致。");
+      return {
+        snapshotId: opaqueHandle(item.snapshotId, "快照"),
+        baseCommitId: opaqueHandle(item.baseCommitId, "快照 Commit"),
+        name: textResult(item.name, MDBX2_MAX_SNAPSHOT_NAME_BYTES, false, "MDBX2 快照名称无效。"),
+        kind,
+        isFull: booleanResult(item.isFull, "MDBX2 快照完整类型无效。"),
+        payloadBytes: safeInteger(item.payloadBytes, "MDBX2 快照大小"),
+        createdAt: textResult(item.createdAt, 128, false, "MDBX2 快照时间无效。"),
+        createdByDeviceId: textResult(item.createdByDeviceId, 4096, false, "MDBX2 快照设备 ID 无效。"),
+        autoPrune,
+        integrityOk: booleanResult(item.integrityOk, "MDBX2 快照完整性状态无效。")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "MDBX2 快照游标")
+  };
+}
+
+function snapshotStructurePage(input: unknown): Mdbx2SnapshotStructurePage {
+  const value = objectResult(input, "Native Host MDBX2 快照结构响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE) {
+    throw incompatibleResult("Native Host MDBX2 快照结构分页大小无效。");
+  }
+  const totalNodes = safeInteger(value.totalNodes, "MDBX2 快照结构节点总数");
+  if (totalNodes > MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES || value.items.length > totalNodes) {
+    throw incompatibleResult("Native Host MDBX2 快照结构节点数量无效。");
+  }
+  return {
+    snapshotId: opaqueHandle(value.snapshotId, "快照"),
+    side: snapshotStructureSideResult(value.side),
+    currentItemCount: safeInteger(value.currentItemCount, "MDBX2 现版本项目数量"),
+    snapshotItemCount: safeInteger(value.snapshotItemCount, "MDBX2 快照项目数量"),
+    totalNodes,
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 快照结构节点无效。");
+      return {
+        nodeId: opaqueHandle(item.nodeId, "快照结构节点"),
+        parentNodeId: optionalOpaqueHandle(item.parentNodeId, "快照结构父节点"),
+        name: textResult(item.name, 4096, true, "MDBX2 快照结构名称无效。"),
+        nodeType: snapshotNodeTypeResult(item.nodeType),
+        path: textResult(item.path, 4096, true, "MDBX2 快照结构路径无效。"),
+        status: snapshotNodeStatusResult(item.status),
+        childCount: safeInteger(item.childCount, "MDBX2 快照结构子项数量")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "MDBX2 快照结构游标")
+  };
+}
+
+function snapshotCreateResult(input: unknown): Mdbx2SnapshotCreateResult {
+  const value = objectResult(input, "Native Host MDBX2 快照创建响应无效。");
+  return {
+    operationId: opaqueHandle(value.operationId, "快照操作"),
+    snapshotId: opaqueHandle(value.snapshotId, "快照"),
+    commitId: opaqueHandle(value.commitId, "快照 Commit"),
+    alreadyCompleted: booleanResult(value.alreadyCompleted, "MDBX2 快照创建重试状态无效。")
+  };
+}
+
+function snapshotDeleteResult(input: unknown): Mdbx2SnapshotDeleteResult {
+  const value = objectResult(input, "Native Host MDBX2 快照删除响应无效。");
+  return {
+    operationId: opaqueHandle(value.operationId, "快照操作"),
+    snapshotId: opaqueHandle(value.snapshotId, "快照"),
+    commitId: optionalOpaqueHandle(value.commitId, "快照 Commit"),
+    alreadyCompleted: booleanResult(value.alreadyCompleted, "MDBX2 快照删除重试状态无效。")
+  };
+}
+
+function snapshotRestoreResult(input: unknown): Mdbx2SnapshotRestoreResult {
+  const value = objectResult(input, "Native Host MDBX2 快照恢复响应无效。");
+  return {
+    operationId: opaqueHandle(value.operationId, "快照操作"),
+    snapshotId: opaqueHandle(value.snapshotId, "快照"),
+    commitId: opaqueHandle(value.commitId, "快照 Commit"),
+    affectedObjectCount: safeInteger(value.affectedObjectCount, "MDBX2 快照恢复 Object 数量"),
+    alreadyCompleted: booleanResult(value.alreadyCompleted, "MDBX2 快照恢复重试状态无效。")
+  };
+}
+
 function conflictSummaryPage(input: unknown): Mdbx2ConflictSummaryPage {
   const value = objectResult(input, "Native Host MDBX2 冲突分页响应无效。");
   if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_CONFLICT_PAGE_SIZE) {
@@ -1212,6 +1404,47 @@ function historyPageSizeValue(value: number | undefined): number {
     throw new Mdbx2NativeHostError("history-page-size-invalid", "MDBX2 历史分页大小无效。", false);
   }
   return pageSize;
+}
+
+function snapshotPageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? 20;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_SNAPSHOT_PAGE_SIZE) {
+    throw new Mdbx2NativeHostError("snapshot-page-size-invalid", "MDBX2 快照分页大小无效。", false);
+  }
+  return pageSize;
+}
+
+function snapshotStructurePageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? 100;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE) {
+    throw new Mdbx2NativeHostError("snapshot-structure-page-size-invalid", "MDBX2 快照结构分页大小无效。", false);
+  }
+  return pageSize;
+}
+
+function snapshotStructureSideValue(value: unknown): Mdbx2SnapshotStructureSide {
+  if (value === "current" || value === "snapshot") return value;
+  throw new Mdbx2NativeHostError("snapshot-structure-side-invalid", "MDBX2 快照结构侧无效。", false);
+}
+
+function snapshotStructureSideResult(value: unknown): Mdbx2SnapshotStructureSide {
+  if (value === "current" || value === "snapshot") return value;
+  throw incompatibleResult("Native Host MDBX2 快照结构侧无效。");
+}
+
+function snapshotKindResult(value: unknown): "manual" | "automatic" {
+  if (value === "manual" || value === "automatic") return value;
+  throw incompatibleResult("Native Host MDBX2 快照类型无效。");
+}
+
+function snapshotNodeTypeResult(value: unknown): "folder" | "entry" {
+  if (value === "folder" || value === "entry") return value;
+  throw incompatibleResult("Native Host MDBX2 快照结构类型无效。");
+}
+
+function snapshotNodeStatusResult(value: unknown): "unchanged" | "added" | "removed" | "modified" {
+  if (value === "unchanged" || value === "added" || value === "removed" || value === "modified") return value;
+  throw incompatibleResult("Native Host MDBX2 快照结构状态无效。");
 }
 
 function conflictPageSizeValue(value: number | undefined): number {
