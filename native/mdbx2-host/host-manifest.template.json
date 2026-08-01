@@ -1,0 +1,9 @@
+{
+  "name": "com.monica_pass.mdbx2",
+  "description": "Monica MDBX2 Native Host",
+  "path": "__HOST_EXECUTABLE_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

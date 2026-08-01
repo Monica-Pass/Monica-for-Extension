@@ -10,3 +10,4 @@ test-results/
 *.log
 *.tsbuildinfo
 .DS_Store
+native/mdbx2-host/target/
