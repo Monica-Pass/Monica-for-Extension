@@ -1,5 +1,5 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
-import type { Mdbx2HostStatus } from "../providers/mdbx2/native-contract";
+import type { Mdbx2HostStatus, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource } from "../providers/mdbx2/native-contract";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
@@ -137,6 +137,14 @@ export interface CredentialCaptureInput {
   captureKind: "login" | "password-change";
 }
 
+export interface Mdbx2VaultOpenInput {
+  providerId?: string;
+  name: string;
+  source: Mdbx2VaultSource;
+  credential: Mdbx2VaultCredential;
+  isDefaultSaveTarget?: boolean;
+}
+
 /**
  * A `.kdbx` file the user picks in an extension page, so the bytes travel as Base64 through the
  * runtime channel. Neither the password nor the key file is persisted: the unlocked session lives in
@@ -225,6 +233,14 @@ export type ExtensionRequest =
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
   | { type: "MDBX2_HOST_STATUS" }
+  | { type: "MDBX2_TRANSFER_BEGIN"; sizeBytes: number; sha256: string }
+  | { type: "MDBX2_TRANSFER_CHUNK"; transferId: string; offset: number; dataBase64: string }
+  | { type: "MDBX2_TRANSFER_FINISH"; transferId: string }
+  | { type: "MDBX2_TRANSFER_ABORT"; transferId: string }
+  | { type: "MDBX2_VAULT_INSPECT"; source: Mdbx2VaultSource }
+  | { type: "MDBX2_VAULT_OPEN"; input: Mdbx2VaultOpenInput }
+  | { type: "MDBX2_VAULT_STATUS"; providerId: string }
+  | { type: "MDBX2_VAULT_LOCK"; providerId: string }
   | { type: "KEEPASS_OPEN"; input: KeePassOpenInput }
   | { type: "KEEPASS_STATUS"; providerId: string }
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
@@ -239,5 +255,5 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
-export type { Mdbx2HostStatus, KeePassSessionSummary };
+export type { Mdbx2HostStatus, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, KeePassSessionSummary };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

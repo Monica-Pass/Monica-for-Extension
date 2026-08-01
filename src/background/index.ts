@@ -5,6 +5,7 @@ import { ProviderRegistry } from "../core/provider";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
+import { MDBX2_MAX_BINARY_CHUNK_BYTES } from "../providers/mdbx2/native-contract";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
@@ -34,6 +35,7 @@ const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
+const MDBX2_MAX_BASE64_CHUNK_LENGTH = Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4;
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
 const PASSKEY_COMPLETION_TTL_MS = 2 * 60_000;
 const activeProviderSyncs = new Map<string, AbortController>();
@@ -421,7 +423,70 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "MDBX2_HOST_STATUS":
       assertExtensionPage(sender);
-      return mdbx2NativeClient.probe();
+      return new Mdbx2NativeClient(createChromeMdbx2NativeRuntime()).probe();
+    case "MDBX2_TRANSFER_BEGIN":
+      assertExtensionPage(sender);
+      return mdbx2NativeClient.beginInboundTransfer(request.sizeBytes, request.sha256);
+    case "MDBX2_TRANSFER_CHUNK":
+      assertExtensionPage(sender);
+      if (typeof request.dataBase64 !== "string" || request.dataBase64.length > MDBX2_MAX_BASE64_CHUNK_LENGTH) throw new Error("MDBX2 文件分块超出允许范围。");
+      return mdbx2NativeClient.sendInboundChunk(request.transferId, request.offset, base64ToBytes(request.dataBase64));
+    case "MDBX2_TRANSFER_FINISH":
+      assertExtensionPage(sender);
+      return mdbx2NativeClient.finishInboundTransfer(request.transferId);
+    case "MDBX2_TRANSFER_ABORT":
+      assertExtensionPage(sender);
+      return mdbx2NativeClient.abortInboundTransfer(request.transferId);
+    case "MDBX2_VAULT_INSPECT":
+      assertExtensionPage(sender);
+      return mdbx2NativeClient.inspectVault(request.source);
+    case "MDBX2_VAULT_OPEN": {
+      assertExtensionPage(sender);
+      const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
+      if (existing && existing.kind !== "mdbx2") throw new Error("所选密码源不是 MDBX2 保险库。");
+      const existingHandle = typeof existing?.config.vaultHandle === "string" ? existing.config.vaultHandle : undefined;
+      if (existing && (request.input.source.kind !== "vault" || request.input.source.handle !== existingHandle)) {
+        throw new Error("已有 MDBX2 密码源只能重新打开其本机工作副本。");
+      }
+      const session = await mdbx2NativeClient.openVault(request.input.source, request.input.credential);
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "mdbx2",
+        name: request.input.name.trim() || "Monica MDBX2",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(request.input.isDefaultSaveTarget),
+        config: {
+          ...existing?.config,
+          mdbxGeneration: 2,
+          formatVersion: "MDBX-2",
+          vaultHandle: session.vaultHandle,
+          schemaVersion: session.schemaVersion,
+          hostVerifiedAt: new Date().toISOString()
+        },
+        lastSyncAt: existing?.lastSyncAt,
+        lastError: undefined
+      };
+      try {
+        return { account: await service.upsertProvider(account), session };
+      } catch (error) {
+        await mdbx2NativeClient.lockVault(session.vaultHandle).catch(() => undefined);
+        throw error;
+      }
+    }
+    case "MDBX2_VAULT_STATUS": {
+      assertExtensionPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
+      const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
+      return mdbx2NativeClient.vaultStatus(vaultHandle);
+    }
+    case "MDBX2_VAULT_LOCK": {
+      assertExtensionPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
+      const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
+      return mdbx2NativeClient.lockVault(vaultHandle);
+    }
     case "KEEPASS_OPEN": {
       assertExtensionPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
@@ -471,6 +536,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (!account) throw new Error("密码源不存在。");
       if (account.kind === "local") throw new Error("本地密码源不需要同步。");
       if (account.kind === "mdbx-legacy") throw new Error("MDBX1 密码源已停用，请先在 Monica Android 或桌面端升级为 MDBX2。");
+      if (account.kind === "mdbx2") throw new Error("MDBX2 本地运行时已连接；对象映射与增量同步将在下一阶段启用。");
       if (!account.enabled) throw new Error("此密码源已停用。");
       if (activeProviderSyncs.has(account.id)) throw new Error("此密码源正在同步。");
       const controller = new AbortController();
@@ -514,6 +580,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "PROVIDER_REMOVE":
       assertExtensionPage(sender);
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
+      {
+        const account = await service.getProvider(request.providerId);
+        const vaultHandle = account?.kind === "mdbx2" && typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : undefined;
+        if (vaultHandle) await mdbx2NativeClient.lockVault(vaultHandle).catch(() => undefined);
+      }
       keePassProvider.lockAccount(request.providerId);
       return service.removeProvider(request.providerId);
   }

@@ -122,6 +122,29 @@ describe("encrypted vault", () => {
     });
     expect(keePass.config).toEqual({ fileName: "personal.kdbx", protectionMode: "password-and-key-file" });
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/keepass-password-secret|keepass-key-secret/);
+
+    const mdbx2 = await service.upsertProvider({
+      id: "mdbx2-1",
+      kind: "mdbx2",
+      name: "MDBX2",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {
+        vaultHandle: "11111111-1111-4111-8111-111111111111",
+        schemaVersion: 17,
+        hostVerifiedAt: "2026-08-01T00:00:00.000Z",
+        password: "mdbx2-password-secret",
+        keyMaterialBase64: "mdbx2-key-secret"
+      }
+    });
+    expect(mdbx2.config).toEqual({
+      formatVersion: "MDBX-2",
+      vaultHandle: "11111111-1111-4111-8111-111111111111",
+      schemaVersion: 17,
+      remotePath: undefined,
+      hostVerifiedAt: "2026-08-01T00:00:00.000Z"
+    });
+    expect(JSON.stringify(await service.listProviders())).not.toMatch(/mdbx2-password-secret|mdbx2-key-secret/);
   });
 
   it("accepts four-character master passwords and rejects shorter values", async () => {

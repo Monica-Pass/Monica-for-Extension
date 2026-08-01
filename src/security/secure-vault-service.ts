@@ -687,6 +687,8 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
       ...safe,
       config: {
         formatVersion: "MDBX-2",
+        vaultHandle: stringConfig(provider, "vaultHandle") || undefined,
+        schemaVersion: typeof provider.config.schemaVersion === "number" ? provider.config.schemaVersion : undefined,
         remotePath: stringConfig(provider, "remotePath") || undefined,
         hostVerifiedAt: stringConfig(provider, "hostVerifiedAt") || undefined
       }

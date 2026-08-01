@@ -1,14 +1,13 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::io::{self, Read, Write};
+mod runtime;
 
-const PROTOCOL_VERSION: u32 = 1;
-const HOST_NAME: &str = "com.monica_pass.mdbx2";
-const MDBX_CORE_REVISION: &str = "aafa22f195c626a8d8288d712bf42bccea134847";
-const MDBX_FORMAT_VERSION: &str = "MDBX-2";
+use runtime::{HostRuntime, RpcFailure, PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::io::{self, Read, Write};
+use zeroize::Zeroize;
+
 const MAX_INPUT_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_OUTPUT_FRAME_BYTES: usize = 900 * 1024;
-const MAX_BINARY_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const MAX_METHOD_BYTES: usize = 128;
 
@@ -59,8 +58,6 @@ impl HostResponse {
         message: impl Into<String>,
         retryable: bool,
     ) -> Self {
-        let mut message = message.into();
-        message.truncate(512);
         Self {
             protocol: PROTOCOL_VERSION,
             request_id,
@@ -68,27 +65,40 @@ impl HostResponse {
             result: None,
             error: Some(HostError {
                 code,
-                message,
+                message: bounded_message(message.into(), 512),
                 retryable,
             }),
         }
     }
+
+    fn rpc_failure(request_id: String, error: RpcFailure) -> Self {
+        Self::failure(request_id, error.code, error.message, error.retryable)
+    }
 }
 
 fn main() {
+    let mut runtime = match HostRuntime::open_default() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("Monica MDBX2 Host could not initialize private storage: {error}");
+            std::process::exit(1);
+        }
+    };
     let stdin = io::stdin();
     let stdout = io::stdout();
-    if let Err(error) = run(stdin.lock(), stdout.lock()) {
+    if let Err(error) = run(stdin.lock(), stdout.lock(), &mut runtime) {
         // Native Messaging reserves stdout for framed protocol messages.
         eprintln!("Monica MDBX2 Host stopped: {error}");
         std::process::exit(1);
     }
 }
 
-fn run(mut reader: impl Read, mut writer: impl Write) -> io::Result<()> {
-    while let Some(frame) = read_frame(&mut reader)? {
-        let response = match serde_json::from_slice::<HostRequest>(&frame) {
-            Ok(request) => process_request(request),
+fn run(mut reader: impl Read, mut writer: impl Write, runtime: &mut HostRuntime) -> io::Result<()> {
+    while let Some(mut frame) = read_frame(&mut reader)? {
+        let parsed = serde_json::from_slice::<HostRequest>(&frame);
+        frame.zeroize();
+        let response = match parsed {
+            Ok(request) => process_request(request, runtime),
             Err(_) => HostResponse::failure(
                 String::new(),
                 "invalid-request",
@@ -104,7 +114,7 @@ fn run(mut reader: impl Read, mut writer: impl Write) -> io::Result<()> {
     Ok(())
 }
 
-fn process_request(request: HostRequest) -> HostResponse {
+fn process_request(request: HostRequest, runtime: &mut HostRuntime) -> HostResponse {
     if request.protocol != PROTOCOL_VERSION {
         return HostResponse::failure(
             bounded_request_id(request.request_id),
@@ -133,45 +143,11 @@ fn process_request(request: HostRequest) -> HostResponse {
         );
     }
 
-    match request.method.as_str() {
-        "host.hello" => host_hello(request.request_id, request.params),
-        _ => HostResponse::failure(
-            request.request_id,
-            "method-unsupported",
-            "Native method is not supported by this Host version.",
-            false,
-        ),
+    let request_id = request.request_id;
+    match runtime.handle(&request.method, request.params) {
+        Ok(result) => HostResponse::success(request_id, result),
+        Err(error) => HostResponse::rpc_failure(request_id, error),
     }
-}
-
-fn host_hello(request_id: String, params: Value) -> HostResponse {
-    if !params.is_object() {
-        return HostResponse::failure(
-            request_id,
-            "params-invalid",
-            "host.hello params must be an object.",
-            false,
-        );
-    }
-    let capabilities = mdbx_ffi::mdbx_build_capability_manifest();
-    HostResponse::success(
-        request_id,
-        json!({
-            "hostName": HOST_NAME,
-            "hostVersion": env!("CARGO_PKG_VERSION"),
-            "protocolVersion": PROTOCOL_VERSION,
-            "mdbxCoreRevision": MDBX_CORE_REVISION,
-            "mdbxEngineVersion": capabilities.engine_version,
-            "mdbxFormatVersion": MDBX_FORMAT_VERSION,
-            "supportsMdbx1": false,
-            "maxBinaryChunkBytes": MAX_BINARY_CHUNK_BYTES,
-            "storageProfile": capabilities.storage_profile,
-            "syncProfile": capabilities.sync_profile,
-            "syncProtocolVersion": capabilities.sync_protocol_version,
-            "enabledStorageCapabilityIds": capabilities.enabled_storage_capability_ids,
-            "enabledSyncCapabilityIds": capabilities.enabled_sync_capability_ids,
-        }),
-    )
 }
 
 fn valid_identifier(value: &str, max_bytes: usize) -> bool {
@@ -190,13 +166,24 @@ fn bounded_request_id(value: String) -> String {
     }
 }
 
+fn bounded_message(value: String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
 fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     let mut length_bytes = [0_u8; 4];
-    match reader.read_exact(&mut length_bytes) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
+    let first = reader.read(&mut length_bytes[..1])?;
+    if first == 0 {
+        return Ok(None);
     }
+    reader.read_exact(&mut length_bytes[1..])?;
     let length = u32::from_ne_bytes(length_bytes) as usize;
     if length == 0 || length > MAX_INPUT_FRAME_BYTES {
         return Err(io::Error::new(
@@ -229,7 +216,36 @@ fn write_frame(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::fs;
     use std::io::Cursor;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "monica-mdbx2-host-protocol-test-{}",
+                Uuid::new_v4()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn runtime() -> (TestRoot, HostRuntime) {
+        let root = TestRoot::new();
+        let runtime = HostRuntime::new(root.0.clone()).unwrap();
+        (root, runtime)
+    }
 
     fn request(method: &str) -> HostRequest {
         HostRequest {
@@ -242,13 +258,21 @@ mod tests {
 
     #[test]
     fn hello_reports_the_pinned_mdbx2_core_and_rejects_mdbx1() {
-        let response = process_request(request("host.hello"));
+        let (_root, mut runtime) = runtime();
+        let response = process_request(request("host.hello"), &mut runtime);
         assert!(response.ok);
         let result = response.result.expect("hello result");
-        assert_eq!(result["mdbxCoreRevision"], MDBX_CORE_REVISION);
+        assert_eq!(result["mdbxCoreRevision"], runtime::MDBX_CORE_REVISION);
         assert_eq!(result["mdbxFormatVersion"], "MDBX-2");
         assert_eq!(result["supportsMdbx1"], false);
-        assert_eq!(result["maxBinaryChunkBytes"], MAX_BINARY_CHUNK_BYTES);
+        assert_eq!(
+            result["maxBinaryChunkBytes"],
+            runtime::MAX_BINARY_CHUNK_BYTES
+        );
+        assert_eq!(
+            result["maxInboundFileBytes"],
+            runtime::MAX_INBOUND_FILE_BYTES
+        );
         assert!(result["enabledStorageCapabilityIds"]
             .as_array()
             .is_some_and(|items| !items.is_empty()));
@@ -256,16 +280,17 @@ mod tests {
 
     #[test]
     fn protocol_and_method_fail_closed() {
+        let (_root, mut runtime) = runtime();
         let mut bad_protocol = request("host.hello");
         bad_protocol.protocol = 99;
-        let response = process_request(bad_protocol);
+        let response = process_request(bad_protocol, &mut runtime);
         assert!(!response.ok);
         assert_eq!(
             response.error.expect("protocol error").code,
             "protocol-version-unsupported"
         );
 
-        let response = process_request(request("vault.rawSql"));
+        let response = process_request(request("vault.rawSql"), &mut runtime);
         assert!(!response.ok);
         assert_eq!(
             response.error.expect("method error").code,
@@ -275,6 +300,7 @@ mod tests {
 
     #[test]
     fn framed_loop_emits_one_bounded_json_response() {
+        let (_root, mut runtime) = runtime();
         let body = serde_json::to_vec(&json!({
             "protocol": PROTOCOL_VERSION,
             "requestId": "request-123",
@@ -285,7 +311,7 @@ mod tests {
         let mut input = Vec::new();
         write_frame(&mut input, &body).unwrap();
         let mut output = Vec::new();
-        run(Cursor::new(input), &mut output).unwrap();
+        run(Cursor::new(input), &mut output, &mut runtime).unwrap();
 
         let frame = read_frame(&mut Cursor::new(output))
             .unwrap()
@@ -296,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_limits_reject_empty_and_oversized_lengths() {
+    fn frame_limits_reject_empty_oversized_and_truncated_lengths() {
         let mut empty = Cursor::new(0_u32.to_ne_bytes().to_vec());
         assert_eq!(
             read_frame(&mut empty).unwrap_err().kind(),
@@ -309,5 +335,19 @@ mod tests {
             read_frame(&mut input).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+
+        let mut truncated = Cursor::new(vec![1_u8, 2_u8]);
+        assert_eq!(
+            read_frame(&mut truncated).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[test]
+    fn error_truncation_preserves_utf8_boundaries() {
+        let message = "密".repeat(300);
+        let bounded = bounded_message(message, 512);
+        assert!(bounded.len() <= 512);
+        assert!(bounded.is_char_boundary(bounded.len()));
     }
 }

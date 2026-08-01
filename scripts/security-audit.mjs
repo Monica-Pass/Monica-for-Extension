@@ -45,6 +45,11 @@ for (const type of pageTypes) if (!allowlistBlock.includes(`"${type}"`)) throw n
 const messageSource = await readFile(resolve(root, "src/runtime/messages.ts"), "utf8");
 const steamTypes = [...messageSource.matchAll(/type:\s*"(STEAM_[A-Z0-9_]+)"/g)].map((match) => match[1]);
 for (const type of steamTypes) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged Steam request ${type} is exposed to web pages.`);
+const mdbx2Types = [...messageSource.matchAll(/type:\s*"(MDBX2_[A-Z0-9_]+)"/g)].map((match) => match[1]);
+for (const type of mdbx2Types) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged MDBX2 request ${type} is exposed to web pages.`);
+for (const legacyType of ["MDBX_OPEN", "MDBX_STATUS", "MDBX_EXPORT_FILE", "MDBX_LOCK"]) {
+  if (messageSource.includes(`"${legacyType}"`) || backgroundSource.includes(`"${legacyType}"`)) throw new Error(`Legacy MDBX1 runtime request remains exposed: ${legacyType}.`);
+}
 const steamRequestDeclarations = messageSource.split("\n").filter((line) => line.includes('type: "STEAM_'));
 for (const field of ["accessToken", "refreshToken", "identitySecret", "sharedSecret", "steamLoginSecure"]) {
   if (steamRequestDeclarations.some((line) => line.includes(field))) throw new Error(`Steam runtime request exposes credential field: ${field}.`);
@@ -56,4 +61,8 @@ const declaredTypes = [...messageSource.matchAll(/type:\s*"([A-Z0-9_]+)"/g)].map
 for (const type of new Set(declaredTypes)) if (!backgroundSource.includes(`case "${type}"`)) throw new Error(`Runtime request ${type} has no explicit background handler.`);
 const contentSource = await readFile(resolve(root, "src/content/index.ts"), "utf8");
 if (!contentSource.includes("sender.id !== chrome.runtime.id") || !contentSource.includes("isBoundedBridgeRequest")) throw new Error("Content-script message or Passkey bridge sender limits are missing.");
+for (const name of ["content.js", "main-world.js"]) {
+  const source = await readFile(resolve(root, "dist", name), "utf8");
+  if (source.includes("com.monica_pass.mdbx2") || source.includes("connectNative")) throw new Error(`${name} contains a forbidden Native Messaging reference.`);
+}
 console.log("Security audit passed: encrypted/trusted runtime output contains no fixture secrets or source maps.");

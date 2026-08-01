@@ -5,8 +5,98 @@ export const MDBX2_ENGINE_VERSION = "0.2.0";
 export const MDBX2_FORMAT_VERSION = "MDBX-2";
 export const MDBX2_SYNC_PROTOCOL_VERSION = 2;
 export const MDBX2_MAX_BINARY_CHUNK_BYTES = 256 * 1024;
+export const MDBX2_MAX_INBOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+export const MDBX2_MAX_ACTIVE_TRANSFERS = 4;
 
-export type Mdbx2NativeMethod = "host.hello";
+export type Mdbx2NativeMethod =
+  | "host.hello"
+  | "transfer.begin"
+  | "transfer.chunk"
+  | "transfer.finish"
+  | "transfer.abort"
+  | "vault.inspect"
+  | "vault.open"
+  | "vault.status"
+  | "vault.lock";
+
+export type Mdbx2UnlockMethod = "password" | "security-key" | "password-security-key";
+
+export type Mdbx2VaultCredential =
+  | { method: "password"; password: string }
+  | { method: "security-key"; keyMaterialBase64: string }
+  | { method: "password-security-key"; password: string; keyMaterialBase64: string };
+
+export interface Mdbx2VaultSource {
+  kind: "file" | "vault";
+  handle: string;
+}
+
+export interface Mdbx2TransferBeginResult {
+  transferId: string;
+  nextOffset: number;
+  maxChunkBytes: typeof MDBX2_MAX_BINARY_CHUNK_BYTES;
+}
+
+export interface Mdbx2TransferChunkResult {
+  nextOffset: number;
+  acceptedBytes: number;
+  repeated: boolean;
+}
+
+export interface Mdbx2TransferFinishResult {
+  fileHandle: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface Mdbx2VaultInspection {
+  source: Mdbx2VaultSource;
+  initialized: true;
+  formatVersion: typeof MDBX2_FORMAT_VERSION;
+  schemaVersion?: number;
+  minReaderVersion?: string;
+  minWriterVersion?: string;
+  requiresUpgrade: boolean;
+  unknownCriticalExtensions: false;
+  targetFormatVersion: typeof MDBX2_FORMAT_VERSION;
+  targetSchemaVersion: number;
+}
+
+export interface Mdbx2VaultDiagnosticsSummary {
+  commitCount: number;
+  tombstoneCount: number;
+  branchCount: number;
+  deviceCount: number;
+  snapshotCount: number;
+  unresolvedConflictCount: number;
+  projectCount: number;
+  deletedProjectCount: number;
+  entryCount: number;
+  deletedEntryCount: number;
+  attachmentCount: number;
+  deletedAttachmentCount: number;
+  externalAttachmentCount: number;
+  originalAttachmentBytes: number;
+  storedAttachmentBytes: number;
+}
+
+export interface Mdbx2VaultSessionSummary {
+  vaultHandle: string;
+  vaultId: string;
+  deviceId: string;
+  formatVersion: typeof MDBX2_FORMAT_VERSION;
+  schemaVersion: number;
+  migrated: boolean;
+  preUpgradeBackupCreated: boolean;
+  health: { healthy: boolean; issueCount: number };
+  diagnostics: Mdbx2VaultDiagnosticsSummary;
+}
+
+export interface Mdbx2VaultRuntimeStatus {
+  vaultHandle: string;
+  open: boolean;
+  available: boolean;
+}
 
 export interface Mdbx2NativeRequest<M extends Mdbx2NativeMethod = Mdbx2NativeMethod> {
   protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
@@ -34,6 +124,9 @@ export interface Mdbx2HostCapabilities {
   mdbxFormatVersion: typeof MDBX2_FORMAT_VERSION;
   supportsMdbx1: false;
   maxBinaryChunkBytes: typeof MDBX2_MAX_BINARY_CHUNK_BYTES;
+  maxInboundFileBytes: typeof MDBX2_MAX_INBOUND_FILE_BYTES;
+  maxActiveTransfers: typeof MDBX2_MAX_ACTIVE_TRANSFERS;
+  supportedUnlockMethods: Mdbx2UnlockMethod[];
   storageProfile: string;
   syncProfile: string;
   syncProtocolVersion: typeof MDBX2_SYNC_PROTOCOL_VERSION;
@@ -94,7 +187,13 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.mdbxFormatVersion !== MDBX2_FORMAT_VERSION) throw incompatible("Native Host 未声明 MDBX-2 格式支持。");
   if (value.supportsMdbx1 !== false) throw incompatible("Native Host 错误声明了 MDBX1 支持。");
   if (value.maxBinaryChunkBytes !== MDBX2_MAX_BINARY_CHUNK_BYTES) throw incompatible("Native Host 二进制分块限制与插件不一致。");
+  if (value.maxInboundFileBytes !== MDBX2_MAX_INBOUND_FILE_BYTES) throw incompatible("Native Host 文件大小限制与插件不一致。");
+  if (value.maxActiveTransfers !== MDBX2_MAX_ACTIVE_TRANSFERS) throw incompatible("Native Host 并发传输限制与插件不一致。");
   if (value.syncProtocolVersion !== MDBX2_SYNC_PROTOCOL_VERSION) throw incompatible("Native Host 同步协议版本与插件不一致。");
+  const supportedUnlockMethods = stringArray(value.supportedUnlockMethods, 8, 64, "Native Host 解锁方式列表无效。") as Mdbx2UnlockMethod[];
+  if (JSON.stringify(supportedUnlockMethods) !== JSON.stringify(["password", "security-key", "password-security-key"])) {
+    throw incompatible("Native Host 解锁方式与插件不一致。");
+  }
   return {
     hostName: MDBX2_NATIVE_HOST_NAME,
     hostVersion: boundedString(value.hostVersion, 64, "Native Host 版本无效。"),
@@ -104,6 +203,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     mdbxFormatVersion: MDBX2_FORMAT_VERSION,
     supportsMdbx1: false,
     maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
+    maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
+    maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
+    supportedUnlockMethods,
     storageProfile: boundedString(value.storageProfile, 128, "Native Host 存储能力配置无效。"),
     syncProfile: boundedString(value.syncProfile, 128, "Native Host 同步能力配置无效。"),
     syncProtocolVersion: MDBX2_SYNC_PROTOCOL_VERSION,
@@ -152,4 +254,9 @@ function booleanValue(value: unknown, message: string): boolean {
 function capabilityIds(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || value.length > 128) throw incompatible(`Native Host ${label}能力列表无效。`);
   return value.map((entry) => boundedIdentifier(entry, 128, `Native Host ${label}能力标识无效。`));
+}
+
+function stringArray(value: unknown, maxItems: number, maxBytes: number, message: string): string[] {
+  if (!Array.isArray(value) || value.length > maxItems) throw incompatible(message);
+  return value.map((entry) => boundedString(entry, maxBytes, message));
 }

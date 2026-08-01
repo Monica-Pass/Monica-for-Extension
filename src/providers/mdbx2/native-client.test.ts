@@ -3,7 +3,9 @@ import {
   MDBX2_CORE_REVISION,
   MDBX2_ENGINE_VERSION,
   MDBX2_FORMAT_VERSION,
+  MDBX2_MAX_ACTIVE_TRANSFERS,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
+  MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
@@ -54,6 +56,9 @@ const HELLO = {
   mdbxFormatVersion: MDBX2_FORMAT_VERSION,
   supportsMdbx1: false,
   maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
+  maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
+  maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
+  supportedUnlockMethods: ["password", "security-key", "password-security-key"],
   storageProfile: "full",
   syncProfile: "full",
   syncProtocolVersion: MDBX2_SYNC_PROTOCOL_VERSION,
@@ -106,6 +111,52 @@ describe("MDBX2 Native Messaging client", () => {
     const client = new Mdbx2NativeClient(runtime, () => "request-2");
 
     await expect(client.hello()).rejects.toMatchObject({ code: "vault-locked", retryable: true });
+    client.close();
+  });
+
+  it("uses bounded transfer and MDBX2-only vault lifecycle methods", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    let requestNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string; method: string };
+      const diagnostics = {
+        commitCount: 0, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0,
+        unresolvedConflictCount: 0, projectCount: 0, deletedProjectCount: 0, entryCount: 0,
+        deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0,
+        originalAttachmentBytes: 0, storedAttachmentBytes: 0
+      };
+      const result: Record<string, unknown> = {
+        "transfer.begin": { transferId: handle, nextOffset: 0, maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES },
+        "transfer.chunk": { nextOffset: 3, acceptedBytes: 3, repeated: false },
+        "transfer.finish": { fileHandle: handle, sizeBytes: 3, sha256: "a".repeat(64) },
+        "vault.inspect": {
+          source: { kind: "file", handle }, initialized: true, formatVersion: MDBX2_FORMAT_VERSION, schemaVersion: 17,
+          minReaderVersion: "MDBX-2", minWriterVersion: "MDBX-2", requiresUpgrade: false,
+          unknownCriticalExtensions: false, targetFormatVersion: MDBX2_FORMAT_VERSION, targetSchemaVersion: 17
+        },
+        "vault.open": {
+          vaultHandle: handle, vaultId: handle, deviceId: handle, formatVersion: MDBX2_FORMAT_VERSION, schemaVersion: 17,
+          migrated: false, preUpgradeBackupCreated: false, health: { healthy: true, issueCount: 0 }, diagnostics
+        },
+        "vault.status": { vaultHandle: handle, open: true, available: true },
+        "vault.lock": { locked: true }
+      }[request.method] as Record<string, unknown>;
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime, () => `request-${++requestNumber}`);
+
+    await expect(client.beginInboundTransfer(3, "a".repeat(64))).resolves.toMatchObject({ transferId: handle, nextOffset: 0 });
+    await expect(client.sendInboundChunk(handle, 0, new Uint8Array([1, 2, 3]))).resolves.toMatchObject({ nextOffset: 3, acceptedBytes: 3 });
+    await expect(client.finishInboundTransfer(handle)).resolves.toMatchObject({ fileHandle: handle, sizeBytes: 3 });
+    await expect(client.inspectVault({ kind: "file", handle })).resolves.toMatchObject({ formatVersion: "MDBX-2", schemaVersion: 17 });
+    await expect(client.openVault({ kind: "file", handle }, { method: "password", password: "" })).resolves.toMatchObject({ vaultHandle: handle, health: { healthy: true } });
+    await expect(client.vaultStatus(handle)).resolves.toEqual({ vaultHandle: handle, open: true, available: true });
+    await expect(client.lockVault(handle)).resolves.toBe(true);
+    expect((runtime.port.messages[4] as { params: unknown }).params).toEqual({
+      source: { kind: "file", handle },
+      credential: { method: "password", password: "" }
+    });
     client.close();
   });
 
