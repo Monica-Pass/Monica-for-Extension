@@ -46,7 +46,18 @@ const messageSource = await readFile(resolve(root, "src/runtime/messages.ts"), "
 const steamTypes = [...messageSource.matchAll(/type:\s*"(STEAM_[A-Z0-9_]+)"/g)].map((match) => match[1]);
 for (const type of steamTypes) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged Steam request ${type} is exposed to web pages.`);
 const mdbx2Types = [...messageSource.matchAll(/type:\s*"(MDBX2_[A-Z0-9_]+)"/g)].map((match) => match[1]);
-for (const type of mdbx2Types) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged MDBX2 request ${type} is exposed to web pages.`);
+for (const type of mdbx2Types) {
+  if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged MDBX2 request ${type} is exposed to web pages.`);
+  const start = backgroundSource.indexOf(`case "${type}"`);
+  if (start < 0 || !backgroundSource.slice(start, start + 500).includes("assertManagerPage(sender)")) throw new Error(`MDBX2 request ${type} is not restricted to the manager page.`);
+}
+if (!backgroundSource.includes('chrome.runtime.getURL("index.html")')) throw new Error("MDBX2 manager-page origin check is missing.");
+if (!backgroundSource.includes("const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient);") || !backgroundSource.includes("providers.register(mdbx2Provider);")) {
+  throw new Error("MDBX2 Provider is not registered through the reviewed Native Host client.");
+}
+if (!backgroundSource.includes("mdbx2Provider.lock();") || !backgroundSource.includes("mdbx2Provider.lockAccount(request.providerId);")) {
+  throw new Error("MDBX2 decrypted compatibility caches are not cleared on lock and provider removal.");
+}
 for (const legacyType of ["MDBX_OPEN", "MDBX_STATUS", "MDBX_EXPORT_FILE", "MDBX_LOCK"]) {
   if (messageSource.includes(`"${legacyType}"`) || backgroundSource.includes(`"${legacyType}"`)) throw new Error(`Legacy MDBX1 runtime request remains exposed: ${legacyType}.`);
 }

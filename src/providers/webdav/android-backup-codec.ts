@@ -102,7 +102,7 @@ export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId:
   document.items = document.items.filter((item) => item.id !== itemId);
 }
 
-function androidRecordToItem(path: string, raw: Record<string, unknown>, providerId: string): VaultItem | null {
+export function androidRecordToItem(path: string, raw: Record<string, unknown>, providerId: string): VaultItem | null {
   const match = path.match(JSON_PATH);
   if (!match) return null;
   const kindFolder = match[2].toLowerCase();
@@ -331,6 +331,10 @@ function androidRecordToItem(path: string, raw: Record<string, unknown>, provide
     } satisfies PaymentAccountItem;
   }
   return null;
+}
+
+export function vaultItemToAndroidRecord(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem): Record<string, unknown> | null {
+  return serializeAndroidItem(item, original, originalItem)?.raw || null;
 }
 
 function baseFields(path: string, raw: Record<string, unknown>, providerId: string) {

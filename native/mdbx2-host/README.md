@@ -28,6 +28,11 @@ vault.inspect
 vault.open
 vault.status
 vault.lock
+collection.list
+object.list
+object.reveal
+object.upsert
+object.delete
 ```
 
 The handshake reports the Host version, exact core revision, MDBX2 format generation, build capability manifest, 256 KiB chunk limit, 2 GiB file limit and supported unlock methods. It explicitly reports `supportsMdbx1: false`.
@@ -37,6 +42,10 @@ Native Messaging messages are framed as four native-endian length bytes followed
 Inbound transfer state uses two alternating durable metadata slots. Chunks require the exact durable offset; a byte-identical retry is idempotent. `transfer.finish` verifies declared size and SHA-256 before publishing an opaque file handle.
 
 `vault.inspect` calls the core's read-only migration inspection and accepts exact `MDBX-2` only. `MDBX-1` and `MDBX-1-DRAFT` are rejected before `open_vault*` can invoke automatic migration. Older MDBX2 schemas receive a local portable backup before the pinned core upgrades the app-private working copy.
+
+Collection and Object summaries are paged at no more than 200 records. Object disclosure is capped at 512 KiB and remains subject to the core Tiga policy. Writes use only the pinned core's typed `MdbxWriteCommand` operations and one idempotent operation UUID; no SQL surface is exported. Monica logical IDs are stored in `payload.monica_entry_id`, while physical IDs use the same `UUID.nameUUIDFromBytes` algorithm as Android.
+
+The extension registers the Host-backed Provider only in the privileged background. Raw Collection and Object commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
 
 ## Build
 
@@ -53,9 +62,7 @@ The Host writes protocol frames only to stdout. Diagnostics go to stderr and mus
 
 ## Planned API groups
 
-1. Bounded Collection and Object summaries plus Tiga disclosure.
-2. Typed write operations.
-3. Incremental bootstrap, authenticated segment and encrypted Blob operations.
-4. Conflict, snapshot and history summaries.
+1. Incremental bootstrap, authenticated segment and encrypted Blob operations.
+2. Conflict, snapshot and history summaries.
 
 Raw SQL will not be exposed.

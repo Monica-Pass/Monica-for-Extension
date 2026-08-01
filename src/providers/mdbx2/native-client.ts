@@ -2,6 +2,8 @@ import {
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+  MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   Mdbx2NativeHostError,
@@ -10,8 +12,14 @@ import {
   validateMdbx2HostCapabilities,
   type Mdbx2HostCapabilities,
   type Mdbx2HostStatus,
+  type Mdbx2CollectionSummaryPage,
   type Mdbx2NativeMethod,
   type Mdbx2NativeRequest,
+  type Mdbx2ObjectDeleteResult,
+  type Mdbx2ObjectRecord,
+  type Mdbx2ObjectSummaryPage,
+  type Mdbx2ObjectUpsertInput,
+  type Mdbx2ObjectWriteResult,
   type Mdbx2TransferBeginResult,
   type Mdbx2TransferChunkResult,
   type Mdbx2TransferFinishResult,
@@ -112,6 +120,59 @@ export class Mdbx2NativeClient {
   async lockVault(vaultHandle: string, timeoutMs = 15_000): Promise<boolean> {
     const result = objectResult(await this.request("vault.lock", { vaultHandle: opaqueHandle(vaultHandle, "保险库") }, timeoutMs), "Native Host 锁定响应无效。");
     return booleanResult(result.locked, "Native Host 锁定状态无效。");
+  }
+
+  async listCollections(vaultHandle: string, input: { deleted?: boolean; pageSize?: number; cursor?: string } = {}, timeoutMs = 15_000): Promise<Mdbx2CollectionSummaryPage> {
+    const pageSize = pageSizeValue(input.pageSize);
+    return collectionSummaryPage(await this.request("collection.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      deleted: Boolean(input.deleted),
+      pageSize,
+      cursor: input.cursor || null
+    }, timeoutMs));
+  }
+
+  async listObjects(vaultHandle: string, collectionId: string, input: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string } = {}, timeoutMs = 15_000): Promise<Mdbx2ObjectSummaryPage> {
+    const pageSize = pageSizeValue(input.pageSize);
+    return objectSummaryPage(await this.request("object.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      collectionId: opaqueHandle(collectionId, "Collection"),
+      objectTypeId: input.objectTypeId || null,
+      deleted: Boolean(input.deleted),
+      pageSize,
+      cursor: input.cursor || null
+    }, timeoutMs));
+  }
+
+  async revealObject(vaultHandle: string, objectId: string, timeoutMs = 30_000): Promise<Mdbx2ObjectRecord> {
+    return objectRecord(await this.request("object.reveal", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      objectId: opaqueHandle(objectId, "Object")
+    }, timeoutMs));
+  }
+
+  async upsertObject(vaultHandle: string, operationId: string, input: Mdbx2ObjectUpsertInput, timeoutMs = 60_000): Promise<Mdbx2ObjectWriteResult> {
+    const logicalObjectId = textResult(input.logicalObjectId, 4096, false, "逻辑 Object ID 无效。");
+    const objectTypeId = textResult(input.objectTypeId, 512, false, "Object 类型无效。");
+    const title = textResult(input.title, 64 * 1024, true, "Object 标题无效。");
+    const payloadJson = textResult(input.payloadJson, MDBX2_MAX_OBJECT_PAYLOAD_BYTES, false, "Object 载荷无效。");
+    return objectWriteResult(await this.request("object.upsert", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: opaqueHandle(operationId, "操作"),
+      logicalObjectId,
+      collectionId: input.collectionId ? opaqueHandle(input.collectionId, "Collection") : null,
+      objectTypeId,
+      title,
+      payloadJson
+    }, timeoutMs));
+  }
+
+  async deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string, timeoutMs = 60_000): Promise<Mdbx2ObjectDeleteResult> {
+    return objectDeleteResult(await this.request("object.delete", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: opaqueHandle(operationId, "操作"),
+      logicalObjectId: textResult(logicalObjectId, 4096, false, "逻辑 Object ID 无效。")
+    }, timeoutMs));
   }
 
   async probe(timeoutMs = 5_000): Promise<Mdbx2HostStatus> {
@@ -313,6 +374,96 @@ function vaultSessionSummary(input: unknown): Mdbx2VaultSessionSummary {
   };
 }
 
+function collectionSummaryPage(input: unknown): Mdbx2CollectionSummaryPage {
+  const value = objectResult(input, "Native Host Collection 分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatibleResult("Native Host Collection 分页大小无效。");
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host Collection 摘要无效。");
+      return {
+        collectionId: opaqueHandle(item.collectionId, "Collection"),
+        title: textResult(item.title, 64 * 1024, true, "Collection 标题无效。"),
+        collectionTypeId: optionalString(item.collectionTypeId, 512, "Collection 类型"),
+        profileSchemaVersion: optionalInteger(item.profileSchemaVersion, "Collection Profile Schema 版本"),
+        groupId: optionalString(item.groupId, 4096, "Collection 分组"),
+        iconRef: optionalString(item.iconRef, 4096, "Collection 图标引用"),
+        favorite: booleanResult(item.favorite, "Collection 收藏状态无效。"),
+        archived: booleanResult(item.archived, "Collection 归档状态无效。"),
+        attachmentCount: safeInteger(item.attachmentCount, "Collection 附件数量"),
+        headCommitId: textResult(item.headCommitId, 128, false, "Collection Commit ID 无效。"),
+        deleted: booleanResult(item.deleted, "Collection 删除状态无效。"),
+        updatedAt: textResult(item.updatedAt, 128, false, "Collection 更新时间无效。")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "Collection 游标")
+  };
+}
+
+function objectSummaryPage(input: unknown): Mdbx2ObjectSummaryPage {
+  const value = objectResult(input, "Native Host Object 分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatibleResult("Native Host Object 分页大小无效。");
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host Object 摘要无效。");
+      return {
+        objectId: opaqueHandle(item.objectId, "Object"),
+        collectionId: opaqueHandle(item.collectionId, "Collection"),
+        objectTypeId: textResult(item.objectTypeId, 512, false, "Object 类型无效。"),
+        title: textResult(item.title, 64 * 1024, true, "Object 标题无效。"),
+        payloadSchemaVersion: safeInteger(item.payloadSchemaVersion, "Object 载荷 Schema 版本"),
+        headCommitId: textResult(item.headCommitId, 128, false, "Object Commit ID 无效。"),
+        deleted: booleanResult(item.deleted, "Object 删除状态无效。"),
+        updatedAt: textResult(item.updatedAt, 128, false, "Object 更新时间无效。")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "Object 游标")
+  };
+}
+
+function objectRecord(input: unknown): Mdbx2ObjectRecord {
+  const value = objectResult(input, "Native Host Object 披露响应无效。");
+  const payloadJson = textResult(value.payloadJson, MDBX2_MAX_OBJECT_PAYLOAD_BYTES, false, "Object 载荷无效。");
+  try {
+    const payload = JSON.parse(payloadJson);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error();
+  } catch {
+    throw incompatibleResult("Native Host Object 载荷不是 JSON 对象。");
+  }
+  return {
+    objectId: opaqueHandle(value.objectId, "Object"),
+    collectionId: opaqueHandle(value.collectionId, "Collection"),
+    objectTypeId: textResult(value.objectTypeId, 512, false, "Object 类型无效。"),
+    title: textResult(value.title, 64 * 1024, true, "Object 标题无效。"),
+    payloadJson,
+    payloadSchemaVersion: safeInteger(value.payloadSchemaVersion, "Object 载荷 Schema 版本"),
+    deleted: booleanResult(value.deleted, "Object 删除状态无效。")
+  };
+}
+
+function objectWriteResult(input: unknown): Mdbx2ObjectWriteResult {
+  const value = objectResult(input, "Native Host Object 写入响应无效。");
+  return {
+    commitId: textResult(value.commitId, 128, false, "Object Commit ID 无效。"),
+    alreadyCommitted: booleanResult(value.alreadyCommitted, "Object 幂等状态无效。"),
+    logicalObjectId: textResult(value.logicalObjectId, 4096, false, "逻辑 Object ID 无效。"),
+    objectId: opaqueHandle(value.objectId, "Object"),
+    collectionId: opaqueHandle(value.collectionId, "Collection"),
+    objectTypeId: textResult(value.objectTypeId, 512, false, "Object 类型无效。")
+  };
+}
+
+function objectDeleteResult(input: unknown): Mdbx2ObjectDeleteResult {
+  const value = objectResult(input, "Native Host Object 删除响应无效。");
+  const changed = booleanResult(value.changed, "Object 删除状态无效。");
+  return {
+    changed,
+    commitId: changed ? textResult(value.commitId, 128, false, "Object 删除 Commit ID 无效。") : undefined,
+    alreadyCommitted: changed ? booleanResult(value.alreadyCommitted, "Object 删除幂等状态无效。") : undefined,
+    logicalObjectId: textResult(value.logicalObjectId, 4096, false, "逻辑 Object ID 无效。"),
+    objectId: opaqueHandle(value.objectId, "Object")
+  };
+}
+
 function vaultSource(source: Mdbx2VaultSource): Mdbx2VaultSource {
   if (source.kind !== "file" && source.kind !== "vault") throw new Mdbx2NativeHostError("vault-source-invalid", "MDBX2 保险库来源无效。", false);
   return { kind: source.kind, handle: opaqueHandle(source.handle, "来源") };
@@ -334,12 +485,22 @@ function safeInteger(value: unknown, label: string): number {
   return value;
 }
 
+function pageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? MDBX2_MAX_SUMMARY_PAGE_SIZE;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_SUMMARY_PAGE_SIZE) throw new Mdbx2NativeHostError("page-size-invalid", "MDBX2 摘要分页大小无效。", false);
+  return pageSize;
+}
+
 function optionalInteger(value: unknown, label: string): number | undefined {
   return value === null || value === undefined ? undefined : safeInteger(value, label);
 }
 
 function stringResult(value: unknown, maxBytes: number, message: string): string {
-  if (typeof value !== "string" || !value || new TextEncoder().encode(value).byteLength > maxBytes) throw incompatibleResult(message);
+  return textResult(value, maxBytes, false, message);
+}
+
+function textResult(value: unknown, maxBytes: number, allowEmpty: boolean, message: string): string {
+  if (typeof value !== "string" || (!allowEmpty && !value) || new TextEncoder().encode(value).byteLength > maxBytes) throw incompatibleResult(message);
   return value;
 }
 

@@ -6,6 +6,7 @@ import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES } from "../providers/mdbx2/native-contract";
+import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
@@ -31,6 +32,8 @@ const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
 providers.register(new BitwardenProvider());
 const mdbx2NativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime());
+const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient);
+providers.register(mdbx2Provider);
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
 const bitwardenClient = new BitwardenClient();
@@ -74,7 +77,7 @@ interface PendingPasskeyRequest {
   rpId: string;
   expiresAt: number;
   matches: string[];
-  saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" }>;
+  saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" | "mdbx2" }>;
   defaultSaveTargetId?: string;
 }
 
@@ -135,6 +138,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") void clearPendingPasskeyRequests();
       if (status !== "unlocked") abortProviderSyncs();
       if (status !== "unlocked") mdbx2NativeClient.close();
+      if (status !== "unlocked") mdbx2Provider.lock();
       if (status !== "unlocked") keePassProvider.lock();
     });
   }
@@ -180,6 +184,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       abortProviderSyncs();
       mdbx2NativeClient.close();
+      mdbx2Provider.lock();
       keePassProvider.lock();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
@@ -195,6 +200,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_RESTORE_ENCRYPTED": {
       assertExtensionPage(sender);
       abortProviderSyncs();
+      mdbx2NativeClient.close();
+      mdbx2Provider.lock();
       const state = await service.restoreEncryptedBackup(request.backup, request.backupPassword, {
         replaceExisting: request.replaceExisting,
         currentPassword: request.currentPassword
@@ -422,26 +429,26 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       });
     }
     case "MDBX2_HOST_STATUS":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return new Mdbx2NativeClient(createChromeMdbx2NativeRuntime()).probe();
     case "MDBX2_TRANSFER_BEGIN":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return mdbx2NativeClient.beginInboundTransfer(request.sizeBytes, request.sha256);
     case "MDBX2_TRANSFER_CHUNK":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       if (typeof request.dataBase64 !== "string" || request.dataBase64.length > MDBX2_MAX_BASE64_CHUNK_LENGTH) throw new Error("MDBX2 文件分块超出允许范围。");
       return mdbx2NativeClient.sendInboundChunk(request.transferId, request.offset, base64ToBytes(request.dataBase64));
     case "MDBX2_TRANSFER_FINISH":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return mdbx2NativeClient.finishInboundTransfer(request.transferId);
     case "MDBX2_TRANSFER_ABORT":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return mdbx2NativeClient.abortInboundTransfer(request.transferId);
     case "MDBX2_VAULT_INSPECT":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return mdbx2NativeClient.inspectVault(request.source);
     case "MDBX2_VAULT_OPEN": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "mdbx2") throw new Error("所选密码源不是 MDBX2 保险库。");
       const existingHandle = typeof existing?.config.vaultHandle === "string" ? existing.config.vaultHandle : undefined;
@@ -474,18 +481,47 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
     }
     case "MDBX2_VAULT_STATUS": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
       const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
       return mdbx2NativeClient.vaultStatus(vaultHandle);
     }
     case "MDBX2_VAULT_LOCK": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
       const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
-      return mdbx2NativeClient.lockVault(vaultHandle);
+      try {
+        return await mdbx2NativeClient.lockVault(vaultHandle);
+      } finally {
+        mdbx2Provider.lockAccount(request.providerId);
+      }
+    }
+    case "MDBX2_COLLECTION_LIST": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listCollections(vaultHandle, request);
+    }
+    case "MDBX2_OBJECT_LIST": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listObjects(vaultHandle, request.collectionId, request);
+    }
+    case "MDBX2_OBJECT_REVEAL": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.revealObject(vaultHandle, request.objectId);
+    }
+    case "MDBX2_OBJECT_UPSERT": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.upsertObject(vaultHandle, request.operationId, request.input);
+    }
+    case "MDBX2_OBJECT_DELETE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.deleteObject(vaultHandle, request.operationId, request.logicalObjectId);
     }
     case "KEEPASS_OPEN": {
       assertExtensionPage(sender);
@@ -536,7 +572,6 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (!account) throw new Error("密码源不存在。");
       if (account.kind === "local") throw new Error("本地密码源不需要同步。");
       if (account.kind === "mdbx-legacy") throw new Error("MDBX1 密码源已停用，请先在 Monica Android 或桌面端升级为 MDBX2。");
-      if (account.kind === "mdbx2") throw new Error("MDBX2 本地运行时已连接；对象映射与增量同步将在下一阶段启用。");
       if (!account.enabled) throw new Error("此密码源已停用。");
       if (activeProviderSyncs.has(account.id)) throw new Error("此密码源正在同步。");
       const controller = new AbortController();
@@ -585,6 +620,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const vaultHandle = account?.kind === "mdbx2" && typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : undefined;
         if (vaultHandle) await mdbx2NativeClient.lockVault(vaultHandle).catch(() => undefined);
       }
+      mdbx2Provider.lockAccount(request.providerId);
       keePassProvider.lockAccount(request.providerId);
       return service.removeProvider(request.providerId);
   }
@@ -1087,7 +1123,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   const state = await service.readState();
   const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
   const saveTargets = state.providers
-    .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden"))
+    .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" | "mdbx2" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden" || provider.kind === "mdbx2"))
     .map((provider) => ({ providerId: provider.id, name: provider.name, kind: provider.kind }));
   const configuredTarget = saveTargets.find((provider) => provider.providerId === state.settings.defaultProviderId);
   const defaultSaveTarget = configuredTarget || saveTargets.find((provider) => provider.kind === "local") || saveTargets[0];
@@ -1162,7 +1198,7 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
       }
       const now = new Date().toISOString();
       const bitwarden = target.kind === "bitwarden";
-      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: bitwarden ? [{ providerId: target.providerId }] : [], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: false, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
+      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: target.kind === "local" ? [] : [{ providerId: target.providerId }], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: false, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
       const result: PasskeyResult = { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response, clientExtensionResults: activePending.request.credProps ? { credProps: { rk: item.discoverable } } : {} };
       preparedReceipt = {
         id: candidateId,
@@ -1374,6 +1410,24 @@ function documentLabel(type: IdentityItem["documentType"]): string {
 function unmaskedAccountNumber(value: string): string | undefined {
   const normalized = value.trim();
   return normalized && !/[x*•]/i.test(normalized) ? normalized : undefined;
+}
+
+async function requireMdbx2VaultHandle(providerId: string): Promise<string> {
+  const account = await service.getProvider(providerId);
+  const vaultHandle = account?.kind === "mdbx2" && typeof account.config.vaultHandle === "string"
+    ? account.config.vaultHandle
+    : "";
+  if (!vaultHandle) throw new Error("MDBX2 密码源不存在或缺少本机工作副本。");
+  return vaultHandle;
+}
+
+function assertManagerPage(sender: chrome.runtime.MessageSender): void {
+  assertExtensionPage(sender);
+  const actual = new URL(sender.url || "");
+  const manager = new URL(chrome.runtime.getURL("index.html"));
+  if (actual.origin !== manager.origin || actual.pathname !== manager.pathname) {
+    throw new Error("此 MDBX2 管理命令只允许 Monica 管理页调用。");
+  }
 }
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {

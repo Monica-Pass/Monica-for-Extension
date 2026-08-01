@@ -1,5 +1,5 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
-import type { Mdbx2HostStatus, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource } from "../providers/mdbx2/native-contract";
+import type { Mdbx2CollectionSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource } from "../providers/mdbx2/native-contract";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
@@ -241,6 +241,11 @@ export type ExtensionRequest =
   | { type: "MDBX2_VAULT_OPEN"; input: Mdbx2VaultOpenInput }
   | { type: "MDBX2_VAULT_STATUS"; providerId: string }
   | { type: "MDBX2_VAULT_LOCK"; providerId: string }
+  | { type: "MDBX2_COLLECTION_LIST"; providerId: string; deleted?: boolean; pageSize?: number; cursor?: string }
+  | { type: "MDBX2_OBJECT_LIST"; providerId: string; collectionId: string; objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string }
+  | { type: "MDBX2_OBJECT_REVEAL"; providerId: string; objectId: string }
+  | { type: "MDBX2_OBJECT_UPSERT"; providerId: string; operationId: string; input: Mdbx2ObjectUpsertInput }
+  | { type: "MDBX2_OBJECT_DELETE"; providerId: string; operationId: string; logicalObjectId: string }
   | { type: "KEEPASS_OPEN"; input: KeePassOpenInput }
   | { type: "KEEPASS_STATUS"; providerId: string }
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
@@ -255,5 +260,5 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 
 // Type-only re-exports keep UI imports centered on the runtime contract.
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
-export type { Mdbx2HostStatus, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, KeePassSessionSummary };
+export type { Mdbx2CollectionSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, KeePassSessionSummary };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

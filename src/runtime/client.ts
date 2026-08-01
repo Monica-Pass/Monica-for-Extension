@@ -2,7 +2,7 @@ import type { ProviderAccount, ProviderConflict, ProviderConflictResolution, Pro
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { bytesToBase64 } from "../security/encoding";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
-import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2HostStatus, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassOpenInput, KeePassSessionSummary, LoginMatchSummary, Mdbx2CollectionSummaryPage, Mdbx2HostStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
@@ -73,6 +73,11 @@ export const vaultClient = {
   openMdbx2Vault: (input: Mdbx2VaultOpenInput) => send<{ account: ProviderAccount; session: Mdbx2VaultSessionSummary }>({ type: "MDBX2_VAULT_OPEN", input }),
   mdbx2VaultStatus: (providerId: string) => send<Mdbx2VaultRuntimeStatus>({ type: "MDBX2_VAULT_STATUS", providerId }),
   lockMdbx2Vault: (providerId: string) => send<boolean>({ type: "MDBX2_VAULT_LOCK", providerId }),
+  listMdbx2Collections: (providerId: string, input: { deleted?: boolean; pageSize?: number; cursor?: string } = {}) => send<Mdbx2CollectionSummaryPage>({ type: "MDBX2_COLLECTION_LIST", providerId, ...input }),
+  listMdbx2Objects: (providerId: string, collectionId: string, input: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string } = {}) => send<Mdbx2ObjectSummaryPage>({ type: "MDBX2_OBJECT_LIST", providerId, collectionId, ...input }),
+  revealMdbx2Object: (providerId: string, objectId: string) => send<Mdbx2ObjectRecord>({ type: "MDBX2_OBJECT_REVEAL", providerId, objectId }),
+  upsertMdbx2Object: (providerId: string, operationId: string, input: Mdbx2ObjectUpsertInput) => send<Mdbx2ObjectWriteResult>({ type: "MDBX2_OBJECT_UPSERT", providerId, operationId, input }),
+  deleteMdbx2Object: (providerId: string, operationId: string, logicalObjectId: string) => send<Mdbx2ObjectDeleteResult>({ type: "MDBX2_OBJECT_DELETE", providerId, operationId, logicalObjectId }),
   openKeePass: (input: KeePassOpenInput) => send<{ account: ProviderAccount; session: KeePassSessionSummary }>({ type: "KEEPASS_OPEN", input }),
   keePassStatus: (providerId: string) => send<KeePassSessionSummary | undefined>({ type: "KEEPASS_STATUS", providerId }),
   exportKeePassFile: (providerId: string) => send<KeePassFileExport>({ type: "KEEPASS_EXPORT_FILE", providerId }),

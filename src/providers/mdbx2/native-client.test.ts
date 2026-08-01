@@ -6,6 +6,8 @@ import {
   MDBX2_MAX_ACTIVE_TRANSFERS,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+  MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
@@ -58,6 +60,8 @@ const HELLO = {
   maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
   maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
   maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
+  maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+  maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
   supportedUnlockMethods: ["password", "security-key", "password-security-key"],
   storageProfile: "full",
   syncProfile: "full",
@@ -140,7 +144,12 @@ describe("MDBX2 Native Messaging client", () => {
           migrated: false, preUpgradeBackupCreated: false, health: { healthy: true, issueCount: 0 }, diagnostics
         },
         "vault.status": { vaultHandle: handle, open: true, available: true },
-        "vault.lock": { locked: true }
+        "vault.lock": { locked: true },
+        "collection.list": { items: [{ collectionId: handle, title: ".monica-root", collectionTypeId: null, profileSchemaVersion: null, groupId: null, iconRef: null, favorite: false, archived: false, attachmentCount: 0, headCommitId: "commit-1", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
+        "object.list": { items: [{ objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadSchemaVersion: 1, headCommitId: "commit-2", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
+        "object.reveal": { objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:1" }), payloadSchemaVersion: 1, deleted: false },
+        "object.upsert": { commitId: "commit-3", alreadyCommitted: false, logicalObjectId: "password:1", objectId: handle, collectionId: handle, objectTypeId: "login" },
+        "object.delete": { changed: true, commitId: "commit-4", alreadyCommitted: false, logicalObjectId: "password:1", objectId: handle }
       }[request.method] as Record<string, unknown>;
       runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
     };
@@ -152,6 +161,11 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.inspectVault({ kind: "file", handle })).resolves.toMatchObject({ formatVersion: "MDBX-2", schemaVersion: 17 });
     await expect(client.openVault({ kind: "file", handle }, { method: "password", password: "" })).resolves.toMatchObject({ vaultHandle: handle, health: { healthy: true } });
     await expect(client.vaultStatus(handle)).resolves.toEqual({ vaultHandle: handle, open: true, available: true });
+    await expect(client.listCollections(handle)).resolves.toMatchObject({ items: [{ collectionId: handle, title: ".monica-root" }] });
+    await expect(client.listObjects(handle, handle)).resolves.toMatchObject({ items: [{ objectId: handle, objectTypeId: "login" }] });
+    await expect(client.revealObject(handle, handle)).resolves.toMatchObject({ payloadSchemaVersion: 1, payloadJson: expect.stringContaining("password:1") });
+    await expect(client.upsertObject(handle, handle, { logicalObjectId: "password:1", objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:1" }) })).resolves.toMatchObject({ commitId: "commit-3", objectId: handle });
+    await expect(client.deleteObject(handle, handle, "password:1")).resolves.toMatchObject({ changed: true, commitId: "commit-4" });
     await expect(client.lockVault(handle)).resolves.toBe(true);
     expect((runtime.port.messages[4] as { params: unknown }).params).toEqual({
       source: { kind: "file", handle },

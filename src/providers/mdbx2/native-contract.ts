@@ -7,6 +7,8 @@ export const MDBX2_SYNC_PROTOCOL_VERSION = 2;
 export const MDBX2_MAX_BINARY_CHUNK_BYTES = 256 * 1024;
 export const MDBX2_MAX_INBOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MDBX2_MAX_ACTIVE_TRANSFERS = 4;
+export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
+export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
 
 export type Mdbx2NativeMethod =
   | "host.hello"
@@ -17,7 +19,12 @@ export type Mdbx2NativeMethod =
   | "vault.inspect"
   | "vault.open"
   | "vault.status"
-  | "vault.lock";
+  | "vault.lock"
+  | "collection.list"
+  | "object.list"
+  | "object.reveal"
+  | "object.upsert"
+  | "object.delete";
 
 export type Mdbx2UnlockMethod = "password" | "security-key" | "password-security-key";
 
@@ -98,6 +105,77 @@ export interface Mdbx2VaultRuntimeStatus {
   available: boolean;
 }
 
+export interface Mdbx2CollectionSummary {
+  collectionId: string;
+  title: string;
+  collectionTypeId?: string;
+  profileSchemaVersion?: number;
+  groupId?: string;
+  iconRef?: string;
+  favorite: boolean;
+  archived: boolean;
+  attachmentCount: number;
+  headCommitId: string;
+  deleted: boolean;
+  updatedAt: string;
+}
+
+export interface Mdbx2CollectionSummaryPage {
+  items: Mdbx2CollectionSummary[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2ObjectSummary {
+  objectId: string;
+  collectionId: string;
+  objectTypeId: string;
+  title: string;
+  payloadSchemaVersion: number;
+  headCommitId: string;
+  deleted: boolean;
+  updatedAt: string;
+}
+
+export interface Mdbx2ObjectSummaryPage {
+  items: Mdbx2ObjectSummary[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2ObjectRecord {
+  objectId: string;
+  collectionId: string;
+  objectTypeId: string;
+  title: string;
+  payloadJson: string;
+  payloadSchemaVersion: number;
+  deleted: boolean;
+}
+
+export interface Mdbx2ObjectUpsertInput {
+  logicalObjectId: string;
+  collectionId?: string;
+  objectTypeId: string;
+  title: string;
+  payloadJson: string;
+}
+
+export interface Mdbx2ObjectWriteResult {
+  commitId: string;
+  alreadyCommitted: boolean;
+  logicalObjectId: string;
+  objectId: string;
+  collectionId: string;
+  objectTypeId: string;
+}
+
+export interface Mdbx2ObjectDeleteResult {
+  changed: boolean;
+  commitId?: string;
+  alreadyCommitted?: boolean;
+  logicalObjectId: string;
+  objectId: string;
+}
+
 export interface Mdbx2NativeRequest<M extends Mdbx2NativeMethod = Mdbx2NativeMethod> {
   protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
   requestId: string;
@@ -126,6 +204,8 @@ export interface Mdbx2HostCapabilities {
   maxBinaryChunkBytes: typeof MDBX2_MAX_BINARY_CHUNK_BYTES;
   maxInboundFileBytes: typeof MDBX2_MAX_INBOUND_FILE_BYTES;
   maxActiveTransfers: typeof MDBX2_MAX_ACTIVE_TRANSFERS;
+  maxObjectPayloadBytes: typeof MDBX2_MAX_OBJECT_PAYLOAD_BYTES;
+  maxSummaryPageSize: typeof MDBX2_MAX_SUMMARY_PAGE_SIZE;
   supportedUnlockMethods: Mdbx2UnlockMethod[];
   storageProfile: string;
   syncProfile: string;
@@ -189,6 +269,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxBinaryChunkBytes !== MDBX2_MAX_BINARY_CHUNK_BYTES) throw incompatible("Native Host 二进制分块限制与插件不一致。");
   if (value.maxInboundFileBytes !== MDBX2_MAX_INBOUND_FILE_BYTES) throw incompatible("Native Host 文件大小限制与插件不一致。");
   if (value.maxActiveTransfers !== MDBX2_MAX_ACTIVE_TRANSFERS) throw incompatible("Native Host 并发传输限制与插件不一致。");
+  if (value.maxObjectPayloadBytes !== MDBX2_MAX_OBJECT_PAYLOAD_BYTES) throw incompatible("Native Host Object 载荷限制与插件不一致。");
+  if (value.maxSummaryPageSize !== MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatible("Native Host 摘要分页限制与插件不一致。");
   if (value.syncProtocolVersion !== MDBX2_SYNC_PROTOCOL_VERSION) throw incompatible("Native Host 同步协议版本与插件不一致。");
   const supportedUnlockMethods = stringArray(value.supportedUnlockMethods, 8, 64, "Native Host 解锁方式列表无效。") as Mdbx2UnlockMethod[];
   if (JSON.stringify(supportedUnlockMethods) !== JSON.stringify(["password", "security-key", "password-security-key"])) {
@@ -205,6 +287,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
     maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
+    maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
+    maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
     supportedUnlockMethods,
     storageProfile: boundedString(value.storageProfile, 128, "Native Host 存储能力配置无效。"),
     syncProfile: boundedString(value.syncProfile, 128, "Native Host 同步能力配置无效。"),

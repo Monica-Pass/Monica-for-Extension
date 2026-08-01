@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use mdbx_ffi::{MdbxMigrationInfo, MdbxVault};
+use md5::{Digest, Md5};
+use mdbx_ffi::{MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxVault, MdbxWriteCommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -25,6 +26,12 @@ const DEVICE_METADATA_VERSION: u32 = 1;
 const MAX_SECRET_BYTES: usize = 64 * 1024;
 const MAX_BASE64_CHUNK_BYTES: usize = ((MAX_BINARY_CHUNK_BYTES + 2) / 3) * 4;
 const MAX_METADATA_BYTES: u64 = 16 * 1024;
+const MAX_SUMMARY_PAGE_SIZE: u32 = 200;
+const MAX_CURSOR_BYTES: usize = 4096;
+const MAX_OBJECT_PAYLOAD_BYTES: usize = 512 * 1024;
+const MAX_LOGICAL_OBJECT_ID_BYTES: usize = 4096;
+const MAX_OBJECT_TYPE_ID_BYTES: usize = 512;
+const MAX_TITLE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
 pub struct RpcFailure {
@@ -136,6 +143,11 @@ impl HostRuntime {
             "vault.open" => self.vault_open(params),
             "vault.status" => self.vault_status(params),
             "vault.lock" => self.vault_lock(params),
+            "collection.list" => self.collection_list(params),
+            "object.list" => self.object_list(params),
+            "object.reveal" => self.object_reveal(params),
+            "object.upsert" => self.object_upsert(params),
+            "object.delete" => self.object_delete(params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
                 "Native method is not supported by this Host version.",
@@ -159,6 +171,8 @@ impl HostRuntime {
             "maxBinaryChunkBytes": MAX_BINARY_CHUNK_BYTES,
             "maxInboundFileBytes": MAX_INBOUND_FILE_BYTES,
             "maxActiveTransfers": MAX_ACTIVE_TRANSFERS,
+            "maxObjectPayloadBytes": MAX_OBJECT_PAYLOAD_BYTES,
+            "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
             "supportedUnlockMethods": ["password", "security-key", "password-security-key"],
             "storageProfile": capabilities.storage_profile,
             "syncProfile": capabilities.sync_profile,
@@ -576,6 +590,304 @@ impl HostRuntime {
         }))
     }
 
+    fn collection_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let deleted = take_optional_bool(&mut params, "deleted")?.unwrap_or(false);
+        let page_size = take_page_size(&mut params)?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let page = if deleted {
+            vault.list_deleted_collection_summaries(page_size, cursor)
+        } else {
+            vault.list_collection_summaries(page_size, cursor)
+        }
+        .map_err(|_| {
+            RpcFailure::new(
+                "collection-list-failed",
+                "MDBX2 Collection summaries could not be read.",
+                false,
+            )
+        })?;
+        Ok(json!({
+            "items": page.items.into_iter().map(|item| json!({
+                "collectionId": item.collection_id,
+                "title": item.title,
+                "collectionTypeId": item.collection_type_id,
+                "profileSchemaVersion": item.profile_schema_version,
+                "groupId": item.group_id,
+                "iconRef": item.icon_ref,
+                "favorite": item.favorite,
+                "archived": item.archived,
+                "attachmentCount": item.attachment_count,
+                "headCommitId": item.head_commit_id,
+                "deleted": item.deleted,
+                "updatedAt": item.updated_at
+            })).collect::<Vec<_>>(),
+            "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn object_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let object_type_id =
+            take_optional_string(&mut params, "objectTypeId", MAX_OBJECT_TYPE_ID_BYTES)?;
+        let deleted = take_optional_bool(&mut params, "deleted")?.unwrap_or(false);
+        let page_size = take_page_size(&mut params)?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let page = if deleted {
+            vault.list_deleted_object_summaries(collection_id, object_type_id, page_size, cursor)
+        } else {
+            vault.list_object_summaries(collection_id, object_type_id, page_size, cursor)
+        }
+        .map_err(|_| {
+            RpcFailure::new(
+                "object-list-failed",
+                "MDBX2 Object summaries could not be read.",
+                false,
+            )
+        })?;
+        Ok(json!({
+            "items": page.items.into_iter().map(object_summary_json).collect::<Vec<_>>(),
+            "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn object_reveal(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.reveal params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let object_id = take_uuid(&mut params, "objectId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let disclosure = vault
+            .reveal_object_with_limits(
+                object_id,
+                MdbxObjectDisclosureLimits {
+                    max_payload_bytes: MAX_OBJECT_PAYLOAD_BYTES as u64,
+                },
+            )
+            .map_err(|_| {
+                RpcFailure::new(
+                    "object-reveal-failed",
+                    "MDBX2 Object disclosure failed.",
+                    false,
+                )
+            })?;
+        let object = disclosure.object.ok_or_else(|| {
+            RpcFailure::new(
+                "object-disclosure-denied",
+                "MDBX2 Tiga policy did not authorize Object disclosure for this browser context.",
+                false,
+            )
+        })?;
+        if object.payload_json.len() > MAX_OBJECT_PAYLOAD_BYTES {
+            return Err(RpcFailure::new(
+                "object-payload-too-large",
+                "MDBX2 Object payload exceeds the browser disclosure limit.",
+                false,
+            ));
+        }
+        Ok(json!({
+            "objectId": object.object_id,
+            "collectionId": object.collection_id,
+            "objectTypeId": object.object_type_id,
+            "title": object.title,
+            "payloadJson": object.payload_json,
+            "payloadSchemaVersion": object.payload_schema_version,
+            "deleted": object.deleted
+        }))
+    }
+
+    fn object_upsert(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.upsert params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let logical_object_id = take_string(
+            &mut params,
+            "logicalObjectId",
+            MAX_LOGICAL_OBJECT_ID_BYTES,
+            false,
+        )?;
+        let requested_collection_id = take_optional_uuid(&mut params, "collectionId")?;
+        let object_type_id =
+            take_string(&mut params, "objectTypeId", MAX_OBJECT_TYPE_ID_BYTES, false)?;
+        let title = take_string(&mut params, "title", MAX_TITLE_BYTES, true)?;
+        let payload_json =
+            take_string(&mut params, "payloadJson", MAX_OBJECT_PAYLOAD_BYTES, false)?;
+        reject_unknown(params)?;
+        validate_monica_payload(&payload_json, &logical_object_id)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let info = vault.info();
+        let root_collection_id =
+            java_name_uuid(format!("monica-root:{}", info.vault_id).as_bytes());
+        let object_id = java_name_uuid(
+            format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
+        );
+        let mut commands = Vec::new();
+        let root = vault
+            .get_collection_summary(root_collection_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "collection-read-failed",
+                    "MDBX2 root Collection could not be read.",
+                    false,
+                )
+            })?;
+        match root {
+            None => commands.push(MdbxWriteCommand::CreateProject {
+                project_id: root_collection_id.clone(),
+                title: ".monica-root".to_string(),
+            }),
+            Some(summary) if summary.deleted => commands.push(MdbxWriteCommand::RestoreProject {
+                project_id: root_collection_id.clone(),
+                parent_project_id: None,
+            }),
+            Some(_) => {}
+        }
+        let collection_id = match requested_collection_id {
+            Some(collection_id) => match vault
+                .get_collection_summary(collection_id.clone())
+                .map_err(|_| {
+                    RpcFailure::new(
+                        "collection-read-failed",
+                        "MDBX2 target Collection could not be read.",
+                        false,
+                    )
+                })? {
+                Some(summary) if !summary.deleted => collection_id,
+                _ => root_collection_id.clone(),
+            },
+            None => root_collection_id.clone(),
+        };
+        let current = vault.get_object_summary(object_id.clone()).map_err(|_| {
+            RpcFailure::new(
+                "object-read-failed",
+                "MDBX2 Object summary could not be read.",
+                false,
+            )
+        })?;
+        match current {
+            None => commands.push(MdbxWriteCommand::CreateEntry {
+                entry_id: object_id.clone(),
+                project_id: collection_id.clone(),
+                entry_type: object_type_id.clone(),
+                title,
+                payload_json,
+            }),
+            Some(summary) => {
+                if summary.deleted {
+                    commands.push(MdbxWriteCommand::RestoreEntry {
+                        entry_id: object_id.clone(),
+                        project_id: summary.collection_id.clone(),
+                    });
+                }
+                if summary.collection_id != collection_id {
+                    commands.push(MdbxWriteCommand::MoveEntry {
+                        entry_id: object_id.clone(),
+                        project_id: summary.collection_id,
+                        target_project_id: collection_id.clone(),
+                    });
+                }
+                commands.push(MdbxWriteCommand::UpdateEntry {
+                    entry_id: object_id.clone(),
+                    project_id: collection_id.clone(),
+                    entry_type: object_type_id.clone(),
+                    title,
+                    payload_json,
+                });
+            }
+        }
+        let result = vault
+            .execute_write_operation(
+                operation_id,
+                "monica-extension-upsert-object".to_string(),
+                commands,
+            )
+            .map_err(|_| {
+                RpcFailure::new("object-write-failed", "MDBX2 Object write failed.", false)
+            })?;
+        Ok(json!({
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "logicalObjectId": logical_object_id,
+            "objectId": object_id,
+            "collectionId": collection_id,
+            "objectTypeId": object_type_id
+        }))
+    }
+
+    fn object_delete(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.delete params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let logical_object_id = take_string(
+            &mut params,
+            "logicalObjectId",
+            MAX_LOGICAL_OBJECT_ID_BYTES,
+            false,
+        )?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let vault_id = vault.info().vault_id;
+        let object_id =
+            java_name_uuid(format!("monica-entry:{vault_id}:{logical_object_id}").as_bytes());
+        let Some(summary) = vault.get_object_summary(object_id.clone()).map_err(|_| {
+            RpcFailure::new(
+                "object-read-failed",
+                "MDBX2 Object summary could not be read.",
+                false,
+            )
+        })?
+        else {
+            return Ok(json!({
+                "changed": false,
+                "logicalObjectId": logical_object_id,
+                "objectId": object_id
+            }));
+        };
+        if summary.deleted {
+            return Ok(json!({
+                "changed": false,
+                "logicalObjectId": logical_object_id,
+                "objectId": object_id
+            }));
+        }
+        let result = vault
+            .execute_write_operation(
+                operation_id,
+                "monica-extension-delete-object".to_string(),
+                vec![MdbxWriteCommand::DeleteEntry {
+                    entry_id: object_id.clone(),
+                    project_id: summary.collection_id,
+                }],
+            )
+            .map_err(|_| {
+                RpcFailure::new("object-delete-failed", "MDBX2 Object delete failed.", false)
+            })?;
+        Ok(json!({
+            "changed": true,
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "logicalObjectId": logical_object_id,
+            "objectId": object_id
+        }))
+    }
+
+    fn require_open_vault(&self, vault_handle: &str) -> Result<Arc<MdbxVault>, RpcFailure> {
+        self.vaults.get(vault_handle).cloned().ok_or_else(|| {
+            RpcFailure::new(
+                "vault-locked",
+                "MDBX2 vault is not open in this Host session.",
+                false,
+            )
+        })
+    }
+
     fn take_vault_source(
         &self,
         params: &mut Map<String, Value>,
@@ -829,6 +1141,40 @@ fn migration_json(source: &VaultSource, info: &MdbxMigrationInfo) -> Value {
     })
 }
 
+fn object_summary_json(item: mdbx_ffi::MdbxObjectSummary) -> Value {
+    json!({
+        "objectId": item.object_id,
+        "collectionId": item.collection_id,
+        "objectTypeId": item.object_type_id,
+        "title": item.title,
+        "payloadSchemaVersion": item.payload_schema_version,
+        "headCommitId": item.head_commit_id,
+        "deleted": item.deleted,
+        "updatedAt": item.updated_at
+    })
+}
+
+fn validate_monica_payload(payload_json: &str, logical_object_id: &str) -> Result<(), RpcFailure> {
+    let payload: Value = serde_json::from_str(payload_json)
+        .map_err(|_| RpcFailure::invalid("MDBX2 Object payload is not valid JSON."))?;
+    let payload = payload
+        .as_object()
+        .ok_or_else(|| RpcFailure::invalid("MDBX2 Object payload must be a JSON object."))?;
+    if payload.get("monica_entry_id").and_then(Value::as_str) != Some(logical_object_id) {
+        return Err(RpcFailure::invalid(
+            "MDBX2 Object payload monica_entry_id does not match the logical Object ID.",
+        ));
+    }
+    Ok(())
+}
+
+fn java_name_uuid(value: &[u8]) -> String {
+    let mut bytes: [u8; 16] = Md5::digest(value).into();
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes).hyphenated().to_string()
+}
+
 fn take_credential(params: &mut Map<String, Value>) -> Result<VaultCredential, RpcFailure> {
     let credential = params
         .remove("credential")
@@ -908,6 +1254,77 @@ fn take_u64(params: &mut Map<String, Value>, key: &'static str) -> Result<u64, R
         .remove(key)
         .and_then(|value| value.as_u64())
         .ok_or_else(|| RpcFailure::invalid(format!("{key} must be an unsigned integer.")))
+}
+
+fn take_page_size(params: &mut Map<String, Value>) -> Result<u32, RpcFailure> {
+    let value = take_u64(params, "pageSize")?;
+    if value == 0 || value > MAX_SUMMARY_PAGE_SIZE as u64 {
+        return Err(RpcFailure::invalid(
+            "pageSize exceeds the MDBX2 summary limit.",
+        ));
+    }
+    Ok(value as u32)
+}
+
+fn take_optional_string(
+    params: &mut Map<String, Value>,
+    key: &'static str,
+    max_bytes: usize,
+) -> Result<Option<String>, RpcFailure> {
+    let Some(value) = params.remove(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Value::String(value) = value else {
+        return Err(RpcFailure::invalid(format!(
+            "{key} must be a string or null."
+        )));
+    };
+    if value.is_empty() || value.len() > max_bytes {
+        return Err(RpcFailure::invalid(format!(
+            "{key} exceeds the reviewed limit."
+        )));
+    }
+    Ok(Some(value))
+}
+
+fn take_optional_bool(
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<Option<bool>, RpcFailure> {
+    let Some(value) = params.remove(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_bool()
+        .map(Some)
+        .ok_or_else(|| RpcFailure::invalid(format!("{key} must be a boolean or null.")))
+}
+
+fn take_optional_uuid(
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<Option<String>, RpcFailure> {
+    let Some(value) = params.remove(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Value::String(value) = value else {
+        return Err(RpcFailure::invalid(format!(
+            "{key} must be an opaque handle or null."
+        )));
+    };
+    canonical_uuid(&value)
+        .filter(|canonical| canonical == &value)
+        .map(Some)
+        .ok_or_else(|| RpcFailure::invalid(format!("{key} is not a canonical opaque handle.")))
 }
 
 fn take_uuid(params: &mut Map<String, Value>, key: &'static str) -> Result<String, RpcFailure> {
@@ -1263,6 +1680,83 @@ mod tests {
             )["open"],
             true
         );
+        let logical_object_id = "password:42";
+        let written = call(
+            &mut runtime,
+            "object.upsert",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": fresh_uuid(),
+                "logicalObjectId": logical_object_id,
+                "collectionId": null,
+                "objectTypeId": "login",
+                "title": "Example",
+                "payloadJson": json!({
+                    "kind": "password",
+                    "monica_entry_id": logical_object_id,
+                    "website": "https://example.test",
+                    "username": "demo",
+                    "password_plain": "secret"
+                }).to_string()
+            }),
+        );
+        assert_eq!(written["logicalObjectId"], logical_object_id);
+        let collection_id = written["collectionId"].as_str().unwrap().to_string();
+        let object_id = written["objectId"].as_str().unwrap().to_string();
+        let collections = call(
+            &mut runtime,
+            "collection.list",
+            json!({ "vaultHandle": vault_handle.clone(), "deleted": false, "pageSize": 200, "cursor": null }),
+        );
+        assert_eq!(collections["items"].as_array().unwrap().len(), 1);
+        let objects = call(
+            &mut runtime,
+            "object.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "collectionId": collection_id.clone(),
+                "objectTypeId": null,
+                "deleted": false,
+                "pageSize": 200,
+                "cursor": null
+            }),
+        );
+        assert_eq!(objects["items"][0]["objectId"], object_id);
+        let revealed = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": vault_handle.clone(), "objectId": object_id }),
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(revealed["payloadJson"].as_str().unwrap()).unwrap()
+                ["monica_entry_id"],
+            logical_object_id
+        );
+        assert_eq!(
+            call(
+                &mut runtime,
+                "object.delete",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "operationId": fresh_uuid(),
+                    "logicalObjectId": logical_object_id
+                })
+            )["changed"],
+            true
+        );
+        let deleted = call(
+            &mut runtime,
+            "object.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "collectionId": collection_id,
+                "objectTypeId": null,
+                "deleted": true,
+                "pageSize": 200,
+                "cursor": null
+            }),
+        );
+        assert_eq!(deleted["items"].as_array().unwrap().len(), 1);
         assert_eq!(
             call(
                 &mut runtime,
@@ -1278,6 +1772,18 @@ mod tests {
                 json!({ "vaultHandle": vault_handle })
             )["open"],
             false
+        );
+    }
+
+    #[test]
+    fn java_name_uuid_matches_android_uuid_name_uuid_from_bytes() {
+        assert_eq!(
+            java_name_uuid(b"monica-root:test-vault"),
+            "cb508e7b-24ba-31d8-8bfc-42e17c67bc07"
+        );
+        assert_eq!(
+            java_name_uuid(b"monica-entry:test-vault:password:42"),
+            "d98d22d3-805a-3b75-8b45-45a8857afdc7"
         );
     }
 }
