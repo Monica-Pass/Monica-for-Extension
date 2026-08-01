@@ -72,6 +72,13 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(response.ok).toBe(false);
     expect(response.error).toContain("只允许 Monica 管理页调用");
+    const historyResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
+      type: "MDBX2_HISTORY_LIST",
+      providerId: "manager-only-provider",
+      pageSize: 20
+    })) as RuntimeResponse;
+    expect(historyResponse.ok).toBe(false);
+    expect(historyResponse.error).toContain("只允许 Monica 管理页调用");
   } finally {
     await context?.close();
   }

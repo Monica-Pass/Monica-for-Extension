@@ -3,6 +3,8 @@ import {
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  MDBX2_MAX_HISTORY_DIFF_ITEMS,
+  MDBX2_MAX_HISTORY_PAGE_SIZE,
   MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
@@ -17,6 +19,8 @@ import {
   validateMdbx2HostCapabilities,
   type Mdbx2HostCapabilities,
   type Mdbx2HostStatus,
+  type Mdbx2CommitDiffResult,
+  type Mdbx2CommitHistoryPage,
   type Mdbx2ExternalBlobChunk,
   type Mdbx2ExternalBlobReceiveState,
   type Mdbx2ExternalBlobReferencePage,
@@ -243,6 +247,25 @@ export class Mdbx2NativeClient {
     return objectOperationResolutionResult(await this.request("object.operation.resolve", {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       operationScope: sha256Value(operationScope, "操作范围")
+    }, timeoutMs));
+  }
+
+  async listCommitHistory(
+    vaultHandle: string,
+    input: { pageSize?: number; cursor?: string } = {},
+    timeoutMs = 30_000
+  ): Promise<Mdbx2CommitHistoryPage> {
+    return commitHistoryPage(await this.request("history.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      pageSize: historyPageSizeValue(input.pageSize),
+      cursor: input.cursor || null
+    }, timeoutMs));
+  }
+
+  async listCommitDiff(vaultHandle: string, commitId: string, timeoutMs = 30_000): Promise<Mdbx2CommitDiffResult> {
+    return commitDiffResult(await this.request("history.diff", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      commitId: opaqueHandle(commitId, "Commit")
     }, timeoutMs));
   }
 
@@ -899,6 +922,71 @@ function objectDeleteResult(input: unknown): Mdbx2ObjectDeleteResult {
   };
 }
 
+function commitHistoryPage(input: unknown): Mdbx2CommitHistoryPage {
+  const value = objectResult(input, "Native Host MDBX2 历史分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_HISTORY_PAGE_SIZE) {
+    throw incompatibleResult("Native Host MDBX2 历史分页大小无效。");
+  }
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 历史项目无效。");
+      if (!Array.isArray(item.changes) || item.changes.length > MDBX2_MAX_HISTORY_DIFF_ITEMS) {
+        throw incompatibleResult("Native Host MDBX2 历史变更数量无效。");
+      }
+      return {
+        commitId: opaqueHandle(item.commitId, "Commit"),
+        deviceId: textResult(item.deviceId, 128, false, "MDBX2 历史设备 ID 无效。"),
+        localSeq: safeInteger(item.localSeq, "MDBX2 历史序号"),
+        commitKind: textResult(item.commitKind, 128, false, "MDBX2 Commit 类型无效。"),
+        changeScope: textResult(item.changeScope, 128, false, "MDBX2 变更范围无效。"),
+        createdAt: textResult(item.createdAt, 128, false, "MDBX2 历史时间无效。"),
+        operationId: optionalString(item.operationId, 512, "MDBX2 操作 ID"),
+        operationKind: optionalString(item.operationKind, 512, "MDBX2 操作类型"),
+        branchName: optionalString(item.branchName, 1024, "MDBX2 分支名称"),
+        message: optionalTextResult(item.message, 64 * 1024, true, "MDBX2 历史消息无效。"),
+        changes: item.changes.map((changeCandidate) => {
+          const change = objectResult(changeCandidate, "Native Host MDBX2 历史变更无效。");
+          return {
+            objectType: textResult(change.objectType, 512, false, "MDBX2 历史 Object 类型无效。"),
+            objectId: textResult(change.objectId, 128, false, "MDBX2 历史 Object ID 无效。"),
+            action: textResult(change.action, 128, false, "MDBX2 历史动作无效。"),
+            fields: boundedTextArray(change.fields, 512, 4096, "MDBX2 历史字段")
+          };
+        }),
+        parentIds: boundedTextArray(item.parentIds, 32, 128, "MDBX2 父 Commit"),
+        legacy: booleanResult(item.legacy, "MDBX2 历史兼容标记无效。")
+      };
+    }),
+    nextCursor: optionalString(value.nextCursor, 4096, "MDBX2 历史游标")
+  };
+}
+
+function commitDiffResult(input: unknown): Mdbx2CommitDiffResult {
+  const value = objectResult(input, "Native Host MDBX2 Commit 差异响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_HISTORY_DIFF_ITEMS) {
+    throw incompatibleResult("Native Host MDBX2 Commit 差异数量无效。");
+  }
+  return {
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host MDBX2 Commit 差异项目无效。");
+      return {
+        commitId: opaqueHandle(item.commitId, "Commit"),
+        objectType: textResult(item.objectType, 512, false, "MDBX2 Commit Object 类型无效。"),
+        objectId: textResult(item.objectId, 128, false, "MDBX2 Commit Object ID 无效。"),
+        collectionId: optionalOpaqueHandle(item.collectionId, "Collection"),
+        previousTitle: optionalTextResult(item.previousTitle, 64 * 1024, true, "MDBX2 Commit 原标题无效。"),
+        currentTitle: optionalTextResult(item.currentTitle, 64 * 1024, true, "MDBX2 Commit 新标题无效。"),
+        previousDeleted: optionalBooleanResult(item.previousDeleted, "MDBX2 Commit 原删除状态无效。"),
+        currentDeleted: booleanResult(item.currentDeleted, "MDBX2 Commit 删除状态无效。"),
+        changedFields: boundedTextArray(item.changedFields, 512, 4096, "MDBX2 Commit 变更字段"),
+        payloadChanged: booleanResult(item.payloadChanged, "MDBX2 Commit 内容变更状态无效。"),
+        contentType: optionalString(item.contentType, 512, "MDBX2 Commit 内容类型"),
+        createdAt: textResult(item.createdAt, 128, false, "MDBX2 Commit 差异时间无效。")
+      };
+    })
+  };
+}
+
 function objectBatchResult(input: unknown): Mdbx2ObjectBatchResult {
   const value = objectResult(input, "Native Host Object 批量响应无效。");
   const changed = booleanResult(value.changed, "Object 批量变更状态无效。");
@@ -1051,6 +1139,14 @@ function pageSizeValue(value: number | undefined): number {
   return pageSize;
 }
 
+function historyPageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? 20;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_HISTORY_PAGE_SIZE) {
+    throw new Mdbx2NativeHostError("history-page-size-invalid", "MDBX2 历史分页大小无效。", false);
+  }
+  return pageSize;
+}
+
 function optionalInteger(value: unknown, label: string): number | undefined {
   return value === null || value === undefined ? undefined : safeInteger(value, label);
 }
@@ -1066,6 +1162,19 @@ function textResult(value: unknown, maxBytes: number, allowEmpty: boolean, messa
 
 function optionalString(value: unknown, maxBytes: number, label: string): string | undefined {
   return value === null || value === undefined ? undefined : stringResult(value, maxBytes, `${label}无效。`);
+}
+
+function optionalTextResult(value: unknown, maxBytes: number, allowEmpty: boolean, message: string): string | undefined {
+  return value === null || value === undefined ? undefined : textResult(value, maxBytes, allowEmpty, message);
+}
+
+function optionalBooleanResult(value: unknown, message: string): boolean | undefined {
+  return value === null || value === undefined ? undefined : booleanResult(value, message);
+}
+
+function boundedTextArray(value: unknown, maxItems: number, maxBytes: number, label: string): string[] {
+  if (!Array.isArray(value) || value.length > maxItems) throw incompatibleResult(`${label}列表无效。`);
+  return value.map((entry) => textResult(entry, maxBytes, false, `${label}无效。`));
 }
 
 function booleanResult(value: unknown, message: string): boolean {

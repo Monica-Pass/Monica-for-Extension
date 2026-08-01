@@ -93,7 +93,9 @@ Large transfers use explicit begin, chunk, finish and abort methods. A transfer 
 
 The background uses `chrome.runtime.connectNative()`. The port keeps an MV3 Service Worker alive on supported Chrome versions; disconnect handlers reopen the port only when an active native task still exists.
 
-Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release and synchronization status are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
+Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release, synchronization status, bounded commit history and commit diff are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
+
+History pages contain at most 50 commits and are additionally capped at 850 KiB before framing. Commit diffs inherit the core's 500-Object limit. The Host removes decrypted previous/current payload previews and returns only a `payloadChanged` flag, titles, deletion state and changed-field names. The M3E list presents human operation labels and times without showing technical Object or Commit IDs in the primary view.
 
 ## Local files
 

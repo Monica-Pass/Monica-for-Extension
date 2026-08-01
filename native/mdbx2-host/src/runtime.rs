@@ -42,6 +42,8 @@ const OBJECT_OPERATION_STATE_VERSION: u32 = 1;
 const MAX_OBJECT_OPERATION_RECEIPTS: usize = 2048;
 const MAX_OBJECT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_OPERATION_HISTORY_PAGES: usize = 16;
+const MAX_HISTORY_PAGE_SIZE: u32 = 50;
+pub const MAX_HISTORY_RESULT_BYTES: usize = 850 * 1024;
 
 #[derive(Debug)]
 pub struct RpcFailure {
@@ -244,6 +246,8 @@ impl HostRuntime {
             "object.batch" => self.object_batch(params),
             "object.operation.status" => self.object_operation_status(params),
             "object.operation.resolve" => self.object_operation_resolve(params),
+            "history.list" => self.history_list(params),
+            "history.diff" => self.history_diff(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
@@ -271,6 +275,9 @@ impl HostRuntime {
             "maxObjectPayloadBytes": MAX_OBJECT_PAYLOAD_BYTES,
             "maxObjectBatchMutations": MAX_OBJECT_BATCH_MUTATIONS,
             "maxObjectBatchIntentBytes": MAX_OBJECT_BATCH_INTENT_BYTES,
+            "maxHistoryPageSize": MAX_HISTORY_PAGE_SIZE,
+            "maxHistoryResultBytes": MAX_HISTORY_RESULT_BYTES,
+            "supportsHistoryDiff": true,
             "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
             "supportsDurableCloudSync": true,
             "maxSyncSegmentPageSize": cloud_sync::SEGMENT_PAGE_SIZE,
@@ -818,6 +825,104 @@ impl HostRuntime {
             "payloadSchemaVersion": object.payload_schema_version,
             "deleted": object.deleted
         }))
+    }
+
+    fn history_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "history.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let page_size = take_bounded_page_size(
+            &mut params,
+            MAX_HISTORY_PAGE_SIZE,
+            "pageSize exceeds the MDBX2 history limit.",
+        )?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let page = vault.list_commit_history(page_size, cursor).map_err(|_| {
+            RpcFailure::new(
+                "history-list-failed",
+                "MDBX2 commit history could not be read.",
+                false,
+            )
+        })?;
+        let value = json!({
+            "items": page.items.into_iter().map(|item| json!({
+                "commitId": item.commit_id,
+                "deviceId": item.device_id,
+                "localSeq": item.local_seq,
+                "commitKind": item.commit_kind,
+                "changeScope": item.change_scope,
+                "createdAt": item.created_at,
+                "operationId": item.operation_id,
+                "operationKind": item.operation_kind,
+                "branchName": item.branch_name,
+                "message": item.message,
+                "changes": item.changes.into_iter().map(|change| json!({
+                    "objectType": change.object_type,
+                    "objectId": change.object_id,
+                    "action": change.action,
+                    "fields": change.fields
+                })).collect::<Vec<_>>(),
+                "parentIds": item.parent_ids,
+                "legacy": item.legacy
+            })).collect::<Vec<_>>(),
+            "nextCursor": page.next_cursor
+        });
+        bounded_history_result(value)
+    }
+
+    fn history_diff(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "history.diff params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let commit_id = take_uuid(&mut params, "commitId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let diffs = vault.list_commit_diff(commit_id).map_err(|error| {
+            let diagnostic = error.to_string().to_ascii_lowercase();
+            if diagnostic.contains("resource limit") || diagnostic.contains("commit diff objects") {
+                RpcFailure::new(
+                    "history-diff-too-large",
+                    "MDBX2 commit contains too many Objects to expand in one browser view.",
+                    false,
+                )
+            } else {
+                RpcFailure::new(
+                    "history-diff-failed",
+                    "MDBX2 commit details could not be read.",
+                    false,
+                )
+            }
+        })?;
+        let items = diffs
+            .into_iter()
+            .map(|diff| {
+                let content_type = vault
+                    .get_object_summary(diff.object_id.clone())
+                    .ok()
+                    .flatten()
+                    .map(|summary| summary.object_type_id);
+                let payload_changed = diff.previous_payload_preview != diff.current_payload_preview
+                    || diff
+                        .changed_fields
+                        .iter()
+                        .any(|field| field.eq_ignore_ascii_case("payload"));
+                json!({
+                    "commitId": diff.commit_id,
+                    "objectType": diff.object_type,
+                    "objectId": diff.object_id,
+                    "collectionId": diff.collection_id,
+                    "previousTitle": diff.previous_title,
+                    "currentTitle": diff.current_title,
+                    "previousDeleted": diff.previous_deleted,
+                    "currentDeleted": diff.current_deleted,
+                    "changedFields": diff.changed_fields,
+                    "payloadChanged": payload_changed,
+                    "contentType": content_type,
+                    "createdAt": diff.created_at
+                })
+            })
+            .collect::<Vec<_>>();
+        bounded_history_result(json!({ "items": items }))
     }
 
     fn object_upsert(&mut self, params: Value) -> Result<Value, RpcFailure> {
@@ -2071,11 +2176,21 @@ fn take_u64(params: &mut Map<String, Value>, key: &'static str) -> Result<u64, R
 }
 
 fn take_page_size(params: &mut Map<String, Value>) -> Result<u32, RpcFailure> {
+    take_bounded_page_size(
+        params,
+        MAX_SUMMARY_PAGE_SIZE,
+        "pageSize exceeds the MDBX2 summary limit.",
+    )
+}
+
+fn take_bounded_page_size(
+    params: &mut Map<String, Value>,
+    maximum: u32,
+    message: &'static str,
+) -> Result<u32, RpcFailure> {
     let value = take_u64(params, "pageSize")?;
-    if value == 0 || value > MAX_SUMMARY_PAGE_SIZE as u64 {
-        return Err(RpcFailure::invalid(
-            "pageSize exceeds the MDBX2 summary limit.",
-        ));
+    if value == 0 || value > maximum as u64 {
+        return Err(RpcFailure::invalid(message));
     }
     Ok(value as u32)
 }
@@ -2156,6 +2271,20 @@ fn reject_unknown(params: Map<String, Value>) -> Result<(), RpcFailure> {
             "Native request contains unknown parameters.",
         ))
     }
+}
+
+fn bounded_history_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 history response could not be encoded."))?
+        .len();
+    if size > MAX_HISTORY_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "history-result-too-large",
+            "MDBX2 history response exceeds the Native Messaging safety limit; request a smaller page.",
+            false,
+        ));
+    }
+    Ok(value)
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -2600,6 +2729,43 @@ mod tests {
             .unwrap();
         assert_eq!(operation.commit_id, batch_commit_id);
         assert!(operation.changes.len() >= 2);
+        let exposed_history = call(
+            &mut runtime,
+            "history.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": 20,
+                "cursor": null
+            }),
+        );
+        let exposed_operation = exposed_history["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["commitId"] == batch_commit_id)
+            .unwrap();
+        assert_eq!(
+            exposed_operation["operationKind"],
+            "monica-extension-batch-objects"
+        );
+        assert!(exposed_operation["changes"].as_array().unwrap().len() >= 2);
+        let exposed_diff = call(
+            &mut runtime,
+            "history.diff",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "commitId": batch_commit_id.clone()
+            }),
+        );
+        assert!(exposed_diff["items"].as_array().unwrap().len() >= 2);
+        assert!(exposed_diff["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["payloadChanged"] == true));
+        let exposed_diff_text = serde_json::to_string(&exposed_diff).unwrap();
+        assert!(!exposed_diff_text.contains("password_plain"));
+        assert!(!exposed_diff_text.contains("https://example.test"));
         drop(runtime);
         let mut runtime = HostRuntime::new(root.0.clone()).unwrap();
         call(
@@ -2664,6 +2830,33 @@ mod tests {
             )["open"],
             false
         );
+    }
+
+    #[test]
+    fn history_methods_reject_unbounded_or_noncanonical_requests() {
+        let (_root, mut runtime) = runtime();
+        let error = runtime
+            .handle(
+                "history.list",
+                json!({
+                    "vaultHandle": fresh_uuid(),
+                    "pageSize": MAX_HISTORY_PAGE_SIZE + 1,
+                    "cursor": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "params-invalid");
+
+        let error = runtime
+            .handle(
+                "history.diff",
+                json!({
+                    "vaultHandle": fresh_uuid(),
+                    "commitId": "not-a-commit"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "params-invalid");
     }
 
     #[test]

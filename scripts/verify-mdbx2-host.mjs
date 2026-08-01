@@ -6,13 +6,15 @@ const hostRoot = resolve(root, "native", "mdbx2-host");
 const coreRevision = "aafa22f195c626a8d8288d712bf42bccea134847";
 const expectedSource = `git+https://github.com/Monica-Pass/Mdbx.git?rev=${coreRevision}#${coreRevision}`;
 
-const [manifest, lockfile, toolchain, hostManifest, installer, uninstaller] = await Promise.all([
+const [manifest, lockfile, toolchain, hostManifest, installer, uninstaller, runtime, contract] = await Promise.all([
   readFile(resolve(hostRoot, "Cargo.toml"), "utf8"),
   readFile(resolve(hostRoot, "Cargo.lock"), "utf8"),
   readFile(resolve(hostRoot, "rust-toolchain.toml"), "utf8"),
   readFile(resolve(hostRoot, "host-manifest.template.json"), "utf8"),
   readFile(resolve(hostRoot, "install-host.ps1"), "utf8"),
-  readFile(resolve(hostRoot, "uninstall-host.ps1"), "utf8")
+  readFile(resolve(hostRoot, "uninstall-host.ps1"), "utf8"),
+  readFile(resolve(hostRoot, "src", "runtime.rs"), "utf8"),
+  readFile(resolve(root, "src", "providers", "mdbx2", "native-contract.ts"), "utf8")
 ]);
 
 if (!manifest.includes(`rev = "${coreRevision}"`)) throw new Error("MDBX2 Host core dependency is not pinned to the reviewed revision.");
@@ -43,5 +45,11 @@ for (const registryPath of ["Google\\Chrome\\NativeMessagingHosts", "Microsoft\\
 if (!uninstaller.includes("GetPathRoot") || !uninstaller.includes("-LiteralPath $InstallRoot -Recurse")) {
   throw new Error("MDBX2 Host uninstaller is missing its reviewed absolute-path deletion guard.");
 }
+for (const required of ['"history.list"', '"history.diff"', 'MAX_HISTORY_PAGE_SIZE', 'MAX_HISTORY_RESULT_BYTES', '"supportsHistoryDiff": true']) {
+  if (!runtime.includes(required)) throw new Error(`MDBX2 Host history boundary is missing ${required}.`);
+}
+for (const required of ["MDBX2_MAX_HISTORY_PAGE_SIZE", "MDBX2_MAX_HISTORY_RESULT_BYTES", "supportsHistoryDiff: true"]) {
+  if (!contract.includes(required)) throw new Error(`MDBX2 extension history contract is missing ${required}.`);
+}
 
-console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer and manifest template.`);
+console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, history boundary and manifest template.`);

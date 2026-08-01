@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import type { ProviderAccount } from "../core/model";
 import {
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  type Mdbx2CommitDiffItem,
+  type Mdbx2CommitHistoryItem,
   type Mdbx2HostStatus,
   type Mdbx2UnlockMethod,
   type Mdbx2VaultCredential,
@@ -10,6 +12,7 @@ import {
   type Mdbx2VaultRuntimeStatus,
   type Mdbx2VaultSource
 } from "../providers/mdbx2/native-contract";
+import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from "../providers/mdbx2/mdbx2-history";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
@@ -45,6 +48,13 @@ const pendingSource = ref<Mdbx2VaultSource | undefined>();
 const pendingOriginKey = ref("");
 const inspection = ref<Mdbx2VaultInspection | undefined>();
 const revealVaultPassword = ref(false);
+const historyItems = ref<Mdbx2CommitHistoryItem[]>([]);
+const historyCursor = ref<string | undefined>();
+const historyLoaded = ref(false);
+const historyBusy = ref<"" | "list" | "diff">("");
+const historyError = ref("");
+const selectedCommitId = ref("");
+const commitDiffItems = ref<Mdbx2CommitDiffItem[]>([]);
 
 const config = props.provider?.config || {};
 const form = reactive({
@@ -66,6 +76,7 @@ const vaultOpen = computed(() => runtimeStatus.value?.open === true);
 const remoteFieldsComplete = computed(() => Boolean(form.baseUrl.trim() && form.remotePath.trim()));
 const needsSecurityKey = computed(() => form.unlockMethod !== "password");
 const canPublish = computed(() => isExisting.value && vaultOpen.value && remoteFieldsComplete.value && !syncStatus.value?.initialized);
+const selectedHistoryItem = computed(() => historyItems.value.find((item) => item.commitId === selectedCommitId.value));
 const dialogTitle = computed(() => {
   if (isExisting.value) return `管理 ${activeProvider.value?.name || form.name}`;
   return form.mode === "remote" ? "从 WebDAV 加入 MDBX2" : "打开 MDBX2 保险库";
@@ -184,9 +195,9 @@ async function unlockExisting() {
     activeProvider.value = opened.account;
     runtimeStatus.value = { vaultHandle: opened.session.vaultHandle, open: true, available: true };
     emit("changed");
-    emit("notice", `${opened.account.name} 已解锁；可在密码源列表执行增量同步。`);
     clearSecrets();
-    emit("close");
+    await loadHistory(true);
+    emit("notice", `${opened.account.name} 已解锁；现在可以查看提交历史或执行增量同步。`);
   } catch (cause) {
     error.value = errorMessage(cause);
   } finally {
@@ -237,6 +248,48 @@ async function publishBootstrap() {
     error.value = errorMessage(cause);
   } finally {
     busy.value = "";
+  }
+}
+
+async function loadHistory(reset = false) {
+  if (!providerId.value || !vaultOpen.value || historyBusy.value) return;
+  historyBusy.value = "list";
+  historyError.value = "";
+  if (reset) {
+    historyItems.value = [];
+    historyCursor.value = undefined;
+    selectedCommitId.value = "";
+    commitDiffItems.value = [];
+  }
+  try {
+    const page = await vaultClient.listMdbx2History(providerId.value, {
+      pageSize: 20,
+      cursor: reset ? undefined : historyCursor.value
+    });
+    const merged = reset ? page.items : [...historyItems.value, ...page.items];
+    historyItems.value = [...new Map(merged.map((item) => [item.commitId, item])).values()];
+    historyCursor.value = page.nextCursor;
+    historyLoaded.value = true;
+  } catch (cause) {
+    historyError.value = historyErrorMessage(cause);
+  } finally {
+    historyBusy.value = "";
+  }
+}
+
+async function selectHistory(item: Mdbx2CommitHistoryItem) {
+  const presentation = presentMdbx2History(item);
+  selectedCommitId.value = selectedCommitId.value === item.commitId ? "" : item.commitId;
+  commitDiffItems.value = [];
+  historyError.value = "";
+  if (!selectedCommitId.value || !presentation.canInspect || !providerId.value) return;
+  historyBusy.value = "diff";
+  try {
+    commitDiffItems.value = (await vaultClient.listMdbx2CommitDiff(providerId.value, item.commitId)).items;
+  } catch (cause) {
+    historyError.value = historyErrorMessage(cause);
+  } finally {
+    historyBusy.value = "";
   }
 }
 
@@ -321,6 +374,7 @@ function closeDialog() {
   if (busy.value) return;
   void releasePendingSource();
   clearSecrets();
+  clearHistory();
   emit("close");
 }
 
@@ -329,6 +383,16 @@ function clearSecrets() {
   form.webDavPassword = "";
   securityKeyFile.value = null;
   revealVaultPassword.value = false;
+}
+
+function clearHistory() {
+  historyItems.value = [];
+  historyCursor.value = undefined;
+  historyLoaded.value = false;
+  historyBusy.value = "";
+  historyError.value = "";
+  selectedCommitId.value = "";
+  commitDiffItems.value = [];
 }
 
 function hostStateLabel(status: Mdbx2HostStatus | null): string {
@@ -361,6 +425,13 @@ function fileAsBase64(file: File): Promise<string> {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "MDBX2 操作失败。";
+}
+
+function historyErrorMessage(cause: unknown): string {
+  const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
+  if (code === "history-diff-too-large") return "这次提交包含的对象过多，当前版本无法一次展开全部详情；提交记录本身仍然有效。";
+  if (code === "history-result-too-large") return "历史记录内容超过单次安全上限，请缩小分页后重试。";
+  return errorMessage(cause);
 }
 </script>
 
@@ -425,6 +496,46 @@ function errorMessage(cause: unknown): string {
           <span><strong>{{ syncStatus?.blockedStreamCount || 0 }} 个受阻 stream</strong><small>{{ syncStatus?.remoteStreamCount || 0 }} 个远端 stream</small></span>
         </div>
 
+        <section v-if="isExisting && vaultOpen" class="mdbx2-history-panel field-wide" aria-labelledby="mdbx2-history-title">
+          <div class="mdbx2-history-header">
+            <div><strong id="mdbx2-history-title">提交历史</strong><small>只显示可读操作摘要；密码和原始 payload 不会进入此页面。</small></div>
+            <m3e-button variant="tonal" type="button" :disabled="Boolean(historyBusy)" @click="loadHistory(true)"><m3e-icon slot="icon" name="history"></m3e-icon>{{ historyLoaded ? '刷新' : '加载历史' }}</m3e-button>
+          </div>
+          <p v-if="historyError" class="form-error mdbx2-history-error" role="alert">{{ historyError }}</p>
+          <div v-if="historyBusy === 'list' && !historyItems.length" class="mdbx2-history-empty" role="status"><m3e-icon name="progress_activity" /><span>正在读取提交历史…</span></div>
+          <div v-else-if="historyLoaded && !historyItems.length" class="mdbx2-history-empty"><m3e-icon name="history_toggle_off" /><span>暂无可显示的提交记录。</span></div>
+          <div v-if="historyItems.length" class="mdbx2-history-list" aria-label="MDBX2 提交历史">
+            <button
+              v-for="item in historyItems"
+              :key="item.commitId"
+              type="button"
+              class="mdbx2-history-row"
+              :class="{ selected: selectedCommitId === item.commitId }"
+              :aria-expanded="selectedCommitId === item.commitId"
+              :disabled="Boolean(historyBusy)"
+              @click="selectHistory(item)"
+            >
+              <span class="mdbx2-history-icon"><m3e-icon :name="presentMdbx2History(item).icon" /></span>
+              <span class="mdbx2-history-copy"><strong>{{ presentMdbx2History(item).title }}</strong><small>{{ presentMdbx2History(item).supportingText }}</small></span>
+              <time :datetime="item.createdAt">{{ formatMdbx2HistoryTime(item.createdAt) }}</time>
+              <m3e-icon :name="selectedCommitId === item.commitId ? 'expand_less' : 'chevron_right'" />
+            </button>
+          </div>
+          <div v-if="selectedHistoryItem" class="mdbx2-history-detail" aria-live="polite">
+            <div class="mdbx2-history-detail-heading"><strong>{{ presentMdbx2History(selectedHistoryItem).title }}</strong><small>{{ presentMdbx2History(selectedHistoryItem).supportingText }}</small></div>
+            <div v-if="historyBusy === 'diff'" class="mdbx2-history-empty"><m3e-icon name="progress_activity" /><span>正在读取变更详情…</span></div>
+            <div v-else-if="commitDiffItems.length" class="mdbx2-diff-list">
+              <div v-for="diff in commitDiffItems" :key="`${diff.objectType}:${diff.objectId}`" class="mdbx2-diff-row">
+                <span class="mdbx2-history-icon"><m3e-icon :name="presentMdbx2Diff(diff).icon" /></span>
+                <span><strong>{{ presentMdbx2Diff(diff).title }} · {{ presentMdbx2Diff(diff).displayTitle }}</strong><small>{{ presentMdbx2Diff(diff).supportingText }}</small></span>
+              </div>
+            </div>
+            <p v-else-if="!historyBusy && presentMdbx2History(selectedHistoryItem).canInspect" class="mdbx2-history-empty">此提交没有可展开的普通条目差异。</p>
+            <p v-else-if="!presentMdbx2History(selectedHistoryItem).canInspect" class="mdbx2-history-empty">这是数据库级系统记录，不包含普通条目差异。</p>
+          </div>
+          <div v-if="historyCursor" class="mdbx2-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(historyBusy)" @click="loadHistory(false)">加载更早记录</m3e-button></div>
+        </section>
+
         <div class="provider-boundaries field-wide" aria-label="MDBX2 浏览器能力边界">
           <div class="boundary-row"><m3e-icon name="database" /><span>单个 .mdbx 用于首次加入和完整备份；多设备日常修改通过 Commit DAG、state delta、Tombstone 和 Blob 增量交换。</span></div>
           <div class="boundary-row"><m3e-icon name="encrypted" /><span>Native Host 负责解锁、迁移、健康检查和核心写入；管理页只接收状态摘要与受限句柄。</span></div>
@@ -472,6 +583,33 @@ function errorMessage(cause: unknown): string {
 .mdbx2-runtime-summary small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-progress { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--app-muted); }
 .mdbx2-progress progress { width: min(220px, 40%); accent-color: var(--app-primary); }
+.mdbx2-history-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-history-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.mdbx2-history-header > div,
+.mdbx2-history-copy,
+.mdbx2-history-detail-heading,
+.mdbx2-diff-row > span:last-child { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-history-header small,
+.mdbx2-history-copy small,
+.mdbx2-history-detail small,
+.mdbx2-diff-row small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-history-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-history-row { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-text); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.mdbx2-history-row:last-child { border-bottom: 0; }
+.mdbx2-history-row:hover,
+.mdbx2-history-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-history-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-history-row:disabled { cursor: progress; opacity: .72; }
+.mdbx2-history-row time { color: var(--app-muted); font-size: .78rem; white-space: nowrap; }
+.mdbx2-history-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
+.mdbx2-history-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-history-detail { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 12px 16px; display: grid; gap: 12px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-diff-list { display: grid; gap: 8px; }
+.mdbx2-diff-row { min-height: 56px; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 12px; }
+.mdbx2-history-empty { min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
+.mdbx2-history-empty m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-history-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
+.mdbx2-history-error { margin: 0 16px 12px; }
 code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 @media (max-width: 700px) {
   .mdbx2-host-row { grid-template-columns: 24px minmax(0, 1fr); }
@@ -483,5 +621,8 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-runtime-summary span + span { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-progress { align-items: stretch; flex-direction: column; }
   .mdbx2-progress progress { width: 100%; }
+  .mdbx2-history-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-history-row { grid-template-columns: 32px minmax(0, 1fr) 24px; }
+  .mdbx2-history-row time { grid-column: 2; white-space: normal; }
 }
 </style>

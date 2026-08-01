@@ -11,6 +11,9 @@ export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
 export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
 export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
 export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
+export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
+export const MDBX2_MAX_HISTORY_DIFF_ITEMS = 500;
+export const MDBX2_MAX_HISTORY_RESULT_BYTES = 850 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
 export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
 export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
@@ -33,6 +36,8 @@ export type Mdbx2NativeMethod =
   | "object.batch"
   | "object.operation.status"
   | "object.operation.resolve"
+  | "history.list"
+  | "history.diff"
   | "transfer.read"
   | "transfer.release"
   | "sync.state.register"
@@ -342,6 +347,53 @@ export type Mdbx2ObjectOperationResolution =
   | { known: true; committed: false; operationId: string }
   | { known: true; committed: true; operationId: string; commitId: string };
 
+export interface Mdbx2CommitChangeSummary {
+  objectType: string;
+  objectId: string;
+  action: string;
+  fields: string[];
+}
+
+export interface Mdbx2CommitHistoryItem {
+  commitId: string;
+  deviceId: string;
+  localSeq: number;
+  commitKind: string;
+  changeScope: string;
+  createdAt: string;
+  operationId?: string;
+  operationKind?: string;
+  branchName?: string;
+  message?: string;
+  changes: Mdbx2CommitChangeSummary[];
+  parentIds: string[];
+  legacy: boolean;
+}
+
+export interface Mdbx2CommitHistoryPage {
+  items: Mdbx2CommitHistoryItem[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2CommitDiffItem {
+  commitId: string;
+  objectType: string;
+  objectId: string;
+  collectionId?: string;
+  previousTitle?: string;
+  currentTitle?: string;
+  previousDeleted?: boolean;
+  currentDeleted: boolean;
+  changedFields: string[];
+  payloadChanged: boolean;
+  contentType?: string;
+  createdAt: string;
+}
+
+export interface Mdbx2CommitDiffResult {
+  items: Mdbx2CommitDiffItem[];
+}
+
 export interface Mdbx2NativeRequest<M extends Mdbx2NativeMethod = Mdbx2NativeMethod> {
   protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
   requestId: string;
@@ -374,6 +426,9 @@ export interface Mdbx2HostCapabilities {
   maxSummaryPageSize: typeof MDBX2_MAX_SUMMARY_PAGE_SIZE;
   maxObjectBatchMutations: typeof MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
   maxObjectBatchIntentBytes: typeof MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
+  maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
+  maxHistoryResultBytes: typeof MDBX2_MAX_HISTORY_RESULT_BYTES;
+  supportsHistoryDiff: true;
   supportsDurableCloudSync: true;
   maxSyncSegmentPageSize: typeof MDBX2_SYNC_SEGMENT_PAGE_SIZE;
   maxBlobReferencePageSize: typeof MDBX2_BLOB_REFERENCE_PAGE_SIZE;
@@ -445,6 +500,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxSummaryPageSize !== MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatible("Native Host 摘要分页限制与插件不一致。");
   if (value.maxObjectBatchMutations !== MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw incompatible("Native Host Object 批量数量限制与插件不一致。");
   if (value.maxObjectBatchIntentBytes !== MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw incompatible("Native Host Object 批量大小限制与插件不一致。");
+  if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
+  if (value.maxHistoryResultBytes !== MDBX2_MAX_HISTORY_RESULT_BYTES) throw incompatible("Native Host 历史响应限制与插件不一致。");
+  if (value.supportsHistoryDiff !== true) throw incompatible("Native Host 未启用 MDBX2 历史差异能力。");
   if (value.supportsDurableCloudSync !== true) throw incompatible("Native Host 未启用 MDBX2 持久增量同步。");
   if (value.maxSyncSegmentPageSize !== MDBX2_SYNC_SEGMENT_PAGE_SIZE) throw incompatible("Native Host 增量段分页限制与插件不一致。");
   if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
@@ -469,6 +527,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
     maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
     maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
+    maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
+    maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
+    supportsHistoryDiff: true,
     supportsDurableCloudSync: true,
     maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
     maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,

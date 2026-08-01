@@ -596,6 +596,16 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.deleteObject(vaultHandle, request.operationId, request.logicalObjectId);
     }
+    case "MDBX2_HISTORY_LIST": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listCommitHistory(vaultHandle, request);
+    }
+    case "MDBX2_HISTORY_DIFF": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.listCommitDiff(vaultHandle, request.commitId);
+    }
     case "KEEPASS_OPEN": {
       assertExtensionPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
