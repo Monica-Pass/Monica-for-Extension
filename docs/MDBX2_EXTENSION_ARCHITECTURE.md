@@ -28,7 +28,7 @@ Native Messaging RPC
 Monica MDBX2 Host
   ├─ pinned mdbx-ffi core
   ├─ app-private working copies
-  ├─ durable checkpoints and transfer state
+  ├─ durable checkpoints, transfer state and Object operation receipts
   └─ encrypted Blob store
 ```
 
@@ -44,6 +44,7 @@ The Host owns every MDBX2 invariant:
 - bounded Collection, Object, attachment, conflict, history and snapshot summaries;
 - Tiga authorization and explicit secret disclosure;
 - typed multi-object write operations;
+- bounded batch mutation receipts and unknown-result recovery;
 - Commit2, object versions, tombstones, heads, snapshots and conflicts;
 - portable bootstrap creation;
 - authenticated incremental segment export, inspection and apply;
@@ -103,11 +104,13 @@ Monica Extension/MDBX2/
   device.json
   vaults/<opaque-vault-handle>/vault.mdbx
   vaults/<opaque-vault-handle>/blobs/<aa>/<bb>/<sha256>
-  state/<opaque-vault-handle>.json
   transfers/<opaque-transfer-id>.part
+  transfers/<opaque-transfer-id>.state.<slot>.json
+  sync/states/<opaque-state-handle>.state.<slot>.json
+  operations/object-operations.state.<slot>.json
 ```
 
-User-controlled titles, domains and account names never appear in file names. Local state files use no decrypted payload. Windows ACLs and user scope provide the outer filesystem boundary; MDBX2 remains encrypted at rest.
+User-controlled titles, domains and account names never appear in file names. Operation receipts contain random IDs, bounded hashes, changed indexes and Commit IDs, never decrypted Object payloads. Local sync state also contains no decrypted payload. Windows ACLs and user scope provide the outer filesystem boundary; MDBX2 remains encrypted at rest.
 
 ## WebDAV rules
 

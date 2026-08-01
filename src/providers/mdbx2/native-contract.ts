@@ -9,6 +9,8 @@ export const MDBX2_MAX_INBOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MDBX2_MAX_ACTIVE_TRANSFERS = 4;
 export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
 export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
+export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
+export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
 export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
 export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
@@ -28,6 +30,9 @@ export type Mdbx2NativeMethod =
   | "object.reveal"
   | "object.upsert"
   | "object.delete"
+  | "object.batch"
+  | "object.operation.status"
+  | "object.operation.resolve"
   | "transfer.read"
   | "transfer.release"
   | "sync.state.register"
@@ -306,6 +311,37 @@ export interface Mdbx2ObjectDeleteResult {
   objectId: string;
 }
 
+export type Mdbx2ObjectMutationInput =
+  | ({ kind: "upsert" } & Mdbx2ObjectUpsertInput)
+  | { kind: "delete"; logicalObjectId: string };
+
+export interface Mdbx2ObjectMutationResult {
+  kind: "upsert" | "delete";
+  changed: boolean;
+  logicalObjectId: string;
+  objectId: string;
+  collectionId?: string;
+  objectTypeId?: string;
+}
+
+export interface Mdbx2ObjectBatchResult {
+  changed: boolean;
+  operationId: string;
+  commitId?: string;
+  alreadyCommitted?: boolean;
+  items: Mdbx2ObjectMutationResult[];
+}
+
+export type Mdbx2ObjectOperationStatus =
+  | { known: false; committed: false }
+  | { known: true; committed: false }
+  | { known: true; committed: true; commitId: string };
+
+export type Mdbx2ObjectOperationResolution =
+  | { known: false; committed: false }
+  | { known: true; committed: false; operationId: string }
+  | { known: true; committed: true; operationId: string; commitId: string };
+
 export interface Mdbx2NativeRequest<M extends Mdbx2NativeMethod = Mdbx2NativeMethod> {
   protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
   requestId: string;
@@ -336,6 +372,8 @@ export interface Mdbx2HostCapabilities {
   maxActiveTransfers: typeof MDBX2_MAX_ACTIVE_TRANSFERS;
   maxObjectPayloadBytes: typeof MDBX2_MAX_OBJECT_PAYLOAD_BYTES;
   maxSummaryPageSize: typeof MDBX2_MAX_SUMMARY_PAGE_SIZE;
+  maxObjectBatchMutations: typeof MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
+  maxObjectBatchIntentBytes: typeof MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
   supportsDurableCloudSync: true;
   maxSyncSegmentPageSize: typeof MDBX2_SYNC_SEGMENT_PAGE_SIZE;
   maxBlobReferencePageSize: typeof MDBX2_BLOB_REFERENCE_PAGE_SIZE;
@@ -405,6 +443,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxActiveTransfers !== MDBX2_MAX_ACTIVE_TRANSFERS) throw incompatible("Native Host 并发传输限制与插件不一致。");
   if (value.maxObjectPayloadBytes !== MDBX2_MAX_OBJECT_PAYLOAD_BYTES) throw incompatible("Native Host Object 载荷限制与插件不一致。");
   if (value.maxSummaryPageSize !== MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatible("Native Host 摘要分页限制与插件不一致。");
+  if (value.maxObjectBatchMutations !== MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw incompatible("Native Host Object 批量数量限制与插件不一致。");
+  if (value.maxObjectBatchIntentBytes !== MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw incompatible("Native Host Object 批量大小限制与插件不一致。");
   if (value.supportsDurableCloudSync !== true) throw incompatible("Native Host 未启用 MDBX2 持久增量同步。");
   if (value.maxSyncSegmentPageSize !== MDBX2_SYNC_SEGMENT_PAGE_SIZE) throw incompatible("Native Host 增量段分页限制与插件不一致。");
   if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
@@ -427,6 +467,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
     maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
     maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+    maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
+    maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
     supportsDurableCloudSync: true,
     maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
     maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,

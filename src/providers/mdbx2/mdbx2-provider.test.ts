@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createLoginItem, type ProviderAccount } from "../../core/model";
 import { Mdbx2Provider, type Mdbx2CloudSynchronizer, type Mdbx2RuntimeClient } from "./mdbx2-provider";
-import type { Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult } from "./native-contract";
+import type { Mdbx2ObjectMutationInput, Mdbx2ObjectOperationResolution, Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult } from "./native-contract";
 
 const HANDLE = "11111111-1111-4111-8111-111111111111";
 const COLLECTION = "22222222-2222-4222-8222-222222222222";
@@ -11,7 +11,11 @@ const CREATED_OBJECT = "55555555-5555-4555-8555-555555555555";
 
 class FakeRuntime implements Mdbx2RuntimeClient {
   readonly writes: Mdbx2ObjectUpsertInput[] = [];
+  readonly batchOperationIds: string[] = [];
   head = "commit-1";
+  password = "secret";
+  failAfterWrite = false;
+  lastOperationScope?: string;
 
   async vaultStatus() { return { vaultHandle: HANDLE, open: true, available: true }; }
   async listCollections(_handle: string, input: { deleted?: boolean } = {}) {
@@ -26,13 +30,42 @@ class FakeRuntime implements Mdbx2RuntimeClient {
   }
   async revealObject(_handle: string, objectId: string): Promise<Mdbx2ObjectRecord> {
     if (objectId === FUTURE_OBJECT) return { objectId, collectionId: COLLECTION, objectTypeId: "future/v1", title: "Future", payloadJson: JSON.stringify({ monica_entry_id: "future:1", future: true }), payloadSchemaVersion: 1, deleted: false };
-    return { objectId, collectionId: COLLECTION, objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:42", website: "https://example.test", username: "demo", password_plain: "secret", future_field: 7 }), payloadSchemaVersion: 1, deleted: false };
+    return { objectId, collectionId: COLLECTION, objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:42", website: "https://example.test", username: "demo", password_plain: this.password, future_field: 7 }), payloadSchemaVersion: 1, deleted: false };
   }
   async upsertObject(_handle: string, _operationId: string, input: Mdbx2ObjectUpsertInput): Promise<Mdbx2ObjectWriteResult> {
     this.writes.push(input);
+    this.head = "commit-written";
+    this.password = JSON.parse(input.payloadJson).password_plain || this.password;
+    if (this.failAfterWrite) throw new Error("Native Host response was lost");
     return { commitId: "commit-written", alreadyCommitted: false, logicalObjectId: input.logicalObjectId, objectId: input.logicalObjectId === "password:42" ? LOGIN_OBJECT : CREATED_OBJECT, collectionId: input.collectionId || COLLECTION, objectTypeId: input.objectTypeId };
   }
   async deleteObject() { return { changed: true, commitId: "commit-delete", alreadyCommitted: false, logicalObjectId: "password:42", objectId: LOGIN_OBJECT }; }
+  async mutateObjects(_handle: string, operationScope: string, mutations: Mdbx2ObjectMutationInput[]) {
+    this.lastOperationScope = operationScope;
+    if (mutations.length > 1) this.batchOperationIds.push(operationScope);
+    const items = mutations.map((mutation) => {
+      if (mutation.kind === "delete") return { kind: "delete" as const, changed: true, logicalObjectId: mutation.logicalObjectId, objectId: LOGIN_OBJECT };
+      this.writes.push(mutation);
+      this.password = JSON.parse(mutation.payloadJson).password_plain || this.password;
+      return {
+        kind: "upsert" as const,
+        changed: true,
+        logicalObjectId: mutation.logicalObjectId,
+        objectId: mutation.logicalObjectId === "password:42" ? LOGIN_OBJECT : CREATED_OBJECT,
+        collectionId: mutation.collectionId || COLLECTION,
+        objectTypeId: mutation.objectTypeId
+      };
+    });
+    const commitId = mutations.length > 1 ? "commit-batch" : "commit-written";
+    this.head = commitId;
+    if (this.failAfterWrite) throw new Error("Native Host response was lost");
+    return { changed: true, operationId: HANDLE, commitId, alreadyCommitted: false, items };
+  }
+  async resolveObjectOperation(_handle: string, operationScope: string): Promise<Mdbx2ObjectOperationResolution> {
+    return operationScope === this.lastOperationScope && (this.head === "commit-written" || this.head === "commit-batch")
+      ? { known: true, committed: true, operationId: HANDLE, commitId: this.head }
+      : { known: false, committed: false };
+  }
 }
 
 const account: ProviderAccount = { id: "mdbx-provider", kind: "mdbx2", name: "MDBX2", enabled: true, isDefaultSaveTarget: false, config: { vaultHandle: HANDLE } };
@@ -92,6 +125,44 @@ describe("MDBX2 provider", () => {
     expect(result.items.find((item) => item.id === local.id)?.providerRefs[0]).toMatchObject({ remoteId: CREATED_OBJECT, revision: "commit-written" });
   });
 
+  it("commits multiple browser changes as one bounded MDBX2 operation", async () => {
+    const runtime = new FakeRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const imported = await provider.sync(account, { now: "2026-08-02T00:01:00Z", localItems: [] });
+    const edited = { ...imported.items[0], password: "batch-changed" } as typeof imported.items[0];
+    const created = createLoginItem({
+      title: "Second",
+      username: "second",
+      password: "secret-2",
+      uris: ["https://second.example"],
+      providerRefs: [{ providerId: account.id }]
+    });
+
+    const result = await provider.sync(account, { now: "2026-08-02T00:02:00Z", localItems: [edited, created] });
+
+    expect(runtime.batchOperationIds).toHaveLength(1);
+    expect(runtime.writes).toHaveLength(2);
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.items.filter((item) => referenceForTest(item)?.revision === "commit-batch")).toHaveLength(2);
+  });
+
+  it("recovers a committed Object operation after the Native Host response is lost", async () => {
+    const runtime = new FakeRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const imported = await provider.sync(account, { now: "2026-08-02T00:01:00Z", localItems: [] });
+    const edited = { ...imported.items[0], password: "durable-change" } as typeof imported.items[0];
+    runtime.failAfterWrite = true;
+
+    await expect(provider.sync(account, { now: "2026-08-02T00:02:00Z", localItems: [edited] })).rejects.toThrow("response was lost");
+    runtime.failAfterWrite = false;
+    const recovered = await provider.sync(account, { now: "2026-08-02T00:03:00Z", localItems: [edited] });
+
+    expect(runtime.writes).toHaveLength(1);
+    expect(recovered.conflicts).toHaveLength(0);
+    expect(recovered.items[0]).toMatchObject({ password: "durable-change" });
+    expect(recovered.items[0].providerRefs[0]).toMatchObject({ remoteId: LOGIN_OBJECT, revision: "commit-written" });
+  });
+
   it("stops before opening the Native Host when the provider sync was cancelled", async () => {
     const runtime = new FakeRuntime();
     const provider = new Mdbx2Provider(runtime);
@@ -146,3 +217,7 @@ describe("MDBX2 provider", () => {
     ]));
   });
 });
+
+function referenceForTest(item: { providerRefs: Array<{ providerId: string; revision?: string }> }) {
+  return item.providerRefs.find((reference) => reference.providerId === account.id);
+}

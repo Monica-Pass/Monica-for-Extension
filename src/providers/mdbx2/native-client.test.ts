@@ -7,6 +7,8 @@ import {
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
+  MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   MDBX2_MAX_REMOTE_BLOB_BYTES,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
@@ -65,6 +67,8 @@ const HELLO = {
   maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
   maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+  maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
+  maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   supportsDurableCloudSync: true,
   maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,
@@ -156,7 +160,19 @@ describe("MDBX2 Native Messaging client", () => {
         "object.list": { items: [{ objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadSchemaVersion: 1, headCommitId: "commit-2", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
         "object.reveal": { objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:1" }), payloadSchemaVersion: 1, deleted: false },
         "object.upsert": { commitId: "commit-3", alreadyCommitted: false, logicalObjectId: "password:1", objectId: handle, collectionId: handle, objectTypeId: "login" },
-        "object.delete": { changed: true, commitId: "commit-4", alreadyCommitted: false, logicalObjectId: "password:1", objectId: handle }
+        "object.delete": { changed: true, commitId: "commit-4", alreadyCommitted: false, logicalObjectId: "password:1", objectId: handle },
+        "object.batch": {
+          changed: true,
+          operationId: handle,
+          commitId: "commit-5",
+          alreadyCommitted: false,
+          items: [
+            { kind: "upsert", changed: true, logicalObjectId: "password:1", objectId: handle, collectionId: handle, objectTypeId: "login" },
+            { kind: "delete", changed: true, logicalObjectId: "password:2", objectId: handle, collectionId: null, objectTypeId: null }
+          ]
+        },
+        "object.operation.status": { known: true, committed: true, commitId: "commit-5" },
+        "object.operation.resolve": { known: true, committed: true, operationId: handle, commitId: "commit-5" }
       }[request.method] as Record<string, unknown>;
       runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
     };
@@ -173,6 +189,12 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.revealObject(handle, handle)).resolves.toMatchObject({ payloadSchemaVersion: 1, payloadJson: expect.stringContaining("password:1") });
     await expect(client.upsertObject(handle, handle, { logicalObjectId: "password:1", objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:1" }) })).resolves.toMatchObject({ commitId: "commit-3", objectId: handle });
     await expect(client.deleteObject(handle, handle, "password:1")).resolves.toMatchObject({ changed: true, commitId: "commit-4" });
+    await expect(client.mutateObjects(handle, "ab".repeat(32), [
+      { kind: "upsert", logicalObjectId: "password:1", objectTypeId: "login", title: "Example", payloadJson: JSON.stringify({ kind: "password", monica_entry_id: "password:1" }) },
+      { kind: "delete", logicalObjectId: "password:2" }
+    ])).resolves.toMatchObject({ changed: true, commitId: "commit-5", items: [{ kind: "upsert" }, { kind: "delete" }] });
+    await expect(client.objectOperationStatus(handle, handle)).resolves.toEqual({ known: true, committed: true, commitId: "commit-5" });
+    await expect(client.resolveObjectOperation(handle, "ab".repeat(32))).resolves.toEqual({ known: true, committed: true, operationId: handle, commitId: "commit-5" });
     await expect(client.lockVault(handle)).resolves.toBe(true);
     expect((runtime.port.messages[4] as { params: unknown }).params).toEqual({
       source: { kind: "file", handle },

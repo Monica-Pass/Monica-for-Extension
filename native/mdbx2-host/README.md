@@ -33,6 +33,9 @@ object.list
 object.reveal
 object.upsert
 object.delete
+object.batch
+object.operation.status
+object.operation.resolve
 transfer.read
 transfer.release
 sync.state.register
@@ -63,6 +66,8 @@ Inbound transfer state uses two alternating durable metadata slots. Chunks requi
 `vault.inspect` calls the core's read-only migration inspection and accepts exact `MDBX-2` only. `MDBX-1` and `MDBX-1-DRAFT` are rejected before `open_vault*` can invoke automatic migration. Older MDBX2 schemas receive a local portable backup before the pinned core upgrades the app-private working copy.
 
 Collection and Object summaries are paged at no more than 200 records. Object disclosure is capped at 512 KiB and remains subject to the core Tiga policy. Writes use only the pinned core's typed `MdbxWriteCommand` operations and one idempotent operation UUID; no SQL surface is exported. Monica logical IDs are stored in `payload.monica_entry_id`, while physical IDs use the same `UUID.nameUUIDFromBytes` algorithm as Android.
+
+Provider reconciliation groups up to 50 Object mutations into one bounded user-level operation instead of creating one Commit per item. Multi-item intent is capped at 384 KiB by the Native Messaging boundary; a larger single Object retains the existing 512 KiB payload limit. The Host generates a random operation UUID, stores only bounded local receipt hashes and Commit metadata in alternating durable slots, and can resolve a lost Service Worker response after restart without placing secret-derived deterministic IDs into the synchronized Commit DAG. Reusing one operation ID or operation scope with different semantic content fails closed.
 
 Synchronization state uses two alternating durable slots. A portable `.mdbx` file initializes a device; normal multi-device operation exchanges authenticated bundle v8 segments, state deltas and encrypted external Blobs. Export checkpoints advance only after immutable publication, and remote stream cursors advance only after atomic apply and Blob completion.
 

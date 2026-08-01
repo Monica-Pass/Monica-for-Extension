@@ -1,19 +1,24 @@
+import { sha256 } from "hash-wasm";
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
 import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
 import type { Mdbx2CloudSyncInput, Mdbx2CloudSyncReport } from "./mdbx2-sync-coordinator";
 import type {
+  Mdbx2ObjectBatchResult,
   Mdbx2CollectionSummary,
   Mdbx2CollectionSummaryPage,
   Mdbx2ObjectDeleteResult,
   Mdbx2ObjectRecord,
+  Mdbx2ObjectMutationInput,
+  Mdbx2ObjectOperationResolution,
   Mdbx2ObjectSummary,
   Mdbx2ObjectSummaryPage,
   Mdbx2ObjectUpsertInput,
   Mdbx2ObjectWriteResult,
   Mdbx2VaultRuntimeStatus
 } from "./native-contract";
+import { MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES, MDBX2_MAX_OBJECT_BATCH_MUTATIONS } from "./native-contract";
 
 const MAX_SYNC_OBJECTS = 50_000;
 const MAX_SYNC_COLLECTIONS = 10_000;
@@ -28,6 +33,8 @@ export interface Mdbx2RuntimeClient {
   revealObject(vaultHandle: string, objectId: string): Promise<Mdbx2ObjectRecord>;
   upsertObject(vaultHandle: string, operationId: string, input: Mdbx2ObjectUpsertInput): Promise<Mdbx2ObjectWriteResult>;
   deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string): Promise<Mdbx2ObjectDeleteResult>;
+  mutateObjects(vaultHandle: string, operationScope: string, mutations: Mdbx2ObjectMutationInput[]): Promise<Mdbx2ObjectBatchResult>;
+  resolveObjectOperation(vaultHandle: string, operationScope: string): Promise<Mdbx2ObjectOperationResolution>;
 }
 
 export interface Mdbx2CloudSynchronizer {
@@ -56,6 +63,26 @@ interface RemoteSnapshot {
   sourceRecords: ProviderSourceRecord[];
   payloads: Map<string, Record<string, unknown>>;
   originals: Map<string, VaultItem>;
+}
+
+type PendingMutation = PendingUpsertMutation | PendingDeleteMutation;
+
+interface PendingMutationBase {
+  mutation: Mdbx2ObjectMutationInput;
+  local: VaultItem;
+  baseRevision: string;
+  remoteHeadCommitId?: string;
+}
+
+interface PendingUpsertMutation extends PendingMutationBase {
+  mutation: { kind: "upsert" } & Mdbx2ObjectUpsertInput;
+  expectedRemoteId?: string;
+  remoteObject?: RemoteObject;
+}
+
+interface PendingDeleteMutation extends PendingMutationBase {
+  mutation: { kind: "delete"; logicalObjectId: string };
+  expectedRemoteId?: string;
 }
 
 export class Mdbx2Provider implements ProviderAdapter {
@@ -95,20 +122,25 @@ export class Mdbx2Provider implements ProviderAdapter {
     const scoped = context.localItems.filter((item) => referenceOf(item, account.id));
     const unrelated = context.localItems.filter((item) => !referenceOf(item, account.id));
     const localByRemote = new Map<string, VaultItem>();
-    const creations: VaultItem[] = [];
+    const localByLogical = new Map<string, VaultItem>();
     for (const item of scoped) {
-      const remoteId = referenceOf(item, account.id)?.remoteId;
+      const reference = referenceOf(item, account.id)!;
+      const remoteId = reference.remoteId;
       if (remoteId) localByRemote.set(remoteId, item);
-      else if (!item.deletedAt) creations.push(item);
+      else if (!item.deletedAt) localByLogical.set(mdbx2LogicalObjectId(item), item);
     }
 
     const items = [...unrelated];
     const conflicts: ProviderSyncResult["conflicts"] = [];
     const handled = new Set<string>();
+    const matchedLocalIds = new Set<string>();
+    const cleanMutations: PendingMutation[] = [];
+    const recoveryMutations: PendingMutation[] = [];
     for (const [remoteId, remoteObject] of remote.active) {
       context.signal?.throwIfAborted();
       handled.add(remoteId);
-      const local = localByRemote.get(remoteId);
+      const local = localByRemote.get(remoteId) || localByLogical.get(remoteObject.logicalObjectId);
+      if (local) matchedLocalIds.add(local.id);
       if (!remoteObject.item) {
         if (local) items.push(local);
         continue;
@@ -118,20 +150,35 @@ export class Mdbx2Provider implements ProviderAdapter {
         continue;
       }
       const reference = referenceOf(local, account.id)!;
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
-      const remoteChanged = Boolean(reference.revision) && reference.revision !== remoteObject.summary.headCommitId;
+      const queuedCreation = !reference.remoteId;
+      const localChanged = queuedCreation || Boolean(reference.etag) && fingerprint(local) !== reference.etag;
+      const remoteChanged = queuedCreation || Boolean(reference.revision) && reference.revision !== remoteObject.summary.headCommitId;
       if (local.deletedAt) {
-        if (remoteChanged) {
-          conflicts.push({ itemId: local.id, reason: "MDBX2 Object 在浏览器删除后又被其他设备修改。", local, remote: remoteObject.item });
-          items.push(local);
-        } else {
-          await this.runtime.deleteObject(vaultHandleOf(account), crypto.randomUUID(), remoteObject.logicalObjectId);
-        }
+        const pending: PendingDeleteMutation = {
+          mutation: { kind: "delete", logicalObjectId: remoteObject.logicalObjectId },
+          local,
+          baseRevision: reference.revision || "",
+          remoteHeadCommitId: remoteObject.summary.headCommitId,
+          expectedRemoteId: remoteId
+        };
+        (remoteChanged ? recoveryMutations : cleanMutations).push(pending);
         continue;
       }
       if (localChanged && remoteChanged) {
-        conflicts.push({ itemId: local.id, reason: "浏览器与 MDBX2 远端在同一基线后都修改了该 Object。", local, remote: remoteObject.item });
-        items.push(local);
+        const encoded = encodeMdbx2Object(local, remoteObject.payload, remoteObject.item);
+        if (!encoded) {
+          conflicts.push({ itemId: local.id, reason: "此 Monica 项目类型暂时无法写入 MDBX2。", local, remote: remoteObject.item });
+          items.push(local);
+          continue;
+        }
+        recoveryMutations.push({
+          mutation: { kind: "upsert", ...encoded },
+          local,
+          baseRevision: reference.revision || "",
+          remoteHeadCommitId: remoteObject.summary.headCommitId,
+          expectedRemoteId: remoteId,
+          remoteObject
+        });
         continue;
       }
       if (localChanged) {
@@ -141,12 +188,13 @@ export class Mdbx2Provider implements ProviderAdapter {
           items.push(local);
           continue;
         }
-        const written = await this.runtime.upsertObject(vaultHandleOf(account), crypto.randomUUID(), encoded);
-        if (written.objectId !== remoteId) throw new Error("MDBX2 物理 Object ID 与 Android 兼容算法不一致。");
-        remote.payloads.set(remoteId, JSON.parse(encoded.payloadJson) as Record<string, unknown>);
-        const finalized = finalizeWritten(local, account.id, written);
-        remote.originals.set(remoteId, finalized);
-        items.push(finalized);
+        cleanMutations.push({
+          mutation: { kind: "upsert", ...encoded },
+          local,
+          baseRevision: reference.revision || "",
+          expectedRemoteId: remoteId,
+          remoteObject
+        });
         continue;
       }
       items.push(finalizeRemote(remoteObject.item, local, account.id, remoteObject.summary));
@@ -157,9 +205,18 @@ export class Mdbx2Provider implements ProviderAdapter {
       handled.add(remoteId);
       const local = localByRemote.get(remoteId);
       if (!local) continue;
+      matchedLocalIds.add(local.id);
       const reference = referenceOf(local, account.id)!;
       const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
-      if (localChanged) {
+      if (local.deletedAt && reference.revision && reference.revision !== summary.headCommitId) {
+        recoveryMutations.push({
+          mutation: { kind: "delete", logicalObjectId: mdbx2LogicalObjectId(local) },
+          local,
+          baseRevision: reference.revision,
+          remoteHeadCommitId: summary.headCommitId,
+          expectedRemoteId: remoteId
+        });
+      } else if (localChanged) {
         conflicts.push({ itemId: local.id, reason: "MDBX2 Object 已由其他设备删除，但浏览器仍有未同步修改。", local });
         items.push(local);
       } else if (reference.revision && reference.revision === summary.headCommitId) {
@@ -178,20 +235,25 @@ export class Mdbx2Provider implements ProviderAdapter {
       }
     }
 
-    for (const item of creations) {
+    for (const item of scoped) {
       context.signal?.throwIfAborted();
+      const reference = referenceOf(item, account.id)!;
+      if (reference.remoteId || item.deletedAt || matchedLocalIds.has(item.id)) continue;
       const encoded = encodeMdbx2Object(item);
       if (!encoded) {
         conflicts.push({ itemId: item.id, reason: "此 Monica 项目类型暂时无法写入 MDBX2。", local: item });
         items.push(item);
         continue;
       }
-      const written = await this.runtime.upsertObject(vaultHandleOf(account), crypto.randomUUID(), encoded);
-      remote.payloads.set(written.objectId, JSON.parse(encoded.payloadJson) as Record<string, unknown>);
-      const finalized = finalizeWritten(item, account.id, written);
-      remote.originals.set(written.objectId, finalized);
-      items.push(finalized);
+      cleanMutations.push({
+        mutation: { kind: "upsert", ...encoded },
+        local: item,
+        baseRevision: ""
+      });
     }
+
+    await this.recoverObjectMutations(account, recoveryMutations, remote, items, conflicts, context.signal);
+    await this.applyObjectMutations(account, cleanMutations, remote, items, context.signal);
 
     return {
       items,
@@ -202,6 +264,102 @@ export class Mdbx2Provider implements ProviderAdapter {
       warnings: remote.warnings,
       sourceRecords: remote.sourceRecords
     };
+  }
+
+  private async recoverObjectMutations(
+    account: ProviderAccount,
+    pending: PendingMutation[],
+    remote: RemoteSnapshot,
+    items: VaultItem[],
+    conflicts: ProviderSyncResult["conflicts"],
+    signal?: AbortSignal
+  ): Promise<void> {
+    for (const batch of batchPendingMutations(pending)) {
+      signal?.throwIfAborted();
+      const operationScope = await pendingOperationScope(vaultHandleOf(account), batch);
+      const status = await this.runtime.resolveObjectOperation(vaultHandleOf(account), operationScope);
+      if (status.known && status.committed && batch.every((entry) => entry.remoteHeadCommitId === status.commitId)) {
+        for (const entry of batch) {
+          if (entry.mutation.kind === "delete") {
+            if (entry.expectedRemoteId) {
+              remote.payloads.delete(entry.expectedRemoteId);
+              remote.originals.delete(entry.expectedRemoteId);
+            }
+            continue;
+          }
+          const remoteObject = (entry as PendingUpsertMutation).remoteObject;
+          if (!remoteObject?.item) throw new Error("MDBX2 已提交操作缺少可恢复的远端 Object。");
+          const finalized = finalizeRemote(remoteObject.item, entry.local, account.id, remoteObject.summary);
+          remote.payloads.set(remoteObject.summary.objectId, remoteObject.payload);
+          remote.originals.set(remoteObject.summary.objectId, finalized);
+          items.push(finalized);
+        }
+        continue;
+      }
+      for (const entry of batch) {
+        if (entry.mutation.kind === "delete") {
+          conflicts.push({ itemId: entry.local.id, reason: "MDBX2 Object 在浏览器删除后又被其他设备修改。", local: entry.local });
+        } else {
+          conflicts.push({
+            itemId: entry.local.id,
+            reason: entry.expectedRemoteId
+              ? "浏览器与 MDBX2 远端在同一基线后都修改了该 Object。"
+              : "MDBX2 中已存在相同逻辑 ID 的 Object，且无法证明它来自刚才的浏览器提交。",
+            local: entry.local,
+            remote: (entry as PendingUpsertMutation).remoteObject?.item
+          });
+        }
+        items.push(entry.local);
+      }
+    }
+  }
+
+  private async applyObjectMutations(
+    account: ProviderAccount,
+    pending: PendingMutation[],
+    remote: RemoteSnapshot,
+    items: VaultItem[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    for (const batch of batchPendingMutations(pending)) {
+      signal?.throwIfAborted();
+      const operationScope = await pendingOperationScope(vaultHandleOf(account), batch);
+      const result = await executePendingBatch(this.runtime, vaultHandleOf(account), operationScope, batch);
+      if (result.items.length !== batch.length) throw new Error("MDBX2 Object 批量结果数量不一致。");
+      for (let index = 0; index < batch.length; index += 1) {
+        const entry = batch[index];
+        const written = result.items[index];
+        if (written.kind !== entry.mutation.kind || written.logicalObjectId !== entry.mutation.logicalObjectId) {
+          throw new Error("MDBX2 Object 批量结果顺序或逻辑 ID 不一致。");
+        }
+        if (entry.expectedRemoteId && written.objectId !== entry.expectedRemoteId) {
+          throw new Error("MDBX2 物理 Object ID 与 Android 兼容算法不一致。");
+        }
+        if (entry.mutation.kind === "delete") {
+          if (entry.expectedRemoteId) {
+            remote.payloads.delete(entry.expectedRemoteId);
+            remote.originals.delete(entry.expectedRemoteId);
+          }
+          continue;
+        }
+        if (!result.commitId || !written.collectionId || !written.objectTypeId) {
+          throw new Error("MDBX2 Object 写入结果缺少 Commit 或 Collection 元数据。");
+        }
+        const writeResult: Mdbx2ObjectWriteResult = {
+          commitId: result.commitId,
+          alreadyCommitted: Boolean(result.alreadyCommitted),
+          logicalObjectId: written.logicalObjectId,
+          objectId: written.objectId,
+          collectionId: written.collectionId,
+          objectTypeId: written.objectTypeId
+        };
+        const payload = JSON.parse(entry.mutation.payloadJson) as Record<string, unknown>;
+        remote.payloads.set(written.objectId, payload);
+        const finalized = finalizeWritten(entry.local, account.id, writeResult);
+        remote.originals.set(written.objectId, finalized);
+        items.push(finalized);
+      }
+    }
   }
 
   async create(account: ProviderAccount, item: VaultItem): Promise<VaultItem> {
@@ -324,6 +482,46 @@ export class Mdbx2Provider implements ProviderAdapter {
     if (omittedWarnings) warnings.push(`另有 ${omittedWarnings} 条 MDBX2 兼容性提示已省略。`);
     return { active, deleted, warnings, sourceRecords, payloads, originals };
   }
+}
+
+function batchPendingMutations(pending: PendingMutation[]): PendingMutation[][] {
+  const sorted = [...pending].sort((left, right) => left.mutation.logicalObjectId.localeCompare(right.mutation.logicalObjectId));
+  const batches: PendingMutation[][] = [];
+  let current: PendingMutation[] = [];
+  for (const entry of sorted) {
+    const candidate = [...current, entry];
+    const exceedsCount = candidate.length > MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
+    const exceedsBytes = mutationIntentBytes(candidate) > MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
+    if (current.length && (exceedsCount || exceedsBytes)) {
+      batches.push(current);
+      current = [entry];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+function mutationIntentBytes(batch: PendingMutation[]): number {
+  return new TextEncoder().encode(JSON.stringify(batch.map((entry) => entry.mutation))).byteLength;
+}
+
+async function pendingOperationScope(vaultHandle: string, batch: PendingMutation[]): Promise<string> {
+  return sha256(JSON.stringify({
+    version: 1,
+    vaultHandle,
+    mutations: batch.map((entry) => ({ baseRevision: entry.baseRevision, mutation: entry.mutation }))
+  }));
+}
+
+async function executePendingBatch(
+  runtime: Mdbx2RuntimeClient,
+  vaultHandle: string,
+  operationScope: string,
+  batch: PendingMutation[]
+): Promise<Mdbx2ObjectBatchResult> {
+  return runtime.mutateObjects(vaultHandle, operationScope, batch.map((entry) => entry.mutation));
 }
 
 async function listAllCollections(runtime: Mdbx2RuntimeClient, vaultHandle: string, deleted: boolean, signal?: AbortSignal): Promise<Mdbx2CollectionSummary[]> {

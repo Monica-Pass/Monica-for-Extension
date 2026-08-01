@@ -4,12 +4,13 @@ use mdbx_ffi::{MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxVault, MdbxWri
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -34,6 +35,13 @@ const MAX_OBJECT_PAYLOAD_BYTES: usize = 512 * 1024;
 const MAX_LOGICAL_OBJECT_ID_BYTES: usize = 4096;
 const MAX_OBJECT_TYPE_ID_BYTES: usize = 512;
 const MAX_TITLE_BYTES: usize = 64 * 1024;
+pub const MAX_OBJECT_BATCH_MUTATIONS: usize = 50;
+pub const MAX_OBJECT_BATCH_INTENT_BYTES: usize = 384 * 1024;
+const MAX_OBJECT_BATCH_COMMANDS: usize = 256;
+const OBJECT_OPERATION_STATE_VERSION: u32 = 1;
+const MAX_OBJECT_OPERATION_RECEIPTS: usize = 2048;
+const MAX_OBJECT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_OPERATION_HISTORY_PAGES: usize = 16;
 
 #[derive(Debug)]
 pub struct RpcFailure {
@@ -86,6 +94,82 @@ struct DeviceMetadata {
     device_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObjectOperationReceipt {
+    vault_handle: String,
+    operation_id: String,
+    #[serde(default)]
+    operation_scope: Option<String>,
+    semantic_sha256: String,
+    plan_sha256: String,
+    mutation_count: u32,
+    changed_indices: Vec<u32>,
+    commit_id: Option<String>,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObjectOperationState {
+    version: u32,
+    revision: u64,
+    receipts: Vec<ObjectOperationReceipt>,
+}
+
+impl Default for ObjectOperationState {
+    fn default() -> Self {
+        Self {
+            version: OBJECT_OPERATION_STATE_VERSION,
+            revision: 0,
+            receipts: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ObjectMutation {
+    Upsert {
+        logical_object_id: String,
+        requested_collection_id: Option<String>,
+        object_type_id: String,
+        title: String,
+        payload_json: String,
+    },
+    Delete {
+        logical_object_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct ObjectMutationResult {
+    kind: &'static str,
+    changed: bool,
+    logical_object_id: String,
+    object_id: String,
+    collection_id: Option<String>,
+    object_type_id: Option<String>,
+}
+
+struct ObjectMutationPlan {
+    commands: Vec<MdbxWriteCommand>,
+    items: Vec<ObjectMutationResult>,
+    plan_sha256: String,
+    changed_indices: Vec<u32>,
+}
+
+struct ObjectMutationExecution {
+    operation_id: String,
+    commit_id: Option<String>,
+    already_committed: Option<bool>,
+    items: Vec<ObjectMutationResult>,
+}
+
+enum ObjectOperationIdentity {
+    Id(String),
+    Scope(String),
+}
+
 enum VaultCredential {
     Password(Zeroizing<String>),
     SecurityKey(Zeroizing<Vec<u8>>),
@@ -103,6 +187,7 @@ pub struct HostRuntime {
     pub(crate) device_id: String,
     transfers: HashMap<String, TransferMetadata>,
     pub(crate) vaults: HashMap<String, Arc<MdbxVault>>,
+    object_operations: ObjectOperationState,
 }
 
 impl HostRuntime {
@@ -122,7 +207,7 @@ impl HostRuntime {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(root)?;
-        for directory in ["transfers", "imports", "vaults", "backups"] {
+        for directory in ["transfers", "imports", "vaults", "backups", "operations"] {
             fs::create_dir_all(root.join(directory))?;
         }
         for directory in ["sync/incoming", "sync/outbound", "sync/states"] {
@@ -130,11 +215,13 @@ impl HostRuntime {
         }
         let device_id = load_or_create_device_id(&root)?;
         let transfers = load_transfers(&root)?;
+        let object_operations = load_object_operation_state(&root)?;
         Ok(Self {
             root,
             device_id,
             transfers,
             vaults: HashMap::new(),
+            object_operations,
         })
     }
 
@@ -154,6 +241,9 @@ impl HostRuntime {
             "object.reveal" => self.object_reveal(params),
             "object.upsert" => self.object_upsert(params),
             "object.delete" => self.object_delete(params),
+            "object.batch" => self.object_batch(params),
+            "object.operation.status" => self.object_operation_status(params),
+            "object.operation.resolve" => self.object_operation_resolve(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
@@ -179,6 +269,8 @@ impl HostRuntime {
             "maxInboundFileBytes": MAX_INBOUND_FILE_BYTES,
             "maxActiveTransfers": MAX_ACTIVE_TRANSFERS,
             "maxObjectPayloadBytes": MAX_OBJECT_PAYLOAD_BYTES,
+            "maxObjectBatchMutations": MAX_OBJECT_BATCH_MUTATIONS,
+            "maxObjectBatchIntentBytes": MAX_OBJECT_BATCH_INTENT_BYTES,
             "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
             "supportsDurableCloudSync": true,
             "maxSyncSegmentPageSize": cloud_sync::SEGMENT_PAGE_SIZE,
@@ -728,7 +820,7 @@ impl HostRuntime {
         }))
     }
 
-    fn object_upsert(&self, params: Value) -> Result<Value, RpcFailure> {
+    fn object_upsert(&mut self, params: Value) -> Result<Value, RpcFailure> {
         let mut params = take_object(params, "object.upsert params must be an object.")?;
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         let operation_id = take_uuid(&mut params, "operationId")?;
@@ -746,107 +838,37 @@ impl HostRuntime {
             take_string(&mut params, "payloadJson", MAX_OBJECT_PAYLOAD_BYTES, false)?;
         reject_unknown(params)?;
         validate_monica_payload(&payload_json, &logical_object_id)?;
-        let vault = self.require_open_vault(&vault_handle)?;
-        let info = vault.info();
-        let root_collection_id =
-            java_name_uuid(format!("monica-root:{}", info.vault_id).as_bytes());
-        let object_id = java_name_uuid(
-            format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
-        );
-        let mut commands = Vec::new();
-        let root = vault
-            .get_collection_summary(root_collection_id.clone())
-            .map_err(|_| {
-                RpcFailure::new(
-                    "collection-read-failed",
-                    "MDBX2 root Collection could not be read.",
-                    false,
-                )
-            })?;
-        match root {
-            None => commands.push(MdbxWriteCommand::CreateProject {
-                project_id: root_collection_id.clone(),
-                title: ".monica-root".to_string(),
-            }),
-            Some(summary) if summary.deleted => commands.push(MdbxWriteCommand::RestoreProject {
-                project_id: root_collection_id.clone(),
-                parent_project_id: None,
-            }),
-            Some(_) => {}
-        }
-        let collection_id = match requested_collection_id {
-            Some(collection_id) => match vault
-                .get_collection_summary(collection_id.clone())
-                .map_err(|_| {
-                    RpcFailure::new(
-                        "collection-read-failed",
-                        "MDBX2 target Collection could not be read.",
-                        false,
-                    )
-                })? {
-                Some(summary) if !summary.deleted => collection_id,
-                _ => root_collection_id.clone(),
-            },
-            None => root_collection_id.clone(),
-        };
-        let current = vault.get_object_summary(object_id.clone()).map_err(|_| {
+        let result = self.execute_object_mutations(
+            vault_handle,
+            Some(operation_id),
+            None,
+            "monica-extension-upsert-object",
+            vec![ObjectMutation::Upsert {
+                logical_object_id,
+                requested_collection_id,
+                object_type_id,
+                title,
+                payload_json,
+            }],
+        )?;
+        let item = result.items.into_iter().next().ok_or_else(|| {
             RpcFailure::new(
-                "object-read-failed",
-                "MDBX2 Object summary could not be read.",
+                "object-write-failed",
+                "MDBX2 Object write result is empty.",
                 false,
             )
         })?;
-        match current {
-            None => commands.push(MdbxWriteCommand::CreateEntry {
-                entry_id: object_id.clone(),
-                project_id: collection_id.clone(),
-                entry_type: object_type_id.clone(),
-                title,
-                payload_json,
-            }),
-            Some(summary) => {
-                if summary.deleted {
-                    commands.push(MdbxWriteCommand::RestoreEntry {
-                        entry_id: object_id.clone(),
-                        project_id: summary.collection_id.clone(),
-                    });
-                }
-                if summary.collection_id != collection_id {
-                    commands.push(MdbxWriteCommand::MoveEntry {
-                        entry_id: object_id.clone(),
-                        project_id: summary.collection_id,
-                        target_project_id: collection_id.clone(),
-                    });
-                }
-                commands.push(MdbxWriteCommand::UpdateEntry {
-                    entry_id: object_id.clone(),
-                    project_id: collection_id.clone(),
-                    entry_type: object_type_id.clone(),
-                    title,
-                    payload_json,
-                });
-            }
-        }
-        let result = vault
-            .execute_write_operation(
-                operation_id,
-                "monica-extension-upsert-object".to_string(),
-                commands,
-            )
-            .map_err(|_| {
-                RpcFailure::new("object-write-failed", "MDBX2 Object write failed.", false)
-            })?;
         Ok(json!({
             "commitId": result.commit_id,
             "alreadyCommitted": result.already_committed,
-            "logicalObjectId": logical_object_id,
-            "objectId": object_id,
-            "collectionId": collection_id,
-            "objectTypeId": object_type_id
+            "logicalObjectId": item.logical_object_id,
+            "objectId": item.object_id,
+            "collectionId": item.collection_id,
+            "objectTypeId": item.object_type_id
         }))
     }
 
-    fn object_delete(&self, params: Value) -> Result<Value, RpcFailure> {
+    fn object_delete(&mut self, params: Value) -> Result<Value, RpcFailure> {
         let mut params = take_object(params, "object.delete params must be an object.")?;
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         let operation_id = take_uuid(&mut params, "operationId")?;
@@ -857,50 +879,417 @@ impl HostRuntime {
             false,
         )?;
         reject_unknown(params)?;
-        let vault = self.require_open_vault(&vault_handle)?;
-        let vault_id = vault.info().vault_id;
-        let object_id =
-            java_name_uuid(format!("monica-entry:{vault_id}:{logical_object_id}").as_bytes());
-        let Some(summary) = vault.get_object_summary(object_id.clone()).map_err(|_| {
+        let result = self.execute_object_mutations(
+            vault_handle,
+            Some(operation_id),
+            None,
+            "monica-extension-delete-object",
+            vec![ObjectMutation::Delete { logical_object_id }],
+        )?;
+        let item = result.items.into_iter().next().ok_or_else(|| {
             RpcFailure::new(
-                "object-read-failed",
-                "MDBX2 Object summary could not be read.",
+                "object-delete-failed",
+                "MDBX2 Object delete result is empty.",
                 false,
             )
-        })?
-        else {
-            return Ok(json!({
-                "changed": false,
-                "logicalObjectId": logical_object_id,
-                "objectId": object_id
-            }));
+        })?;
+        Ok(json!({
+            "changed": item.changed,
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "logicalObjectId": item.logical_object_id,
+            "objectId": item.object_id
+        }))
+    }
+
+    fn object_batch(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.batch params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_optional_uuid(&mut params, "operationId")?;
+        let operation_scope = take_optional_string(&mut params, "operationScope", 128)?;
+        if operation_id.is_some() == operation_scope.is_some() {
+            return Err(RpcFailure::invalid(
+                "object.batch requires exactly one operationId or operationScope.",
+            ));
+        }
+        if operation_scope
+            .as_deref()
+            .is_some_and(|scope| !valid_sha256(scope))
+        {
+            return Err(RpcFailure::invalid(
+                "object.batch operationScope must be a lowercase SHA-256 value.",
+            ));
+        }
+        let mutations = params
+            .remove("mutations")
+            .ok_or_else(|| RpcFailure::invalid("mutations is required."))?;
+        let Value::Array(mutations) = mutations else {
+            return Err(RpcFailure::invalid("mutations must be an array."));
         };
-        if summary.deleted {
+        if mutations.is_empty() || mutations.len() > MAX_OBJECT_BATCH_MUTATIONS {
+            return Err(RpcFailure::invalid(
+                "mutations exceeds the reviewed MDBX2 batch limit.",
+            ));
+        }
+        reject_unknown(params)?;
+        let mut parsed = Vec::with_capacity(mutations.len());
+        for mutation in mutations {
+            let mut mutation = take_object(mutation, "MDBX2 batch mutation must be an object.")?;
+            let kind = take_string(&mut mutation, "kind", 32, false)?;
+            let logical_object_id = take_string(
+                &mut mutation,
+                "logicalObjectId",
+                MAX_LOGICAL_OBJECT_ID_BYTES,
+                false,
+            )?;
+            match kind.as_str() {
+                "upsert" => {
+                    let requested_collection_id =
+                        take_optional_uuid(&mut mutation, "collectionId")?;
+                    let object_type_id = take_string(
+                        &mut mutation,
+                        "objectTypeId",
+                        MAX_OBJECT_TYPE_ID_BYTES,
+                        false,
+                    )?;
+                    let title = take_string(&mut mutation, "title", MAX_TITLE_BYTES, true)?;
+                    let payload_json = take_string(
+                        &mut mutation,
+                        "payloadJson",
+                        MAX_OBJECT_PAYLOAD_BYTES,
+                        false,
+                    )?;
+                    reject_unknown(mutation)?;
+                    validate_monica_payload(&payload_json, &logical_object_id)?;
+                    parsed.push(ObjectMutation::Upsert {
+                        logical_object_id,
+                        requested_collection_id,
+                        object_type_id,
+                        title,
+                        payload_json,
+                    });
+                }
+                "delete" => {
+                    reject_unknown(mutation)?;
+                    parsed.push(ObjectMutation::Delete { logical_object_id });
+                }
+                _ => {
+                    return Err(RpcFailure::invalid(
+                        "MDBX2 batch mutation kind is unsupported.",
+                    ))
+                }
+            }
+        }
+        let semantic_bytes = object_mutation_semantic_bytes(&parsed)?;
+        if parsed.len() > 1 && semantic_bytes.len() > MAX_OBJECT_BATCH_INTENT_BYTES {
+            return Err(RpcFailure::new(
+                "object-batch-too-large",
+                "MDBX2 Object batch exceeds the Native Host intent limit.",
+                false,
+            ));
+        }
+        let result = self.execute_object_mutations(
+            vault_handle,
+            operation_id,
+            operation_scope,
+            "monica-extension-batch-objects",
+            parsed,
+        )?;
+        Ok(json!({
+            "changed": result.commit_id.is_some(),
+            "operationId": result.operation_id,
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "items": result.items.into_iter().map(object_mutation_result_json).collect::<Vec<_>>()
+        }))
+    }
+
+    fn object_operation_status(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.operation.status params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let Some(receipt) = self
+            .object_operations
+            .receipts
+            .iter()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .cloned()
+        else {
+            return Ok(json!({ "known": false, "committed": false }));
+        };
+        if let Some(commit_id) = receipt.commit_id {
             return Ok(json!({
-                "changed": false,
-                "logicalObjectId": logical_object_id,
-                "objectId": object_id
+                "known": true,
+                "committed": true,
+                "commitId": commit_id
             }));
+        }
+        if let Some(commit_id) = find_operation_commit(&vault, &operation_id)? {
+            self.record_object_operation_commit(&vault_handle, &operation_id, &commit_id)?;
+            return Ok(json!({
+                "known": true,
+                "committed": true,
+                "commitId": commit_id
+            }));
+        }
+        Ok(json!({ "known": true, "committed": false }))
+    }
+
+    fn object_operation_resolve(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.operation.resolve params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_scope = take_string(&mut params, "operationScope", 128, false)?;
+        if !valid_sha256(&operation_scope) {
+            return Err(RpcFailure::invalid(
+                "operationScope must be a lowercase SHA-256 value.",
+            ));
+        }
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let Some(receipt) = self
+            .object_operations
+            .receipts
+            .iter()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle
+                    && receipt.operation_scope.as_deref() == Some(operation_scope.as_str())
+            })
+            .cloned()
+        else {
+            return Ok(json!({ "known": false, "committed": false }));
+        };
+        if let Some(commit_id) = receipt.commit_id {
+            return Ok(json!({
+                "known": true,
+                "committed": true,
+                "operationId": receipt.operation_id,
+                "commitId": commit_id
+            }));
+        }
+        if let Some(commit_id) = find_operation_commit(&vault, &receipt.operation_id)? {
+            self.record_object_operation_commit(&vault_handle, &receipt.operation_id, &commit_id)?;
+            return Ok(json!({
+                "known": true,
+                "committed": true,
+                "operationId": receipt.operation_id,
+                "commitId": commit_id
+            }));
+        }
+        Ok(json!({
+            "known": true,
+            "committed": false,
+            "operationId": receipt.operation_id
+        }))
+    }
+
+    fn execute_object_mutations(
+        &mut self,
+        vault_handle: String,
+        operation_id: Option<String>,
+        operation_scope: Option<String>,
+        operation_kind: &'static str,
+        mutations: Vec<ObjectMutation>,
+    ) -> Result<ObjectMutationExecution, RpcFailure> {
+        let vault = self.require_open_vault(&vault_handle)?;
+        let semantic_sha256 = object_mutation_semantic_sha256(&mutations)?;
+        let plan = build_object_mutation_plan(&vault, &mutations)?;
+        let identity = match (operation_id, operation_scope) {
+            (Some(operation_id), None) => ObjectOperationIdentity::Id(operation_id),
+            (None, Some(operation_scope)) => ObjectOperationIdentity::Scope(operation_scope),
+            _ => {
+                return Err(RpcFailure::invalid(
+                    "MDBX2 Object operation identity is invalid.",
+                ))
+            }
+        };
+        let receipt = self.prepare_object_operation(
+            &vault_handle,
+            &identity,
+            &semantic_sha256,
+            u32::try_from(mutations.len()).map_err(|_| {
+                RpcFailure::invalid("MDBX2 Object mutation count cannot be represented.")
+            })?,
+            &plan,
+        )?;
+        let recovered_commit = match receipt.commit_id.clone() {
+            Some(commit_id) => Some(commit_id),
+            None => find_operation_commit(&vault, &receipt.operation_id)?,
+        };
+        if let Some(commit_id) = recovered_commit {
+            self.record_object_operation_commit(&vault_handle, &receipt.operation_id, &commit_id)?;
+            return Ok(ObjectMutationExecution {
+                operation_id: receipt.operation_id,
+                commit_id: Some(commit_id),
+                already_committed: Some(true),
+                items: apply_changed_indices(plan.items, &receipt.changed_indices),
+            });
+        }
+        if receipt.plan_sha256 != plan.plan_sha256 {
+            return Err(RpcFailure::new(
+                "object-operation-state-changed",
+                "MDBX2 Object operation state changed before its durable retry completed.",
+                false,
+            ));
+        }
+        if plan.commands.is_empty() {
+            return Ok(ObjectMutationExecution {
+                operation_id: receipt.operation_id,
+                commit_id: None,
+                already_committed: None,
+                items: plan.items,
+            });
         }
         let result = vault
             .execute_write_operation(
-                operation_id,
-                "monica-extension-delete-object".to_string(),
-                vec![MdbxWriteCommand::DeleteEntry {
-                    entry_id: object_id.clone(),
-                    project_id: summary.collection_id,
-                }],
+                receipt.operation_id.clone(),
+                operation_kind.to_string(),
+                plan.commands,
             )
             .map_err(|_| {
-                RpcFailure::new("object-delete-failed", "MDBX2 Object delete failed.", false)
+                RpcFailure::new("object-write-failed", "MDBX2 Object write failed.", false)
             })?;
-        Ok(json!({
-            "changed": true,
-            "commitId": result.commit_id,
-            "alreadyCommitted": result.already_committed,
-            "logicalObjectId": logical_object_id,
-            "objectId": object_id
-        }))
+        self.record_object_operation_commit(
+            &vault_handle,
+            &receipt.operation_id,
+            &result.commit_id,
+        )?;
+        Ok(ObjectMutationExecution {
+            operation_id: receipt.operation_id,
+            commit_id: Some(result.commit_id),
+            already_committed: Some(result.already_committed),
+            items: plan.items,
+        })
+    }
+
+    fn prepare_object_operation(
+        &mut self,
+        vault_handle: &str,
+        identity: &ObjectOperationIdentity,
+        semantic_sha256: &str,
+        mutation_count: u32,
+        plan: &ObjectMutationPlan,
+    ) -> Result<ObjectOperationReceipt, RpcFailure> {
+        let existing = self.object_operations.receipts.iter().find(|receipt| {
+            receipt.vault_handle == vault_handle
+                && match identity {
+                    ObjectOperationIdentity::Id(operation_id) => {
+                        receipt.operation_id == *operation_id
+                    }
+                    ObjectOperationIdentity::Scope(operation_scope) => {
+                        receipt.operation_scope.as_deref() == Some(operation_scope)
+                    }
+                }
+        });
+        if let Some(receipt) = existing {
+            if receipt.semantic_sha256 != semantic_sha256 {
+                return Err(RpcFailure::new(
+                    "object-operation-intent-mismatch",
+                    "MDBX2 operation ID was reused for different Object content.",
+                    false,
+                ));
+            }
+            if receipt.mutation_count != mutation_count {
+                return Err(RpcFailure::new(
+                    "object-operation-intent-mismatch",
+                    "MDBX2 operation ID was reused for a different mutation count.",
+                    false,
+                ));
+            }
+            if receipt.commit_id.is_none() && receipt.plan_sha256 != plan.plan_sha256 {
+                return Err(RpcFailure::new(
+                    "object-operation-state-changed",
+                    "MDBX2 Object operation state changed before its durable retry completed.",
+                    false,
+                ));
+            }
+            return Ok(receipt.clone());
+        }
+        prune_object_operation_receipts(&mut self.object_operations.receipts)?;
+        let receipt = ObjectOperationReceipt {
+            vault_handle: vault_handle.to_string(),
+            operation_id: match identity {
+                ObjectOperationIdentity::Id(operation_id) => operation_id.clone(),
+                ObjectOperationIdentity::Scope(_) => fresh_uuid(),
+            },
+            operation_scope: match identity {
+                ObjectOperationIdentity::Id(_) => None,
+                ObjectOperationIdentity::Scope(operation_scope) => Some(operation_scope.clone()),
+            },
+            semantic_sha256: semantic_sha256.to_string(),
+            plan_sha256: plan.plan_sha256.clone(),
+            mutation_count,
+            changed_indices: plan.changed_indices.clone(),
+            commit_id: None,
+            updated_at_unix_secs: unix_seconds()?,
+        };
+        self.object_operations.receipts.push(receipt.clone());
+        self.persist_object_operations()?;
+        Ok(receipt)
+    }
+
+    fn record_object_operation_commit(
+        &mut self,
+        vault_handle: &str,
+        operation_id: &str,
+        commit_id: &str,
+    ) -> Result<(), RpcFailure> {
+        let receipt = self
+            .object_operations
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.operation_id == operation_id
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 Object operation receipt is missing."))?;
+        if let Some(existing) = receipt.commit_id.as_deref() {
+            if existing != commit_id {
+                return Err(RpcFailure::new(
+                    "object-operation-commit-mismatch",
+                    "MDBX2 Object operation resolved to a different Commit.",
+                    false,
+                ));
+            }
+            return Ok(());
+        }
+        receipt.commit_id = Some(commit_id.to_string());
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        self.persist_object_operations()
+    }
+
+    fn persist_object_operations(&mut self) -> Result<(), RpcFailure> {
+        self.object_operations.revision = self
+            .object_operations
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RpcFailure::storage("MDBX2 Object operation revision overflowed."))?;
+        let bytes = serde_json::to_vec(&self.object_operations).map_err(|_| {
+            RpcFailure::storage("MDBX2 Object operation state could not be encoded.")
+        })?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_OBJECT_OPERATION_STATE_BYTES {
+            return Err(RpcFailure::new(
+                "object-operation-state-too-large",
+                "MDBX2 Object operation state exceeds the reviewed limit.",
+                false,
+            ));
+        }
+        let path = object_operation_state_path(&self.root, self.object_operations.revision % 2);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|_| {
+                RpcFailure::storage("MDBX2 Object operation state could not be opened.")
+            })?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| {
+                RpcFailure::storage("MDBX2 Object operation state could not be persisted.")
+            })
     }
 
     pub(crate) fn require_open_vault(
@@ -1016,6 +1405,396 @@ impl HostRuntime {
             .join("incoming")
             .join(format!("{file_handle}.mdbxsync"))
     }
+}
+
+fn build_object_mutation_plan(
+    vault: &Arc<MdbxVault>,
+    mutations: &[ObjectMutation],
+) -> Result<ObjectMutationPlan, RpcFailure> {
+    let info = vault.info();
+    let root_collection_id = java_name_uuid(format!("monica-root:{}", info.vault_id).as_bytes());
+    let mut commands = Vec::new();
+    let mut plan_actions = Vec::new();
+    let mut items = Vec::with_capacity(mutations.len());
+    let mut changed_indices = Vec::new();
+    let mut logical_ids = HashSet::new();
+    if mutations
+        .iter()
+        .any(|mutation| matches!(mutation, ObjectMutation::Upsert { .. }))
+    {
+        let root = vault
+            .get_collection_summary(root_collection_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "collection-read-failed",
+                    "MDBX2 root Collection could not be read.",
+                    false,
+                )
+            })?;
+        match root {
+            None => {
+                commands.push(MdbxWriteCommand::CreateProject {
+                    project_id: root_collection_id.clone(),
+                    title: ".monica-root".to_string(),
+                });
+                plan_actions.push(json!({
+                    "kind": "create-project",
+                    "projectId": root_collection_id,
+                    "title": ".monica-root"
+                }));
+            }
+            Some(summary) if summary.deleted => {
+                commands.push(MdbxWriteCommand::RestoreProject {
+                    project_id: root_collection_id.clone(),
+                    parent_project_id: None,
+                });
+                plan_actions.push(json!({
+                    "kind": "restore-project",
+                    "projectId": root_collection_id,
+                    "parentProjectId": null
+                }));
+            }
+            Some(_) => {}
+        }
+    }
+    for (index, mutation) in mutations.iter().enumerate() {
+        let logical_object_id = match mutation {
+            ObjectMutation::Upsert {
+                logical_object_id, ..
+            }
+            | ObjectMutation::Delete { logical_object_id } => logical_object_id,
+        };
+        if !logical_ids.insert(logical_object_id.clone()) {
+            return Err(RpcFailure::invalid(
+                "MDBX2 Object batch contains a duplicate logical Object ID.",
+            ));
+        }
+        let object_id = java_name_uuid(
+            format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
+        );
+        match mutation {
+            ObjectMutation::Upsert {
+                requested_collection_id,
+                object_type_id,
+                title,
+                payload_json,
+                ..
+            } => {
+                let collection_id = match requested_collection_id {
+                    Some(collection_id) => match vault
+                        .get_collection_summary(collection_id.clone())
+                        .map_err(|_| {
+                            RpcFailure::new(
+                                "collection-read-failed",
+                                "MDBX2 target Collection could not be read.",
+                                false,
+                            )
+                        })? {
+                        Some(summary) if !summary.deleted => collection_id.clone(),
+                        _ => root_collection_id.clone(),
+                    },
+                    None => root_collection_id.clone(),
+                };
+                let current = vault.get_object_summary(object_id.clone()).map_err(|_| {
+                    RpcFailure::new(
+                        "object-read-failed",
+                        "MDBX2 Object summary could not be read.",
+                        false,
+                    )
+                })?;
+                match current {
+                    None => {
+                        commands.push(MdbxWriteCommand::CreateEntry {
+                            entry_id: object_id.clone(),
+                            project_id: collection_id.clone(),
+                            entry_type: object_type_id.clone(),
+                            title: title.clone(),
+                            payload_json: payload_json.clone(),
+                        });
+                        plan_actions.push(json!({
+                            "kind": "create-entry",
+                            "entryId": object_id,
+                            "projectId": collection_id,
+                            "entryType": object_type_id,
+                            "title": title,
+                            "payloadJson": payload_json
+                        }));
+                    }
+                    Some(summary) => {
+                        if summary.deleted {
+                            commands.push(MdbxWriteCommand::RestoreEntry {
+                                entry_id: object_id.clone(),
+                                project_id: summary.collection_id.clone(),
+                            });
+                            plan_actions.push(json!({
+                                "kind": "restore-entry",
+                                "entryId": object_id,
+                                "projectId": summary.collection_id
+                            }));
+                        }
+                        if summary.collection_id != collection_id {
+                            commands.push(MdbxWriteCommand::MoveEntry {
+                                entry_id: object_id.clone(),
+                                project_id: summary.collection_id.clone(),
+                                target_project_id: collection_id.clone(),
+                            });
+                            plan_actions.push(json!({
+                                "kind": "move-entry",
+                                "entryId": object_id,
+                                "projectId": summary.collection_id,
+                                "targetProjectId": collection_id
+                            }));
+                        }
+                        commands.push(MdbxWriteCommand::UpdateEntry {
+                            entry_id: object_id.clone(),
+                            project_id: collection_id.clone(),
+                            entry_type: object_type_id.clone(),
+                            title: title.clone(),
+                            payload_json: payload_json.clone(),
+                        });
+                        plan_actions.push(json!({
+                            "kind": "update-entry",
+                            "entryId": object_id,
+                            "projectId": collection_id,
+                            "entryType": object_type_id,
+                            "title": title,
+                            "payloadJson": payload_json
+                        }));
+                    }
+                }
+                changed_indices.push(index as u32);
+                items.push(ObjectMutationResult {
+                    kind: "upsert",
+                    changed: true,
+                    logical_object_id: logical_object_id.clone(),
+                    object_id,
+                    collection_id: Some(collection_id),
+                    object_type_id: Some(object_type_id.clone()),
+                });
+            }
+            ObjectMutation::Delete { .. } => {
+                let current = vault.get_object_summary(object_id.clone()).map_err(|_| {
+                    RpcFailure::new(
+                        "object-read-failed",
+                        "MDBX2 Object summary could not be read.",
+                        false,
+                    )
+                })?;
+                let changed = matches!(current, Some(ref summary) if !summary.deleted);
+                if let Some(summary) = current.filter(|summary| !summary.deleted) {
+                    commands.push(MdbxWriteCommand::DeleteEntry {
+                        entry_id: object_id.clone(),
+                        project_id: summary.collection_id.clone(),
+                    });
+                    plan_actions.push(json!({
+                        "kind": "delete-entry",
+                        "entryId": object_id,
+                        "projectId": summary.collection_id
+                    }));
+                    changed_indices.push(index as u32);
+                }
+                items.push(ObjectMutationResult {
+                    kind: "delete",
+                    changed,
+                    logical_object_id: logical_object_id.clone(),
+                    object_id,
+                    collection_id: None,
+                    object_type_id: None,
+                });
+            }
+        }
+    }
+    if commands.len() > MAX_OBJECT_BATCH_COMMANDS {
+        return Err(RpcFailure::new(
+            "object-batch-too-large",
+            "MDBX2 Object batch expands beyond the core write-command limit.",
+            false,
+        ));
+    }
+    let plan_bytes = serde_json::to_vec(&plan_actions)
+        .map_err(|_| RpcFailure::storage("MDBX2 Object operation plan could not be encoded."))?;
+    Ok(ObjectMutationPlan {
+        commands,
+        items,
+        plan_sha256: sha256_hex(&plan_bytes),
+        changed_indices,
+    })
+}
+
+fn object_mutation_semantic_values(mutations: &[ObjectMutation]) -> Vec<Value> {
+    mutations
+        .iter()
+        .map(|mutation| match mutation {
+            ObjectMutation::Upsert {
+                logical_object_id,
+                requested_collection_id,
+                object_type_id,
+                title,
+                payload_json,
+            } => json!({
+                "kind": "upsert",
+                "logicalObjectId": logical_object_id,
+                "collectionId": requested_collection_id,
+                "objectTypeId": object_type_id,
+                "title": title,
+                "payloadJson": payload_json
+            }),
+            ObjectMutation::Delete { logical_object_id } => json!({
+                "kind": "delete",
+                "logicalObjectId": logical_object_id
+            }),
+        })
+        .collect()
+}
+
+fn object_mutation_semantic_bytes(mutations: &[ObjectMutation]) -> Result<Vec<u8>, RpcFailure> {
+    serde_json::to_vec(&object_mutation_semantic_values(mutations))
+        .map_err(|_| RpcFailure::storage("MDBX2 Object operation intent could not be encoded."))
+}
+
+fn object_mutation_semantic_sha256(mutations: &[ObjectMutation]) -> Result<String, RpcFailure> {
+    Ok(sha256_hex(&object_mutation_semantic_bytes(mutations)?))
+}
+
+fn object_mutation_result_json(item: ObjectMutationResult) -> Value {
+    json!({
+        "kind": item.kind,
+        "changed": item.changed,
+        "logicalObjectId": item.logical_object_id,
+        "objectId": item.object_id,
+        "collectionId": item.collection_id,
+        "objectTypeId": item.object_type_id
+    })
+}
+
+fn apply_changed_indices(
+    mut items: Vec<ObjectMutationResult>,
+    changed_indices: &[u32],
+) -> Vec<ObjectMutationResult> {
+    let changed = changed_indices.iter().copied().collect::<HashSet<_>>();
+    for (index, item) in items.iter_mut().enumerate() {
+        item.changed = changed.contains(&(index as u32));
+    }
+    items
+}
+
+fn find_operation_commit(
+    vault: &Arc<MdbxVault>,
+    operation_id: &str,
+) -> Result<Option<String>, RpcFailure> {
+    let mut cursor = None;
+    for _ in 0..MAX_OPERATION_HISTORY_PAGES {
+        let page = vault.list_commit_history(100, cursor).map_err(|_| {
+            RpcFailure::new(
+                "object-operation-history-failed",
+                "MDBX2 operation history could not be inspected.",
+                false,
+            )
+        })?;
+        if let Some(item) = page
+            .items
+            .iter()
+            .find(|item| item.operation_id.as_deref() == Some(operation_id))
+        {
+            return Ok(Some(item.commit_id.clone()));
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(None);
+        };
+        cursor = Some(next_cursor);
+    }
+    Ok(None)
+}
+
+fn prune_object_operation_receipts(
+    receipts: &mut Vec<ObjectOperationReceipt>,
+) -> Result<(), RpcFailure> {
+    if receipts.len() < MAX_OBJECT_OPERATION_RECEIPTS {
+        return Ok(());
+    }
+    receipts.sort_by_key(|receipt| (receipt.commit_id.is_none(), receipt.updated_at_unix_secs));
+    while receipts.len() >= MAX_OBJECT_OPERATION_RECEIPTS {
+        if receipts
+            .first()
+            .is_some_and(|receipt| receipt.commit_id.is_some())
+        {
+            receipts.remove(0);
+        } else {
+            return Err(RpcFailure::new(
+                "object-operation-receipt-limit",
+                "MDBX2 has too many unfinished Object operations.",
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_object_operation_state(root: &Path) -> std::io::Result<ObjectOperationState> {
+    let mut candidates = Vec::new();
+    for slot in [0_u64, 1_u64] {
+        let path = object_operation_state_path(root, slot);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(bytes) = read_bounded(&path, MAX_OBJECT_OPERATION_STATE_BYTES) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_slice::<ObjectOperationState>(&bytes) else {
+            continue;
+        };
+        if state.version != OBJECT_OPERATION_STATE_VERSION || state.revision % 2 != slot {
+            continue;
+        }
+        if validate_object_operation_state(&state) {
+            candidates.push(state);
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by_key(|state| state.revision)
+        .unwrap_or_default())
+}
+
+fn validate_object_operation_state(state: &ObjectOperationState) -> bool {
+    if state.receipts.len() > MAX_OBJECT_OPERATION_RECEIPTS {
+        return false;
+    }
+    let mut identities = HashSet::new();
+    state.receipts.iter().all(|receipt| {
+        canonical_uuid(&receipt.vault_handle).is_some()
+            && canonical_uuid(&receipt.operation_id).is_some()
+            && valid_sha256(&receipt.semantic_sha256)
+            && valid_sha256(&receipt.plan_sha256)
+            && receipt.operation_scope.as_deref().is_none_or(valid_sha256)
+            && receipt.mutation_count > 0
+            && receipt.mutation_count as usize <= MAX_OBJECT_BATCH_MUTATIONS
+            && receipt
+                .changed_indices
+                .iter()
+                .all(|index| *index < receipt.mutation_count)
+            && receipt
+                .commit_id
+                .as_deref()
+                .is_none_or(|commit_id| !commit_id.is_empty() && commit_id.len() <= 128)
+            && identities.insert((receipt.vault_handle.clone(), receipt.operation_id.clone()))
+    })
+}
+
+fn object_operation_state_path(root: &Path, slot: u64) -> PathBuf {
+    root.join("operations")
+        .join(format!("object-operations.state.{slot}.json"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn unix_seconds() -> Result<u64, RpcFailure> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| RpcFailure::storage("System clock is before the Unix epoch."))
 }
 
 fn load_or_create_device_id(root: &Path) -> std::io::Result<String> {
@@ -1660,7 +2439,7 @@ mod tests {
 
     #[test]
     fn opens_and_locks_a_real_mdbx2_vault_with_an_opaque_working_copy() {
-        let (_root, mut runtime) = runtime();
+        let (root, mut runtime) = runtime();
         let source_path = runtime.root.join("source.mdbx");
         let source = mdbx_ffi::create_vault(
             path_string(&source_path).unwrap(),
@@ -1757,6 +2536,93 @@ mod tests {
                 ["monica_entry_id"],
             logical_object_id
         );
+        let batch_params = json!({
+            "vaultHandle": vault_handle.clone(),
+            "operationId": null,
+            "operationScope": "ab".repeat(32),
+            "mutations": [
+                {
+                    "kind": "upsert",
+                    "logicalObjectId": logical_object_id,
+                    "collectionId": collection_id.clone(),
+                    "objectTypeId": "login",
+                    "title": "Example changed",
+                    "payloadJson": json!({
+                        "kind": "password",
+                        "monica_entry_id": logical_object_id,
+                        "website": "https://example.test",
+                        "username": "demo",
+                        "password_plain": "changed"
+                    }).to_string()
+                },
+                {
+                    "kind": "upsert",
+                    "logicalObjectId": "note:batch",
+                    "collectionId": collection_id.clone(),
+                    "objectTypeId": "note",
+                    "title": "Batch note",
+                    "payloadJson": json!({
+                        "kind": "note",
+                        "monica_entry_id": "note:batch",
+                        "item_data": "{}"
+                    }).to_string()
+                }
+            ]
+        });
+        let batched = call(&mut runtime, "object.batch", batch_params.clone());
+        assert_eq!(batched["changed"], true);
+        assert_eq!(batched["alreadyCommitted"], false);
+        assert_eq!(batched["items"].as_array().unwrap().len(), 2);
+        let batch_operation_id = batched["operationId"].as_str().unwrap().to_string();
+        let batch_commit_id = batched["commitId"].as_str().unwrap().to_string();
+        let receipt_text = fs::read_dir(root.0.join("operations"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+            .collect::<String>();
+        for secret in [
+            "password_plain",
+            "Example changed",
+            "Batch note",
+            "https://example.test",
+        ] {
+            assert!(!receipt_text.contains(secret));
+        }
+        let history = runtime
+            .require_open_vault(&vault_handle)
+            .unwrap()
+            .list_commit_history(100, None)
+            .unwrap();
+        let operation = history
+            .items
+            .iter()
+            .find(|item| item.operation_id.as_deref() == Some(batch_operation_id.as_str()))
+            .unwrap();
+        assert_eq!(operation.commit_id, batch_commit_id);
+        assert!(operation.changes.len() >= 2);
+        drop(runtime);
+        let mut runtime = HostRuntime::new(root.0.clone()).unwrap();
+        call(
+            &mut runtime,
+            "vault.open",
+            json!({
+                "source": { "kind": "vault", "handle": vault_handle.clone() },
+                "credential": { "method": "password", "password": "test-password" }
+            }),
+        );
+        let retried_batch = call(&mut runtime, "object.batch", batch_params);
+        assert_eq!(retried_batch["commitId"], batch_commit_id);
+        assert_eq!(retried_batch["alreadyCommitted"], true);
+        let resolved = call(
+            &mut runtime,
+            "object.operation.resolve",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationScope": "ab".repeat(32)
+            }),
+        );
+        assert_eq!(resolved["committed"], true);
+        assert_eq!(resolved["commitId"], batch_commit_id);
         assert_eq!(
             call(
                 &mut runtime,

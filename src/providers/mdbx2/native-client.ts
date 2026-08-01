@@ -3,6 +3,8 @@ import {
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
+  MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
+  MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   MDBX2_MAX_REMOTE_BLOB_BYTES,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
@@ -23,6 +25,10 @@ import {
   type Mdbx2NativeMethod,
   type Mdbx2NativeRequest,
   type Mdbx2ObjectDeleteResult,
+  type Mdbx2ObjectBatchResult,
+  type Mdbx2ObjectMutationInput,
+  type Mdbx2ObjectOperationStatus,
+  type Mdbx2ObjectOperationResolution,
   type Mdbx2ObjectRecord,
   type Mdbx2ObjectSummaryPage,
   type Mdbx2ObjectUpsertInput,
@@ -193,6 +199,50 @@ export class Mdbx2NativeClient {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       operationId: opaqueHandle(operationId, "操作"),
       logicalObjectId: textResult(logicalObjectId, 4096, false, "逻辑 Object ID 无效。")
+    }, timeoutMs));
+  }
+
+  async mutateObjects(vaultHandle: string, operationScope: string, mutations: Mdbx2ObjectMutationInput[], timeoutMs = 120_000): Promise<Mdbx2ObjectBatchResult> {
+    if (!Array.isArray(mutations) || mutations.length < 1 || mutations.length > MDBX2_MAX_OBJECT_BATCH_MUTATIONS) {
+      throw new Mdbx2NativeHostError("object-batch-invalid", "MDBX2 Object 批量数量无效。", false);
+    }
+    const normalized = mutations.map((mutation): Mdbx2ObjectMutationInput => {
+      const logicalObjectId = textResult(mutation.logicalObjectId, 4096, false, "逻辑 Object ID 无效。");
+      if (mutation.kind === "delete") return { kind: "delete", logicalObjectId };
+      if (mutation.kind !== "upsert") throw new Mdbx2NativeHostError("object-batch-invalid", "MDBX2 Object 批量操作无效。", false);
+      return {
+        kind: "upsert",
+        logicalObjectId,
+        collectionId: mutation.collectionId ? opaqueHandle(mutation.collectionId, "Collection") : undefined,
+        objectTypeId: textResult(mutation.objectTypeId, 512, false, "Object 类型无效。"),
+        title: textResult(mutation.title, 64 * 1024, true, "Object 标题无效。"),
+        payloadJson: textResult(mutation.payloadJson, MDBX2_MAX_OBJECT_PAYLOAD_BYTES, false, "Object 载荷无效。")
+      };
+    });
+    if (normalized.length > 1 && new TextEncoder().encode(JSON.stringify(normalized)).byteLength > MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) {
+      throw new Mdbx2NativeHostError("object-batch-too-large", "MDBX2 Object 批量内容超过 Native Host 上限。", false);
+    }
+    return objectBatchResult(await this.request("object.batch", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: null,
+      operationScope: sha256Value(operationScope, "操作范围"),
+      mutations: normalized.map((mutation) => mutation.kind === "upsert"
+        ? { ...mutation, collectionId: mutation.collectionId || null }
+        : mutation)
+    }, timeoutMs));
+  }
+
+  async objectOperationStatus(vaultHandle: string, operationId: string, timeoutMs = 30_000): Promise<Mdbx2ObjectOperationStatus> {
+    return objectOperationStatusResult(await this.request("object.operation.status", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: opaqueHandle(operationId, "操作")
+    }, timeoutMs));
+  }
+
+  async resolveObjectOperation(vaultHandle: string, operationScope: string, timeoutMs = 30_000): Promise<Mdbx2ObjectOperationResolution> {
+    return objectOperationResolutionResult(await this.request("object.operation.resolve", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationScope: sha256Value(operationScope, "操作范围")
     }, timeoutMs));
   }
 
@@ -849,6 +899,61 @@ function objectDeleteResult(input: unknown): Mdbx2ObjectDeleteResult {
   };
 }
 
+function objectBatchResult(input: unknown): Mdbx2ObjectBatchResult {
+  const value = objectResult(input, "Native Host Object 批量响应无效。");
+  const changed = booleanResult(value.changed, "Object 批量变更状态无效。");
+  if (!Array.isArray(value.items) || value.items.length < 1 || value.items.length > MDBX2_MAX_OBJECT_BATCH_MUTATIONS) {
+    throw incompatibleResult("Native Host Object 批量项目数量无效。");
+  }
+  const commitId = changed ? textResult(value.commitId, 128, false, "Object 批量 Commit ID 无效。") : undefined;
+  const alreadyCommitted = changed ? booleanResult(value.alreadyCommitted, "Object 批量幂等状态无效。") : undefined;
+  return {
+    changed,
+    operationId: opaqueHandle(value.operationId, "操作"),
+    commitId,
+    alreadyCommitted,
+    items: value.items.map((candidate) => {
+      const item = objectResult(candidate, "Native Host Object 批量项目无效。");
+      const kind = item.kind;
+      if (kind !== "upsert" && kind !== "delete") throw incompatibleResult("Native Host Object 批量项目类型无效。");
+      return {
+        kind,
+        changed: booleanResult(item.changed, "Object 批量项目状态无效。"),
+        logicalObjectId: textResult(item.logicalObjectId, 4096, false, "逻辑 Object ID 无效。"),
+        objectId: opaqueHandle(item.objectId, "Object"),
+        collectionId: optionalOpaqueHandle(item.collectionId, "Collection"),
+        objectTypeId: optionalString(item.objectTypeId, 512, "Object 类型")
+      };
+    })
+  };
+}
+
+function objectOperationStatusResult(input: unknown): Mdbx2ObjectOperationStatus {
+  const value = objectResult(input, "Native Host Object 操作状态响应无效。");
+  const known = booleanResult(value.known, "Object 操作已知状态无效。");
+  const committed = booleanResult(value.committed, "Object 操作提交状态无效。");
+  if (!known && committed) throw incompatibleResult("未知的 Object 操作不能标记为已提交。");
+  if (!known) return { known: false, committed: false };
+  if (!committed) return { known: true, committed: false };
+  return { known: true, committed: true, commitId: textResult(value.commitId, 128, false, "Object 操作 Commit ID 无效。") };
+}
+
+function objectOperationResolutionResult(input: unknown): Mdbx2ObjectOperationResolution {
+  const value = objectResult(input, "Native Host Object 操作恢复响应无效。");
+  const known = booleanResult(value.known, "Object 操作已知状态无效。");
+  const committed = booleanResult(value.committed, "Object 操作提交状态无效。");
+  if (!known && committed) throw incompatibleResult("未知的 Object 操作不能标记为已提交。");
+  if (!known) return { known: false, committed: false };
+  const operationId = opaqueHandle(value.operationId, "操作");
+  if (!committed) return { known: true, committed: false, operationId };
+  return {
+    known: true,
+    committed: true,
+    operationId,
+    commitId: textResult(value.commitId, 128, false, "Object 操作 Commit ID 无效。")
+  };
+}
+
 function vaultSource(source: Mdbx2VaultSource): Mdbx2VaultSource {
   if (source.kind !== "file" && source.kind !== "vault") throw new Mdbx2NativeHostError("vault-source-invalid", "MDBX2 保险库来源无效。", false);
   return { kind: source.kind, handle: opaqueHandle(source.handle, "来源") };
@@ -929,6 +1034,10 @@ function opaqueHandle(value: unknown, label: string): string {
   const handle = stringResult(value, 36, `${label}句柄无效。`);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(handle)) throw incompatibleResult(`${label}句柄无效。`);
   return handle;
+}
+
+function optionalOpaqueHandle(value: unknown, label: string): string | undefined {
+  return value === null || value === undefined ? undefined : opaqueHandle(value, label);
 }
 
 function safeInteger(value: unknown, label: string): number {
