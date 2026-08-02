@@ -1,0 +1,11 @@
+gradle.beforeProject { project ->
+    if (project.path == ':mdbx-engine') {
+        project.afterEvaluate {
+            def sourceDirectory = System.getenv('MONICA_MDBX2_INTEROP_SOURCE_DIR')
+            if (sourceDirectory == null || sourceDirectory.trim().isEmpty()) {
+                throw new GradleException('MONICA_MDBX2_INTEROP_SOURCE_DIR is required')
+            }
+            project.android.sourceSets.androidTest.java.srcDir(sourceDirectory)
+        }
+    }
+}

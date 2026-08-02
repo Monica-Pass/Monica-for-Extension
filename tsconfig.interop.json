@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "moduleResolution": "Bundler",
+    "types": ["node", "vitest/globals", "chrome"]
+  },
+  "include": [
+    "tests/interop/**/*.ts",
+    "vitest.android-interop.config.ts"
+  ]
+}
