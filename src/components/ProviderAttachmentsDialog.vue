@@ -248,16 +248,22 @@ async function confirmDelete() {
   if (!attachment) return;
   deletingAttachmentId.value = attachment.attachmentId;
   error.value = "";
+  let deleted = false;
   try {
     await vaultClient.deleteProviderAttachment(selectedProviderId.value, props.item.id, attachment.attachmentId);
     pendingDelete.value = undefined;
     status.value = `${attachment.fileName} 已删除。`;
     emit("notice", `${attachment.fileName} 已删除。`);
     await loadAttachments(true);
+    deleted = true;
   } catch (cause) {
     error.value = errorMessage(cause);
   } finally {
     deletingAttachmentId.value = "";
+  }
+  if (deleted) {
+    await nextTick();
+    dialogRoot.value?.querySelector<HTMLElement>('[aria-label="刷新附件列表"]')?.focus();
   }
 }
 
@@ -374,6 +380,18 @@ function errorMessage(cause: unknown): string {
 .provider-attachments-dialog {
   width: min(100%, 720px);
   overflow-x: hidden;
+}
+
+.provider-attachments-dialog :deep(m3e-icon) {
+  --m3e-icon-size: 20px;
+}
+
+.provider-attachments-dialog :deep(m3e-icon-button) {
+  --m3e-icon-button-icon-size: 20px;
+}
+
+.provider-attachments-dialog :deep(m3e-button) {
+  --m3e-button-icon-size: 20px;
 }
 
 .provider-attachments-dialog > header {

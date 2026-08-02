@@ -54,6 +54,7 @@ async function confirmSavePrompt(page: Page): Promise<void> {
   expect(await prompt.evaluate((host) => host.shadowRoot)).toBeNull();
   await expect.poll(() => prompt.evaluate((host) => document.activeElement === host)).toBe(true);
   await page.keyboard.press("Enter");
+  await expect(prompt).toHaveCount(0, { timeout: 20_000 });
 }
 
 test("save prompt explicitly stores a newly submitted login in the encrypted local vault", async ({}, testInfo) => {
