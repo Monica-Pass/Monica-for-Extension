@@ -20,6 +20,8 @@ export const MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE = 100;
 export const MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES = 10_000;
 export const MDBX2_MAX_SNAPSHOT_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_SNAPSHOT_NAME_BYTES = 96;
+export const MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES = 200;
+export const MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST = 10_000;
 export const MDBX2_MAX_CONFLICT_PAGE_SIZE = 50;
 export const MDBX2_MAX_CONFLICT_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
@@ -53,6 +55,8 @@ export type Mdbx2NativeMethod =
   | "history.revert"
   | "snapshot.list"
   | "snapshot.structure"
+  | "snapshot.prune.plan"
+  | "snapshot.prune.execute"
   | "snapshot.create"
   | "snapshot.delete"
   | "snapshot.restore"
@@ -545,6 +549,20 @@ export interface Mdbx2SnapshotStructurePage {
   nextCursor?: string;
 }
 
+export interface Mdbx2SnapshotPrunePlan {
+  planToken: string;
+  keepLatest: number;
+  candidateCount: number;
+  hasMore: boolean;
+  totalCiphertextBytes: number;
+}
+
+export interface Mdbx2SnapshotPruneResult {
+  planToken: string;
+  commitId: string;
+  deletedSnapshotCount: number;
+}
+
 export interface Mdbx2SnapshotCreateResult {
   operationId: string;
   snapshotId: string;
@@ -635,8 +653,11 @@ export interface Mdbx2HostCapabilities {
   maxSnapshotStructurePageSize: typeof MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE;
   maxSnapshotResultBytes: typeof MDBX2_MAX_SNAPSHOT_RESULT_BYTES;
   maxSnapshotNameBytes: typeof MDBX2_MAX_SNAPSHOT_NAME_BYTES;
+  maxSnapshotPruneCandidates: typeof MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES;
+  maxSnapshotPruneKeepLatest: typeof MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST;
   supportsSnapshotStructure: true;
   supportsSnapshotMutation: true;
+  supportsSnapshotPrune: true;
   maxConflictPageSize: typeof MDBX2_MAX_CONFLICT_PAGE_SIZE;
   maxConflictResultBytes: typeof MDBX2_MAX_CONFLICT_RESULT_BYTES;
   supportsConflictResolution: true;
@@ -725,8 +746,11 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxSnapshotStructurePageSize !== MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE) throw incompatible("Native Host 快照结构分页限制与插件不一致。");
   if (value.maxSnapshotResultBytes !== MDBX2_MAX_SNAPSHOT_RESULT_BYTES) throw incompatible("Native Host 快照响应限制与插件不一致。");
   if (value.maxSnapshotNameBytes !== MDBX2_MAX_SNAPSHOT_NAME_BYTES) throw incompatible("Native Host 快照名称限制与插件不一致。");
+  if (value.maxSnapshotPruneCandidates !== MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES) throw incompatible("Native Host 自动快照清理数量限制与插件不一致。");
+  if (value.maxSnapshotPruneKeepLatest !== MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST) throw incompatible("Native Host 自动快照保留限制与插件不一致。");
   if (value.supportsSnapshotStructure !== true) throw incompatible("Native Host 未启用 MDBX2 快照结构能力。");
   if (value.supportsSnapshotMutation !== true) throw incompatible("Native Host 未启用 MDBX2 快照管理能力。");
+  if (value.supportsSnapshotPrune !== true) throw incompatible("Native Host 未启用 MDBX2 自动快照清理能力。");
   if (value.maxConflictPageSize !== MDBX2_MAX_CONFLICT_PAGE_SIZE) throw incompatible("Native Host 冲突分页限制与插件不一致。");
   if (value.maxConflictResultBytes !== MDBX2_MAX_CONFLICT_RESULT_BYTES) throw incompatible("Native Host 冲突响应限制与插件不一致。");
   if (value.supportsConflictResolution !== true) throw incompatible("Native Host 未启用 MDBX2 冲突解决能力。");
@@ -768,8 +792,11 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
     maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
     maxSnapshotNameBytes: MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+    maxSnapshotPruneCandidates: MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES,
+    maxSnapshotPruneKeepLatest: MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST,
     supportsSnapshotStructure: true,
     supportsSnapshotMutation: true,
+    supportsSnapshotPrune: true,
     maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
     maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
     supportsConflictResolution: true,

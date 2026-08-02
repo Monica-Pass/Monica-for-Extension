@@ -90,6 +90,8 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     const snapshotRequests = [
       { type: "MDBX2_SNAPSHOT_LIST", providerId: "manager-only-provider", pageSize: 20 },
       { type: "MDBX2_SNAPSHOT_STRUCTURE", providerId: "manager-only-provider", snapshotId: "11111111-1111-4111-8111-111111111111", side: "snapshot", pageSize: 100 },
+      { type: "MDBX2_SNAPSHOT_PRUNE_PLAN", providerId: "manager-only-provider", keepLatest: 0 },
+      { type: "MDBX2_SNAPSHOT_PRUNE_EXECUTE", providerId: "manager-only-provider", planToken: "a".repeat(64), keepLatest: 0 },
       { type: "MDBX2_SNAPSHOT_CREATE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "" },
       { type: "MDBX2_SNAPSHOT_DELETE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", snapshotId: "22222222-2222-4222-8222-222222222222" },
       { type: "MDBX2_SNAPSHOT_RESTORE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", snapshotId: "22222222-2222-4222-8222-222222222222" }

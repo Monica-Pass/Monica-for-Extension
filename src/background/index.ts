@@ -629,6 +629,16 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.listSnapshotStructure(vaultHandle, request.snapshotId, request.side, request);
     }
+    case "MDBX2_SNAPSHOT_PRUNE_PLAN": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.planAutomaticSnapshotPrune(vaultHandle, request.keepLatest);
+    }
+    case "MDBX2_SNAPSHOT_PRUNE_EXECUTE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.pruneAutomaticSnapshots(vaultHandle, request.planToken, request.keepLatest);
+    }
     case "MDBX2_SNAPSHOT_CREATE": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);

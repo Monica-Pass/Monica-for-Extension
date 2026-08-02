@@ -273,8 +273,11 @@ mod tests {
         assert_eq!(result["maxSnapshotStructurePageSize"], 100);
         assert_eq!(result["maxSnapshotResultBytes"], 850 * 1024);
         assert_eq!(result["maxSnapshotNameBytes"], 96);
+        assert_eq!(result["maxSnapshotPruneCandidates"], 200);
+        assert_eq!(result["maxSnapshotPruneKeepLatest"], 10_000);
         assert_eq!(result["supportsSnapshotStructure"], true);
         assert_eq!(result["supportsSnapshotMutation"], true);
+        assert_eq!(result["supportsSnapshotPrune"], true);
         assert_eq!(result["maxAttachmentBytes"], runtime::MAX_ATTACHMENT_BYTES);
         assert_eq!(result["maxAttachmentPageSize"], 50);
         assert_eq!(result["maxAttachmentSessions"], 4);

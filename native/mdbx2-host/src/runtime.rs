@@ -57,6 +57,8 @@ pub const MAX_SNAPSHOT_RESULT_BYTES: usize = 850 * 1024;
 const SNAPSHOT_STRUCTURE_CURSOR_VERSION: u32 = 1;
 const MAX_SNAPSHOT_TEXT_BYTES: usize = 4096;
 const MAX_SNAPSHOT_NAME_BYTES: usize = 96;
+const MAX_SNAPSHOT_PRUNE_CANDIDATES: usize = 200;
+const MAX_SNAPSHOT_PRUNE_KEEP_LATEST: u32 = 10_000;
 const MONICA_ROOT_PROJECT_TITLE: &str = ".monica-root";
 const SNAPSHOT_OPERATION_STATE_VERSION: u32 = 1;
 const MAX_SNAPSHOT_OPERATION_RECEIPTS: usize = 2048;
@@ -449,6 +451,8 @@ impl HostRuntime {
             "history.revert" => self.history_revert(params),
             "snapshot.list" => self.snapshot_list(params),
             "snapshot.structure" => self.snapshot_structure(params),
+            "snapshot.prune.plan" => self.snapshot_prune_plan(params),
+            "snapshot.prune.execute" => self.snapshot_prune_execute(params),
             "snapshot.create" => self.snapshot_create(params),
             "snapshot.delete" => self.snapshot_delete(params),
             "snapshot.restore" => self.snapshot_restore(params),
@@ -476,6 +480,16 @@ impl HostRuntime {
         let params = take_object(params, "host.hello params must be an object.")?;
         reject_unknown(params)?;
         let capabilities = mdbx_ffi::mdbx_build_capability_manifest();
+        let snapshot_lifecycle_limits = mdbx_ffi::default_snapshot_lifecycle_limits();
+        if snapshot_lifecycle_limits.max_prune_candidates != MAX_SNAPSHOT_PRUNE_CANDIDATES as u32
+            || snapshot_lifecycle_limits.max_keep_latest != MAX_SNAPSHOT_PRUNE_KEEP_LATEST
+        {
+            return Err(RpcFailure::new(
+                "host-core-incompatible",
+                "Pinned MDBX2 snapshot retention limits differ from the reviewed Host boundary.",
+                false,
+            ));
+        }
         let mut result = json!({
             "hostName": HOST_NAME,
             "hostVersion": env!("CARGO_PKG_VERSION"),
@@ -527,6 +541,15 @@ impl HostRuntime {
             json!(MAX_HISTORY_REVERT_ITEMS),
         );
         result_object.insert("supportsHistoryRevert".to_string(), json!(true));
+        result_object.insert(
+            "maxSnapshotPruneCandidates".to_string(),
+            json!(MAX_SNAPSHOT_PRUNE_CANDIDATES),
+        );
+        result_object.insert(
+            "maxSnapshotPruneKeepLatest".to_string(),
+            json!(MAX_SNAPSHOT_PRUNE_KEEP_LATEST),
+        );
+        result_object.insert("supportsSnapshotPrune".to_string(), json!(true));
         Ok(result)
     }
 
@@ -1340,6 +1363,120 @@ impl HostRuntime {
             "totalNodes": total_nodes,
             "items": items,
             "nextCursor": next_cursor
+        }))
+    }
+
+    fn snapshot_prune_plan(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.prune.plan params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let keep_latest = take_u64(&mut params, "keepLatest")?;
+        if keep_latest > u64::from(MAX_SNAPSHOT_PRUNE_KEEP_LATEST) {
+            return Err(RpcFailure::invalid(
+                "keepLatest exceeds the MDBX2 automatic snapshot retention limit.",
+            ));
+        }
+        reject_unknown(params)?;
+        let keep_latest = keep_latest as u32;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let plan = vault
+            .plan_automatic_snapshot_prune(keep_latest)
+            .map_err(snapshot_prune_plan_failure)?;
+        if plan.keep_latest != keep_latest
+            || !valid_sha256(&plan.plan_token)
+            || plan.candidates.len() > MAX_SNAPSHOT_PRUNE_CANDIDATES
+            || (plan.has_more && plan.candidates.len() != MAX_SNAPSHOT_PRUNE_CANDIDATES)
+        {
+            return Err(RpcFailure::new(
+                "snapshot-prune-inspection-failed",
+                "MDBX2 automatic snapshot prune plan is incompatible with the reviewed browser boundary.",
+                false,
+            ));
+        }
+        let mut candidate_ids = HashSet::new();
+        let total_ciphertext_bytes =
+            plan.candidates.iter().try_fold(0_u64, |total, candidate| {
+                if !candidate_ids.insert(candidate.summary.snapshot_id.as_str()) {
+                    return Err(RpcFailure::new(
+                        "snapshot-prune-inspection-failed",
+                        "MDBX2 automatic snapshot prune plan contains duplicate candidates.",
+                        false,
+                    ));
+                }
+                total
+                    .checked_add(candidate.summary.snapshot_ciphertext_bytes)
+                    .ok_or_else(|| {
+                        RpcFailure::new(
+                    "snapshot-prune-inspection-failed",
+                    "MDBX2 automatic snapshot prune size exceeds the browser numeric boundary.",
+                    false,
+                )
+                    })
+            })?;
+        if total_ciphertext_bytes != plan.total_ciphertext_bytes
+            || total_ciphertext_bytes > 9_007_199_254_740_991
+        {
+            return Err(RpcFailure::new(
+                "snapshot-prune-inspection-failed",
+                "MDBX2 automatic snapshot prune size is incompatible with the reviewed browser boundary.",
+                false,
+            ));
+        }
+        bounded_snapshot_result(json!({
+            "planToken": plan.plan_token,
+            "keepLatest": keep_latest,
+            "candidateCount": plan.candidates.len(),
+            "hasMore": plan.has_more,
+            "totalCiphertextBytes": total_ciphertext_bytes
+        }))
+    }
+
+    fn snapshot_prune_execute(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "snapshot.prune.execute params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let plan_token = take_string(&mut params, "planToken", 64, false)?;
+        if !valid_sha256(&plan_token) {
+            return Err(RpcFailure::invalid(
+                "planToken must be a lowercase SHA-256 digest.",
+            ));
+        }
+        let keep_latest = take_u64(&mut params, "keepLatest")?;
+        if keep_latest > u64::from(MAX_SNAPSHOT_PRUNE_KEEP_LATEST) {
+            return Err(RpcFailure::invalid(
+                "keepLatest exceeds the MDBX2 automatic snapshot retention limit.",
+            ));
+        }
+        reject_unknown(params)?;
+        let keep_latest = keep_latest as u32;
+        self.ensure_no_pending_snapshot_operation(&vault_handle)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let result = vault
+            .prune_automatic_snapshots(
+                plan_token.clone(),
+                keep_latest,
+                browser_snapshot_device_context(),
+            )
+            .map_err(snapshot_prune_execute_failure)?;
+        if result.plan_token != plan_token
+            || canonical_uuid(&result.commit_id).as_deref() != Some(result.commit_id.as_str())
+            || result.deleted_snapshot_ids.is_empty()
+            || result.deleted_snapshot_ids.len() > MAX_SNAPSHOT_PRUNE_CANDIDATES
+            || result
+                .deleted_snapshot_ids
+                .iter()
+                .collect::<HashSet<_>>()
+                .len()
+                != result.deleted_snapshot_ids.len()
+        {
+            return Err(RpcFailure::new(
+                "snapshot-prune-result-invalid",
+                "MDBX2 automatic snapshot prune result is incompatible with the reviewed browser boundary.",
+                false,
+            ));
+        }
+        bounded_snapshot_result(json!({
+            "planToken": result.plan_token,
+            "commitId": result.commit_id,
+            "deletedSnapshotCount": result.deleted_snapshot_ids.len()
         }))
     }
 
@@ -4523,6 +4660,60 @@ fn snapshot_structure_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
     }
 }
 
+fn snapshot_prune_plan_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("integrity key")
+        || diagnostic.contains("integrity tag")
+        || diagnostic.contains("lifecycle")
+    {
+        return RpcFailure::new(
+            "snapshot-prune-inspection-failed",
+            "MDBX2 automatic snapshot lifecycle could not be authenticated safely.",
+            false,
+        );
+    }
+    RpcFailure::new(
+        "snapshot-prune-inspection-failed",
+        "MDBX2 automatic snapshot prune plan could not be created.",
+        false,
+    )
+}
+
+fn snapshot_prune_execute_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("prune plan is stale")
+        || diagnostic.contains("prune plan changed after authorization")
+    {
+        return RpcFailure::new(
+            "snapshot-prune-plan-stale",
+            "MDBX2 automatic snapshot prune plan changed and must be planned again.",
+            true,
+        );
+    }
+    if diagnostic.contains("no eligible automatic snapshots") {
+        return RpcFailure::new(
+            "snapshot-prune-plan-empty",
+            "MDBX2 has no eligible automatic snapshots for this prune plan.",
+            false,
+        );
+    }
+    if diagnostic.contains("authorization")
+        || diagnostic.contains("fresh authentication")
+        || diagnostic.contains("authentication")
+    {
+        return RpcFailure::new(
+            "snapshot-prune-authorization-required",
+            "MDBX2 security policy requires the vault to be freshly unlocked before automatic snapshot cleanup.",
+            true,
+        );
+    }
+    RpcFailure::new(
+        "snapshot-prune-failed",
+        "MDBX2 automatic snapshots could not be cleaned safely.",
+        false,
+    )
+}
+
 fn snapshot_operation_intent_sha256(value: Value) -> Result<String, RpcFailure> {
     let bytes = serde_json::to_vec(&value)
         .map_err(|_| RpcFailure::storage("MDBX2 snapshot intent could not be encoded."))?;
@@ -5373,6 +5564,42 @@ mod tests {
                 "credential": { "method": "password", "password": password }
             }),
         );
+    }
+
+    fn test_rfc3339_after(offset_seconds: u64) -> String {
+        let total_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_add(offset_seconds);
+        let days = (total_seconds / 86_400) as i64;
+        let day_seconds = total_seconds % 86_400;
+        let (year, month, day) = civil_date_from_unix_days(days);
+        let hour = day_seconds / 3_600;
+        let minute = (day_seconds % 3_600) / 60;
+        let second = day_seconds % 60;
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    }
+
+    fn civil_date_from_unix_days(days: i64) -> (i64, u32, u32) {
+        let shifted = days + 719_468;
+        let era = if shifted >= 0 {
+            shifted
+        } else {
+            shifted - 146_096
+        } / 146_097;
+        let day_of_era = shifted - era * 146_097;
+        let year_of_era =
+            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+        let mut year = year_of_era + era * 400;
+        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+        let month_prime = (5 * day_of_year + 2) / 153;
+        let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+        let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+        if month <= 2 {
+            year += 1;
+        }
+        (year, month as u32, day as u32)
     }
 
     fn upsert_test_login(
@@ -6401,6 +6628,136 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(mismatch.code, "history-revert-operation-mismatch");
+    }
+
+    #[test]
+    fn snapshot_prune_is_identifier_free_stale_safe_and_restart_idempotent() {
+        let (root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "snapshot-prune-password");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let retention_eligible_at = test_rfc3339_after(2);
+        let automatic_a = vault
+            .create_automatic_snapshot(
+                retention_eligible_at.clone(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        let automatic_b = vault
+            .create_automatic_snapshot(retention_eligible_at, browser_snapshot_device_context())
+            .unwrap();
+        let manual = vault
+            .create_manual_snapshot(
+                "Protected manual snapshot".to_string(),
+                browser_snapshot_device_context(),
+            )
+            .unwrap();
+        drop(vault);
+        std::thread::sleep(std::time::Duration::from_secs(3));
+
+        let invalid_keep = runtime
+            .handle(
+                "snapshot.prune.plan",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "keepLatest": MAX_SNAPSHOT_PRUNE_KEEP_LATEST + 1
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(invalid_keep.code, "params-invalid");
+        let plan = call(
+            &mut runtime,
+            "snapshot.prune.plan",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "keepLatest": 0
+            }),
+        );
+        assert_eq!(plan["keepLatest"], 0);
+        assert_eq!(plan["candidateCount"], 2);
+        assert_eq!(plan["hasMore"], false);
+        assert!(plan["totalCiphertextBytes"].as_u64().unwrap() > 0);
+        let plan_token = plan["planToken"].as_str().unwrap().to_string();
+        assert!(valid_sha256(&plan_token));
+        let plan_text = serde_json::to_string(&plan).unwrap();
+        for hidden in [
+            automatic_a.snapshot_id.as_str(),
+            automatic_a.base_commit_id.as_str(),
+            automatic_a.snapshot_hash.as_str(),
+            automatic_a.created_by_device_id.as_str(),
+            automatic_b.snapshot_id.as_str(),
+            manual.snapshot_id.as_str(),
+        ] {
+            assert!(!plan_text.contains(hidden));
+        }
+
+        let stale = runtime
+            .handle(
+                "snapshot.prune.execute",
+                json!({
+                    "vaultHandle": vault_handle.clone(),
+                    "planToken": plan_token.clone(),
+                    "keepLatest": 1
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(stale.code, "snapshot-prune-plan-stale");
+        let before = call(
+            &mut runtime,
+            "snapshot.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": MAX_SNAPSHOT_PAGE_SIZE,
+                "cursor": null
+            }),
+        );
+        assert_eq!(before["items"].as_array().unwrap().len(), 3);
+
+        drop(runtime);
+        let mut runtime = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut runtime, &vault_handle, "snapshot-prune-password");
+        let result = call(
+            &mut runtime,
+            "snapshot.prune.execute",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "planToken": plan_token.clone(),
+                "keepLatest": 0
+            }),
+        );
+        assert_eq!(result["planToken"], plan_token);
+        assert_eq!(result["deletedSnapshotCount"], 2);
+        let commit_id = result["commitId"].as_str().unwrap().to_string();
+        let result_text = serde_json::to_string(&result).unwrap();
+        assert!(!result_text.contains(&automatic_a.snapshot_id));
+        assert!(!result_text.contains(&automatic_b.snapshot_id));
+
+        drop(runtime);
+        let mut runtime = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut runtime, &vault_handle, "snapshot-prune-password");
+        let retried = call(
+            &mut runtime,
+            "snapshot.prune.execute",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "planToken": plan_token,
+                "keepLatest": 0
+            }),
+        );
+        assert_eq!(retried["commitId"], commit_id);
+        assert_eq!(retried["deletedSnapshotCount"], 2);
+        let remaining = call(
+            &mut runtime,
+            "snapshot.list",
+            json!({
+                "vaultHandle": vault_handle,
+                "pageSize": MAX_SNAPSHOT_PAGE_SIZE,
+                "cursor": null
+            }),
+        );
+        let remaining_items = remaining["items"].as_array().unwrap();
+        assert_eq!(remaining_items.len(), 1);
+        assert_eq!(remaining_items[0]["snapshotId"], manual.snapshot_id);
+        assert_eq!(remaining_items[0]["autoPrune"], false);
     }
 
     #[test]

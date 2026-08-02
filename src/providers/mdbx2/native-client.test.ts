@@ -22,6 +22,8 @@ import {
   MDBX2_MAX_REMOTE_BLOB_BYTES,
   MDBX2_MAX_SNAPSHOT_NAME_BYTES,
   MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
+  MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES,
+  MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST,
   MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
   MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES,
   MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
@@ -92,8 +94,11 @@ const HELLO = {
   maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
   maxSnapshotNameBytes: MDBX2_MAX_SNAPSHOT_NAME_BYTES,
+  maxSnapshotPruneCandidates: MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES,
+  maxSnapshotPruneKeepLatest: MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST,
   supportsSnapshotStructure: true,
   supportsSnapshotMutation: true,
+  supportsSnapshotPrune: true,
   maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
   maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
   supportsConflictResolution: true,
@@ -144,6 +149,7 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsMdbx1: true })).toThrowError(Mdbx2NativeHostError);
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxBinaryChunkBytes: 64 * 1024 })).toThrow("分块限制");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsHistoryRevert: false })).toThrow("历史恢复能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsSnapshotPrune: false })).toThrow("自动快照清理能力");
   });
 
   it("preserves stable Host error codes and retryability", async () => {
@@ -274,6 +280,8 @@ describe("MDBX2 Native Messaging client", () => {
           }],
           nextCursor: null
         },
+        "snapshot.prune.plan": { planToken: "a".repeat(64), keepLatest: 0, candidateCount: 2, hasMore: false, totalCiphertextBytes: 256 },
+        "snapshot.prune.execute": { planToken: "a".repeat(64), commitId: handle, deletedSnapshotCount: 2 },
         "snapshot.create": { operationId: handle, snapshotId: handle, commitId: handle, alreadyCompleted: false },
         "snapshot.delete": { operationId: handle, snapshotId: handle, commitId: null, alreadyCompleted: true },
         "snapshot.restore": { operationId: handle, snapshotId: handle, commitId: handle, affectedObjectCount: 2, alreadyCompleted: false },
@@ -337,6 +345,8 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.revertCommit(handle, handle, handle)).resolves.toEqual({ operationId: handle, commitId: handle, revertedObjectCount: 1 });
     await expect(client.listSnapshots(handle)).resolves.toMatchObject({ items: [{ snapshotId: handle, name: "手动快照", integrityOk: true }] });
     await expect(client.listSnapshotStructure(handle, handle, "snapshot")).resolves.toMatchObject({ side: "snapshot", totalNodes: 1, items: [{ name: "工作账号", status: "modified" }] });
+    await expect(client.planAutomaticSnapshotPrune(handle)).resolves.toEqual({ planToken: "a".repeat(64), keepLatest: 0, candidateCount: 2, hasMore: false, totalCiphertextBytes: 256 });
+    await expect(client.pruneAutomaticSnapshots(handle, "a".repeat(64))).resolves.toEqual({ planToken: "a".repeat(64), commitId: handle, deletedSnapshotCount: 2 });
     await expect(client.createSnapshot(handle, handle, " 手动快照 ")).resolves.toMatchObject({ operationId: handle, alreadyCompleted: false });
     await expect(client.deleteSnapshot(handle, handle, handle)).resolves.toEqual({ operationId: handle, snapshotId: handle, commitId: undefined, alreadyCompleted: true });
     await expect(client.restoreSnapshot(handle, handle, handle)).resolves.toMatchObject({ operationId: handle, affectedObjectCount: 2 });
@@ -517,6 +527,38 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.listSnapshots(handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
     await expect(client.listSnapshotStructure(handle, handle, "snapshot")).rejects.toMatchObject({ code: "native-host-incompatible" });
     await expect(client.listSnapshotStructure(handle, handle, "snapshot")).rejects.toMatchObject({ code: "native-host-incompatible" });
+    client.close();
+  });
+
+  it("rejects malformed or mismatched automatic snapshot prune plans and results", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+
+    await expect(client.planAutomaticSnapshotPrune(handle, MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST + 1))
+      .rejects.toMatchObject({ code: "snapshot-prune-keep-latest-invalid" });
+    await expect(client.pruneAutomaticSnapshots(handle, "invalid"))
+      .rejects.toMatchObject({ code: "digest-invalid" });
+    expect(runtime.port.messages).toHaveLength(0);
+
+    let responseNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      responseNumber += 1;
+      const result = responseNumber === 1
+        ? { planToken: "a".repeat(64), keepLatest: 0, candidateCount: 1, hasMore: false, totalCiphertextBytes: 128, candidateIds: [handle] }
+        : responseNumber === 2
+          ? { planToken: "a".repeat(64), keepLatest: 1, candidateCount: 1, hasMore: false, totalCiphertextBytes: 128 }
+          : responseNumber === 3
+            ? { planToken: "b".repeat(64), commitId: handle, deletedSnapshotCount: 1 }
+            : { planToken: "a".repeat(64), commitId: handle, deletedSnapshotCount: MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES + 1 };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+
+    await expect(client.planAutomaticSnapshotPrune(handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.planAutomaticSnapshotPrune(handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.pruneAutomaticSnapshots(handle, "a".repeat(64))).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.pruneAutomaticSnapshots(handle, "a".repeat(64))).rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 

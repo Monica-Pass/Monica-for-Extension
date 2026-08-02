@@ -10,6 +10,7 @@ import {
   type Mdbx2ConflictSummary,
   type Mdbx2HostStatus,
   type Mdbx2ManagedSnapshotSummary,
+  type Mdbx2SnapshotPrunePlan,
   type Mdbx2SnapshotStructureNode,
   type Mdbx2SnapshotStructureSide,
   type Mdbx2UnlockMethod,
@@ -20,19 +21,20 @@ import {
 } from "../providers/mdbx2/native-contract";
 import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from "../providers/mdbx2/mdbx2-history";
 import { mdbx2ConflictChoiceDescription, mdbx2ConflictChoiceLabel, presentMdbx2Conflict } from "../providers/mdbx2/mdbx2-conflicts";
-import { presentMdbx2Snapshot, presentMdbx2SnapshotNode } from "../providers/mdbx2/mdbx2-snapshots";
+import { formatMdbx2SnapshotBytes, presentMdbx2Snapshot, presentMdbx2SnapshotNode } from "../providers/mdbx2/mdbx2-snapshots";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
 type NewSourceMode = "local" | "remote";
 type BusyState = "" | "probe" | "upload" | "download" | "open" | "save" | "publish";
-type SnapshotBusyState = "" | "list" | "structure" | "create" | "delete" | "restore";
+type SnapshotBusyState = "" | "list" | "structure" | "prune-plan" | "prune" | "create" | "delete" | "restore";
 type SnapshotStructureMode = "snapshot" | "compare";
 type SnapshotMutationAction = "delete" | "restore";
 interface PendingConflictResolution { item: Mdbx2ConflictSummary; choice: Mdbx2ConflictResolutionChoice; operationId: string }
 interface PendingHistoryRevert { item: Mdbx2CommitHistoryItem; operationId: string; attempted: boolean }
 interface PendingSnapshotCreate { operationId: string; name: string }
 interface PendingSnapshotMutation { item: Mdbx2ManagedSnapshotSummary; action: SnapshotMutationAction; operationId: string; attempted: boolean }
+interface PendingSnapshotPrune { plan: Mdbx2SnapshotPrunePlan; attempted: boolean; uncertain: boolean; stale: boolean }
 interface SnapshotStructureState {
   items: Mdbx2SnapshotStructureNode[];
   cursor?: string;
@@ -100,8 +102,10 @@ const currentSnapshotStructure = ref<SnapshotStructureState>(emptySnapshotStruct
 const savedSnapshotStructure = ref<SnapshotStructureState>(emptySnapshotStructure());
 const pendingSnapshotCreate = ref<PendingSnapshotCreate | undefined>();
 const pendingSnapshotMutation = ref<PendingSnapshotMutation | undefined>();
+const pendingSnapshotPrune = ref<PendingSnapshotPrune | undefined>();
 const snapshotRequiresRefresh = ref(false);
 const confirmSnapshotButton = ref<HTMLElement | null>(null);
+const confirmSnapshotPruneButton = ref<HTMLElement | null>(null);
 
 const config = props.provider?.config || {};
 const form = reactive({
@@ -128,7 +132,7 @@ const selectedConflict = computed(() => conflictItems.value.find((item) => item.
 const selectedSnapshot = computed(() => snapshotItems.value.find((item) => item.snapshotId === selectedSnapshotId.value));
 const snapshotNameBytes = computed(() => new TextEncoder().encode(snapshotName.value.trim()).byteLength);
 const snapshotNameTooLong = computed(() => snapshotNameBytes.value > MDBX2_MAX_SNAPSHOT_NAME_BYTES);
-const snapshotMutating = computed(() => snapshotBusy.value === "create" || snapshotBusy.value === "delete" || snapshotBusy.value === "restore");
+const snapshotMutating = computed(() => snapshotBusy.value === "prune" || snapshotBusy.value === "create" || snapshotBusy.value === "delete" || snapshotBusy.value === "restore");
 const historyMutating = computed(() => historyBusy.value === "revert");
 const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value);
 const dialogLocked = computed(() => Boolean(busy.value) || managerMutationLocked.value);
@@ -495,6 +499,7 @@ async function loadSnapshots(reset = false) {
     if (reset) {
       pendingSnapshotCreate.value = undefined;
       pendingSnapshotMutation.value = undefined;
+      if (!pendingSnapshotPrune.value?.uncertain) pendingSnapshotPrune.value = undefined;
       snapshotRequiresRefresh.value = false;
     }
   } catch (cause) {
@@ -504,8 +509,89 @@ async function loadSnapshots(reset = false) {
   }
 }
 
+async function requestAutomaticSnapshotPrune() {
+  if (!providerId.value
+      || snapshotBusy.value
+      || snapshotRequiresRefresh.value
+      || conflictBusy.value === "resolve"
+      || pendingSnapshotCreate.value
+      || pendingSnapshotMutation.value
+      || pendingSnapshotPrune.value?.uncertain) return;
+  snapshotBusy.value = "prune-plan";
+  snapshotError.value = "";
+  pendingSnapshotPrune.value = undefined;
+  let planned = false;
+  try {
+    const plan = await vaultClient.planMdbx2AutomaticSnapshotPrune(providerId.value, 0);
+    if (!plan.candidateCount) {
+      emit("notice", "当前没有已到保留期限的自动快照；手动快照和未到期自动快照均未更改。");
+      return;
+    }
+    pendingSnapshotPrune.value = { plan, attempted: false, uncertain: false, stale: false };
+    planned = true;
+  } catch (cause) {
+    snapshotError.value = snapshotErrorMessage(cause);
+  } finally {
+    snapshotBusy.value = "";
+  }
+  if (planned) {
+    await nextTick();
+    confirmSnapshotPruneButton.value?.focus();
+  }
+}
+
+function cancelAutomaticSnapshotPrune() {
+  if (!pendingSnapshotPrune.value || pendingSnapshotPrune.value.uncertain || snapshotBusy.value) return;
+  pendingSnapshotPrune.value = undefined;
+  snapshotError.value = "";
+}
+
+async function confirmAutomaticSnapshotPrune() {
+  const pending = pendingSnapshotPrune.value;
+  if (!pending || !providerId.value || snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve") return;
+  if (pending.stale) {
+    await requestAutomaticSnapshotPrune();
+    return;
+  }
+  pending.attempted = true;
+  pending.uncertain = false;
+  snapshotBusy.value = "prune";
+  snapshotError.value = "";
+  let completed = false;
+  try {
+    const result = await vaultClient.pruneMdbx2AutomaticSnapshots(providerId.value, pending.plan.planToken, pending.plan.keepLatest);
+    if (result.deletedSnapshotCount !== pending.plan.candidateCount) {
+      throw new Error("Native Host 返回的自动快照清理数量与确认计划不一致。");
+    }
+    pendingSnapshotPrune.value = undefined;
+    completed = true;
+    emit(
+      "notice",
+      `已清理 ${result.deletedSnapshotCount} 个到期自动快照。手动快照和未到期自动快照保持不变。${pending.plan.hasMore ? " 仍有更多到期项，可再次检查。" : ""}`
+    );
+  } catch (cause) {
+    const code = errorCode(cause);
+    snapshotError.value = snapshotErrorMessage(cause);
+    if (code === "snapshot-prune-plan-stale") {
+      pending.stale = true;
+      pending.uncertain = false;
+    } else if (code === "native-host-disconnected") {
+      pending.uncertain = true;
+    } else if (code === "snapshot-prune-plan-empty") {
+      pendingSnapshotPrune.value = undefined;
+      emit("notice", "自动快照候选已经变化，当前没有可清理项。请刷新快照后再检查。");
+    } else {
+      pending.attempted = false;
+      pending.uncertain = false;
+    }
+  } finally {
+    snapshotBusy.value = "";
+  }
+  if (completed) await refreshAfterSnapshotMutation();
+}
+
 async function selectSnapshot(item: Mdbx2ManagedSnapshotSummary) {
-  if (snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve") return;
+  if (snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || pendingSnapshotPrune.value) return;
   selectedSnapshotId.value = selectedSnapshotId.value === item.snapshotId ? "" : item.snapshotId;
   pendingSnapshotMutation.value = undefined;
   snapshotError.value = "";
@@ -515,7 +601,7 @@ async function selectSnapshot(item: Mdbx2ManagedSnapshotSummary) {
 }
 
 async function changeSnapshotStructureMode(mode: SnapshotStructureMode) {
-  if (!selectedSnapshot.value || snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve") return;
+  if (!selectedSnapshot.value || snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || pendingSnapshotPrune.value) return;
   snapshotStructureMode.value = mode;
   snapshotError.value = "";
   if (!selectedSnapshot.value.integrityOk) return;
@@ -529,7 +615,7 @@ async function changeSnapshotStructureMode(mode: SnapshotStructureMode) {
 
 async function loadSnapshotStructure(side: Mdbx2SnapshotStructureSide, reset = false) {
   const item = selectedSnapshot.value;
-  if (!providerId.value || !item || !item.integrityOk || snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve") return;
+  if (!providerId.value || !item || !item.integrityOk || snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || pendingSnapshotPrune.value) return;
   const state = side === "current" ? currentSnapshotStructure : savedSnapshotStructure;
   snapshotBusy.value = "structure";
   snapshotError.value = "";
@@ -558,7 +644,7 @@ async function loadSnapshotStructure(side: Mdbx2SnapshotStructureSide, reset = f
 }
 
 async function createSnapshot() {
-  if (!providerId.value || snapshotBusy.value || snapshotNameTooLong.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve") return;
+  if (!providerId.value || snapshotBusy.value || snapshotNameTooLong.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || pendingSnapshotMutation.value || pendingSnapshotPrune.value) return;
   const pending = pendingSnapshotCreate.value || {
     operationId: crypto.randomUUID(),
     name: snapshotName.value.trim()
@@ -584,7 +670,7 @@ async function createSnapshot() {
 }
 
 async function requestSnapshotMutation(item: Mdbx2ManagedSnapshotSummary, action: SnapshotMutationAction) {
-  if (snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || (action === "restore" && !item.integrityOk)) return;
+  if (snapshotBusy.value || snapshotRequiresRefresh.value || conflictBusy.value === "resolve" || pendingSnapshotCreate.value || pendingSnapshotPrune.value || (action === "restore" && !item.integrityOk)) return;
   selectedSnapshotId.value = item.snapshotId;
   pendingSnapshotMutation.value = { item, action, operationId: crypto.randomUUID(), attempted: false };
   snapshotError.value = "";
@@ -774,6 +860,7 @@ function clearSnapshots() {
   resetSnapshotStructures();
   pendingSnapshotCreate.value = undefined;
   pendingSnapshotMutation.value = undefined;
+  pendingSnapshotPrune.value = undefined;
   snapshotRequiresRefresh.value = false;
 }
 
@@ -834,6 +921,11 @@ function snapshotErrorMessage(cause: unknown): string {
   if (code === "snapshot-operation-mismatch") return "快照重试内容与先前操作不一致，请刷新状态后重新选择。";
   if (code === "snapshot-not-found") return "此快照已被其他操作删除，请刷新快照列表。";
   if (code === "snapshot-name-invalid") return "快照名称超过 96 个 UTF-8 字节，请缩短后重试。";
+  if (code === "snapshot-prune-plan-stale") return "自动快照集合或保留状态已经变化，旧计划已安全失效。请重新检查可清理项。";
+  if (code === "snapshot-prune-plan-empty") return "此清理计划已没有符合条件的自动快照，请刷新后重新检查。";
+  if (code === "snapshot-prune-authorization-required") return "MDBX2 安全策略要求重新解锁保险库后再清理自动快照。";
+  if (code === "snapshot-prune-inspection-failed") return "Native Host 无法安全验证自动快照保留状态；没有执行删除。";
+  if (code === "native-host-disconnected") return "Native Host 在清理期间断开。原计划令牌已经保留，请使用同一确认按钮安全重试。";
   return errorMessage(cause);
 }
 
@@ -938,7 +1030,7 @@ function conflictErrorMessage(cause: unknown): string {
                 autocomplete="off"
                 :aria-invalid="snapshotNameTooLong"
                 aria-describedby="mdbx2-snapshot-name-help"
-                :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotCreate) || snapshotRequiresRefresh || conflictBusy === 'resolve'"
+                :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotCreate) || Boolean(pendingSnapshotMutation) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve'"
                 placeholder="例如：升级前"
                 @keydown.enter.prevent="createSnapshot"
               />
@@ -947,7 +1039,31 @@ function conflictErrorMessage(cause: unknown): string {
               <small>MDBX2 手动快照始终保存完整且经过认证的保险库状态；留空时由 Core 生成名称。</small>
               <small :class="{ error: snapshotNameTooLong }">{{ snapshotNameBytes }} / {{ MDBX2_MAX_SNAPSHOT_NAME_BYTES }} UTF-8 字节</small>
             </div>
-            <m3e-button variant="filled" type="button" :disabled="Boolean(snapshotBusy) || snapshotNameTooLong || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="createSnapshot"><m3e-icon slot="icon" name="add"></m3e-icon>{{ snapshotBusy === 'create' ? '正在创建…' : pendingSnapshotCreate ? '重试创建' : '创建完整快照' }}</m3e-button>
+            <m3e-button variant="filled" type="button" :disabled="Boolean(snapshotBusy) || snapshotNameTooLong || Boolean(pendingSnapshotMutation) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="createSnapshot"><m3e-icon slot="icon" name="add"></m3e-icon>{{ snapshotBusy === 'create' ? '正在创建…' : pendingSnapshotCreate ? '重试创建' : '创建完整快照' }}</m3e-button>
+          </div>
+
+          <div v-if="!pendingSnapshotPrune" class="mdbx2-snapshot-retention">
+            <span class="mdbx2-snapshot-retention-icon"><m3e-icon name="history" /></span>
+            <div class="mdbx2-snapshot-retention-copy">
+              <strong>自动快照保留</strong>
+              <small>先由 Core 检查已到保留期限的候选；手动快照和未到期自动快照不会进入清理计划。</small>
+            </div>
+            <m3e-button class="mdbx2-snapshot-prune-action" variant="tonal" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotCreate) || Boolean(pendingSnapshotMutation) || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="requestAutomaticSnapshotPrune"><m3e-icon slot="icon" name="delete_sweep"></m3e-icon>{{ snapshotBusy === 'prune-plan' ? '正在检查…' : '检查可清理项' }}</m3e-button>
+          </div>
+
+          <div v-else class="mdbx2-snapshot-prune-confirmation" role="group" aria-labelledby="mdbx2-snapshot-prune-title" aria-live="assertive">
+            <span class="mdbx2-snapshot-prune-icon"><m3e-icon name="warning" /></span>
+            <div class="mdbx2-snapshot-prune-copy">
+              <strong id="mdbx2-snapshot-prune-title">清理 {{ pendingSnapshotPrune.plan.candidateCount }} 个到期自动快照？</strong>
+              <small>本次计划约 {{ formatMdbx2SnapshotBytes(pendingSnapshotPrune.plan.totalCiphertextBytes) }}。手动快照和未到期自动快照保持不变；成功后会生成新的同步提交。</small>
+              <small v-if="pendingSnapshotPrune.plan.hasMore">Core 已达到单次 200 项安全上限；完成本次后可以再次检查剩余到期项。</small>
+              <small v-if="pendingSnapshotPrune.uncertain">Host 响应中断，计划令牌仍保留。安全重试会返回原清理结果，不会重复删除。</small>
+              <small v-else-if="pendingSnapshotPrune.stale">旧计划没有执行删除。请重新检查当前候选后再确认。</small>
+            </div>
+            <div class="mdbx2-snapshot-prune-actions">
+              <m3e-button variant="text" type="button" :disabled="pendingSnapshotPrune.uncertain || Boolean(snapshotBusy)" @click="cancelAutomaticSnapshotPrune">取消</m3e-button>
+              <m3e-button ref="confirmSnapshotPruneButton" variant="filled" type="button" aria-label="确认清理到期自动快照" :disabled="Boolean(snapshotBusy) || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="confirmAutomaticSnapshotPrune">{{ snapshotBusy === 'prune' ? '正在清理…' : pendingSnapshotPrune.stale ? '重新检查' : pendingSnapshotPrune.uncertain ? '安全重试' : '确认清理' }}</m3e-button>
+            </div>
           </div>
 
           <p v-if="snapshotError" class="form-error mdbx2-snapshot-error" role="alert">{{ snapshotError }}</p>
@@ -966,7 +1082,7 @@ function conflictErrorMessage(cause: unknown): string {
               class="mdbx2-snapshot-row"
               :class="{ selected: selectedSnapshotId === item.snapshotId, 'integrity-failed': !item.integrityOk }"
               :aria-expanded="selectedSnapshotId === item.snapshotId"
-              :disabled="Boolean(snapshotBusy) || snapshotRequiresRefresh || conflictBusy === 'resolve'"
+              :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve'"
               @click="selectSnapshot(item)"
             >
               <span class="mdbx2-snapshot-icon"><m3e-icon :name="presentMdbx2Snapshot(item).icon" /></span>
@@ -992,8 +1108,8 @@ function conflictErrorMessage(cause: unknown): string {
             <div v-if="selectedSnapshot.integrityOk" class="mdbx2-snapshot-structure">
               <div class="mdbx2-snapshot-structure-toolbar">
                 <div role="group" aria-label="快照结构查看方式">
-                  <button type="button" :aria-pressed="snapshotStructureMode === 'snapshot'" :class="{ active: snapshotStructureMode === 'snapshot' }" :disabled="Boolean(snapshotBusy) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('snapshot')">仅快照</button>
-                  <button type="button" :aria-pressed="snapshotStructureMode === 'compare'" :class="{ active: snapshotStructureMode === 'compare' }" :disabled="Boolean(snapshotBusy) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('compare')">与现版本比较</button>
+                  <button type="button" :aria-pressed="snapshotStructureMode === 'snapshot'" :class="{ active: snapshotStructureMode === 'snapshot' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('snapshot')">仅快照</button>
+                  <button type="button" :aria-pressed="snapshotStructureMode === 'compare'" :class="{ active: snapshotStructureMode === 'compare' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('compare')">与现版本比较</button>
                 </div>
                 <small>结构只包含可读名称、路径、类型和变化状态；附件内容与自定义 metadata 留在 Native Host。</small>
               </div>
@@ -1010,7 +1126,7 @@ function conflictErrorMessage(cause: unknown): string {
                       <small class="mdbx2-snapshot-node-status">{{ presentMdbx2SnapshotNode(node).statusLabel }}</small>
                     </div>
                   </div>
-                  <m3e-button v-if="currentSnapshotStructure.cursor" variant="text" type="button" :disabled="Boolean(snapshotBusy) || conflictBusy === 'resolve'" @click="loadSnapshotStructure('current', false)">加载更多当前项目</m3e-button>
+                  <m3e-button v-if="currentSnapshotStructure.cursor" variant="text" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="loadSnapshotStructure('current', false)">加载更多当前项目</m3e-button>
                 </section>
 
                 <section class="mdbx2-snapshot-structure-side" aria-labelledby="mdbx2-saved-structure-title">
@@ -1024,7 +1140,7 @@ function conflictErrorMessage(cause: unknown): string {
                       <small class="mdbx2-snapshot-node-status">{{ presentMdbx2SnapshotNode(node).statusLabel }}</small>
                     </div>
                   </div>
-                  <m3e-button v-if="savedSnapshotStructure.cursor" variant="text" type="button" :disabled="Boolean(snapshotBusy) || conflictBusy === 'resolve'" @click="loadSnapshotStructure('snapshot', false)">加载更多快照项目</m3e-button>
+                  <m3e-button v-if="savedSnapshotStructure.cursor" variant="text" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="loadSnapshotStructure('snapshot', false)">加载更多快照项目</m3e-button>
                 </section>
               </div>
             </div>
@@ -1035,8 +1151,8 @@ function conflictErrorMessage(cause: unknown): string {
             </div>
 
             <div v-if="!pendingSnapshotMutation" class="mdbx2-snapshot-actions">
-              <m3e-button class="mdbx2-snapshot-delete" variant="tonal" type="button" :disabled="Boolean(snapshotBusy) || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="requestSnapshotMutation(selectedSnapshot, 'delete')"><m3e-icon slot="icon" name="delete_forever"></m3e-icon>删除快照</m3e-button>
-              <m3e-button class="mdbx2-snapshot-restore" variant="filled" type="button" :disabled="Boolean(snapshotBusy) || snapshotRequiresRefresh || conflictBusy === 'resolve' || !presentMdbx2Snapshot(selectedSnapshot).canRestore" @click="requestSnapshotMutation(selectedSnapshot, 'restore')"><m3e-icon slot="icon" name="restore"></m3e-icon>恢复此快照</m3e-button>
+              <m3e-button class="mdbx2-snapshot-delete" variant="tonal" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve'" @click="requestSnapshotMutation(selectedSnapshot, 'delete')"><m3e-icon slot="icon" name="delete_forever"></m3e-icon>删除快照</m3e-button>
+              <m3e-button class="mdbx2-snapshot-restore" variant="filled" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve' || !presentMdbx2Snapshot(selectedSnapshot).canRestore" @click="requestSnapshotMutation(selectedSnapshot, 'restore')"><m3e-icon slot="icon" name="restore"></m3e-icon>恢复此快照</m3e-button>
             </div>
 
             <div v-else class="mdbx2-snapshot-confirmation" role="group" aria-labelledby="mdbx2-snapshot-confirm-title" aria-live="assertive">
@@ -1060,7 +1176,7 @@ function conflictErrorMessage(cause: unknown): string {
             </div>
           </div>
 
-          <div v-if="snapshotCursor" class="mdbx2-snapshot-more"><m3e-button variant="text" type="button" :disabled="Boolean(snapshotBusy) || conflictBusy === 'resolve'" @click="loadSnapshots(false)">加载更多快照</m3e-button></div>
+          <div v-if="snapshotCursor" class="mdbx2-snapshot-more"><m3e-button variant="text" type="button" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="loadSnapshots(false)">加载更多快照</m3e-button></div>
         </section>
 
         <section v-if="isExisting && vaultOpen" class="mdbx2-conflict-panel field-wide" aria-labelledby="mdbx2-conflict-title">
@@ -1266,6 +1382,23 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-snapshot-create-copy { min-width: 0; display: grid; align-content: end; gap: 2px; color: var(--app-muted); }
 .mdbx2-snapshot-create-copy .error { color: var(--md-sys-color-error, #ba1a1a); }
 .mdbx2-snapshot-create > m3e-button { min-height: 44px; }
+.mdbx2-snapshot-retention,
+.mdbx2-snapshot-prune-confirmation { min-height: 64px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
+.mdbx2-snapshot-retention { background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-snapshot-retention-icon,
+.mdbx2-snapshot-prune-icon { width: 32px; height: 32px; display: grid; place-items: center; }
+.mdbx2-snapshot-retention-icon { color: var(--app-muted); }
+.mdbx2-snapshot-prune-icon { color: var(--md-sys-color-on-error-container, var(--app-text)); }
+.mdbx2-snapshot-retention-icon m3e-icon,
+.mdbx2-snapshot-prune-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-snapshot-retention-copy,
+.mdbx2-snapshot-prune-copy { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-snapshot-retention-copy small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-snapshot-prune-action { min-height: 44px; color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-snapshot-prune-confirmation { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-snapshot-prune-copy small { color: inherit; opacity: .84; overflow-wrap: anywhere; }
+.mdbx2-snapshot-prune-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mdbx2-snapshot-prune-actions m3e-button { min-height: 44px; }
 .mdbx2-snapshot-error { margin: 0 16px 12px; }
 .mdbx2-snapshot-refresh-required { min-height: 56px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; gap: 8px; padding: 12px 16px; color: var(--md-sys-color-on-tertiary-container, var(--app-text)); background: var(--md-sys-color-tertiary-container, var(--app-surface-high)); }
 .mdbx2-snapshot-refresh-required m3e-icon { flex: 0 0 24px; --m3e-icon-size: 20px; }
@@ -1410,6 +1543,11 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-progress progress { width: 100%; }
   .mdbx2-snapshot-header { align-items: stretch; flex-direction: column; }
   .mdbx2-snapshot-create { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .mdbx2-snapshot-retention,
+  .mdbx2-snapshot-prune-confirmation { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-snapshot-retention > m3e-button,
+  .mdbx2-snapshot-prune-actions { grid-column: 1 / -1; }
+  .mdbx2-snapshot-prune-actions { align-items: stretch; flex-direction: column; }
   .mdbx2-snapshot-row { grid-template-columns: 32px minmax(0, 1fr) 24px; }
   .mdbx2-snapshot-row time { grid-column: 2; white-space: normal; }
   .mdbx2-snapshot-structure-toolbar > div { width: 100%; }
