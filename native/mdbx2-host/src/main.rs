@@ -273,6 +273,11 @@ mod tests {
         assert_eq!(result["maxSnapshotNameBytes"], 96);
         assert_eq!(result["supportsSnapshotStructure"], true);
         assert_eq!(result["supportsSnapshotMutation"], true);
+        assert_eq!(result["maxAttachmentBytes"], runtime::MAX_ATTACHMENT_BYTES);
+        assert_eq!(result["maxAttachmentPageSize"], 50);
+        assert_eq!(result["maxAttachmentSessions"], 4);
+        assert_eq!(result["maxAttachmentMemoryBytes"], 128 * 1024 * 1024);
+        assert_eq!(result["supportsAttachmentManagement"], true);
         assert_eq!(
             result["maxSyncSegmentPageSize"],
             cloud_sync::SEGMENT_PAGE_SIZE

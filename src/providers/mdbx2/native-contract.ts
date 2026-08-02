@@ -21,6 +21,10 @@ export const MDBX2_MAX_SNAPSHOT_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_SNAPSHOT_NAME_BYTES = 96;
 export const MDBX2_MAX_CONFLICT_PAGE_SIZE = 50;
 export const MDBX2_MAX_CONFLICT_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+export const MDBX2_MAX_ATTACHMENT_PAGE_SIZE = 50;
+export const MDBX2_MAX_ATTACHMENT_SESSIONS = 4;
+export const MDBX2_MAX_ATTACHMENT_MEMORY_BYTES = 128 * 1024 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
 export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
 export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
@@ -52,6 +56,15 @@ export type Mdbx2NativeMethod =
   | "snapshot.restore"
   | "conflict.list"
   | "conflict.resolve"
+  | "attachment.list"
+  | "attachment.read.begin"
+  | "attachment.read.chunk"
+  | "attachment.read.release"
+  | "attachment.upload.begin"
+  | "attachment.upload.chunk"
+  | "attachment.upload.finish"
+  | "attachment.upload.abort"
+  | "attachment.delete"
   | "transfer.read"
   | "transfer.release"
   | "sync.state.register"
@@ -305,6 +318,79 @@ export interface Mdbx2ObjectRecord {
   deleted: boolean;
 }
 
+export type Mdbx2AttachmentStorageMode = "embedded-inline" | "embedded-chunked" | "external-hash-ref";
+
+export interface Mdbx2AttachmentSummary {
+  attachmentId: string;
+  fileName: string;
+  mediaType?: string;
+  sizeBytes: number;
+  storageMode: Mdbx2AttachmentStorageMode;
+  protected: true;
+  deleted: boolean;
+  updatedAt?: string;
+}
+
+export interface Mdbx2AttachmentSummaryPage {
+  items: Mdbx2AttachmentSummary[];
+  nextCursor?: string;
+}
+
+export interface Mdbx2AttachmentReadBeginResult {
+  readHandle: string;
+  attachmentId: string;
+  fileName: string;
+  mediaType?: string;
+  sizeBytes: number;
+  maxChunkBytes: typeof MDBX2_MAX_BINARY_CHUNK_BYTES;
+}
+
+export interface Mdbx2AttachmentReadChunkResult extends Omit<Mdbx2AttachmentReadBeginResult, "maxChunkBytes"> {
+  offset: number;
+  dataBase64: string;
+  nextOffset: number;
+  eof: boolean;
+}
+
+export type Mdbx2AttachmentUploadMode = "create" | "replace";
+
+export interface Mdbx2AttachmentUploadBeginInput {
+  operationId: string;
+  attachmentId: string;
+  collectionId: string;
+  objectId: string;
+  fileName: string;
+  mediaType?: string;
+  mode: Mdbx2AttachmentUploadMode;
+  sizeBytes: number;
+  sha256?: string;
+}
+
+export interface Mdbx2AttachmentUploadBeginResult {
+  transferId: string;
+  operationId: string;
+  attachmentId: string;
+  nextOffset: number;
+  maxChunkBytes: typeof MDBX2_MAX_BINARY_CHUNK_BYTES;
+  alreadyCommitted: boolean;
+}
+
+export interface Mdbx2AttachmentUploadChunkResult {
+  transferId: string;
+  nextOffset: number;
+  acceptedBytes: number;
+  repeated: boolean;
+}
+
+export interface Mdbx2AttachmentMutationResult {
+  transferId?: string;
+  operationId?: string;
+  attachment: Mdbx2AttachmentSummary;
+  commitId: string;
+  alreadyCommitted: boolean;
+  changed: boolean;
+}
+
 export interface Mdbx2ObjectUpsertInput {
   logicalObjectId: string;
   collectionId?: string;
@@ -544,6 +630,11 @@ export interface Mdbx2HostCapabilities {
   maxConflictPageSize: typeof MDBX2_MAX_CONFLICT_PAGE_SIZE;
   maxConflictResultBytes: typeof MDBX2_MAX_CONFLICT_RESULT_BYTES;
   supportsConflictResolution: true;
+  maxAttachmentBytes: typeof MDBX2_MAX_ATTACHMENT_BYTES;
+  maxAttachmentPageSize: typeof MDBX2_MAX_ATTACHMENT_PAGE_SIZE;
+  maxAttachmentSessions: typeof MDBX2_MAX_ATTACHMENT_SESSIONS;
+  maxAttachmentMemoryBytes: typeof MDBX2_MAX_ATTACHMENT_MEMORY_BYTES;
+  supportsAttachmentManagement: true;
   supportsDurableCloudSync: true;
   maxSyncSegmentPageSize: typeof MDBX2_SYNC_SEGMENT_PAGE_SIZE;
   maxBlobReferencePageSize: typeof MDBX2_BLOB_REFERENCE_PAGE_SIZE;
@@ -627,6 +718,11 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxConflictPageSize !== MDBX2_MAX_CONFLICT_PAGE_SIZE) throw incompatible("Native Host 冲突分页限制与插件不一致。");
   if (value.maxConflictResultBytes !== MDBX2_MAX_CONFLICT_RESULT_BYTES) throw incompatible("Native Host 冲突响应限制与插件不一致。");
   if (value.supportsConflictResolution !== true) throw incompatible("Native Host 未启用 MDBX2 冲突解决能力。");
+  if (value.maxAttachmentBytes !== MDBX2_MAX_ATTACHMENT_BYTES) throw incompatible("Native Host 附件大小限制与插件不一致。");
+  if (value.maxAttachmentPageSize !== MDBX2_MAX_ATTACHMENT_PAGE_SIZE) throw incompatible("Native Host 附件分页限制与插件不一致。");
+  if (value.maxAttachmentSessions !== MDBX2_MAX_ATTACHMENT_SESSIONS) throw incompatible("Native Host 附件会话限制与插件不一致。");
+  if (value.maxAttachmentMemoryBytes !== MDBX2_MAX_ATTACHMENT_MEMORY_BYTES) throw incompatible("Native Host 附件内存限制与插件不一致。");
+  if (value.supportsAttachmentManagement !== true) throw incompatible("Native Host 未启用 MDBX2 附件管理能力。");
   if (value.supportsDurableCloudSync !== true) throw incompatible("Native Host 未启用 MDBX2 持久增量同步。");
   if (value.maxSyncSegmentPageSize !== MDBX2_SYNC_SEGMENT_PAGE_SIZE) throw incompatible("Native Host 增量段分页限制与插件不一致。");
   if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
@@ -663,6 +759,11 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
     maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
     supportsConflictResolution: true,
+    maxAttachmentBytes: MDBX2_MAX_ATTACHMENT_BYTES,
+    maxAttachmentPageSize: MDBX2_MAX_ATTACHMENT_PAGE_SIZE,
+    maxAttachmentSessions: MDBX2_MAX_ATTACHMENT_SESSIONS,
+    maxAttachmentMemoryBytes: MDBX2_MAX_ATTACHMENT_MEMORY_BYTES,
+    supportsAttachmentManagement: true,
     supportsDurableCloudSync: true,
     maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
     maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,

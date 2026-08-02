@@ -2,6 +2,8 @@ import {
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
+  MDBX2_MAX_ATTACHMENT_BYTES,
+  MDBX2_MAX_ATTACHMENT_PAGE_SIZE,
   MDBX2_MAX_CONFLICT_PAGE_SIZE,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_DIFF_ITEMS,
@@ -24,6 +26,13 @@ import {
   validateMdbx2HostCapabilities,
   type Mdbx2HostCapabilities,
   type Mdbx2HostStatus,
+  type Mdbx2AttachmentMutationResult,
+  type Mdbx2AttachmentReadBeginResult,
+  type Mdbx2AttachmentReadChunkResult,
+  type Mdbx2AttachmentSummaryPage,
+  type Mdbx2AttachmentUploadBeginInput,
+  type Mdbx2AttachmentUploadBeginResult,
+  type Mdbx2AttachmentUploadChunkResult,
   type Mdbx2CommitDiffResult,
   type Mdbx2CommitHistoryPage,
   type Mdbx2ConflictResolutionChoice,
@@ -400,6 +409,139 @@ export class Mdbx2NativeClient {
       conflictId: opaqueHandle(conflictId, "冲突"),
       choice: conflictResolutionChoiceValue(choice)
     }, timeoutMs));
+  }
+
+  async listAttachments(
+    vaultHandle: string,
+    collectionId: string,
+    objectId: string,
+    input: { pageSize?: number; cursor?: string } = {},
+    timeoutMs = 30_000
+  ): Promise<Mdbx2AttachmentSummaryPage> {
+    return attachmentSummaryPage(await this.request("attachment.list", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      collectionId: opaqueHandle(collectionId, "Collection"),
+      objectId: opaqueHandle(objectId, "Object"),
+      pageSize: attachmentPageSizeValue(input.pageSize),
+      cursor: input.cursor ? textResult(input.cursor, 4096, false, "MDBX2 附件游标无效。") : null
+    }, timeoutMs));
+  }
+
+  async beginAttachmentRead(
+    vaultHandle: string,
+    attachmentId: string,
+    timeoutMs = 120_000
+  ): Promise<Mdbx2AttachmentReadBeginResult> {
+    const normalizedAttachmentId = opaqueHandle(attachmentId, "附件");
+    const result = attachmentReadBeginResult(await this.request("attachment.read.begin", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      attachmentId: normalizedAttachmentId
+    }, timeoutMs));
+    if (result.attachmentId !== normalizedAttachmentId) throw incompatibleResult("Native Host MDBX2 附件读取响应与请求不匹配。");
+    return result;
+  }
+
+  async readAttachmentChunk(
+    readHandle: string,
+    offset: number,
+    maxBytes = MDBX2_MAX_BINARY_CHUNK_BYTES,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2AttachmentReadChunkResult> {
+    const normalizedReadHandle = opaqueHandle(readHandle, "附件读取");
+    const normalizedOffset = safeInteger(offset, "附件偏移");
+    const result = attachmentReadChunkResult(await this.request("attachment.read.chunk", {
+      readHandle: normalizedReadHandle,
+      offset: normalizedOffset,
+      maxBytes: binaryChunkSize(maxBytes)
+    }, timeoutMs));
+    if (result.readHandle !== normalizedReadHandle || result.offset !== normalizedOffset) {
+      throw incompatibleResult("Native Host MDBX2 附件分块响应与请求不匹配。");
+    }
+    return result;
+  }
+
+  async releaseAttachmentRead(readHandle: string, timeoutMs = 15_000): Promise<boolean> {
+    const result = objectResult(await this.request("attachment.read.release", {
+      readHandle: opaqueHandle(readHandle, "附件读取")
+    }, timeoutMs), "Native Host MDBX2 附件读取释放响应无效。");
+    return booleanResult(result.released, "Native Host MDBX2 附件读取释放状态无效。");
+  }
+
+  async beginAttachmentUpload(
+    vaultHandle: string,
+    input: Mdbx2AttachmentUploadBeginInput,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2AttachmentUploadBeginResult> {
+    const normalized = attachmentUploadInput(input);
+    const result = attachmentUploadBeginResult(await this.request("attachment.upload.begin", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      ...normalized,
+      mediaType: normalized.mediaType || null,
+      sha256: normalized.sha256 || null
+    }, timeoutMs));
+    if (result.operationId !== normalized.operationId || result.attachmentId !== normalized.attachmentId) {
+      throw incompatibleResult("Native Host MDBX2 附件上传响应与请求不匹配。");
+    }
+    return result;
+  }
+
+  async sendAttachmentUploadChunk(
+    transferId: string,
+    offset: number,
+    bytes: Uint8Array,
+    timeoutMs = 30_000
+  ): Promise<Mdbx2AttachmentUploadChunkResult> {
+    if (!bytes.length || bytes.length > MDBX2_MAX_BINARY_CHUNK_BYTES) {
+      throw new Mdbx2NativeHostError("attachment-upload-chunk-invalid", "MDBX2 附件分块大小无效。", false);
+    }
+    const normalizedTransferId = opaqueHandle(transferId, "附件上传");
+    const result = attachmentUploadChunkResult(await this.request("attachment.upload.chunk", {
+      transferId: normalizedTransferId,
+      offset: safeInteger(offset, "附件上传偏移"),
+      dataBase64: bytesToBase64(bytes)
+    }, timeoutMs));
+    if (result.transferId !== normalizedTransferId) throw incompatibleResult("Native Host MDBX2 附件上传分块响应与请求不匹配。");
+    if (result.repeated) {
+      if (result.acceptedBytes !== 0 || result.nextOffset < offset + bytes.length) throw incompatibleResult("Native Host MDBX2 附件重试分块边界无效。");
+    } else if (result.acceptedBytes !== bytes.length || result.nextOffset !== offset + bytes.length) {
+      throw incompatibleResult("Native Host MDBX2 附件上传分块边界无效。");
+    }
+    return result;
+  }
+
+  async finishAttachmentUpload(transferId: string, timeoutMs = 5 * 60_000): Promise<Mdbx2AttachmentMutationResult> {
+    const normalizedTransferId = opaqueHandle(transferId, "附件上传");
+    const result = attachmentMutationResult(await this.request("attachment.upload.finish", {
+      transferId: normalizedTransferId
+    }, timeoutMs));
+    if (result.transferId !== normalizedTransferId) throw incompatibleResult("Native Host MDBX2 附件上传完成响应与请求不匹配。");
+    return result;
+  }
+
+  async abortAttachmentUpload(transferId: string, timeoutMs = 15_000): Promise<boolean> {
+    const result = objectResult(await this.request("attachment.upload.abort", {
+      transferId: opaqueHandle(transferId, "附件上传")
+    }, timeoutMs), "Native Host MDBX2 附件上传中止响应无效。");
+    return booleanResult(result.aborted, "Native Host MDBX2 附件上传中止状态无效。");
+  }
+
+  async deleteAttachment(
+    vaultHandle: string,
+    operationId: string,
+    attachmentId: string,
+    timeoutMs = 120_000
+  ): Promise<Mdbx2AttachmentMutationResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "附件操作");
+    const normalizedAttachmentId = opaqueHandle(attachmentId, "附件");
+    const result = attachmentMutationResult(await this.request("attachment.delete", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: normalizedOperationId,
+      attachmentId: normalizedAttachmentId
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId || result.attachment.attachmentId !== normalizedAttachmentId) {
+      throw incompatibleResult("Native Host MDBX2 附件删除响应与请求不匹配。");
+    }
+    return result;
   }
 
   async readOutputFile(
@@ -1055,6 +1197,118 @@ function objectDeleteResult(input: unknown): Mdbx2ObjectDeleteResult {
   };
 }
 
+function attachmentSummaryPage(input: unknown): Mdbx2AttachmentSummaryPage {
+  const value = objectResult(input, "Native Host MDBX2 附件分页响应无效。");
+  if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_ATTACHMENT_PAGE_SIZE) {
+    throw incompatibleResult("Native Host MDBX2 附件分页大小无效。");
+  }
+  return {
+    items: value.items.map(attachmentSummaryResult),
+    nextCursor: optionalString(value.nextCursor, 4096, "MDBX2 附件游标")
+  };
+}
+
+function attachmentSummaryResult(input: unknown): Mdbx2AttachmentSummaryPage["items"][number] {
+  const value = objectResult(input, "Native Host MDBX2 附件摘要无效。");
+  const sizeBytes = safeInteger(value.sizeBytes, "MDBX2 附件大小");
+  if (sizeBytes > MDBX2_MAX_ATTACHMENT_BYTES) throw incompatibleResult("Native Host MDBX2 附件大小超过允许范围。");
+  if (value.protected !== true) throw incompatibleResult("Native Host MDBX2 附件保护状态无效。");
+  return {
+    attachmentId: opaqueHandle(value.attachmentId, "附件"),
+    fileName: textResult(value.fileName, 4096, false, "MDBX2 附件名称无效。"),
+    mediaType: optionalString(value.mediaType, 512, "MDBX2 附件媒体类型"),
+    sizeBytes,
+    storageMode: attachmentStorageModeResult(value.storageMode),
+    protected: true,
+    deleted: booleanResult(value.deleted, "MDBX2 附件删除状态无效。"),
+    updatedAt: optionalString(value.updatedAt, 128, "MDBX2 附件更新时间")
+  };
+}
+
+function attachmentReadBeginResult(input: unknown): Mdbx2AttachmentReadBeginResult {
+  const value = objectResult(input, "Native Host MDBX2 附件读取开始响应无效。");
+  const summary = attachmentReadDescriptor(value);
+  if (value.maxChunkBytes !== MDBX2_MAX_BINARY_CHUNK_BYTES) throw incompatibleResult("Native Host MDBX2 附件读取分块限制无效。");
+  return { ...summary, readHandle: opaqueHandle(value.readHandle, "附件读取"), maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES };
+}
+
+function attachmentReadChunkResult(input: unknown): Mdbx2AttachmentReadChunkResult {
+  const value = objectResult(input, "Native Host MDBX2 附件读取分块响应无效。");
+  const descriptor = attachmentReadDescriptor(value);
+  const dataBase64 = textResult(value.dataBase64, Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4 + 4, false, "MDBX2 附件分块无效。");
+  const bytes = decodeBoundedBase64(dataBase64, MDBX2_MAX_BINARY_CHUNK_BYTES, "MDBX2 附件分块无效。");
+  const offset = safeInteger(value.offset, "MDBX2 附件偏移");
+  const nextOffset = safeInteger(value.nextOffset, "MDBX2 附件下一偏移");
+  if (nextOffset !== offset + bytes.length || nextOffset > descriptor.sizeBytes) throw incompatibleResult("Native Host MDBX2 附件分块边界无效。");
+  const eof = booleanResult(value.eof, "MDBX2 附件结束状态无效。");
+  if (eof !== (nextOffset === descriptor.sizeBytes)) throw incompatibleResult("Native Host MDBX2 附件结束边界无效。");
+  return {
+    ...descriptor,
+    readHandle: opaqueHandle(value.readHandle, "附件读取"),
+    offset,
+    dataBase64,
+    nextOffset,
+    eof
+  };
+}
+
+function attachmentReadDescriptor(input: Record<string, unknown>): Omit<Mdbx2AttachmentReadBeginResult, "readHandle" | "maxChunkBytes"> {
+  const sizeBytes = safeInteger(input.sizeBytes, "MDBX2 附件大小");
+  if (sizeBytes > MDBX2_MAX_ATTACHMENT_BYTES) throw incompatibleResult("Native Host MDBX2 附件大小超过允许范围。");
+  return {
+    attachmentId: opaqueHandle(input.attachmentId, "附件"),
+    fileName: textResult(input.fileName, 4096, false, "MDBX2 附件名称无效。"),
+    mediaType: optionalString(input.mediaType, 512, "MDBX2 附件媒体类型"),
+    sizeBytes
+  };
+}
+
+function attachmentUploadBeginResult(input: unknown): Mdbx2AttachmentUploadBeginResult {
+  const value = objectResult(input, "Native Host MDBX2 附件上传开始响应无效。");
+  const nextOffset = safeInteger(value.nextOffset, "MDBX2 附件上传偏移");
+  if (nextOffset > MDBX2_MAX_ATTACHMENT_BYTES || value.maxChunkBytes !== MDBX2_MAX_BINARY_CHUNK_BYTES) {
+    throw incompatibleResult("Native Host MDBX2 附件上传边界无效。");
+  }
+  return {
+    transferId: opaqueHandle(value.transferId, "附件上传"),
+    operationId: opaqueHandle(value.operationId, "附件操作"),
+    attachmentId: opaqueHandle(value.attachmentId, "附件"),
+    nextOffset,
+    maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
+    alreadyCommitted: booleanResult(value.alreadyCommitted, "MDBX2 附件上传完成状态无效。")
+  };
+}
+
+function attachmentUploadChunkResult(input: unknown): Mdbx2AttachmentUploadChunkResult {
+  const value = objectResult(input, "Native Host MDBX2 附件上传分块响应无效。");
+  const nextOffset = safeInteger(value.nextOffset, "MDBX2 附件上传下一偏移");
+  if (nextOffset > MDBX2_MAX_ATTACHMENT_BYTES) throw incompatibleResult("Native Host MDBX2 附件上传偏移超过允许范围。");
+  return {
+    transferId: opaqueHandle(value.transferId, "附件上传"),
+    nextOffset,
+    acceptedBytes: safeInteger(value.acceptedBytes, "MDBX2 附件已接收字节"),
+    repeated: booleanResult(value.repeated, "MDBX2 附件分块重试状态无效。")
+  };
+}
+
+function attachmentMutationResult(input: unknown): Mdbx2AttachmentMutationResult {
+  const value = objectResult(input, "Native Host MDBX2 附件修改响应无效。");
+  const alreadyCommitted = booleanResult(value.alreadyCommitted, "MDBX2 附件幂等状态无效。");
+  const changed = booleanResult(value.changed, "MDBX2 附件修改状态无效。");
+  if (changed === alreadyCommitted) throw incompatibleResult("Native Host MDBX2 附件修改状态不一致。");
+  const transferId = optionalOpaqueHandle(value.transferId, "附件上传");
+  const operationId = optionalOpaqueHandle(value.operationId, "附件操作");
+  if (Boolean(transferId) === Boolean(operationId)) throw incompatibleResult("Native Host MDBX2 附件修改身份无效。");
+  return {
+    transferId,
+    operationId,
+    attachment: attachmentSummaryResult(value.attachment),
+    commitId: textResult(value.commitId, 128, false, "MDBX2 附件 Commit ID 无效。"),
+    alreadyCommitted,
+    changed
+  };
+}
+
 function commitHistoryPage(input: unknown): Mdbx2CommitHistoryPage {
   const value = objectResult(input, "Native Host MDBX2 历史分页响应无效。");
   if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_HISTORY_PAGE_SIZE) {
@@ -1463,6 +1717,50 @@ function conflictResolutionChoiceValue(value: unknown): Mdbx2ConflictResolutionC
 function conflictResolutionChoiceResult(value: unknown): Mdbx2ConflictResolutionChoice {
   if (value === "local-wins" || value === "incoming-wins") return value;
   throw incompatibleResult("Native Host MDBX2 冲突解决方式无效。");
+}
+
+function attachmentPageSizeValue(value: number | undefined): number {
+  const pageSize = value ?? 20;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MDBX2_MAX_ATTACHMENT_PAGE_SIZE) {
+    throw new Mdbx2NativeHostError("attachment-page-size-invalid", "MDBX2 附件分页大小无效。", false);
+  }
+  return pageSize;
+}
+
+function attachmentStorageModeResult(value: unknown): "embedded-inline" | "embedded-chunked" | "external-hash-ref" {
+  if (value === "embedded-inline" || value === "embedded-chunked" || value === "external-hash-ref") return value;
+  throw incompatibleResult("Native Host MDBX2 附件存储方式无效。");
+}
+
+function attachmentUploadInput(input: Mdbx2AttachmentUploadBeginInput): Mdbx2AttachmentUploadBeginInput {
+  const fileNameBytes = typeof input.fileName === "string" ? new TextEncoder().encode(input.fileName).byteLength : 0;
+  if (!fileNameBytes || fileNameBytes > 4096 || !input.fileName.trim() || input.fileName.includes("\0")) {
+    throw new Mdbx2NativeHostError("attachment-name-invalid", "MDBX2 附件名称为空、含 NUL 或超过 4096 字节。", false);
+  }
+  const mediaType = input.mediaType?.trim() || undefined;
+  if (mediaType && (new TextEncoder().encode(mediaType).byteLength > 512 || mediaType.includes("\0"))) {
+    throw new Mdbx2NativeHostError("attachment-media-type-invalid", "MDBX2 附件媒体类型超过 512 字节或含 NUL。", false);
+  }
+  if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0 || input.sizeBytes > MDBX2_MAX_ATTACHMENT_BYTES) {
+    throw new Mdbx2NativeHostError("attachment-size-invalid", "MDBX2 附件大小超过 64 MiB 上限。", false);
+  }
+  if (input.mode !== "create" && input.mode !== "replace") {
+    throw new Mdbx2NativeHostError("attachment-mode-invalid", "MDBX2 附件上传方式无效。", false);
+  }
+  if (input.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.sha256)) {
+    throw new Mdbx2NativeHostError("attachment-sha256-invalid", "MDBX2 附件 SHA-256 无效。", false);
+  }
+  return {
+    operationId: opaqueHandle(input.operationId, "附件操作"),
+    attachmentId: opaqueHandle(input.attachmentId, "附件"),
+    collectionId: opaqueHandle(input.collectionId, "Collection"),
+    objectId: opaqueHandle(input.objectId, "Object"),
+    fileName: input.fileName,
+    mediaType,
+    mode: input.mode,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256
+  };
 }
 
 function optionalInteger(value: unknown, label: string): number | undefined {

@@ -1,9 +1,11 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use md5::{Digest, Md5};
 use mdbx_ffi::{
-    MdbxCommitHistoryItem, MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance,
-    MdbxDeviceContext, MdbxManagedSnapshotSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits,
-    MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxVault, MdbxWriteCommand,
+    MdbxAttachmentBatchCommand, MdbxAttachmentContentLimits, MdbxAttachmentCreateRequest,
+    MdbxAttachmentRecord, MdbxAttachmentSummary, MdbxAttachmentWriteResult, MdbxCommitHistoryItem,
+    MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance, MdbxDeviceContext,
+    MdbxManagedSnapshotSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxSnapshotKind,
+    MdbxSnapshotStructureNode, MdbxVault, MdbxWriteCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -67,6 +69,13 @@ pub const MAX_CONFLICT_RESULT_BYTES: usize = 850 * 1024;
 const MAX_CONFLICT_SCAN_PAGES: usize = 64;
 const MAX_CONFLICT_RESOLUTION_RECEIPTS: usize = 2048;
 const MAX_CONFLICT_RESOLUTION_STATE_BYTES: u64 = 1024 * 1024;
+pub const MAX_ATTACHMENT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ATTACHMENT_PAGE_SIZE: u32 = 50;
+const MAX_ATTACHMENT_SESSIONS: usize = 4;
+const MAX_ATTACHMENT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_ATTACHMENT_FILE_NAME_BYTES: usize = 4096;
+const MAX_ATTACHMENT_MEDIA_TYPE_BYTES: usize = 512;
+const ATTACHMENT_SESSION_TTL_SECS: u64 = 5 * 60;
 
 #[derive(Debug)]
 pub struct RpcFailure {
@@ -312,6 +321,44 @@ enum ObjectOperationIdentity {
     Scope(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentUploadMode {
+    Create,
+    Replace,
+}
+
+struct AttachmentReadSession {
+    vault_handle: String,
+    attachment_id: String,
+    file_name: String,
+    media_type: Option<String>,
+    bytes: Zeroizing<Vec<u8>>,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+struct AttachmentUploadResult {
+    attachment: MdbxAttachmentRecord,
+    commit_id: String,
+    already_committed: bool,
+}
+
+struct AttachmentUploadSession {
+    vault_handle: String,
+    operation_id: String,
+    attachment_id: String,
+    collection_id: String,
+    object_id: String,
+    file_name: String,
+    media_type: Option<String>,
+    mode: AttachmentUploadMode,
+    size_bytes: usize,
+    expected_sha256: Option<String>,
+    bytes: Zeroizing<Vec<u8>>,
+    result: Option<AttachmentUploadResult>,
+    updated_at_unix_secs: u64,
+}
+
 enum VaultCredential {
     Password(Zeroizing<String>),
     SecurityKey(Zeroizing<Vec<u8>>),
@@ -332,6 +379,8 @@ pub struct HostRuntime {
     object_operations: ObjectOperationState,
     snapshot_operations: SnapshotOperationState,
     conflict_resolutions: ConflictResolutionState,
+    attachment_reads: HashMap<String, AttachmentReadSession>,
+    attachment_uploads: HashMap<String, AttachmentUploadSession>,
 }
 
 impl HostRuntime {
@@ -370,6 +419,8 @@ impl HostRuntime {
             object_operations,
             snapshot_operations,
             conflict_resolutions,
+            attachment_reads: HashMap::new(),
+            attachment_uploads: HashMap::new(),
         })
     }
 
@@ -401,6 +452,15 @@ impl HostRuntime {
             "snapshot.restore" => self.snapshot_restore(params),
             "conflict.list" => self.conflict_list(params),
             "conflict.resolve" => self.conflict_resolve(params),
+            "attachment.list" => self.attachment_list(params),
+            "attachment.read.begin" => self.attachment_read_begin(params),
+            "attachment.read.chunk" => self.attachment_read_chunk(params),
+            "attachment.read.release" => self.attachment_read_release(params),
+            "attachment.upload.begin" => self.attachment_upload_begin(params),
+            "attachment.upload.chunk" => self.attachment_upload_chunk(params),
+            "attachment.upload.finish" => self.attachment_upload_finish(params),
+            "attachment.upload.abort" => self.attachment_upload_abort(params),
+            "attachment.delete" => self.attachment_delete(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
@@ -440,6 +500,11 @@ impl HostRuntime {
             "maxConflictPageSize": MAX_CONFLICT_PAGE_SIZE,
             "maxConflictResultBytes": MAX_CONFLICT_RESULT_BYTES,
             "supportsConflictResolution": true,
+            "maxAttachmentBytes": MAX_ATTACHMENT_BYTES,
+            "maxAttachmentPageSize": MAX_ATTACHMENT_PAGE_SIZE,
+            "maxAttachmentSessions": MAX_ATTACHMENT_SESSIONS,
+            "maxAttachmentMemoryBytes": MAX_ATTACHMENT_MEMORY_BYTES,
+            "supportsAttachmentManagement": true,
             "maxSummaryPageSize": MAX_SUMMARY_PAGE_SIZE,
             "supportsDurableCloudSync": true,
             "maxSyncSegmentPageSize": cloud_sync::SEGMENT_PAGE_SIZE,
@@ -856,6 +921,10 @@ impl HostRuntime {
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         reject_unknown(params)?;
         let locked = self.vaults.remove(&vault_handle).is_some();
+        self.attachment_reads
+            .retain(|_, session| session.vault_handle != vault_handle);
+        self.attachment_uploads
+            .retain(|_, session| session.vault_handle != vault_handle);
         Ok(json!({ "locked": locked }))
     }
 
@@ -1985,6 +2054,612 @@ impl HostRuntime {
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| RpcFailure::storage("MDBX2 conflict receipts could not be persisted."))
+    }
+
+    fn attachment_list(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "attachment.list params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let object_id = take_uuid(&mut params, "objectId")?;
+        let page_size = take_bounded_page_size(
+            &mut params,
+            MAX_ATTACHMENT_PAGE_SIZE,
+            "pageSize exceeds the MDBX2 attachment limit.",
+        )?;
+        let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        require_attachment_object_target(&vault, &collection_id, &object_id)?;
+        let page = vault
+            .list_attachment_summaries(collection_id, Some(object_id), page_size, cursor)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "attachment-list-failed",
+                    "MDBX2 attachment summaries could not be read.",
+                    false,
+                )
+            })?;
+        Ok(json!({
+            "items": page.items.into_iter().map(attachment_summary_json).collect::<Vec<_>>(),
+            "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn attachment_read_begin(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        self.prune_attachment_sessions()?;
+        if self.attachment_session_count() >= MAX_ATTACHMENT_SESSIONS {
+            return Err(RpcFailure::new(
+                "attachment-session-limit",
+                "MDBX2 has too many active attachment downloads.",
+                true,
+            ));
+        }
+        let mut params = take_object(params, "attachment.read.begin params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let attachment_id = take_uuid(&mut params, "attachmentId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let summary = require_active_attachment_summary(&vault, &attachment_id)?;
+        let size_bytes = usize::try_from(summary.stored_size).map_err(|_| {
+            RpcFailure::new(
+                "attachment-too-large",
+                "MDBX2 attachment size exceeds the browser limit.",
+                false,
+            )
+        })?;
+        if size_bytes > MAX_ATTACHMENT_BYTES
+            || self
+                .attachment_memory_usage()
+                .checked_add(size_bytes)
+                .is_none_or(|total| total > MAX_ATTACHMENT_MEMORY_BYTES)
+        {
+            return Err(RpcFailure::new(
+                "attachment-memory-limit",
+                "MDBX2 attachment exceeds the reviewed in-memory limit.",
+                false,
+            ));
+        }
+        if !vault
+            .verify_attachment_integrity(attachment_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "attachment-integrity-check-failed",
+                    "MDBX2 attachment integrity could not be verified.",
+                    false,
+                )
+            })?
+        {
+            return Err(RpcFailure::new(
+                "attachment-integrity-failed",
+                "MDBX2 attachment integrity verification failed.",
+                false,
+            ));
+        }
+        let content = vault
+            .read_attachment_content(attachment_id.clone(), MAX_ATTACHMENT_BYTES as u64)
+            .map_err(|_| {
+                RpcFailure::new(
+                    "attachment-read-failed",
+                    "MDBX2 attachment content could not be read in this browser security context.",
+                    false,
+                )
+            })?;
+        if content.len() != size_bytes {
+            return Err(RpcFailure::new(
+                "attachment-size-mismatch",
+                "MDBX2 attachment plaintext size does not match its authenticated metadata.",
+                false,
+            ));
+        }
+        let read_handle = fresh_uuid();
+        let now = unix_seconds()?;
+        let file_name = summary.file_name.clone();
+        let media_type = summary.media_type.clone();
+        self.attachment_reads.insert(
+            read_handle.clone(),
+            AttachmentReadSession {
+                vault_handle,
+                attachment_id: attachment_id.clone(),
+                file_name: file_name.clone(),
+                media_type: media_type.clone(),
+                bytes: Zeroizing::new(content),
+                updated_at_unix_secs: now,
+            },
+        );
+        Ok(json!({
+            "readHandle": read_handle,
+            "attachmentId": attachment_id,
+            "fileName": file_name,
+            "mediaType": media_type,
+            "sizeBytes": size_bytes,
+            "maxChunkBytes": MAX_BINARY_CHUNK_BYTES
+        }))
+    }
+
+    fn attachment_read_chunk(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        self.prune_attachment_sessions()?;
+        let mut params = take_object(params, "attachment.read.chunk params must be an object.")?;
+        let read_handle = take_uuid(&mut params, "readHandle")?;
+        let offset = take_u64(&mut params, "offset")?;
+        let max_bytes = take_u64(&mut params, "maxBytes")?;
+        if max_bytes == 0 || max_bytes > MAX_BINARY_CHUNK_BYTES as u64 {
+            return Err(RpcFailure::invalid(
+                "attachment.read.chunk maxBytes exceeds the reviewed limit.",
+            ));
+        }
+        reject_unknown(params)?;
+        let now = unix_seconds()?;
+        let session = self.attachment_reads.get_mut(&read_handle).ok_or_else(|| {
+            RpcFailure::new(
+                "attachment-read-not-found",
+                "MDBX2 attachment download expired or does not exist.",
+                false,
+            )
+        })?;
+        let offset = usize::try_from(offset)
+            .map_err(|_| RpcFailure::invalid("attachment.read.chunk offset is invalid."))?;
+        if offset >= session.bytes.len() {
+            return Err(RpcFailure::invalid(
+                "attachment.read.chunk offset must be below the attachment size.",
+            ));
+        }
+        let count = (session.bytes.len() - offset).min(max_bytes as usize);
+        let next_offset = offset + count;
+        session.updated_at_unix_secs = now;
+        Ok(json!({
+            "readHandle": read_handle,
+            "attachmentId": session.attachment_id,
+            "fileName": session.file_name,
+            "mediaType": session.media_type,
+            "sizeBytes": session.bytes.len(),
+            "offset": offset,
+            "dataBase64": BASE64.encode(&session.bytes[offset..next_offset]),
+            "nextOffset": next_offset,
+            "eof": next_offset == session.bytes.len()
+        }))
+    }
+
+    fn attachment_read_release(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "attachment.read.release params must be an object.")?;
+        let read_handle = take_uuid(&mut params, "readHandle")?;
+        reject_unknown(params)?;
+        Ok(json!({ "released": self.attachment_reads.remove(&read_handle).is_some() }))
+    }
+
+    fn attachment_upload_begin(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        self.prune_attachment_sessions()?;
+        let mut params = take_object(params, "attachment.upload.begin params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let attachment_id = take_uuid(&mut params, "attachmentId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let object_id = take_uuid(&mut params, "objectId")?;
+        let file_name = take_string(
+            &mut params,
+            "fileName",
+            MAX_ATTACHMENT_FILE_NAME_BYTES,
+            false,
+        )?;
+        let media_type =
+            take_optional_string(&mut params, "mediaType", MAX_ATTACHMENT_MEDIA_TYPE_BYTES)?;
+        let mode = match take_string(&mut params, "mode", 16, false)?.as_str() {
+            "create" => AttachmentUploadMode::Create,
+            "replace" => AttachmentUploadMode::Replace,
+            _ => {
+                return Err(RpcFailure::invalid(
+                    "attachment.upload.begin mode must be create or replace.",
+                ))
+            }
+        };
+        let size_bytes = take_u64(&mut params, "sizeBytes")?;
+        let size_bytes = usize::try_from(size_bytes)
+            .map_err(|_| RpcFailure::invalid("attachment size exceeds the browser limit."))?;
+        let expected_sha256 = take_optional_string(&mut params, "sha256", 64)?;
+        reject_unknown(params)?;
+        validate_attachment_text(&file_name, "fileName")?;
+        if media_type
+            .as_deref()
+            .is_some_and(|value| value.contains('\0'))
+        {
+            return Err(RpcFailure::invalid(
+                "mediaType contains an invalid NUL byte.",
+            ));
+        }
+        if size_bytes > MAX_ATTACHMENT_BYTES {
+            return Err(RpcFailure::new(
+                "attachment-too-large",
+                "MDBX2 attachment exceeds the 64 MiB browser limit.",
+                false,
+            ));
+        }
+        if expected_sha256
+            .as_deref()
+            .is_some_and(|value| !valid_sha256(value))
+        {
+            return Err(RpcFailure::invalid(
+                "attachment.upload.begin sha256 must be a lowercase SHA-256 digest or null.",
+            ));
+        }
+
+        if let Some((transfer_id, session)) = self.attachment_uploads.iter().find(|(_, session)| {
+            session.vault_handle == vault_handle && session.operation_id == operation_id
+        }) {
+            let matches = session.attachment_id == attachment_id
+                && session.collection_id == collection_id
+                && session.object_id == object_id
+                && session.file_name == file_name
+                && session.media_type == media_type
+                && session.mode == mode
+                && session.size_bytes == size_bytes
+                && session.expected_sha256 == expected_sha256;
+            if !matches {
+                return Err(RpcFailure::new(
+                    "attachment-upload-operation-mismatch",
+                    "MDBX2 attachment operation ID was reused with different input.",
+                    false,
+                ));
+            }
+            return Ok(json!({
+                "transferId": transfer_id,
+                "operationId": operation_id,
+                "attachmentId": attachment_id,
+                "nextOffset": session.bytes.len(),
+                "maxChunkBytes": MAX_BINARY_CHUNK_BYTES,
+                "alreadyCommitted": session.result.is_some()
+            }));
+        }
+        if self.attachment_session_count() >= MAX_ATTACHMENT_SESSIONS {
+            return Err(RpcFailure::new(
+                "attachment-session-limit",
+                "MDBX2 has too many active attachment uploads.",
+                true,
+            ));
+        }
+        if self
+            .attachment_memory_usage()
+            .checked_add(size_bytes)
+            .is_none_or(|total| total > MAX_ATTACHMENT_MEMORY_BYTES)
+        {
+            return Err(RpcFailure::new(
+                "attachment-memory-limit",
+                "MDBX2 attachment uploads exceed the reviewed in-memory limit.",
+                false,
+            ));
+        }
+        let vault = self.require_open_vault(&vault_handle)?;
+        require_attachment_object_target(&vault, &collection_id, &object_id)?;
+        if mode == AttachmentUploadMode::Replace {
+            let summary = require_active_attachment_summary(&vault, &attachment_id)?;
+            if summary.collection_id != collection_id
+                || summary.object_id.as_deref() != Some(object_id.as_str())
+                || summary.file_name != file_name
+                || summary.media_type != media_type
+            {
+                return Err(RpcFailure::new(
+                    "attachment-target-mismatch",
+                    "MDBX2 replacement attachment does not match the selected Object.",
+                    false,
+                ));
+            }
+        }
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size_bytes).map_err(|_| {
+            RpcFailure::new(
+                "attachment-memory-limit",
+                "MDBX2 attachment memory could not be reserved.",
+                true,
+            )
+        })?;
+        if self
+            .attachment_memory_usage()
+            .checked_add(bytes.capacity())
+            .is_none_or(|total| total > MAX_ATTACHMENT_MEMORY_BYTES)
+        {
+            return Err(RpcFailure::new(
+                "attachment-memory-limit",
+                "MDBX2 attachment memory reservation exceeds the reviewed limit.",
+                false,
+            ));
+        }
+        let transfer_id = fresh_uuid();
+        self.attachment_uploads.insert(
+            transfer_id.clone(),
+            AttachmentUploadSession {
+                vault_handle,
+                operation_id: operation_id.clone(),
+                attachment_id: attachment_id.clone(),
+                collection_id,
+                object_id,
+                file_name,
+                media_type,
+                mode,
+                size_bytes,
+                expected_sha256,
+                bytes: Zeroizing::new(bytes),
+                result: None,
+                updated_at_unix_secs: unix_seconds()?,
+            },
+        );
+        Ok(json!({
+            "transferId": transfer_id,
+            "operationId": operation_id,
+            "attachmentId": attachment_id,
+            "nextOffset": 0,
+            "maxChunkBytes": MAX_BINARY_CHUNK_BYTES,
+            "alreadyCommitted": false
+        }))
+    }
+
+    fn attachment_upload_chunk(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        self.prune_attachment_sessions()?;
+        let mut params = take_object(params, "attachment.upload.chunk params must be an object.")?;
+        let transfer_id = take_uuid(&mut params, "transferId")?;
+        let offset = take_u64(&mut params, "offset")?;
+        let encoded = Zeroizing::new(take_string(
+            &mut params,
+            "dataBase64",
+            MAX_BASE64_CHUNK_BYTES,
+            false,
+        )?);
+        reject_unknown(params)?;
+        let bytes = Zeroizing::new(
+            BASE64
+                .decode(encoded.as_bytes())
+                .map_err(|_| RpcFailure::invalid("attachment upload chunk is invalid Base64."))?,
+        );
+        if bytes.is_empty() || bytes.len() > MAX_BINARY_CHUNK_BYTES {
+            return Err(RpcFailure::invalid(
+                "attachment upload chunk exceeds the reviewed limit.",
+            ));
+        }
+        let now = unix_seconds()?;
+        let session = self
+            .attachment_uploads
+            .get_mut(&transfer_id)
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "attachment-upload-not-found",
+                    "MDBX2 attachment upload expired or does not exist.",
+                    false,
+                )
+            })?;
+        if session.result.is_some() {
+            return Err(RpcFailure::new(
+                "attachment-upload-already-committed",
+                "MDBX2 attachment upload is already committed.",
+                false,
+            ));
+        }
+        let offset = usize::try_from(offset)
+            .map_err(|_| RpcFailure::invalid("attachment upload offset is invalid."))?;
+        let end = offset
+            .checked_add(bytes.len())
+            .ok_or_else(|| RpcFailure::invalid("attachment upload offset overflowed."))?;
+        if end > session.size_bytes {
+            return Err(RpcFailure::invalid(
+                "attachment upload chunk exceeds the declared size.",
+            ));
+        }
+        if offset < session.bytes.len() {
+            if end > session.bytes.len() || session.bytes[offset..end] != bytes[..] {
+                return Err(RpcFailure::new(
+                    "attachment-upload-retry-mismatch",
+                    "Retried MDBX2 attachment bytes differ from the accepted chunk.",
+                    false,
+                ));
+            }
+            session.updated_at_unix_secs = now;
+            return Ok(json!({
+                "transferId": transfer_id,
+                "nextOffset": session.bytes.len(),
+                "acceptedBytes": 0,
+                "repeated": true
+            }));
+        }
+        if offset != session.bytes.len() {
+            return Err(RpcFailure::new(
+                "attachment-upload-offset-mismatch",
+                "MDBX2 attachment chunk does not start at the accepted offset.",
+                true,
+            ));
+        }
+        session.bytes.extend_from_slice(bytes.as_slice());
+        session.updated_at_unix_secs = now;
+        Ok(json!({
+            "transferId": transfer_id,
+            "nextOffset": session.bytes.len(),
+            "acceptedBytes": bytes.len(),
+            "repeated": false
+        }))
+    }
+
+    fn attachment_upload_finish(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        self.prune_attachment_sessions()?;
+        let mut params = take_object(params, "attachment.upload.finish params must be an object.")?;
+        let transfer_id = take_uuid(&mut params, "transferId")?;
+        reject_unknown(params)?;
+        let mut session = self
+            .attachment_uploads
+            .remove(&transfer_id)
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "attachment-upload-not-found",
+                    "MDBX2 attachment upload expired or does not exist.",
+                    false,
+                )
+            })?;
+        if let Some(result) = session.result.clone() {
+            session.updated_at_unix_secs = unix_seconds()?;
+            self.attachment_uploads.insert(transfer_id.clone(), session);
+            return Ok(attachment_upload_result_json(&transfer_id, &result));
+        }
+        if session.bytes.len() != session.size_bytes {
+            let received = session.bytes.len();
+            let expected = session.size_bytes;
+            self.attachment_uploads.insert(transfer_id, session);
+            return Err(RpcFailure::new(
+                "attachment-upload-incomplete",
+                format!("MDBX2 attachment upload received {received} of {expected} bytes."),
+                true,
+            ));
+        }
+        let actual_sha256 = sha256_hex(session.bytes.as_slice());
+        if session
+            .expected_sha256
+            .as_deref()
+            .is_some_and(|expected| expected != actual_sha256)
+        {
+            return Err(RpcFailure::new(
+                "attachment-upload-digest-mismatch",
+                "MDBX2 attachment SHA-256 verification failed and the upload was discarded.",
+                false,
+            ));
+        }
+        let vault = match self.require_open_vault(&session.vault_handle) {
+            Ok(vault) => vault,
+            Err(error) => {
+                self.attachment_uploads.insert(transfer_id, session);
+                return Err(error);
+            }
+        };
+        if let Err(error) =
+            require_attachment_object_target(&vault, &session.collection_id, &session.object_id)
+        {
+            self.attachment_uploads.insert(transfer_id, session);
+            return Err(error);
+        }
+        let limits = MdbxAttachmentContentLimits {
+            chunk_size: MAX_BINARY_CHUNK_BYTES as u64,
+            max_plaintext_bytes: MAX_ATTACHMENT_BYTES as u64,
+        };
+        let write_result = match session.mode {
+            AttachmentUploadMode::Create => vault.create_attachment_with_external_content(
+                session.operation_id.clone(),
+                MdbxAttachmentCreateRequest {
+                    attachment_id: session.attachment_id.clone(),
+                    project_id: session.collection_id.clone(),
+                    entry_id: Some(session.object_id.clone()),
+                    file_name: session.file_name.clone(),
+                    media_type: session.media_type.clone(),
+                },
+                session.bytes.as_slice().to_vec(),
+                limits,
+            ),
+            AttachmentUploadMode::Replace => vault.replace_attachment_external_content(
+                session.operation_id.clone(),
+                session.attachment_id.clone(),
+                session.bytes.as_slice().to_vec(),
+                limits,
+            ),
+        };
+        let write_result = match write_result {
+            Ok(result) => result,
+            Err(_) => {
+                self.attachment_uploads.insert(transfer_id, session);
+                return Err(RpcFailure::new(
+                    "attachment-write-failed",
+                    "MDBX2 attachment could not be written by the pinned core.",
+                    false,
+                ));
+            }
+        };
+        let result = attachment_upload_result(write_result);
+        session.bytes = Zeroizing::new(Vec::new());
+        session.result = Some(result.clone());
+        session.updated_at_unix_secs = unix_seconds()?;
+        self.attachment_uploads.insert(transfer_id.clone(), session);
+        Ok(attachment_upload_result_json(&transfer_id, &result))
+    }
+
+    fn attachment_upload_abort(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "attachment.upload.abort params must be an object.")?;
+        let transfer_id = take_uuid(&mut params, "transferId")?;
+        reject_unknown(params)?;
+        Ok(json!({ "aborted": self.attachment_uploads.remove(&transfer_id).is_some() }))
+    }
+
+    fn attachment_delete(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "attachment.delete params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let attachment_id = take_uuid(&mut params, "attachmentId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        if vault
+            .get_attachment_summary(attachment_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "attachment-summary-failed",
+                    "MDBX2 attachment metadata could not be read.",
+                    false,
+                )
+            })?
+            .is_none()
+        {
+            return Err(RpcFailure::new(
+                "attachment-not-found",
+                "MDBX2 attachment does not exist.",
+                false,
+            ));
+        }
+        let result = vault
+            .execute_attachment_batch(
+                operation_id.clone(),
+                vec![MdbxAttachmentBatchCommand::Delete {
+                    attachment_id: attachment_id.clone(),
+                }],
+            )
+            .map_err(|_| {
+                RpcFailure::new(
+                    "attachment-delete-failed",
+                    "MDBX2 attachment could not be deleted by the pinned core.",
+                    false,
+                )
+            })?;
+        let attachment = result.attachments.into_iter().next().ok_or_else(|| {
+            RpcFailure::new(
+                "attachment-delete-failed",
+                "MDBX2 attachment delete result is empty.",
+                false,
+            )
+        })?;
+        Ok(json!({
+            "operationId": operation_id,
+            "attachment": attachment_record_json(&attachment),
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "changed": !result.already_committed
+        }))
+    }
+
+    fn prune_attachment_sessions(&mut self) -> Result<(), RpcFailure> {
+        let now = unix_seconds()?;
+        self.attachment_reads.retain(|_, session| {
+            now.saturating_sub(session.updated_at_unix_secs) < ATTACHMENT_SESSION_TTL_SECS
+        });
+        self.attachment_uploads.retain(|_, session| {
+            now.saturating_sub(session.updated_at_unix_secs) < ATTACHMENT_SESSION_TTL_SECS
+        });
+        Ok(())
+    }
+
+    fn attachment_memory_usage(&self) -> usize {
+        let reads = self
+            .attachment_reads
+            .values()
+            .map(|session| session.bytes.capacity())
+            .sum::<usize>();
+        self.attachment_uploads
+            .values()
+            .map(|session| session.bytes.capacity())
+            .sum::<usize>()
+            .saturating_add(reads)
+    }
+
+    fn attachment_session_count(&self) -> usize {
+        self.attachment_reads
+            .len()
+            .saturating_add(self.attachment_uploads.len())
     }
 
     fn object_upsert(&mut self, params: Value) -> Result<Value, RpcFailure> {
@@ -3206,6 +3881,119 @@ fn object_summary_json(item: mdbx_ffi::MdbxObjectSummary) -> Value {
         "headCommitId": item.head_commit_id,
         "deleted": item.deleted,
         "updatedAt": item.updated_at
+    })
+}
+
+fn require_attachment_object_target(
+    vault: &Arc<MdbxVault>,
+    collection_id: &str,
+    object_id: &str,
+) -> Result<(), RpcFailure> {
+    let summary = vault
+        .get_object_summary(object_id.to_string())
+        .map_err(|_| {
+            RpcFailure::new(
+                "attachment-target-read-failed",
+                "MDBX2 attachment target could not be inspected.",
+                false,
+            )
+        })?
+        .ok_or_else(|| {
+            RpcFailure::new(
+                "attachment-target-not-found",
+                "MDBX2 attachment target Object does not exist.",
+                false,
+            )
+        })?;
+    if summary.deleted || summary.collection_id != collection_id {
+        return Err(RpcFailure::new(
+            "attachment-target-mismatch",
+            "MDBX2 attachment target does not belong to the selected Collection.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn require_active_attachment_summary(
+    vault: &Arc<MdbxVault>,
+    attachment_id: &str,
+) -> Result<MdbxAttachmentSummary, RpcFailure> {
+    let summary = vault
+        .get_attachment_summary(attachment_id.to_string())
+        .map_err(|_| {
+            RpcFailure::new(
+                "attachment-summary-failed",
+                "MDBX2 attachment metadata could not be read.",
+                false,
+            )
+        })?
+        .ok_or_else(|| {
+            RpcFailure::new(
+                "attachment-not-found",
+                "MDBX2 attachment does not exist.",
+                false,
+            )
+        })?;
+    if summary.deleted {
+        return Err(RpcFailure::new(
+            "attachment-deleted",
+            "MDBX2 attachment is in the deleted state.",
+            false,
+        ));
+    }
+    Ok(summary)
+}
+
+fn validate_attachment_text(value: &str, field: &'static str) -> Result<(), RpcFailure> {
+    if value.trim().is_empty() || value.contains('\0') {
+        return Err(RpcFailure::invalid(format!(
+            "{field} is empty or contains an invalid NUL byte."
+        )));
+    }
+    Ok(())
+}
+
+fn attachment_summary_json(item: MdbxAttachmentSummary) -> Value {
+    json!({
+        "attachmentId": item.attachment_id,
+        "fileName": item.file_name,
+        "mediaType": item.media_type,
+        "sizeBytes": item.stored_size,
+        "storageMode": item.storage_mode,
+        "protected": true,
+        "deleted": item.deleted,
+        "updatedAt": item.updated_at
+    })
+}
+
+fn attachment_record_json(item: &MdbxAttachmentRecord) -> Value {
+    json!({
+        "attachmentId": item.attachment_id,
+        "fileName": item.file_name,
+        "mediaType": item.media_type,
+        "sizeBytes": item.stored_size,
+        "storageMode": item.storage_mode,
+        "protected": true,
+        "deleted": item.deleted
+    })
+}
+
+fn attachment_upload_result(result: MdbxAttachmentWriteResult) -> AttachmentUploadResult {
+    AttachmentUploadResult {
+        attachment: result.attachment,
+        commit_id: result.commit_id,
+        already_committed: result.already_committed,
+    }
+}
+
+fn attachment_upload_result_json(transfer_id: &str, result: &AttachmentUploadResult) -> Value {
+    json!({
+        "transferId": transfer_id,
+        "attachment": attachment_record_json(&result.attachment),
+        "commitId": result.commit_id,
+        "alreadyCommitted": result.already_committed,
+        "changed": !result.already_committed
     })
 }
 
@@ -4502,6 +5290,353 @@ mod tests {
 
     fn sha256_bytes(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))
+    }
+
+    struct TestAttachmentUpload<'a> {
+        vault_handle: &'a str,
+        operation_id: &'a str,
+        attachment_id: &'a str,
+        collection_id: &'a str,
+        object_id: &'a str,
+        file_name: &'a str,
+        media_type: Option<&'a str>,
+        mode: &'a str,
+    }
+
+    fn begin_attachment_upload(
+        runtime: &mut HostRuntime,
+        input: TestAttachmentUpload<'_>,
+        bytes: &[u8],
+    ) -> String {
+        call(
+            runtime,
+            "attachment.upload.begin",
+            json!({
+                "vaultHandle": input.vault_handle,
+                "operationId": input.operation_id,
+                "attachmentId": input.attachment_id,
+                "collectionId": input.collection_id,
+                "objectId": input.object_id,
+                "fileName": input.file_name,
+                "mediaType": input.media_type,
+                "mode": input.mode,
+                "sizeBytes": bytes.len(),
+                "sha256": sha256_bytes(bytes)
+            }),
+        )["transferId"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn send_attachment_chunk(
+        runtime: &mut HostRuntime,
+        transfer_id: &str,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Value {
+        call(
+            runtime,
+            "attachment.upload.chunk",
+            json!({
+                "transferId": transfer_id,
+                "offset": offset,
+                "dataBase64": BASE64.encode(bytes)
+            }),
+        )
+    }
+
+    fn read_attachment_bytes(
+        runtime: &mut HostRuntime,
+        vault_handle: &str,
+        attachment_id: &str,
+    ) -> Vec<u8> {
+        let begun = call(
+            runtime,
+            "attachment.read.begin",
+            json!({
+                "vaultHandle": vault_handle,
+                "attachmentId": attachment_id
+            }),
+        );
+        let read_handle = begun["readHandle"].as_str().unwrap().to_string();
+        let size = begun["sizeBytes"].as_u64().unwrap() as usize;
+        let mut bytes = Vec::with_capacity(size);
+        while bytes.len() < size {
+            let chunk = call(
+                runtime,
+                "attachment.read.chunk",
+                json!({
+                    "readHandle": read_handle,
+                    "offset": bytes.len(),
+                    "maxBytes": 64 * 1024
+                }),
+            );
+            bytes.extend_from_slice(
+                &BASE64
+                    .decode(chunk["dataBase64"].as_str().unwrap())
+                    .unwrap(),
+            );
+        }
+        assert!(call(
+            runtime,
+            "attachment.read.release",
+            json!({ "readHandle": read_handle })
+        )["released"]
+            .as_bool()
+            .unwrap());
+        bytes
+    }
+
+    #[test]
+    fn attachment_sessions_round_trip_external_content_and_delete_idempotently() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "attachment-round-trip-password");
+        let object = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:attachment-round-trip",
+            "Attachment target",
+        );
+        let collection_id = object["collectionId"].as_str().unwrap().to_string();
+        let object_id = object["objectId"].as_str().unwrap().to_string();
+        let attachment_id = fresh_uuid();
+        let operation_id = fresh_uuid();
+        let content = (0..(MAX_BINARY_CHUNK_BYTES + 19_337))
+            .map(|index| ((index * 31 + 7) % 251) as u8)
+            .collect::<Vec<_>>();
+        let transfer_id = begin_attachment_upload(
+            &mut runtime,
+            TestAttachmentUpload {
+                vault_handle: &vault_handle,
+                operation_id: &operation_id,
+                attachment_id: &attachment_id,
+                collection_id: &collection_id,
+                object_id: &object_id,
+                file_name: "private-evidence.bin",
+                media_type: Some("application/octet-stream"),
+                mode: "create",
+            },
+            &content,
+        );
+        let first = &content[..MAX_BINARY_CHUNK_BYTES];
+        let accepted = send_attachment_chunk(&mut runtime, &transfer_id, 0, first);
+        assert_eq!(accepted["acceptedBytes"], MAX_BINARY_CHUNK_BYTES);
+        let repeated = send_attachment_chunk(&mut runtime, &transfer_id, 0, first);
+        assert_eq!(repeated["acceptedBytes"], 0);
+        assert_eq!(repeated["repeated"], true);
+        send_attachment_chunk(
+            &mut runtime,
+            &transfer_id,
+            MAX_BINARY_CHUNK_BYTES,
+            &content[MAX_BINARY_CHUNK_BYTES..],
+        );
+        let created = call(
+            &mut runtime,
+            "attachment.upload.finish",
+            json!({ "transferId": transfer_id }),
+        );
+        assert_eq!(created["attachment"]["attachmentId"], attachment_id);
+        assert_eq!(created["attachment"]["storageMode"], "external-hash-ref");
+        assert_eq!(created["attachment"]["sizeBytes"], content.len());
+        assert_eq!(created["alreadyCommitted"], false);
+        let cached = call(
+            &mut runtime,
+            "attachment.upload.finish",
+            json!({ "transferId": transfer_id }),
+        );
+        assert_eq!(cached["commitId"], created["commitId"]);
+
+        let page = call(
+            &mut runtime,
+            "attachment.list",
+            json!({
+                "vaultHandle": vault_handle,
+                "collectionId": collection_id,
+                "objectId": object_id,
+                "pageSize": 20,
+                "cursor": null
+            }),
+        );
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert!(page["items"][0].get("contentHash").is_none());
+        assert!(page["items"][0].get("commitId").is_none());
+        assert_eq!(
+            read_attachment_bytes(&mut runtime, &vault_handle, &attachment_id),
+            content
+        );
+        assert!(call(
+            &mut runtime,
+            "attachment.upload.abort",
+            json!({ "transferId": transfer_id })
+        )["aborted"]
+            .as_bool()
+            .unwrap());
+
+        let replacement = b"replacement attachment bytes with a different authenticated digest";
+        let replace_operation = fresh_uuid();
+        let replace_transfer = begin_attachment_upload(
+            &mut runtime,
+            TestAttachmentUpload {
+                vault_handle: &vault_handle,
+                operation_id: &replace_operation,
+                attachment_id: &attachment_id,
+                collection_id: &collection_id,
+                object_id: &object_id,
+                file_name: "private-evidence.bin",
+                media_type: Some("application/octet-stream"),
+                mode: "replace",
+            },
+            replacement,
+        );
+        send_attachment_chunk(&mut runtime, &replace_transfer, 0, replacement);
+        let replaced = call(
+            &mut runtime,
+            "attachment.upload.finish",
+            json!({ "transferId": replace_transfer }),
+        );
+        assert_eq!(replaced["attachment"]["sizeBytes"], replacement.len());
+        assert_eq!(
+            read_attachment_bytes(&mut runtime, &vault_handle, &attachment_id),
+            replacement
+        );
+        call(
+            &mut runtime,
+            "attachment.upload.abort",
+            json!({ "transferId": replace_transfer }),
+        );
+
+        let delete_operation = fresh_uuid();
+        let deleted = call(
+            &mut runtime,
+            "attachment.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": delete_operation,
+                "attachmentId": attachment_id
+            }),
+        );
+        assert_eq!(deleted["attachment"]["deleted"], true);
+        assert_eq!(deleted["alreadyCommitted"], false);
+        let repeated_delete = call(
+            &mut runtime,
+            "attachment.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": delete_operation,
+                "attachmentId": attachment_id
+            }),
+        );
+        assert_eq!(repeated_delete["alreadyCommitted"], true);
+        assert_eq!(repeated_delete["commitId"], deleted["commitId"]);
+        let empty = call(
+            &mut runtime,
+            "attachment.list",
+            json!({
+                "vaultHandle": vault_handle,
+                "collectionId": collection_id,
+                "objectId": object_id,
+                "pageSize": 20,
+                "cursor": null
+            }),
+        );
+        assert!(empty["items"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn attachment_upload_limits_and_retry_intent_fail_closed() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "attachment-limits-password");
+        let object = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:attachment-limits",
+            "Attachment limits target",
+        );
+        let collection_id = object["collectionId"].as_str().unwrap();
+        let object_id = object["objectId"].as_str().unwrap();
+        let operation_id = fresh_uuid();
+        let attachment_id = fresh_uuid();
+        let content = b"bounded bytes";
+        let transfer_id = begin_attachment_upload(
+            &mut runtime,
+            TestAttachmentUpload {
+                vault_handle: &vault_handle,
+                operation_id: &operation_id,
+                attachment_id: &attachment_id,
+                collection_id,
+                object_id,
+                file_name: "bounded.bin",
+                media_type: None,
+                mode: "create",
+            },
+            content,
+        );
+        let mismatch = runtime
+            .handle(
+                "attachment.upload.begin",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": operation_id,
+                    "attachmentId": attachment_id,
+                    "collectionId": collection_id,
+                    "objectId": object_id,
+                    "fileName": "changed.bin",
+                    "mediaType": null,
+                    "mode": "create",
+                    "sizeBytes": content.len(),
+                    "sha256": sha256_bytes(content)
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(mismatch.code, "attachment-upload-operation-mismatch");
+        let gap = runtime
+            .handle(
+                "attachment.upload.chunk",
+                json!({
+                    "transferId": transfer_id,
+                    "offset": 1,
+                    "dataBase64": BASE64.encode(&content[..1])
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(gap.code, "attachment-upload-offset-mismatch");
+        send_attachment_chunk(&mut runtime, &transfer_id, 0, content);
+        let changed_retry = runtime
+            .handle(
+                "attachment.upload.chunk",
+                json!({
+                    "transferId": transfer_id,
+                    "offset": 0,
+                    "dataBase64": BASE64.encode(b"changed byte!")
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(changed_retry.code, "attachment-upload-retry-mismatch");
+        call(
+            &mut runtime,
+            "attachment.upload.abort",
+            json!({ "transferId": transfer_id }),
+        );
+
+        let oversized = runtime
+            .handle(
+                "attachment.upload.begin",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": fresh_uuid(),
+                    "attachmentId": fresh_uuid(),
+                    "collectionId": collection_id,
+                    "objectId": object_id,
+                    "fileName": "oversized.bin",
+                    "mediaType": null,
+                    "mode": "create",
+                    "sizeBytes": MAX_ATTACHMENT_BYTES as u64 + 1,
+                    "sha256": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(oversized.code, "attachment-too-large");
     }
 
     #[test]

@@ -3,6 +3,10 @@ import {
   MDBX2_CORE_REVISION,
   MDBX2_ENGINE_VERSION,
   MDBX2_FORMAT_VERSION,
+  MDBX2_MAX_ATTACHMENT_BYTES,
+  MDBX2_MAX_ATTACHMENT_MEMORY_BYTES,
+  MDBX2_MAX_ATTACHMENT_PAGE_SIZE,
+  MDBX2_MAX_ATTACHMENT_SESSIONS,
   MDBX2_MAX_ACTIVE_TRANSFERS,
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
@@ -90,6 +94,11 @@ const HELLO = {
   maxConflictPageSize: MDBX2_MAX_CONFLICT_PAGE_SIZE,
   maxConflictResultBytes: MDBX2_MAX_CONFLICT_RESULT_BYTES,
   supportsConflictResolution: true,
+  maxAttachmentBytes: MDBX2_MAX_ATTACHMENT_BYTES,
+  maxAttachmentPageSize: MDBX2_MAX_ATTACHMENT_PAGE_SIZE,
+  maxAttachmentSessions: MDBX2_MAX_ATTACHMENT_SESSIONS,
+  maxAttachmentMemoryBytes: MDBX2_MAX_ATTACHMENT_MEMORY_BYTES,
+  supportsAttachmentManagement: true,
   supportsDurableCloudSync: true,
   maxSyncSegmentPageSize: MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   maxBlobReferencePageSize: MDBX2_BLOB_REFERENCE_PAGE_SIZE,
@@ -283,7 +292,19 @@ describe("MDBX2 Native Messaging client", () => {
           objectId: handle,
           choice: "incoming-wins",
           resolvedAt: "2026-08-02T00:01:00Z"
-        }
+        },
+        "attachment.list": {
+          items: [{ attachmentId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", sizeBytes: 3, storageMode: "external-hash-ref", protected: true, deleted: false, updatedAt: "2026-08-02T00:00:00Z" }],
+          nextCursor: null
+        },
+        "attachment.read.begin": { readHandle: handle, attachmentId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", sizeBytes: 3, maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES },
+        "attachment.read.chunk": { readHandle: handle, attachmentId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", sizeBytes: 3, offset: 0, dataBase64: "AQID", nextOffset: 3, eof: true },
+        "attachment.read.release": { released: true },
+        "attachment.upload.begin": { transferId: handle, operationId: handle, attachmentId: handle, nextOffset: 0, maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES, alreadyCommitted: false },
+        "attachment.upload.chunk": { transferId: handle, nextOffset: 3, acceptedBytes: 3, repeated: false },
+        "attachment.upload.finish": { transferId: handle, attachment: { attachmentId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", sizeBytes: 3, storageMode: "external-hash-ref", protected: true, deleted: false }, commitId: handle, alreadyCommitted: false, changed: true },
+        "attachment.upload.abort": { aborted: true },
+        "attachment.delete": { operationId: handle, attachment: { attachmentId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", sizeBytes: 3, storageMode: "external-hash-ref", protected: true, deleted: true }, commitId: handle, alreadyCommitted: false, changed: true }
       }[request.method] as Record<string, unknown>;
       runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
     };
@@ -315,6 +336,15 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.restoreSnapshot(handle, handle, handle)).resolves.toMatchObject({ operationId: handle, affectedObjectCount: 2 });
     await expect(client.listConflicts(handle)).resolves.toMatchObject({ items: [{ conflictId: handle, displayTitle: "Local account", conflictingFields: ["payload", "title_ct"] }] });
     await expect(client.resolveConflict(handle, handle, handle, "incoming-wins")).resolves.toMatchObject({ resolved: true, alreadyResolved: false, choice: "incoming-wins" });
+    await expect(client.listAttachments(handle, handle, handle)).resolves.toMatchObject({ items: [{ attachmentId: handle, fileName: "evidence.bin", sizeBytes: 3 }] });
+    await expect(client.beginAttachmentRead(handle, handle)).resolves.toMatchObject({ readHandle: handle, sizeBytes: 3 });
+    await expect(client.readAttachmentChunk(handle, 0)).resolves.toMatchObject({ nextOffset: 3, eof: true });
+    await expect(client.releaseAttachmentRead(handle)).resolves.toBe(true);
+    await expect(client.beginAttachmentUpload(handle, { operationId: handle, attachmentId: handle, collectionId: handle, objectId: handle, fileName: "evidence.bin", mediaType: "application/octet-stream", mode: "create", sizeBytes: 3, sha256: "a".repeat(64) })).resolves.toMatchObject({ transferId: handle, nextOffset: 0 });
+    await expect(client.sendAttachmentUploadChunk(handle, 0, new Uint8Array([1, 2, 3]))).resolves.toMatchObject({ nextOffset: 3, acceptedBytes: 3 });
+    await expect(client.finishAttachmentUpload(handle)).resolves.toMatchObject({ attachment: { attachmentId: handle }, changed: true });
+    await expect(client.abortAttachmentUpload(handle)).resolves.toBe(true);
+    await expect(client.deleteAttachment(handle, handle, handle)).resolves.toMatchObject({ operationId: handle, attachment: { deleted: true } });
     await expect(client.lockVault(handle)).resolves.toBe(true);
     expect((runtime.port.messages[4] as { params: unknown }).params).toEqual({
       source: { kind: "file", handle },
@@ -484,6 +514,40 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.createSnapshot(handle, handle, "快照")).rejects.toMatchObject({ code: "native-host-incompatible" });
     await expect(client.deleteSnapshot(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
     await expect(client.restoreSnapshot(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    client.close();
+  });
+
+  it("rejects unbounded attachment requests and malformed attachment disclosures", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+
+    await expect(client.listAttachments(handle, handle, handle, { pageSize: MDBX2_MAX_ATTACHMENT_PAGE_SIZE + 1 }))
+      .rejects.toMatchObject({ code: "attachment-page-size-invalid" });
+    await expect(client.beginAttachmentUpload(handle, {
+      operationId: handle,
+      attachmentId: handle,
+      collectionId: handle,
+      objectId: handle,
+      fileName: "oversized.bin",
+      mode: "create",
+      sizeBytes: MDBX2_MAX_ATTACHMENT_BYTES + 1
+    })).rejects.toMatchObject({ code: "attachment-size-invalid" });
+    expect(runtime.port.messages).toHaveLength(0);
+
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({
+        protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          items: [{ attachmentId: handle, fileName: "private.bin", sizeBytes: 1, storageMode: "external-hash-ref", protected: false, deleted: false }],
+          nextCursor: null
+        }
+      } as never);
+    };
+    await expect(client.listAttachments(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 

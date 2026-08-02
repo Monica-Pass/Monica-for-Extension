@@ -51,11 +51,17 @@ for (const required of ['"history.list"', '"history.diff"', 'MAX_HISTORY_PAGE_SI
 for (const required of ['"conflict.list"', '"conflict.resolve"', 'MAX_CONFLICT_PAGE_SIZE', 'MAX_CONFLICT_RESULT_BYTES', '"supportsConflictResolution": true', 'conflict-resolutions.state.']) {
   if (!runtime.includes(required)) throw new Error(`MDBX2 Host conflict boundary is missing ${required}.`);
 }
+for (const required of ['"attachment.list"', '"attachment.read.begin"', '"attachment.upload.begin"', '"attachment.delete"', 'MAX_ATTACHMENT_BYTES', 'MAX_ATTACHMENT_MEMORY_BYTES', '"supportsAttachmentManagement": true', 'Zeroizing<Vec<u8>>']) {
+  if (!runtime.includes(required)) throw new Error(`MDBX2 Host attachment boundary is missing ${required}.`);
+}
 for (const required of ["MDBX2_MAX_HISTORY_PAGE_SIZE", "MDBX2_MAX_HISTORY_RESULT_BYTES", "supportsHistoryDiff: true"]) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension history contract is missing ${required}.`);
 }
 for (const required of ["MDBX2_MAX_CONFLICT_PAGE_SIZE", "MDBX2_MAX_CONFLICT_RESULT_BYTES", "supportsConflictResolution: true"]) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension conflict contract is missing ${required}.`);
 }
+for (const required of ["MDBX2_MAX_ATTACHMENT_BYTES", "MDBX2_MAX_ATTACHMENT_MEMORY_BYTES", "supportsAttachmentManagement: true", '"attachment.upload.finish"']) {
+  if (!contract.includes(required)) throw new Error(`MDBX2 extension attachment contract is missing ${required}.`);
+}
 
-console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, history/conflict boundaries and manifest template.`);
+console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, history/conflict/attachment boundaries and manifest template.`);
