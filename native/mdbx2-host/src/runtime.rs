@@ -50,6 +50,7 @@ const MAX_OBJECT_OPERATION_STATE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_OPERATION_HISTORY_PAGES: usize = 16;
 const MAX_HISTORY_PAGE_SIZE: u32 = 50;
 pub const MAX_HISTORY_RESULT_BYTES: usize = 850 * 1024;
+const MAX_HISTORY_REVERT_ITEMS: usize = 500;
 const MAX_SNAPSHOT_PAGE_SIZE: u32 = 50;
 const MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE: u32 = 100;
 pub const MAX_SNAPSHOT_RESULT_BYTES: usize = 850 * 1024;
@@ -445,6 +446,7 @@ impl HostRuntime {
             "object.operation.resolve" => self.object_operation_resolve(params),
             "history.list" => self.history_list(params),
             "history.diff" => self.history_diff(params),
+            "history.revert" => self.history_revert(params),
             "snapshot.list" => self.snapshot_list(params),
             "snapshot.structure" => self.snapshot_structure(params),
             "snapshot.create" => self.snapshot_create(params),
@@ -474,7 +476,7 @@ impl HostRuntime {
         let params = take_object(params, "host.hello params must be an object.")?;
         reject_unknown(params)?;
         let capabilities = mdbx_ffi::mdbx_build_capability_manifest();
-        Ok(json!({
+        let mut result = json!({
             "hostName": HOST_NAME,
             "hostVersion": env!("CARGO_PKG_VERSION"),
             "protocolVersion": PROTOCOL_VERSION,
@@ -516,7 +518,16 @@ impl HostRuntime {
             "syncProtocolVersion": capabilities.sync_protocol_version,
             "enabledStorageCapabilityIds": capabilities.enabled_storage_capability_ids,
             "enabledSyncCapabilityIds": capabilities.enabled_sync_capability_ids,
-        }))
+        });
+        let result_object = result
+            .as_object_mut()
+            .ok_or_else(|| RpcFailure::storage("Native Host capability response is invalid."))?;
+        result_object.insert(
+            "maxHistoryRevertItems".to_string(),
+            json!(MAX_HISTORY_REVERT_ITEMS),
+        );
+        result_object.insert("supportsHistoryRevert".to_string(), json!(true));
+        Ok(result)
     }
 
     fn transfer_begin(&mut self, params: Value) -> Result<Value, RpcFailure> {
@@ -1154,6 +1165,44 @@ impl HostRuntime {
             })
             .collect::<Vec<_>>();
         bounded_history_result(json!({ "items": items }))
+    }
+
+    fn history_revert(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "history.revert params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let commit_id = take_uuid(&mut params, "commitId")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let history = vault
+            .get_commit_history(commit_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "history-revert-inspection-failed",
+                    "MDBX2 commit eligibility could not be inspected.",
+                    false,
+                )
+            })?
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "history-revert-not-found",
+                    "MDBX2 commit is no longer available.",
+                    false,
+                )
+            })?;
+        validate_history_revert_eligibility(&history)?;
+        let result = vault
+            .revert_commit(
+                commit_id,
+                operation_id.clone(),
+                browser_management_device_context(),
+            )
+            .map_err(history_revert_failure)?;
+        Ok(json!({
+            "operationId": operation_id,
+            "commitId": result.commit_id,
+            "revertedObjectCount": result.reverted_object_count
+        }))
     }
 
     fn snapshot_list(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -4611,12 +4660,112 @@ fn snapshot_mutation_failure(
 }
 
 fn browser_snapshot_device_context() -> MdbxDeviceContext {
+    browser_management_device_context()
+}
+
+fn browser_management_device_context() -> MdbxDeviceContext {
     MdbxDeviceContext {
         assurance: MdbxDeviceAssurance::Standard,
         secure_clipboard_available: false,
         screen_capture_protection_available: false,
         secure_temp_files_available: true,
     }
+}
+
+fn validate_history_revert_eligibility(item: &MdbxCommitHistoryItem) -> Result<(), RpcFailure> {
+    if history_item_is_system_commit(item) {
+        return Err(RpcFailure::new(
+            "history-revert-not-allowed",
+            "MDBX2 database-level system commits cannot be reverted from the browser manager.",
+            false,
+        ));
+    }
+    let distinct_changes = item
+        .changes
+        .iter()
+        .map(|change| (change.object_type.as_str(), change.object_id.as_str()))
+        .collect::<HashSet<_>>();
+    if distinct_changes.is_empty()
+        || distinct_changes.len() > MAX_HISTORY_REVERT_ITEMS
+        || distinct_changes
+            .iter()
+            .any(|(object_type, _)| !object_type.eq_ignore_ascii_case("entry"))
+    {
+        return Err(RpcFailure::new(
+            "history-revert-not-allowed",
+            "MDBX2 commit is not an eligible bounded entry-only history action.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn history_item_is_system_commit(item: &MdbxCommitHistoryItem) -> bool {
+    let operation = item
+        .operation_kind
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let scope = item.change_scope.trim().to_ascii_lowercase();
+    let kind = item.commit_kind.trim().to_ascii_lowercase();
+    operation == "monica-initialize"
+        || operation.starts_with("snapshot-")
+        || operation.starts_with("branch-")
+        || operation.contains("key-rotation")
+        || operation.contains("security-policy")
+        || matches!(
+            scope.as_str(),
+            "vault-meta" | "key-epoch" | "snapshot" | "branch"
+        )
+        || matches!(kind.as_str(), "snapshot" | "key-rotation")
+}
+
+fn history_revert_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("reused with different content") {
+        return RpcFailure::new(
+            "history-revert-operation-mismatch",
+            "MDBX2 history operation ID was already used for another recovery action.",
+            false,
+        );
+    }
+    if diagnostic.contains("authorization")
+        || diagnostic.contains("fresh authentication")
+        || diagnostic.contains("authentication")
+    {
+        return RpcFailure::new(
+            "history-revert-authorization-required",
+            "MDBX2 security policy requires the vault to be freshly unlocked for history recovery.",
+            true,
+        );
+    }
+    if diagnostic.contains("resource limit") || diagnostic.contains("commit diff objects") {
+        return RpcFailure::new(
+            "history-revert-too-large",
+            "MDBX2 commit contains too many Objects to recover from the browser manager.",
+            false,
+        );
+    }
+    if diagnostic.contains("not found") {
+        return RpcFailure::new(
+            "history-revert-not-found",
+            "MDBX2 commit is no longer available.",
+            false,
+        );
+    }
+    if diagnostic.contains("no restorable entry versions") {
+        return RpcFailure::new(
+            "history-revert-not-allowed",
+            "MDBX2 commit has no restorable entry versions.",
+            false,
+        );
+    }
+    RpcFailure::new(
+        "history-revert-failed",
+        "MDBX2 commit could not be recovered.",
+        false,
+    )
 }
 
 fn snapshot_operation_baseline(
@@ -6072,6 +6221,186 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.code, "params-invalid");
+
+        let error = runtime
+            .handle(
+                "history.revert",
+                json!({
+                    "vaultHandle": fresh_uuid(),
+                    "commitId": fresh_uuid(),
+                    "operationId": "not-an-operation"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "params-invalid");
+    }
+
+    #[test]
+    fn history_revert_is_entry_only_retry_safe_and_preserves_the_source_history() {
+        let (root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "history-revert-password");
+        let first = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:history-revert",
+            "Before recovery",
+        );
+        let source_object_id = first["objectId"].as_str().unwrap().to_string();
+        let changed = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:history-revert",
+            "After recovery",
+        );
+        let source_commit_id = changed["commitId"].as_str().unwrap().to_string();
+        let operation_id = fresh_uuid();
+        let request = json!({
+            "vaultHandle": vault_handle.clone(),
+            "commitId": source_commit_id.clone(),
+            "operationId": operation_id.clone()
+        });
+
+        let reverted = call(&mut runtime, "history.revert", request.clone());
+        assert_eq!(reverted["operationId"], operation_id);
+        assert_eq!(reverted["revertedObjectCount"], 1);
+        let recovery_commit_id = reverted["commitId"].as_str().unwrap().to_string();
+        let revealed = call(
+            &mut runtime,
+            "object.reveal",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "objectId": source_object_id
+            }),
+        );
+        assert_eq!(revealed["title"], "Before recovery");
+        assert!(!serde_json::to_string(&reverted)
+            .unwrap()
+            .contains("Before recovery"));
+
+        let source_history = runtime
+            .require_open_vault(&vault_handle)
+            .unwrap()
+            .get_commit_history(source_commit_id.clone())
+            .unwrap()
+            .unwrap();
+        assert_eq!(source_history.commit_id, source_commit_id);
+        for operation_kind in [
+            "monica-initialize",
+            "snapshot-create",
+            "branch-create",
+            "master-key-rotation",
+            "security-policy-update",
+        ] {
+            let mut system_history = source_history.clone();
+            system_history.operation_kind = Some(operation_kind.to_string());
+            assert_eq!(
+                validate_history_revert_eligibility(&system_history)
+                    .unwrap_err()
+                    .code,
+                "history-revert-not-allowed"
+            );
+        }
+        for change_scope in ["vault-meta", "key-epoch", "snapshot", "branch"] {
+            let mut system_history = source_history.clone();
+            system_history.change_scope = change_scope.to_string();
+            assert_eq!(
+                validate_history_revert_eligibility(&system_history)
+                    .unwrap_err()
+                    .code,
+                "history-revert-not-allowed"
+            );
+        }
+        for commit_kind in ["snapshot", "key-rotation"] {
+            let mut system_history = source_history.clone();
+            system_history.commit_kind = commit_kind.to_string();
+            assert_eq!(
+                validate_history_revert_eligibility(&system_history)
+                    .unwrap_err()
+                    .code,
+                "history-revert-not-allowed"
+            );
+        }
+        let mut empty_history = source_history.clone();
+        empty_history.changes.clear();
+        assert_eq!(
+            validate_history_revert_eligibility(&empty_history)
+                .unwrap_err()
+                .code,
+            "history-revert-not-allowed"
+        );
+        let mut mixed_history = source_history.clone();
+        mixed_history.changes[0].object_type = "attachment".to_string();
+        assert_eq!(
+            validate_history_revert_eligibility(&mixed_history)
+                .unwrap_err()
+                .code,
+            "history-revert-not-allowed"
+        );
+        let change_template = source_history.changes[0].clone();
+        let mut oversized_history = source_history.clone();
+        oversized_history.changes = (0..=MAX_HISTORY_REVERT_ITEMS)
+            .map(|index| {
+                let mut change = change_template.clone();
+                change.object_id = format!("entry-{index}");
+                change
+            })
+            .collect();
+        assert_eq!(
+            validate_history_revert_eligibility(&oversized_history)
+                .unwrap_err()
+                .code,
+            "history-revert-not-allowed"
+        );
+
+        drop(runtime);
+        let mut runtime = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut runtime, &vault_handle, "history-revert-password");
+        let retried = call(&mut runtime, "history.revert", request);
+        assert_eq!(retried["commitId"], recovery_commit_id);
+        assert_eq!(retried["revertedObjectCount"], 1);
+
+        let history = call(
+            &mut runtime,
+            "history.list",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "pageSize": MAX_HISTORY_PAGE_SIZE,
+                "cursor": null
+            }),
+        );
+        assert_eq!(
+            history["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["operationId"] == operation_id)
+                .count(),
+            1
+        );
+        assert!(history["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["commitId"] == source_commit_id));
+
+        let another_change = upsert_test_login(
+            &mut runtime,
+            &vault_handle,
+            "password:history-revert",
+            "Another change",
+        );
+        let another_commit_id = another_change["commitId"].as_str().unwrap().to_string();
+        let mismatch = runtime
+            .handle(
+                "history.revert",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "commitId": another_commit_id,
+                    "operationId": operation_id
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(mismatch.code, "history-revert-operation-mismatch");
     }
 
     #[test]

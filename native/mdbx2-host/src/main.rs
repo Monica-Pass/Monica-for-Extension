@@ -266,6 +266,8 @@ mod tests {
         assert_eq!(result["mdbxCoreRevision"], runtime::MDBX_CORE_REVISION);
         assert_eq!(result["mdbxFormatVersion"], "MDBX-2");
         assert_eq!(result["supportsMdbx1"], false);
+        assert_eq!(result["supportsHistoryRevert"], true);
+        assert_eq!(result["maxHistoryRevertItems"], 500);
         assert_eq!(result["supportsDurableCloudSync"], true);
         assert_eq!(result["maxSnapshotPageSize"], 50);
         assert_eq!(result["maxSnapshotStructurePageSize"], 100);

@@ -14,6 +14,7 @@ import {
   MDBX2_MAX_CONFLICT_RESULT_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_PAGE_SIZE,
+  MDBX2_MAX_HISTORY_REVERT_ITEMS,
   MDBX2_MAX_HISTORY_RESULT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
@@ -85,6 +86,8 @@ const HELLO = {
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
   maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
   supportsHistoryDiff: true,
+  maxHistoryRevertItems: MDBX2_MAX_HISTORY_REVERT_ITEMS,
+  supportsHistoryRevert: true,
   maxSnapshotPageSize: MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
   maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,
@@ -140,6 +143,7 @@ describe("MDBX2 Native Messaging client", () => {
   it("rejects a Host that claims MDBX1 support or a different chunk boundary", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsMdbx1: true })).toThrowError(Mdbx2NativeHostError);
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxBinaryChunkBytes: 64 * 1024 })).toThrow("分块限制");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsHistoryRevert: false })).toThrow("历史恢复能力");
   });
 
   it("preserves stable Host error codes and retryability", async () => {
@@ -237,6 +241,7 @@ describe("MDBX2 Native Messaging client", () => {
             createdAt: "2026-08-02T00:00:00Z"
           }]
         },
+        "history.revert": { operationId: handle, commitId: handle, revertedObjectCount: 1 },
         "snapshot.list": {
           items: [{
             snapshotId: handle,
@@ -329,6 +334,7 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.resolveObjectOperation(handle, "ab".repeat(32))).resolves.toEqual({ known: true, committed: true, operationId: handle, commitId: "commit-5" });
     await expect(client.listCommitHistory(handle)).resolves.toMatchObject({ items: [{ commitId: handle, operationKind: "monica-extension-batch-objects", changes: [{ fields: ["payload"] }] }] });
     await expect(client.listCommitDiff(handle, handle)).resolves.toMatchObject({ items: [{ commitId: handle, currentTitle: "After", payloadChanged: true, contentType: "login" }] });
+    await expect(client.revertCommit(handle, handle, handle)).resolves.toEqual({ operationId: handle, commitId: handle, revertedObjectCount: 1 });
     await expect(client.listSnapshots(handle)).resolves.toMatchObject({ items: [{ snapshotId: handle, name: "手动快照", integrityOk: true }] });
     await expect(client.listSnapshotStructure(handle, handle, "snapshot")).resolves.toMatchObject({ side: "snapshot", totalNodes: 1, items: [{ name: "工作账号", status: "modified" }] });
     await expect(client.createSnapshot(handle, handle, " 手动快照 ")).resolves.toMatchObject({ operationId: handle, alreadyCompleted: false });
@@ -445,6 +451,26 @@ describe("MDBX2 Native Messaging client", () => {
     };
     await expect(client.listCommitHistory(handle, { pageSize: MDBX2_MAX_HISTORY_PAGE_SIZE }))
       .rejects.toMatchObject({ code: "native-host-incompatible" });
+    client.close();
+  });
+
+  it("rejects malformed history revert responses and changed operation identity", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const otherHandle = "22222222-2222-4222-8222-222222222222";
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+    let responseNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      responseNumber += 1;
+      const result = responseNumber === 1
+        ? { operationId: otherHandle, commitId: handle, revertedObjectCount: 1 }
+        : { operationId: handle, commitId: handle, revertedObjectCount: MDBX2_MAX_HISTORY_REVERT_ITEMS + 1 };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+
+    await expect(client.revertCommit(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+    await expect(client.revertCommit(handle, handle, handle)).rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 

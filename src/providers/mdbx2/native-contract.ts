@@ -14,6 +14,7 @@ export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
 export const MDBX2_MAX_HISTORY_DIFF_ITEMS = 500;
 export const MDBX2_MAX_HISTORY_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_HISTORY_REVERT_ITEMS = 500;
 export const MDBX2_MAX_SNAPSHOT_PAGE_SIZE = 50;
 export const MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE = 100;
 export const MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES = 10_000;
@@ -49,6 +50,7 @@ export type Mdbx2NativeMethod =
   | "object.operation.resolve"
   | "history.list"
   | "history.diff"
+  | "history.revert"
   | "snapshot.list"
   | "snapshot.structure"
   | "snapshot.create"
@@ -494,6 +496,12 @@ export interface Mdbx2CommitDiffResult {
   items: Mdbx2CommitDiffItem[];
 }
 
+export interface Mdbx2CommitRevertResult {
+  operationId: string;
+  commitId: string;
+  revertedObjectCount: number;
+}
+
 export type Mdbx2SnapshotKind = "manual" | "automatic";
 export type Mdbx2SnapshotStructureSide = "current" | "snapshot";
 export type Mdbx2SnapshotNodeType = "folder" | "entry";
@@ -621,6 +629,8 @@ export interface Mdbx2HostCapabilities {
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
   maxHistoryResultBytes: typeof MDBX2_MAX_HISTORY_RESULT_BYTES;
   supportsHistoryDiff: true;
+  maxHistoryRevertItems: typeof MDBX2_MAX_HISTORY_REVERT_ITEMS;
+  supportsHistoryRevert: true;
   maxSnapshotPageSize: typeof MDBX2_MAX_SNAPSHOT_PAGE_SIZE;
   maxSnapshotStructurePageSize: typeof MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE;
   maxSnapshotResultBytes: typeof MDBX2_MAX_SNAPSHOT_RESULT_BYTES;
@@ -709,6 +719,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
   if (value.maxHistoryResultBytes !== MDBX2_MAX_HISTORY_RESULT_BYTES) throw incompatible("Native Host 历史响应限制与插件不一致。");
   if (value.supportsHistoryDiff !== true) throw incompatible("Native Host 未启用 MDBX2 历史差异能力。");
+  if (value.maxHistoryRevertItems !== MDBX2_MAX_HISTORY_REVERT_ITEMS) throw incompatible("Native Host 历史恢复数量限制与插件不一致。");
+  if (value.supportsHistoryRevert !== true) throw incompatible("Native Host 未启用 MDBX2 历史恢复能力。");
   if (value.maxSnapshotPageSize !== MDBX2_MAX_SNAPSHOT_PAGE_SIZE) throw incompatible("Native Host 快照分页限制与插件不一致。");
   if (value.maxSnapshotStructurePageSize !== MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE) throw incompatible("Native Host 快照结构分页限制与插件不一致。");
   if (value.maxSnapshotResultBytes !== MDBX2_MAX_SNAPSHOT_RESULT_BYTES) throw incompatible("Native Host 快照响应限制与插件不一致。");
@@ -750,6 +762,8 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
     maxHistoryResultBytes: MDBX2_MAX_HISTORY_RESULT_BYTES,
     supportsHistoryDiff: true,
+    maxHistoryRevertItems: MDBX2_MAX_HISTORY_REVERT_ITEMS,
+    supportsHistoryRevert: true,
     maxSnapshotPageSize: MDBX2_MAX_SNAPSHOT_PAGE_SIZE,
     maxSnapshotStructurePageSize: MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
     maxSnapshotResultBytes: MDBX2_MAX_SNAPSHOT_RESULT_BYTES,

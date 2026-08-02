@@ -614,6 +614,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.listCommitDiff(vaultHandle, request.commitId);
     }
+    case "MDBX2_HISTORY_REVERT": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.revertCommit(vaultHandle, request.operationId, request.commitId);
+    }
     case "MDBX2_SNAPSHOT_LIST": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);

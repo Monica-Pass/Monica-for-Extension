@@ -30,6 +30,7 @@ type SnapshotBusyState = "" | "list" | "structure" | "create" | "delete" | "rest
 type SnapshotStructureMode = "snapshot" | "compare";
 type SnapshotMutationAction = "delete" | "restore";
 interface PendingConflictResolution { item: Mdbx2ConflictSummary; choice: Mdbx2ConflictResolutionChoice; operationId: string }
+interface PendingHistoryRevert { item: Mdbx2CommitHistoryItem; operationId: string; attempted: boolean }
 interface PendingSnapshotCreate { operationId: string; name: string }
 interface PendingSnapshotMutation { item: Mdbx2ManagedSnapshotSummary; action: SnapshotMutationAction; operationId: string; attempted: boolean }
 interface SnapshotStructureState {
@@ -73,10 +74,12 @@ const revealVaultPassword = ref(false);
 const historyItems = ref<Mdbx2CommitHistoryItem[]>([]);
 const historyCursor = ref<string | undefined>();
 const historyLoaded = ref(false);
-const historyBusy = ref<"" | "list" | "diff">("");
+const historyBusy = ref<"" | "list" | "diff" | "revert">("");
 const historyError = ref("");
 const selectedCommitId = ref("");
 const commitDiffItems = ref<Mdbx2CommitDiffItem[]>([]);
+const pendingHistoryRevert = ref<PendingHistoryRevert | undefined>();
+const confirmHistoryRevertButton = ref<HTMLElement | null>(null);
 const conflictItems = ref<Mdbx2ConflictSummary[]>([]);
 const conflictCursor = ref<string | undefined>();
 const conflictLoaded = ref(false);
@@ -126,7 +129,8 @@ const selectedSnapshot = computed(() => snapshotItems.value.find((item) => item.
 const snapshotNameBytes = computed(() => new TextEncoder().encode(snapshotName.value.trim()).byteLength);
 const snapshotNameTooLong = computed(() => snapshotNameBytes.value > MDBX2_MAX_SNAPSHOT_NAME_BYTES);
 const snapshotMutating = computed(() => snapshotBusy.value === "create" || snapshotBusy.value === "delete" || snapshotBusy.value === "restore");
-const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value);
+const historyMutating = computed(() => historyBusy.value === "revert");
+const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value);
 const dialogLocked = computed(() => Boolean(busy.value) || managerMutationLocked.value);
 const dialogTitle = computed(() => {
   if (isExisting.value) return `管理 ${activeProvider.value?.name || form.name}`;
@@ -310,7 +314,7 @@ async function loadHistory(reset = false) {
   if (reset) {
     historyItems.value = [];
     historyCursor.value = undefined;
-    selectedCommitId.value = "";
+    selectedCommitId.value = pendingHistoryRevert.value?.item.commitId || "";
     commitDiffItems.value = [];
   }
   try {
@@ -322,6 +326,13 @@ async function loadHistory(reset = false) {
     historyItems.value = [...new Map(merged.map((item) => [item.commitId, item])).values()];
     historyCursor.value = page.nextCursor;
     historyLoaded.value = true;
+    const pending = pendingHistoryRevert.value;
+    if (reset && pending?.attempted && historyItems.value.some((item) => item.operationId === pending.operationId)) {
+      pendingHistoryRevert.value = undefined;
+      selectedCommitId.value = "";
+      historyError.value = "";
+      emit("notice", "提交恢复结果已从历史记录中确认。");
+    }
   } catch (cause) {
     historyError.value = historyErrorMessage(cause);
   } finally {
@@ -330,6 +341,7 @@ async function loadHistory(reset = false) {
 }
 
 async function selectHistory(item: Mdbx2CommitHistoryItem) {
+  if (pendingHistoryRevert.value) return;
   const presentation = presentMdbx2History(item);
   selectedCommitId.value = selectedCommitId.value === item.commitId ? "" : item.commitId;
   commitDiffItems.value = [];
@@ -343,6 +355,50 @@ async function selectHistory(item: Mdbx2CommitHistoryItem) {
   } finally {
     historyBusy.value = "";
   }
+}
+
+async function requestHistoryRevert(item: Mdbx2CommitHistoryItem) {
+  if (!providerId.value || historyBusy.value || managerMutationLocked.value || pendingHistoryRevert.value || !presentMdbx2History(item).canRevert) return;
+  selectedCommitId.value = item.commitId;
+  pendingHistoryRevert.value = { item, operationId: crypto.randomUUID(), attempted: false };
+  historyError.value = "";
+  await nextTick();
+  confirmHistoryRevertButton.value?.focus();
+}
+
+function cancelHistoryRevert() {
+  if (!pendingHistoryRevert.value || pendingHistoryRevert.value.attempted || historyBusy.value) return;
+  pendingHistoryRevert.value = undefined;
+  historyError.value = "";
+}
+
+async function confirmHistoryRevert() {
+  const pending = pendingHistoryRevert.value;
+  if (!pending || !providerId.value || historyBusy.value || conflictBusy.value === "resolve" || snapshotMutating.value) return;
+  pending.attempted = true;
+  historyBusy.value = "revert";
+  historyError.value = "";
+  let completed = false;
+  try {
+    const result = await vaultClient.revertMdbx2Commit(providerId.value, pending.operationId, pending.item.commitId);
+    pendingHistoryRevert.value = undefined;
+    completed = true;
+    emit("notice", `历史版本已恢复，共处理 ${result.revertedObjectCount} 个条目；原提交记录仍然保留。`);
+  } catch (cause) {
+    historyError.value = historyErrorMessage(cause);
+  } finally {
+    historyBusy.value = "";
+  }
+  if (completed) await refreshAfterHistoryRevert();
+}
+
+async function refreshAfterHistoryRevert() {
+  await Promise.all([
+    loadHistory(true),
+    loadSnapshots(true),
+    vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
+  ]);
+  emit("changed");
 }
 
 async function loadConflicts(reset = false) {
@@ -703,6 +759,7 @@ function clearHistory() {
   historyError.value = "";
   selectedCommitId.value = "";
   commitDiffItems.value = [];
+  pendingHistoryRevert.value = undefined;
 }
 
 function clearSnapshots() {
@@ -784,6 +841,12 @@ function historyErrorMessage(cause: unknown): string {
   const code = errorCode(cause);
   if (code === "history-diff-too-large") return "这次提交包含的对象过多，当前版本无法一次展开全部详情；提交记录本身仍然有效。";
   if (code === "history-result-too-large") return "历史记录内容超过单次安全上限，请缩小分页后重试。";
+  if (code === "history-revert-not-allowed") return "这次提交包含数据库级事件、非条目对象或超过 500 个项目，无法从浏览器管理页恢复。";
+  if (code === "history-revert-not-found") return "这次提交已不存在，请刷新历史记录。";
+  if (code === "history-revert-too-large") return "这次提交超过 500 个可恢复对象，Core 已停止恢复操作。";
+  if (code === "history-revert-operation-mismatch") return "恢复操作标识已用于另一项历史操作，请刷新记录后重新选择。";
+  if (code === "history-revert-authorization-required") return "MDBX2 安全策略要求重新解锁保险库后再恢复历史版本。";
+  if (code === "native-host-disconnected") return "Native Host 连接在恢复期间中断。原操作标识已经保留，可以使用同一确认按钮安全重试，或刷新历史确认结果。";
   return errorMessage(cause);
 }
 
@@ -1078,7 +1141,7 @@ function conflictErrorMessage(cause: unknown): string {
               class="mdbx2-history-row"
               :class="{ selected: selectedCommitId === item.commitId }"
               :aria-expanded="selectedCommitId === item.commitId"
-              :disabled="Boolean(historyBusy) || managerMutationLocked"
+              :disabled="Boolean(historyBusy) || managerMutationLocked || Boolean(pendingHistoryRevert)"
               @click="selectHistory(item)"
             >
               <span class="mdbx2-history-icon"><m3e-icon :name="presentMdbx2History(item).icon" /></span>
@@ -1098,8 +1161,24 @@ function conflictErrorMessage(cause: unknown): string {
             </div>
             <p v-else-if="!historyBusy && presentMdbx2History(selectedHistoryItem).canInspect" class="mdbx2-history-empty">此提交没有可展开的普通条目差异。</p>
             <p v-else-if="!presentMdbx2History(selectedHistoryItem).canInspect" class="mdbx2-history-empty">这是数据库级系统记录，不包含普通条目差异。</p>
+            <div v-if="presentMdbx2History(selectedHistoryItem).canRevert && !pendingHistoryRevert" class="mdbx2-history-actions">
+              <span>恢复操作会新增一条历史记录，原提交和后续同步依据保持可审计。</span>
+              <m3e-button variant="filled" type="button" :disabled="Boolean(historyBusy) || managerMutationLocked" @click="requestHistoryRevert(selectedHistoryItem)"><m3e-icon slot="icon" name="undo"></m3e-icon>撤销这次更改</m3e-button>
+            </div>
           </div>
-          <div v-if="historyCursor" class="mdbx2-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(historyBusy) || managerMutationLocked" @click="loadHistory(false)">加载更早记录</m3e-button></div>
+          <div v-if="pendingHistoryRevert" class="mdbx2-history-confirmation" role="group" aria-labelledby="mdbx2-history-revert-title" aria-live="assertive">
+            <span class="mdbx2-history-confirm-icon"><m3e-icon name="warning" /></span>
+            <div>
+              <strong id="mdbx2-history-revert-title">撤销这次更改？</strong>
+              <small>将恢复或移除这次提交涉及的 {{ presentMdbx2History(pendingHistoryRevert.item).objectCount }} 个条目。此操作会生成新的恢复记录，原有历史保持不变。</small>
+              <small v-if="pendingHistoryRevert.attempted">原操作标识已经保留。可以使用同一确认按钮重试，或刷新提交历史确认结果。</small>
+            </div>
+            <div class="mdbx2-history-confirm-actions">
+              <m3e-button variant="text" type="button" :disabled="pendingHistoryRevert.attempted || Boolean(historyBusy)" @click="cancelHistoryRevert">返回详情</m3e-button>
+              <m3e-button ref="confirmHistoryRevertButton" variant="filled" type="button" aria-label="确认撤销这次更改" :disabled="Boolean(historyBusy) || conflictBusy === 'resolve' || snapshotMutating" @click="confirmHistoryRevert">{{ historyBusy === 'revert' ? '正在恢复…' : pendingHistoryRevert.attempted ? '重试恢复' : '确认撤销' }}</m3e-button>
+            </div>
+          </div>
+          <div v-if="historyCursor" class="mdbx2-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(historyBusy) || managerMutationLocked || Boolean(pendingHistoryRevert)" @click="loadHistory(false)">加载更早记录</m3e-button></div>
         </section>
 
         <div class="provider-boundaries field-wide" aria-label="MDBX2 浏览器能力边界">
@@ -1306,6 +1385,13 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-history-detail { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 12px 16px; display: grid; gap: 12px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
 .mdbx2-diff-list { display: grid; gap: 8px; }
 .mdbx2-diff-row { min-height: 56px; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 12px; }
+.mdbx2-history-actions { min-height: 56px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; color: var(--app-muted); }
+.mdbx2-history-confirmation { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-error-container, var(--app-surface-high)); color: var(--md-sys-color-on-error-container, var(--app-text)); }
+.mdbx2-history-confirmation > div:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.mdbx2-history-confirmation small { overflow-wrap: anywhere; }
+.mdbx2-history-confirm-icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--md-sys-color-on-error-container, var(--app-text)); }
+.mdbx2-history-confirm-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-history-confirm-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mdbx2-history-empty { min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
 .mdbx2-history-empty m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-history-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
@@ -1343,5 +1429,8 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-history-header { align-items: stretch; flex-direction: column; }
   .mdbx2-history-row { grid-template-columns: 32px minmax(0, 1fr) 24px; }
   .mdbx2-history-row time { grid-column: 2; white-space: normal; }
+  .mdbx2-history-actions { align-items: stretch; flex-direction: column; }
+  .mdbx2-history-confirmation { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-history-confirm-actions { grid-column: 1 / -1; align-items: stretch; flex-direction: column; }
 }
 </style>

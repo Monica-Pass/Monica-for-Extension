@@ -1,4 +1,4 @@
-import type { Mdbx2CommitChangeSummary, Mdbx2CommitDiffItem, Mdbx2CommitHistoryItem } from "./native-contract";
+import { MDBX2_MAX_HISTORY_REVERT_ITEMS, type Mdbx2CommitChangeSummary, type Mdbx2CommitDiffItem, type Mdbx2CommitHistoryItem } from "./native-contract";
 
 export type Mdbx2HistoryAction = "created" | "updated" | "moved" | "copied" | "deleted" | "restored" | "merged" | "system";
 
@@ -20,6 +20,7 @@ export interface Mdbx2HistoryPresentation {
   objectCount: number;
   isSystemCommit: boolean;
   canInspect: boolean;
+  canRevert: boolean;
   icon: string;
 }
 
@@ -61,6 +62,8 @@ export function presentMdbx2History(item: Mdbx2CommitHistoryItem): Mdbx2HistoryP
     objectCount,
     isSystemCommit,
     canInspect: changes.length > 0,
+    canRevert: !isSystemCommit && changes.length > 0 && changes.length <= MDBX2_MAX_HISTORY_REVERT_ITEMS
+      && changes.every((change) => change.objectType.trim().toLocaleLowerCase() === "entry"),
     icon: historyActionIcon(action)
   };
 }

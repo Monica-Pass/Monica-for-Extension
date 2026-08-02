@@ -45,6 +45,18 @@ describe("extension runtime client", () => {
     ]);
   });
 
+  it("sends MDBX2 history recovery through the manager contract with caller operation identity", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "provider-1";
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const commitId = "22222222-2222-4222-8222-222222222222";
+
+    await vaultClient.revertMdbx2Commit(providerId, operationId, commitId);
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_HISTORY_REVERT", providerId, operationId, commitId });
+  });
+
   it("preserves the snapshot unknown-outcome code for safe manager recovery", async () => {
     const sendMessage = vi.fn().mockResolvedValue({
       ok: false,

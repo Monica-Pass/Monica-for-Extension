@@ -8,6 +8,7 @@ import {
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_DIFF_ITEMS,
   MDBX2_MAX_HISTORY_PAGE_SIZE,
+  MDBX2_MAX_HISTORY_REVERT_ITEMS,
   MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
@@ -35,6 +36,7 @@ import {
   type Mdbx2AttachmentUploadChunkResult,
   type Mdbx2CommitDiffResult,
   type Mdbx2CommitHistoryPage,
+  type Mdbx2CommitRevertResult,
   type Mdbx2ConflictResolutionChoice,
   type Mdbx2ConflictResolutionResult,
   type Mdbx2ConflictSummaryPage,
@@ -290,6 +292,24 @@ export class Mdbx2NativeClient {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       commitId: opaqueHandle(commitId, "Commit")
     }, timeoutMs));
+  }
+
+  async revertCommit(
+    vaultHandle: string,
+    operationId: string,
+    commitId: string,
+    timeoutMs = 120_000
+  ): Promise<Mdbx2CommitRevertResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "历史恢复操作");
+    const result = commitRevertResult(await this.request("history.revert", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      commitId: opaqueHandle(commitId, "Commit"),
+      operationId: normalizedOperationId
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId) {
+      throw incompatibleResult("Native Host MDBX2 历史恢复响应与请求操作不一致。");
+    }
+    return result;
   }
 
   async listSnapshots(
@@ -1371,6 +1391,19 @@ function commitDiffResult(input: unknown): Mdbx2CommitDiffResult {
         createdAt: textResult(item.createdAt, 128, false, "MDBX2 Commit 差异时间无效。")
       };
     })
+  };
+}
+
+function commitRevertResult(input: unknown): Mdbx2CommitRevertResult {
+  const value = objectResult(input, "Native Host MDBX2 历史恢复响应无效。");
+  const revertedObjectCount = safeInteger(value.revertedObjectCount, "MDBX2 历史恢复 Object 数量");
+  if (revertedObjectCount < 1 || revertedObjectCount > MDBX2_MAX_HISTORY_REVERT_ITEMS) {
+    throw incompatibleResult("Native Host MDBX2 历史恢复 Object 数量无效。");
+  }
+  return {
+    operationId: opaqueHandle(value.operationId, "历史恢复操作"),
+    commitId: opaqueHandle(value.commitId, "恢复 Commit"),
+    revertedObjectCount
   };
 }
 

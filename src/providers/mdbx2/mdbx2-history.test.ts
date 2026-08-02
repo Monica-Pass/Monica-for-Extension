@@ -23,7 +23,7 @@ describe("MDBX2 Android-aligned history presentation", () => {
     const result = presentMdbx2History(history({
       changes: ["one", "two", "three"].map((objectId) => ({ objectType: "entry", objectId, action: "create", fields: [] }))
     }));
-    expect(result).toMatchObject({ title: "添加了3 个条目", supportingText: "新增 3", objectCount: 3, isSystemCommit: false, canInspect: true });
+    expect(result).toMatchObject({ title: "添加了3 个条目", supportingText: "新增 3", objectCount: 3, isSystemCommit: false, canInspect: true, canRevert: true });
     expect(JSON.stringify(result)).not.toContain("one");
   });
 
@@ -34,6 +34,22 @@ describe("MDBX2 Android-aligned history presentation", () => {
     expect(presentMdbx2History(history({ operationKind: undefined, commitKind: "key-rotation", changeScope: "key-epoch" }))).toMatchObject({
       title: "数据库系统事件", supportingText: "更新数据库加密密钥或解锁材料", isSystemCommit: true
     });
+  });
+
+  it("matches Android commit-revert eligibility for system, mixed and oversized changes", () => {
+    expect(presentMdbx2History(history({
+      operationKind: "snapshot-create",
+      changes: [{ objectType: "entry", objectId: "one", action: "update", fields: [] }]
+    })).canRevert).toBe(false);
+    expect(presentMdbx2History(history({
+      changes: [
+        { objectType: "entry", objectId: "one", action: "update", fields: [] },
+        { objectType: "attachment", objectId: "two", action: "update", fields: [] }
+      ]
+    })).canRevert).toBe(false);
+    expect(presentMdbx2History(history({
+      changes: Array.from({ length: 501 }, (_, index) => ({ objectType: "entry", objectId: `entry-${index}`, action: "update", fields: [] }))
+    })).canRevert).toBe(false);
   });
 
   it("uses compact mixed-action counts and content-aware labels", () => {
