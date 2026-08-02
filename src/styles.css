@@ -550,7 +550,7 @@ main {
 
 .data-card th:last-child,
 .data-card .action-cell {
-  width: 104px;
+  width: 148px;
   min-width: 0;
   padding-inline: 4px;
 }
@@ -1074,9 +1074,32 @@ tbody tr:hover td {
   }
 
   .item-cell::before,
-  .empty-status,
-  .action-cell {
+  .empty-status {
     display: none;
+  }
+
+  .action-cell {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-block: 4px;
+    border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 36%, transparent);
+  }
+
+  .action-cell::before {
+    display: none;
+  }
+
+  .action-cell m3e-icon-button {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    flex: 0 0 44px;
   }
 
   .row-title {

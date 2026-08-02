@@ -62,4 +62,52 @@ describe("extension runtime client", () => {
       code: "snapshot-operation-state-unknown"
     });
   });
+
+  it("sends bounded provider attachment commands through the manager contract", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "keepass-1";
+    const itemId = "item-1";
+    const attachmentId = "11111111-1111-4111-8111-111111111111";
+    const transferId = "22222222-2222-4222-8222-222222222222";
+    const readHandle = "33333333-3333-4333-8333-333333333333";
+
+    await vaultClient.listProviderAttachments(providerId, itemId, { pageSize: 20, cursor: "next" });
+    await vaultClient.beginProviderAttachmentRead(providerId, itemId, attachmentId);
+    await vaultClient.readProviderAttachmentChunk(providerId, readHandle, 0, 1024);
+    await vaultClient.releaseProviderAttachmentRead(providerId, readHandle);
+    await vaultClient.beginProviderAttachmentUpload(providerId, itemId, { fileName: "a.txt", mediaType: "text/plain", sizeBytes: 2, sha256: "a".repeat(64), replaceExisting: true });
+    await vaultClient.sendProviderAttachmentChunk(providerId, transferId, 0, new Uint8Array([1, 2]));
+    await vaultClient.finishProviderAttachmentUpload(providerId, itemId, transferId);
+    await vaultClient.abortProviderAttachmentUpload(providerId, transferId);
+    await vaultClient.deleteProviderAttachment(providerId, itemId, attachmentId);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "PROVIDER_ATTACHMENT_LIST", providerId, itemId, pageSize: 20, cursor: "next" },
+      { type: "PROVIDER_ATTACHMENT_READ_BEGIN", providerId, itemId, attachmentId },
+      { type: "PROVIDER_ATTACHMENT_READ_CHUNK", providerId, readHandle, offset: 0, maxBytes: 1024 },
+      { type: "PROVIDER_ATTACHMENT_READ_RELEASE", providerId, readHandle },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_BEGIN", providerId, itemId, fileName: "a.txt", mediaType: "text/plain", sizeBytes: 2, sha256: "a".repeat(64), replaceExisting: true },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId, transferId, offset: 0, dataBase64: "AQI=" },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId, transferId },
+      { type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, confirmed: true }
+    ]);
+  });
+
+  it("preserves provider attachment error codes for manager recovery", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({
+      ok: false,
+      error: "附件 SHA-256 校验失败。",
+      code: "attachment-upload-digest-mismatch"
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await expect(vaultClient.finishProviderAttachmentUpload(
+      "keepass-1",
+      "item-1",
+      "11111111-1111-4111-8111-111111111111"
+    ))
+      .rejects.toMatchObject({ name: "ExtensionRuntimeError", code: "attachment-upload-digest-mismatch" });
+  });
 });

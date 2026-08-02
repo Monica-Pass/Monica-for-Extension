@@ -2,6 +2,9 @@ import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, t
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry } from "../core/provider";
+import { KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError } from "../providers/attachments/attachment-contract";
+import { paginateProviderAttachments } from "../providers/attachments/attachment-pagination";
+import { ProviderAttachmentUploadStore } from "../providers/attachments/attachment-upload-store";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
@@ -40,9 +43,12 @@ const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator)
 providers.register(mdbx2Provider);
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
+const providerAttachmentUploads = new ProviderAttachmentUploadStore();
+const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
 const MDBX2_MAX_BASE64_CHUNK_LENGTH = Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4;
+const PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH = Math.ceil(PROVIDER_ATTACHMENT_CHUNK_BYTES / 3) * 4;
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
 const PASSKEY_COMPLETION_TTL_MS = 2 * 60_000;
 const activeProviderSyncs = new Map<string, AbortController>();
@@ -162,7 +168,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -643,8 +649,204 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.resolveConflict(vaultHandle, request.operationId, request.conflictId, request.choice);
     }
+    case "PROVIDER_ATTACHMENT_LIST": {
+      assertManagerPage(sender);
+      const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
+      if (account.kind === "keepass") return paginateProviderAttachments(keePassProvider.listAttachments(account, item), request);
+      if (account.kind === "mdbx2") {
+        const target = requireMdbx2AttachmentTarget(account, item);
+        const page = await mdbx2NativeClient.listAttachments(target.vaultHandle, target.collectionId, target.objectId, request);
+        return { items: page.items.map(providerAttachmentSummaryFromMdbx2), nextCursor: page.nextCursor };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_READ_BEGIN": {
+      assertManagerPage(sender);
+      const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
+      if (account.kind === "keepass") {
+        pruneProviderAttachmentReads();
+        if (providerAttachmentReads.size >= PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS) {
+          throw new ProviderAttachmentError("attachment-read-limit", "同时进行的附件下载过多，请完成或取消现有下载。");
+        }
+        const attachment = keePassProvider.listAttachments(account, item).find((candidate) => candidate.attachmentId === request.attachmentId);
+        if (!attachment) throw new ProviderAttachmentError("attachment-not-found", "附件不存在或已被删除。");
+        const readHandle = crypto.randomUUID();
+        providerAttachmentReads.set(readHandle, {
+          providerId: account.id,
+          itemId: item.id,
+          attachmentId: attachment.attachmentId,
+          expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS
+        });
+        return { ...attachment, readHandle, maxChunkBytes: PROVIDER_ATTACHMENT_CHUNK_BYTES };
+      }
+      if (account.kind === "mdbx2") {
+        const target = requireMdbx2AttachmentTarget(account, item);
+        const result = await mdbx2NativeClient.beginAttachmentRead(target.vaultHandle, request.attachmentId);
+        return { ...providerAttachmentSummaryFromMdbx2(result), readHandle: result.readHandle, maxChunkBytes: result.maxChunkBytes };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_READ_CHUNK": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
+      if (account.kind === "keepass") {
+        pruneProviderAttachmentReads();
+        const route = providerAttachmentReads.get(request.readHandle);
+        if (!route || route.providerId !== account.id) throw new ProviderAttachmentError("attachment-read-not-found", "附件下载已过期，请重新开始。");
+        const { item } = await requireAttachmentTarget(route.providerId, route.itemId);
+        const result = keePassProvider.readAttachment(account, item, route.attachmentId, request.offset, request.maxBytes);
+        route.expiresAt = Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS;
+        return {
+          readHandle: request.readHandle,
+          attachmentId: result.attachment.attachmentId,
+          fileName: result.attachment.fileName,
+          sizeBytes: result.attachment.sizeBytes,
+          offset: result.offset,
+          nextOffset: result.nextOffset,
+          dataBase64: bytesToBase64(result.bytes),
+          eof: result.eof
+        };
+      }
+      if (account.kind === "mdbx2") {
+        const result = await mdbx2NativeClient.readAttachmentChunk(request.readHandle, request.offset, request.maxBytes);
+        return { ...result };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_READ_RELEASE": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account) return providerAttachmentReads.delete(request.readHandle);
+      if (account.kind === "keepass") return providerAttachmentReads.delete(request.readHandle);
+      if (account.kind === "mdbx2") return mdbx2NativeClient.releaseAttachmentRead(request.readHandle);
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_UPLOAD_BEGIN": {
+      assertManagerPage(sender);
+      const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
+      if (account.kind === "keepass") {
+        keePassProvider.assertAttachmentTarget(account, item);
+        if (request.replaceExisting) {
+          const attachment = request.attachmentId
+            ? keePassProvider.listAttachments(account, item).find((candidate) => candidate.attachmentId === request.attachmentId)
+            : undefined;
+          if (!attachment) throw new ProviderAttachmentError("attachment-not-found", "要替换的 KeePass 附件不存在，请刷新附件列表。");
+          if (attachment.fileName !== request.fileName) throw new ProviderAttachmentError("attachment-target-mismatch", "KeePass 附件替换必须保留原文件名。");
+        }
+        return providerAttachmentUploads.begin({
+          providerId: account.id,
+          itemId: item.id,
+          providerKind: "keepass",
+          fileName: request.fileName,
+          mediaType: request.mediaType,
+          sizeBytes: request.sizeBytes,
+          sha256: request.sha256,
+          replaceExisting: request.replaceExisting === true,
+          operationId: request.operationId,
+          attachmentId: request.attachmentId
+        }, KEEPASS_ATTACHMENT_MAX_BYTES);
+      }
+      if (account.kind === "mdbx2") {
+        const target = requireMdbx2AttachmentTarget(account, item);
+        const operationId = request.operationId || crypto.randomUUID();
+        const attachmentId = request.replaceExisting
+          ? request.attachmentId
+          : request.attachmentId || operationId;
+        if (!attachmentId) throw new ProviderAttachmentError("attachment-id-required", "替换 MDBX2 附件需要指定现有附件。");
+        const result = await mdbx2NativeClient.beginAttachmentUpload(target.vaultHandle, {
+          operationId,
+          attachmentId,
+          collectionId: target.collectionId,
+          objectId: target.objectId,
+          fileName: request.fileName,
+          mediaType: request.mediaType,
+          mode: request.replaceExisting ? "replace" : "create",
+          sizeBytes: request.sizeBytes,
+          sha256: request.sha256
+        });
+        return { ...result, expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_UPLOAD_CHUNK": {
+      assertManagerPage(sender);
+      if (typeof request.dataBase64 !== "string" || request.dataBase64.length > PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH) {
+        throw new ProviderAttachmentError("attachment-upload-chunk-invalid", "附件上传分块编码超过安全上限。");
+      }
+      const account = await service.getProvider(request.providerId);
+      if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
+      const bytes = base64ToBytes(request.dataBase64);
+      if (account.kind === "keepass") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (intent && (intent.providerId !== account.id || intent.providerKind !== "keepass")) {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+        }
+        return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
+      }
+      if (account.kind === "mdbx2") return mdbx2NativeClient.sendAttachmentUploadChunk(request.transferId, request.offset, bytes);
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_UPLOAD_FINISH": {
+      assertManagerPage(sender);
+      const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
+      if (account.kind === "keepass") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (intent && (intent.providerId !== account.id || intent.itemId !== item.id || intent.providerKind !== "keepass")) {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
+        }
+        const committed = providerAttachmentUploads.committedResult(request.transferId);
+        if (committed) return committed;
+        const upload = await providerAttachmentUploads.complete(request.transferId);
+        if (upload.intent.providerId !== account.id || upload.intent.itemId !== item.id || upload.intent.providerKind !== "keepass") {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
+        }
+        const attachment = await keePassProvider.addAttachment(
+          account,
+          item,
+          upload.intent.fileName,
+          upload.bytes,
+          upload.intent.replaceExisting
+        );
+        const result = { changed: true, attachment };
+        providerAttachmentUploads.markCommitted(request.transferId, result);
+        return result;
+      }
+      if (account.kind === "mdbx2") {
+        requireMdbx2AttachmentTarget(account, item);
+        const result = await mdbx2NativeClient.finishAttachmentUpload(request.transferId);
+        return { changed: result.changed, attachment: providerAttachmentSummaryFromMdbx2(result.attachment) };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_UPLOAD_ABORT": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account) return providerAttachmentUploads.abort(request.transferId);
+      if (account.kind === "keepass") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (intent && (intent.providerId !== account.id || intent.providerKind !== "keepass")) {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+        }
+        return providerAttachmentUploads.abort(request.transferId);
+      }
+      if (account.kind === "mdbx2") return mdbx2NativeClient.abortAttachmentUpload(request.transferId);
+      throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new ProviderAttachmentError("attachment-delete-confirmation-required", "删除附件需要明确确认。");
+      const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
+      if (account.kind === "keepass") return { changed: keePassProvider.deleteAttachment(account, item, request.attachmentId) };
+      if (account.kind === "mdbx2") {
+        const target = requireMdbx2AttachmentTarget(account, item);
+        const result = await mdbx2NativeClient.deleteAttachment(target.vaultHandle, crypto.randomUUID(), request.attachmentId);
+        return { changed: result.changed, attachment: providerAttachmentSummaryFromMdbx2(result.attachment) };
+      }
+      throw unsupportedAttachmentProvider(account.kind);
+    }
     case "KEEPASS_OPEN": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
       const account: ProviderAccount = {
@@ -672,17 +874,17 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return { account: await service.upsertProvider(account), session };
     }
     case "KEEPASS_STATUS":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return keePassProvider.isUnlocked(request.providerId) ? keePassProvider.summarize(request.providerId) : undefined;
     case "KEEPASS_EXPORT_FILE": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account || account.kind !== "keepass") throw new Error("KeePass 密码源不存在。");
       const fileName = typeof account.config.fileName === "string" && account.config.fileName ? account.config.fileName : "monica.kdbx";
       return { fileName, file: bytesToBase64(await keePassProvider.exportFile(account.id)) };
     }
     case "KEEPASS_LOCK":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       if (request.providerId) keePassProvider.lockAccount(request.providerId);
       else keePassProvider.lock();
       return undefined;
@@ -1593,6 +1795,47 @@ function managerSyncStatus(status: Mdbx2SyncStateStatus | undefined, configured:
 
 function stringAccountConfig(account: ProviderAccount, key: string): string {
   return typeof account.config[key] === "string" ? account.config[key] as string : "";
+}
+
+async function requireAttachmentTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {
+  const [account, item] = await Promise.all([service.getProvider(providerId), service.getItem(itemId)]);
+  if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
+  if (!item || !item.providerRefs.some((reference) => reference.providerId === providerId)) {
+    throw new ProviderAttachmentError("attachment-target-not-found", "附件项目不存在或不属于所选密码源。");
+  }
+  return { account, item };
+}
+
+function requireMdbx2AttachmentTarget(account: ProviderAccount, item: VaultItem): { vaultHandle: string; collectionId: string; objectId: string } {
+  const vaultHandle = account.kind === "mdbx2" ? stringAccountConfig(account, "vaultHandle") : "";
+  const reference = item.providerRefs.find((candidate) => candidate.providerId === account.id);
+  const collectionId = reference?.remoteFolderId || item.mdbxFolderId || "";
+  const objectId = reference?.remoteId || "";
+  if (!vaultHandle) throw new ProviderAttachmentError("attachment-vault-locked", "MDBX2 本机工作副本尚未解锁。");
+  if (!collectionId || !objectId) throw new ProviderAttachmentError("attachment-target-not-synced", "该项目尚未写入 MDBX2，完成项目同步后才能管理附件。");
+  return { vaultHandle, collectionId, objectId };
+}
+
+function providerAttachmentSummaryFromMdbx2(input: { attachmentId: string; fileName: string; sizeBytes: number; mediaType?: string }) {
+  return {
+    attachmentId: input.attachmentId,
+    providerKind: "mdbx2" as const,
+    fileName: input.fileName,
+    sizeBytes: input.sizeBytes,
+    protected: true,
+    mediaType: input.mediaType
+  };
+}
+
+function pruneProviderAttachmentReads(): void {
+  const now = Date.now();
+  for (const [readHandle, route] of providerAttachmentReads) {
+    if (route.expiresAt <= now) providerAttachmentReads.delete(readHandle);
+  }
+}
+
+function unsupportedAttachmentProvider(kind: ProviderAccount["kind"]): ProviderAttachmentError {
+  return new ProviderAttachmentError("attachment-provider-unsupported", `${kind} 附件操作尚未接入此共享传输接口。`);
 }
 
 async function requireMdbx2VaultHandle(providerId: string): Promise<string> {

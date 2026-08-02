@@ -2,6 +2,12 @@ import * as kdbxweb from "kdbxweb";
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
+import {
+  KEEPASS_ATTACHMENT_MAX_BYTES,
+  PROVIDER_ATTACHMENT_CHUNK_BYTES,
+  ProviderAttachmentError,
+  type ProviderAttachmentSummary
+} from "../attachments/attachment-contract";
 import { keePassSourceRecordFor, openKeePassVault, readKeePassEntries, type KeePassSkippedEntry, type KeePassVaultEntries } from "./keepass-vault";
 import { createKeePassEntry, removeKeePassEntry, writeKeePassEntry } from "./keepass-writer";
 
@@ -36,6 +42,20 @@ export interface KeePassUnlockCredential {
   sourceName?: string;
 }
 
+export interface KeePassAttachmentReadResult {
+  attachment: ProviderAttachmentSummary;
+  offset: number;
+  nextOffset: number;
+  bytes: Uint8Array;
+  eof: boolean;
+}
+
+interface KeePassAttachmentHandle {
+  providerId: string;
+  entryUuid: string;
+  fileName: string;
+}
+
 /**
  * One adapter instance serves every `.kdbx` file, because `ProviderRegistry` keys adapters by
  * `ProviderKind` (`provider.ts:31`). Files are multiplexed on `account.id`.
@@ -48,6 +68,8 @@ export interface KeePassUnlockCredential {
 export class KeePassProvider implements ProviderAdapter {
   readonly kind = "keepass" as const;
   private readonly sessions = new Map<string, KeePassSession>();
+  private readonly attachmentHandles = new Map<string, KeePassAttachmentHandle>();
+  private readonly attachmentHandleByKey = new Map<string, string>();
 
   async unlock(
     account: ProviderAccount,
@@ -104,12 +126,93 @@ export class KeePassProvider implements ProviderAdapter {
     return bytes;
   }
 
+  listAttachments(account: ProviderAccount, item: VaultItem): ProviderAttachmentSummary[] {
+    const { entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    return [...entry.binaries.entries()].map(([fileName, binary]) => this.attachmentSummary(
+      account.id,
+      entryUuid,
+      fileName,
+      binary
+    ));
+  }
+
+  readAttachment(
+    account: ProviderAccount,
+    item: VaultItem,
+    attachmentId: string,
+    offset: number,
+    maxBytes = PROVIDER_ATTACHMENT_CHUNK_BYTES
+  ): KeePassAttachmentReadResult {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new ProviderAttachmentError("attachment-offset-invalid", "附件读取偏移量无效。");
+    if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > PROVIDER_ATTACHMENT_CHUNK_BYTES) {
+      throw new ProviderAttachmentError("attachment-chunk-size-invalid", "附件读取分块必须介于 1 字节和 256 KiB 之间。");
+    }
+    const { entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    const handle = this.requireAttachmentHandle(account.id, entryUuid, attachmentId);
+    const binary = entry.binaries.get(handle.fileName);
+    if (!binary) {
+      this.removeAttachmentHandle(attachmentId);
+      throw new ProviderAttachmentError("attachment-not-found", "此 KeePass 附件已不存在，请刷新附件列表。");
+    }
+    const attachment = this.attachmentSummary(account.id, entryUuid, handle.fileName, binary);
+    if (offset > attachment.sizeBytes) throw new ProviderAttachmentError("attachment-offset-invalid", "附件读取偏移量超过文件大小。");
+    const nextOffset = Math.min(attachment.sizeBytes, offset + maxBytes);
+    const bytes = copyBinaryRange(binary, offset, nextOffset);
+    return { attachment, offset, nextOffset, bytes, eof: nextOffset === attachment.sizeBytes };
+  }
+
+  async addAttachment(
+    account: ProviderAccount,
+    item: VaultItem,
+    fileName: string,
+    bytes: Uint8Array,
+    replaceExisting: boolean
+  ): Promise<ProviderAttachmentSummary> {
+    if (bytes.byteLength > KEEPASS_ATTACHMENT_MAX_BYTES) {
+      throw new ProviderAttachmentError("attachment-size-invalid", "KeePass 附件超过当前浏览器支持的 256 MiB 上限。");
+    }
+    const { session, entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    if (entry.binaries.has(fileName) && !replaceExisting) {
+      throw new ProviderAttachmentError("attachment-name-conflict", "此条目已有同名附件，需要明确确认替换。");
+    }
+    const binary = await session.database.createBinary(bytes.slice().buffer);
+    entry.pushHistory();
+    entry.binaries.set(fileName, binary);
+    entry.times.update();
+    session.database.cleanup({ historyRules: true, binaries: true });
+    session.dirty = true;
+    this.reread(session, account.id);
+    return this.attachmentSummary(account.id, entryUuid, fileName, binary);
+  }
+
+  deleteAttachment(account: ProviderAccount, item: VaultItem, attachmentId: string): boolean {
+    const { session, entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    const handle = this.requireAttachmentHandle(account.id, entryUuid, attachmentId);
+    if (!entry.binaries.has(handle.fileName)) {
+      return false;
+    }
+    entry.pushHistory();
+    entry.binaries.delete(handle.fileName);
+    entry.times.update();
+    session.database.cleanup({ historyRules: true, binaries: true });
+    session.dirty = true;
+    this.reread(session, account.id);
+    return true;
+  }
+
+  assertAttachmentTarget(account: ProviderAccount, item: VaultItem): void {
+    this.requireAttachmentEntry(account, item);
+  }
+
   lockAccount(providerId: string): void {
     this.sessions.delete(providerId);
+    this.removeProviderAttachmentHandles(providerId);
   }
 
   lock(): void {
     this.sessions.clear();
+    this.attachmentHandles.clear();
+    this.attachmentHandleByKey.clear();
   }
 
   async testConnection(account: ProviderAccount): Promise<void> {
@@ -250,6 +353,63 @@ export class KeePassProvider implements ProviderAdapter {
     session.entries = readKeePassEntries(session.database, session.databaseId, providerId);
   }
 
+  private requireAttachmentEntry(account: ProviderAccount, item: VaultItem): { session: KeePassSession; entryUuid: string; entry: kdbxweb.KdbxEntry } {
+    if (account.kind !== "keepass") throw new ProviderAttachmentError("attachment-provider-invalid", "所选密码源不是 KeePass 数据库。");
+    const session = this.requireSession(account.id);
+    const reference = referenceOf(item, account.id);
+    const entryUuid = reference?.remoteId || item.keepassEntryUuid;
+    if (!entryUuid) throw new ProviderAttachmentError("attachment-target-unsynced", "此项目尚未写入 KeePass，保存并同步后才能管理附件。");
+    const entry = session.entries.entriesByUuid.get(entryUuid);
+    if (!entry) throw new ProviderAttachmentError("attachment-target-not-found", "KeePass 条目已不存在，请重新同步数据库。");
+    return { session, entryUuid, entry };
+  }
+
+  private attachmentSummary(
+    providerId: string,
+    entryUuid: string,
+    fileName: string,
+    binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash
+  ): ProviderAttachmentSummary {
+    return {
+      attachmentId: this.ensureAttachmentHandle(providerId, entryUuid, fileName),
+      providerKind: "keepass",
+      fileName,
+      sizeBytes: binarySize(binary),
+      protected: binaryProtected(binary)
+    };
+  }
+
+  private ensureAttachmentHandle(providerId: string, entryUuid: string, fileName: string): string {
+    const key = attachmentHandleKey(providerId, entryUuid, fileName);
+    const existing = this.attachmentHandleByKey.get(key);
+    if (existing) return existing;
+    const attachmentId = crypto.randomUUID();
+    this.attachmentHandles.set(attachmentId, { providerId, entryUuid, fileName });
+    this.attachmentHandleByKey.set(key, attachmentId);
+    return attachmentId;
+  }
+
+  private requireAttachmentHandle(providerId: string, entryUuid: string, attachmentId: string): KeePassAttachmentHandle {
+    const handle = this.attachmentHandles.get(attachmentId);
+    if (!handle || handle.providerId !== providerId || handle.entryUuid !== entryUuid) {
+      throw new ProviderAttachmentError("attachment-handle-invalid", "附件标识已失效，请刷新附件列表。");
+    }
+    return handle;
+  }
+
+  private removeAttachmentHandle(attachmentId: string): void {
+    const handle = this.attachmentHandles.get(attachmentId);
+    if (!handle) return;
+    this.attachmentHandles.delete(attachmentId);
+    this.attachmentHandleByKey.delete(attachmentHandleKey(handle.providerId, handle.entryUuid, handle.fileName));
+  }
+
+  private removeProviderAttachmentHandles(providerId: string): void {
+    for (const [attachmentId, handle] of this.attachmentHandles) {
+      if (handle.providerId === providerId) this.removeAttachmentHandle(attachmentId);
+    }
+  }
+
   private requireSession(providerId: string): KeePassSession {
     const session = this.sessions.get(providerId);
     if (!session) throw new Error("此 KeePass 数据库尚未解锁，请在 Monica 设置页中选择 .kdbx 文件并输入密码或密钥文件。");
@@ -312,4 +472,34 @@ function fingerprint(item: VaultItem): string {
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))
       : value);
+}
+
+function attachmentHandleKey(providerId: string, entryUuid: string, fileName: string): string {
+  return `${providerId}\u0000${entryUuid}\u0000${fileName}`;
+}
+
+function binaryValue(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): kdbxweb.KdbxBinary {
+  return kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(binary) ? binary.value : binary;
+}
+
+function binarySize(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): number {
+  const value = binaryValue(binary);
+  return value instanceof kdbxweb.ProtectedValue ? value.byteLength : value.byteLength;
+}
+
+function binaryProtected(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): boolean {
+  return binaryValue(binary) instanceof kdbxweb.ProtectedValue;
+}
+
+function copyBinaryRange(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash, start: number, end: number): Uint8Array {
+  const value = binaryValue(binary);
+  if (value instanceof kdbxweb.ProtectedValue) {
+    const plaintext = value.getBinary();
+    try {
+      return plaintext.slice(start, end);
+    } finally {
+      plaintext.fill(0);
+    }
+  }
+  return new Uint8Array(value, start, end - start).slice();
 }

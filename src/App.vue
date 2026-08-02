@@ -9,6 +9,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import AppearancePanel from "./components/AppearancePanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
+import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
@@ -110,6 +111,9 @@ const selectedEncryptedBackup = ref<EncryptedVaultBackup | null>(null);
 const selectedEncryptedBackupName = ref("");
 const exportBackupDialogOpen = ref(false);
 const exportBackupError = ref("");
+const attachmentDialogOpen = ref(false);
+const attachmentDialogItem = ref<VaultItem | undefined>();
+const attachmentDialogProviders = ref<ProviderAccount[]>([]);
 // protectionMode drives currentPassword validation when replacing the live vault.
 // It is a best-effort UI hint persisted alongside the session; the runtime still
 // authoritatively re-derives the envelope key, so a stale value can never weaken
@@ -154,6 +158,9 @@ const keePassProviders = computed(() => providers.value.filter((provider) => pro
 const mdbx2Providers = computed(() => providers.value.filter((provider) => provider.kind === "mdbx2"));
 const editingMdbx2Provider = computed(() => providers.value.find((provider) => provider.id === editingMdbx2Id.value && provider.kind === "mdbx2"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
+const attachmentProviderById = computed(() => new Map(providers.value
+  .filter((provider) => provider.kind === "keepass" || provider.kind === "mdbx2")
+  .map((provider) => [provider.id, provider])));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
 const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
@@ -167,7 +174,7 @@ const keePassProtectionPreview = computed(() => {
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || exportBackupDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || exportBackupDialogOpen.value || attachmentDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -204,7 +211,8 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (!dialog) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    if (exportBackupDialogOpen.value) closeExportBackupDialog();
+    if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (exportBackupDialogOpen.value) closeExportBackupDialog();
     else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassDialogOpen.value) closeKeePassDialog();
     else if (bitwardenDialogOpen.value) closeBitwardenDialog();
@@ -305,6 +313,7 @@ async function lockVault() {
   bitwardenDialogOpen.value = false;
   mdbx2DialogOpen.value = false;
   editingMdbx2Id.value = undefined;
+  closeAttachmentDialog();
   closeKeePassDialog();
   keePassSessions.value = {};
   mdbx2RuntimeStatuses.value = {};
@@ -396,6 +405,30 @@ function sectionDescription(section: Section): string {
 function providerName(item: VaultItem): string {
   const reference = item.providerRefs[0];
   return reference ? providers.value.find((provider) => provider.id === reference.providerId)?.name || "外部密码源" : "Monica 本地库";
+}
+
+function attachmentProvidersFor(item: VaultItem): ProviderAccount[] {
+  const seen = new Set<string>();
+  return item.providerRefs.flatMap((reference) => {
+    const provider = attachmentProviderById.value.get(reference.providerId);
+    if (!provider || seen.has(provider.id)) return [];
+    seen.add(provider.id);
+    return [provider];
+  });
+}
+
+function openAttachmentDialog(item: VaultItem) {
+  const candidates = attachmentProvidersFor(item);
+  if (!candidates.length) return;
+  attachmentDialogItem.value = item;
+  attachmentDialogProviders.value = candidates;
+  attachmentDialogOpen.value = true;
+}
+
+function closeAttachmentDialog() {
+  attachmentDialogOpen.value = false;
+  attachmentDialogItem.value = undefined;
+  attachmentDialogProviders.value = [];
 }
 
 function vaultItemStatus(item: VaultItem): string {
@@ -1334,7 +1367,7 @@ function errorMessage(error: unknown) {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>全部登录项</h2><p>{{ filteredCredentials.length }} 个结果</p></div>
             <div v-if="filteredCredentials.length" class="table-wrap"><table><thead><tr><th>名称</th><th>用户名</th><th>匹配网站</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? '没有匹配的登录项' : '加密密码库还是空的' }}</h2><p>{{ query ? '换一个关键词试试。' : '添加第一个账号后即可在 Popup 中匹配。' }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">添加登录项</m3e-button></div>
           </m3e-card>
@@ -1351,7 +1384,7 @@ function errorMessage(error: unknown) {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
             <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>
@@ -1473,6 +1506,15 @@ function errorMessage(error: unknown) {
       @changed="handleMdbx2Changed"
       @notice="showNotice"
       @host-status="mdbx2HostStatus = $event"
+    />
+
+    <ProviderAttachmentsDialog
+      v-if="attachmentDialogOpen && attachmentDialogItem"
+      :key="`${attachmentDialogItem.id}:${attachmentDialogProviders.map((provider) => provider.id).join(',')}`"
+      :item="attachmentDialogItem"
+      :providers="attachmentDialogProviders"
+      @close="closeAttachmentDialog"
+      @notice="showNotice"
     />
 
     <div v-if="webDavDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeWebDavDialog"><section class="editor-dialog provider-dialog" role="dialog" aria-modal="true" aria-labelledby="webdav-dialog-title"><header><div><h2 id="webdav-dialog-title">{{ editingWebDavId ? '编辑 WebDAV' : '连接 Monica Android WebDAV' }}</h2><p>读取并无损写回 Android 的 Monica_Backups 快照。</p></div><m3e-icon-button aria-label="关闭 WebDAV 设置" @click="closeWebDavDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>

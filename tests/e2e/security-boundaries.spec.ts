@@ -91,6 +91,23 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       expect(snapshotResponse.ok).toBe(false);
       expect(snapshotResponse.error).toContain("只允许 Monica 管理页调用");
     }
+    const attachmentRequests = [
+      { type: "PROVIDER_ATTACHMENT_LIST", providerId: "keepass-provider", itemId: "item-1", pageSize: 20 },
+      { type: "PROVIDER_ATTACHMENT_READ_BEGIN", providerId: "keepass-provider", itemId: "item-1", attachmentId: "11111111-1111-4111-8111-111111111111" },
+      { type: "PROVIDER_ATTACHMENT_READ_CHUNK", providerId: "keepass-provider", readHandle: "11111111-1111-4111-8111-111111111111", offset: 0, maxBytes: 1024 },
+      { type: "PROVIDER_ATTACHMENT_READ_RELEASE", providerId: "keepass-provider", readHandle: "11111111-1111-4111-8111-111111111111" },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_BEGIN", providerId: "keepass-provider", itemId: "item-1", fileName: "a.txt", sizeBytes: 1 },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId: "keepass-provider", transferId: "11111111-1111-4111-8111-111111111111", offset: 0, dataBase64: "AQ==" },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId: "keepass-provider", itemId: "item-1", transferId: "11111111-1111-4111-8111-111111111111" },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId: "keepass-provider", transferId: "11111111-1111-4111-8111-111111111111" },
+      { type: "PROVIDER_ATTACHMENT_DELETE", providerId: "keepass-provider", itemId: "item-1", attachmentId: "11111111-1111-4111-8111-111111111111", confirmed: true },
+      { type: "KEEPASS_EXPORT_FILE", providerId: "keepass-provider" }
+    ];
+    for (const request of attachmentRequests) {
+      const attachmentResponse = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as RuntimeResponse;
+      expect(attachmentResponse.ok).toBe(false);
+      expect(attachmentResponse.error).toContain("只允许 Monica 管理页调用");
+    }
     const conflictListResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_CONFLICT_LIST",
       providerId: "manager-only-provider",

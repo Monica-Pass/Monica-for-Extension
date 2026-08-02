@@ -145,6 +145,83 @@ describe("KeePassProvider", () => {
     expect(provider.summarize(target.id).dirty).toBe(false);
   });
 
+  it("lists opaque attachment metadata and reads only the requested bounded bytes", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, [{
+      title: "GitHub",
+      fields: { UserName: "alice" },
+      protectedFields: { Password: "hunter2" },
+      binaries: { "document.bin": new Uint8Array([1, 2, 3, 4]) }
+    }]);
+    const item = (await sync(provider, target, [])).items[0];
+
+    const attachments = provider.listAttachments(target, item);
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({ providerKind: "keepass", fileName: "document.bin", sizeBytes: 4, protected: false });
+    expect(attachments[0].attachmentId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(JSON.stringify(attachments)).not.toContain(item.providerRefs[0].remoteId);
+
+    expect(provider.readAttachment(target, item, attachments[0].attachmentId, 1, 2)).toMatchObject({
+      offset: 1,
+      nextOffset: 3,
+      bytes: new Uint8Array([2, 3]),
+      eof: false
+    });
+    expect(provider.readAttachment(target, item, attachments[0].attachmentId, 4, 2)).toMatchObject({ bytes: new Uint8Array(), eof: true });
+    expect(() => provider.readAttachment(target, item, attachments[0].attachmentId, 5, 2)).toThrowError(/超过文件大小/);
+  });
+
+  it("adds and explicitly replaces an attachment while preserving both prior entry states", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider);
+    const item = (await sync(provider, target, [])).items[0];
+
+    await provider.addAttachment(target, item, "document.bin", new Uint8Array([1, 2, 3]), false);
+    expect(provider.summarize(target.id).dirty).toBe(true);
+    await expect(provider.addAttachment(target, item, "document.bin", new Uint8Array([4, 5]), false))
+      .rejects.toMatchObject({ code: "attachment-name-conflict" });
+    await provider.addAttachment(target, item, "document.bin", new Uint8Array([4, 5]), true);
+
+    const reopened = await reopen(provider, target);
+    const entry = reopened.getDefaultGroup().entries.find((candidate) => keePassFieldText(candidate.fields.get("Title")) === "GitHub")!;
+    expect(entry.history).toHaveLength(2);
+    expect([...binaryBytes(entry.binaries.get("document.bin")!)]).toEqual([4, 5]);
+    expect([...binaryBytes(entry.history[1].binaries.get("document.bin")!)]).toEqual([1, 2, 3]);
+  });
+
+  it("deletes an attachment idempotently while retaining history and shared pool data", async () => {
+    const shared = new Uint8Array([7, 8, 9]);
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, [
+      { title: "First", fields: { UserName: "one" }, protectedFields: { Password: "a" }, binaries: { "first.bin": shared } },
+      { title: "Second", fields: { UserName: "two" }, protectedFields: { Password: "b" }, binaries: { "second.bin": shared } }
+    ]);
+    const items = await sync(provider, target, []);
+    const first = items.items.find((item) => item.title === "First")!;
+    const attachment = provider.listAttachments(target, first)[0];
+
+    expect(provider.deleteAttachment(target, first, attachment.attachmentId)).toBe(true);
+    expect(provider.deleteAttachment(target, first, attachment.attachmentId)).toBe(false);
+
+    const reopened = await reopen(provider, target);
+    const firstEntry = reopened.getDefaultGroup().entries.find((entry) => keePassFieldText(entry.fields.get("Title")) === "First")!;
+    const secondEntry = reopened.getDefaultGroup().entries.find((entry) => keePassFieldText(entry.fields.get("Title")) === "Second")!;
+    expect(firstEntry.binaries.has("first.bin")).toBe(false);
+    expect([...binaryBytes(firstEntry.history[0].binaries.get("first.bin")!)]).toEqual([7, 8, 9]);
+    expect([...binaryBytes(secondEntry.binaries.get("second.bin")!)]).toEqual([7, 8, 9]);
+  });
+
+  it("invalidates attachment handles when the KeePass session is locked", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, [{ title: "GitHub", binaries: { "a.bin": new Uint8Array([1]) } }]);
+    const item = (await sync(provider, target, [])).items[0];
+    const attachment = provider.listAttachments(target, item)[0];
+
+    provider.lockAccount(target.id);
+
+    expect(() => provider.readAttachment(target, item, attachment.attachmentId, 0)).toThrowError(/尚未解锁/);
+  });
+
   it("warns that the edited database only exists in memory until the user saves it", async () => {
     const provider = new KeePassProvider();
     const { target } = await unlock(provider);
@@ -265,3 +342,8 @@ describe("KeePassProvider", () => {
     expect(result.items.find((item) => item.id === "other")).toEqual(foreign);
   });
 });
+
+function binaryBytes(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): Uint8Array {
+  const value = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(binary) ? binary.value : binary;
+  return value instanceof kdbxweb.ProtectedValue ? value.getBinary() : new Uint8Array(value);
+}
