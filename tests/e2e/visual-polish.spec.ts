@@ -176,6 +176,7 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: false, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 3 } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: [] } };
+          if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_HISTORY_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_SNAPSHOT_LIST") return { ok: true, data: { items: snapshots } };
           if (message.type === "MDBX2_SNAPSHOT_STRUCTURE") {

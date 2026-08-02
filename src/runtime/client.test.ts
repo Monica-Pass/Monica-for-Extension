@@ -62,6 +62,31 @@ describe("extension runtime client", () => {
     expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_HISTORY_REVERT", providerId, operationId, commitId });
   });
 
+  it("sends every MDBX2 Collection command with retained operation identity", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "provider-1";
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const collectionId = "22222222-2222-4222-8222-222222222222";
+    const parentCollectionId = "33333333-3333-4333-8333-333333333333";
+
+    await vaultClient.listMdbx2Collections(providerId, { deleted: true, excludeRoot: true, pageSize: 50, cursor: "next" });
+    await vaultClient.createMdbx2Collection(providerId, operationId, collectionId, "Accounts", parentCollectionId);
+    await vaultClient.renameMdbx2Collection(providerId, operationId, collectionId, "Work");
+    await vaultClient.moveMdbx2Collection(providerId, operationId, collectionId);
+    await vaultClient.deleteMdbx2Collection(providerId, operationId, collectionId);
+    await vaultClient.restoreMdbx2Collection(providerId, operationId, collectionId, parentCollectionId);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "MDBX2_COLLECTION_LIST", providerId, deleted: true, excludeRoot: true, pageSize: 50, cursor: "next" },
+      { type: "MDBX2_COLLECTION_CREATE", providerId, operationId, collectionId, title: "Accounts", parentCollectionId },
+      { type: "MDBX2_COLLECTION_RENAME", providerId, operationId, collectionId, title: "Work" },
+      { type: "MDBX2_COLLECTION_MOVE", providerId, operationId, collectionId, parentCollectionId: undefined },
+      { type: "MDBX2_COLLECTION_DELETE", providerId, operationId, collectionId, confirmed: true },
+      { type: "MDBX2_COLLECTION_RESTORE", providerId, operationId, collectionId, parentCollectionId }
+    ]);
+  });
+
   it("preserves the snapshot unknown-outcome code for safe manager recovery", async () => {
     const sendMessage = vi.fn().mockResolvedValue({
       ok: false,

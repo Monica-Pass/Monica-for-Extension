@@ -41,6 +41,8 @@ const MAX_OBJECT_PAYLOAD_BYTES: usize = 512 * 1024;
 const MAX_LOGICAL_OBJECT_ID_BYTES: usize = 4096;
 const MAX_OBJECT_TYPE_ID_BYTES: usize = 512;
 const MAX_TITLE_BYTES: usize = 64 * 1024;
+const MAX_COLLECTION_TITLE_BYTES: usize = 4096;
+pub const MAX_COLLECTION_RESULT_BYTES: usize = 850 * 1024;
 pub const MAX_OBJECT_BATCH_MUTATIONS: usize = 50;
 pub const MAX_OBJECT_BATCH_INTENT_BYTES: usize = 384 * 1024;
 const MAX_OBJECT_BATCH_COMMANDS: usize = 256;
@@ -439,6 +441,11 @@ impl HostRuntime {
             "vault.status" => self.vault_status(params),
             "vault.lock" => self.vault_lock(params),
             "collection.list" => self.collection_list(params),
+            "collection.create" => self.collection_create(params),
+            "collection.rename" => self.collection_rename(params),
+            "collection.move" => self.collection_move(params),
+            "collection.delete" => self.collection_delete(params),
+            "collection.restore" => self.collection_restore(params),
             "object.list" => self.object_list(params),
             "object.reveal" => self.object_reveal(params),
             "object.upsert" => self.object_upsert(params),
@@ -536,6 +543,15 @@ impl HostRuntime {
         let result_object = result
             .as_object_mut()
             .ok_or_else(|| RpcFailure::storage("Native Host capability response is invalid."))?;
+        result_object.insert(
+            "maxCollectionTitleBytes".to_string(),
+            json!(MAX_COLLECTION_TITLE_BYTES),
+        );
+        result_object.insert(
+            "maxCollectionResultBytes".to_string(),
+            json!(MAX_COLLECTION_RESULT_BYTES),
+        );
+        result_object.insert("supportsCollectionMutation".to_string(), json!(true));
         result_object.insert(
             "maxHistoryRevertItems".to_string(),
             json!(MAX_HISTORY_REVERT_ITEMS),
@@ -983,10 +999,12 @@ impl HostRuntime {
         let mut params = take_object(params, "collection.list params must be an object.")?;
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         let deleted = take_optional_bool(&mut params, "deleted")?.unwrap_or(false);
+        let exclude_root = take_optional_bool(&mut params, "excludeRoot")?.unwrap_or(false);
         let page_size = take_page_size(&mut params)?;
         let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
         reject_unknown(params)?;
         let vault = self.require_open_vault(&vault_handle)?;
+        let root_collection_id = monica_root_collection_id(&vault);
         let page = if deleted {
             vault.list_deleted_collection_summaries(page_size, cursor)
         } else {
@@ -999,22 +1017,156 @@ impl HostRuntime {
                 false,
             )
         })?;
-        Ok(json!({
-            "items": page.items.into_iter().map(|item| json!({
-                "collectionId": item.collection_id,
-                "title": item.title,
-                "collectionTypeId": item.collection_type_id,
-                "profileSchemaVersion": item.profile_schema_version,
-                "groupId": item.group_id,
-                "iconRef": item.icon_ref,
-                "favorite": item.favorite,
-                "archived": item.archived,
-                "attachmentCount": item.attachment_count,
-                "headCommitId": item.head_commit_id,
-                "deleted": item.deleted,
-                "updatedAt": item.updated_at
-            })).collect::<Vec<_>>(),
+        bounded_collection_result(json!({
+            "items": page.items.into_iter()
+                .filter(|item| !exclude_root || item.collection_id != root_collection_id)
+                .map(collection_summary_json)
+                .collect::<Vec<_>>(),
             "nextCursor": page.next_cursor
+        }))
+    }
+
+    fn collection_create(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.create params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let title = take_collection_title(&mut params)?;
+        let parent_collection_id = take_optional_uuid(&mut params, "parentCollectionId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        validate_collection_intent(&vault, &collection_id, parent_collection_id.as_deref())?;
+        self.execute_collection_mutation(
+            &vault,
+            operation_id,
+            "monica-create-folder",
+            MdbxWriteCommand::CreateProjectWithParent {
+                project_id: collection_id.clone(),
+                title,
+                parent_project_id: parent_collection_id,
+            },
+            collection_id,
+        )
+    }
+
+    fn collection_rename(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.rename params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let title = take_collection_title(&mut params)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        validate_collection_intent(&vault, &collection_id, None)?;
+        self.execute_collection_mutation(
+            &vault,
+            operation_id,
+            "monica-rename-folder",
+            MdbxWriteCommand::RenameProject {
+                project_id: collection_id.clone(),
+                title,
+            },
+            collection_id,
+        )
+    }
+
+    fn collection_move(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.move params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let parent_collection_id = take_optional_uuid(&mut params, "parentCollectionId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        validate_collection_intent(&vault, &collection_id, parent_collection_id.as_deref())?;
+        self.execute_collection_mutation(
+            &vault,
+            operation_id,
+            "monica-move-folder",
+            MdbxWriteCommand::MoveProject {
+                project_id: collection_id.clone(),
+                parent_project_id: parent_collection_id,
+            },
+            collection_id,
+        )
+    }
+
+    fn collection_delete(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.delete params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        validate_collection_intent(&vault, &collection_id, None)?;
+        self.execute_collection_mutation(
+            &vault,
+            operation_id,
+            "monica-delete-folder",
+            MdbxWriteCommand::DeleteProject {
+                project_id: collection_id.clone(),
+            },
+            collection_id,
+        )
+    }
+
+    fn collection_restore(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "collection.restore params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let parent_collection_id = take_optional_uuid(&mut params, "parentCollectionId")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        validate_collection_intent(&vault, &collection_id, parent_collection_id.as_deref())?;
+        self.execute_collection_mutation(
+            &vault,
+            operation_id,
+            "monica-restore-folder",
+            MdbxWriteCommand::RestoreProject {
+                project_id: collection_id.clone(),
+                parent_project_id: parent_collection_id,
+            },
+            collection_id,
+        )
+    }
+
+    fn execute_collection_mutation(
+        &self,
+        vault: &Arc<MdbxVault>,
+        operation_id: String,
+        operation_kind: &str,
+        command: MdbxWriteCommand,
+        collection_id: String,
+    ) -> Result<Value, RpcFailure> {
+        let result = vault
+            .execute_write_operation(
+                operation_id.clone(),
+                operation_kind.to_string(),
+                vec![command],
+            )
+            .map_err(collection_mutation_failure)?;
+        let summary = vault
+            .get_collection_summary(collection_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "collection-read-failed",
+                    "MDBX2 Collection could not be read after the mutation.",
+                    false,
+                )
+            })?
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "collection-result-missing",
+                    "MDBX2 Collection mutation completed without a readable result.",
+                    false,
+                )
+            })?;
+        bounded_collection_result(json!({
+            "operationId": operation_id,
+            "commitId": result.commit_id,
+            "alreadyCommitted": result.already_committed,
+            "collection": collection_summary_json(summary)
         }))
     }
 
@@ -4057,6 +4209,57 @@ fn migration_json(source: &VaultSource, info: &MdbxMigrationInfo) -> Value {
     })
 }
 
+fn monica_root_collection_id(vault: &Arc<MdbxVault>) -> String {
+    java_name_uuid(format!("monica-root:{}", vault.info().vault_id).as_bytes())
+}
+
+fn validate_collection_intent(
+    vault: &Arc<MdbxVault>,
+    collection_id: &str,
+    parent_collection_id: Option<&str>,
+) -> Result<(), RpcFailure> {
+    let root_collection_id = monica_root_collection_id(vault);
+    if collection_id == root_collection_id {
+        return Err(RpcFailure::new(
+            "collection-root-protected",
+            "The MDBX2 root Collection cannot be modified as a folder.",
+            false,
+        ));
+    }
+    if parent_collection_id == Some(root_collection_id.as_str()) {
+        return Err(RpcFailure::new(
+            "collection-parent-invalid",
+            "A top-level MDBX2 folder must use a null parent.",
+            false,
+        ));
+    }
+    if parent_collection_id == Some(collection_id) {
+        return Err(RpcFailure::new(
+            "collection-parent-invalid",
+            "An MDBX2 folder cannot be its own parent.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn collection_summary_json(item: mdbx_ffi::MdbxCollectionSummary) -> Value {
+    json!({
+        "collectionId": item.collection_id,
+        "title": item.title,
+        "collectionTypeId": item.collection_type_id,
+        "profileSchemaVersion": item.profile_schema_version,
+        "groupId": item.group_id,
+        "iconRef": item.icon_ref,
+        "favorite": item.favorite,
+        "archived": item.archived,
+        "attachmentCount": item.attachment_count,
+        "headCommitId": item.head_commit_id,
+        "deleted": item.deleted,
+        "updatedAt": item.updated_at
+    })
+}
+
 fn object_summary_json(item: mdbx_ffi::MdbxObjectSummary) -> Value {
     json!({
         "objectId": item.object_id,
@@ -4278,6 +4481,17 @@ fn take_string(
     Ok(value)
 }
 
+fn take_collection_title(params: &mut Map<String, Value>) -> Result<String, RpcFailure> {
+    let title = take_string(params, "title", MAX_COLLECTION_TITLE_BYTES, true)?;
+    let title = title.trim().to_string();
+    if title.is_empty() || title.contains('\0') {
+        return Err(RpcFailure::invalid(
+            "MDBX2 Collection title cannot be blank or contain a NUL byte.",
+        ));
+    }
+    Ok(title)
+}
+
 fn take_u64(params: &mut Map<String, Value>, key: &'static str) -> Result<u64, RpcFailure> {
     params
         .remove(key)
@@ -4391,6 +4605,20 @@ fn reject_unknown(params: Map<String, Value>) -> Result<(), RpcFailure> {
             "Native request contains unknown parameters.",
         ))
     }
+}
+
+fn bounded_collection_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 Collection response could not be encoded."))?
+        .len();
+    if size > MAX_COLLECTION_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "collection-result-too-large",
+            "MDBX2 Collection response exceeds the Native Messaging safety limit.",
+            false,
+        ));
+    }
+    Ok(value)
 }
 
 fn bounded_history_result(value: Value) -> Result<Value, RpcFailure> {
@@ -4910,6 +5138,47 @@ fn history_item_is_system_commit(item: &MdbxCommitHistoryItem) -> bool {
             "vault-meta" | "key-epoch" | "snapshot" | "branch"
         )
         || matches!(kind.as_str(), "snapshot" | "key-rotation")
+}
+
+fn collection_mutation_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    if diagnostic.contains("reused with different content")
+        || diagnostic.contains("reused for a different operation")
+    {
+        return RpcFailure::new(
+            "collection-operation-mismatch",
+            "MDBX2 Collection operation ID was already used for another folder action.",
+            false,
+        );
+    }
+    if diagnostic.contains("authorization")
+        || diagnostic.contains("fresh authentication")
+        || diagnostic.contains("authentication")
+    {
+        return RpcFailure::new(
+            "collection-authorization-required",
+            "MDBX2 Collection action requires fresh authorization.",
+            false,
+        );
+    }
+    if diagnostic.contains("cycle")
+        || diagnostic.contains("parent")
+        || diagnostic.contains("not found")
+        || diagnostic.contains("deleted")
+        || diagnostic.contains("already exists")
+        || diagnostic.contains("invalid")
+    {
+        return RpcFailure::new(
+            "collection-state-conflict",
+            "MDBX2 Collection action conflicts with the current folder state.",
+            false,
+        );
+    }
+    RpcFailure::new(
+        "collection-mutation-failed",
+        "MDBX2 Collection action could not be completed.",
+        false,
+    )
 }
 
 fn history_revert_failure(error: mdbx_ffi::MdbxFfiError) -> RpcFailure {
@@ -7483,6 +7752,283 @@ mod tests {
             .unwrap();
         assert!(completed.completed);
         assert_eq!(runtime.conflict_resolutions.revision, 2);
+    }
+
+    #[test]
+    fn collection_mutations_round_trip_nested_active_and_deleted_folders() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "collection-password");
+        let parent_id = fresh_uuid();
+        let child_id = fresh_uuid();
+
+        let parent = call(
+            &mut runtime,
+            "collection.create",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": parent_id,
+                "title": "  Personal  ",
+                "parentCollectionId": null
+            }),
+        );
+        assert_eq!(parent["collection"]["title"], "Personal");
+        assert_eq!(parent["collection"]["groupId"], Value::Null);
+        assert_eq!(parent["collection"]["deleted"], false);
+
+        let child = call(
+            &mut runtime,
+            "collection.create",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": child_id,
+                "title": "Accounts",
+                "parentCollectionId": parent_id
+            }),
+        );
+        assert_eq!(child["collection"]["groupId"], parent_id);
+
+        let active = call(
+            &mut runtime,
+            "collection.list",
+            json!({
+                "vaultHandle": vault_handle,
+                "deleted": false,
+                "excludeRoot": true,
+                "pageSize": 200
+            }),
+        );
+        assert_eq!(active["items"].as_array().unwrap().len(), 2);
+        assert!(active["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["title"] != MONICA_ROOT_PROJECT_TITLE));
+
+        let renamed = call(
+            &mut runtime,
+            "collection.rename",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": child_id,
+                "title": "Logins"
+            }),
+        );
+        assert_eq!(renamed["collection"]["title"], "Logins");
+
+        let moved = call(
+            &mut runtime,
+            "collection.move",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": child_id,
+                "parentCollectionId": null
+            }),
+        );
+        assert_eq!(moved["collection"]["groupId"], Value::Null);
+
+        let deleted = call(
+            &mut runtime,
+            "collection.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": parent_id
+            }),
+        );
+        assert_eq!(deleted["collection"]["deleted"], true);
+        let deleted_page = call(
+            &mut runtime,
+            "collection.list",
+            json!({
+                "vaultHandle": vault_handle,
+                "deleted": true,
+                "excludeRoot": true,
+                "pageSize": 200
+            }),
+        );
+        assert_eq!(deleted_page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(deleted_page["items"][0]["collectionId"], parent_id);
+
+        let restored = call(
+            &mut runtime,
+            "collection.restore",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": parent_id,
+                "parentCollectionId": child_id
+            }),
+        );
+        assert_eq!(restored["collection"]["deleted"], false);
+        assert_eq!(restored["collection"]["groupId"], child_id);
+    }
+
+    #[test]
+    fn collection_create_is_restart_idempotent_and_changed_intent_fails_closed() {
+        let (root, mut runtime) = runtime();
+        let password = "collection-restart-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let operation_id = fresh_uuid();
+        let collection_id = fresh_uuid();
+        let request = json!({
+            "vaultHandle": vault_handle,
+            "operationId": operation_id,
+            "collectionId": collection_id,
+            "title": "Recovery",
+            "parentCollectionId": null
+        });
+        let created = call(&mut runtime, "collection.create", request.clone());
+        let commit_id = created["commitId"].as_str().unwrap().to_string();
+        assert_eq!(created["alreadyCommitted"], false);
+
+        drop(runtime);
+        let mut restarted = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut restarted, &vault_handle, password);
+        let retried = call(&mut restarted, "collection.create", request);
+        assert_eq!(retried["commitId"], commit_id);
+        assert_eq!(retried["alreadyCommitted"], true);
+
+        let mismatch = restarted
+            .handle(
+                "collection.create",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": operation_id,
+                    "collectionId": collection_id,
+                    "title": "Different intent",
+                    "parentCollectionId": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(mismatch.code, "collection-operation-mismatch");
+    }
+
+    #[test]
+    fn collection_mutations_protect_the_root_and_reject_invalid_hierarchies() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "collection-boundary-password");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let root_collection_id = monica_root_collection_id(&vault);
+        drop(vault);
+
+        let root_error = runtime
+            .handle(
+                "collection.create",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": fresh_uuid(),
+                    "collectionId": root_collection_id,
+                    "title": "Visible root",
+                    "parentCollectionId": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(root_error.code, "collection-root-protected");
+
+        let folder_id = fresh_uuid();
+        let root_parent_error = runtime
+            .handle(
+                "collection.create",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": fresh_uuid(),
+                    "collectionId": folder_id,
+                    "title": "Top level",
+                    "parentCollectionId": root_collection_id
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(root_parent_error.code, "collection-parent-invalid");
+
+        let blank_error = runtime
+            .handle(
+                "collection.create",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": fresh_uuid(),
+                    "collectionId": fresh_uuid(),
+                    "title": "   ",
+                    "parentCollectionId": null
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(blank_error.code, "params-invalid");
+
+        let parent_id = fresh_uuid();
+        let child_id = fresh_uuid();
+        call(
+            &mut runtime,
+            "collection.create",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": parent_id,
+                "title": "Parent",
+                "parentCollectionId": null
+            }),
+        );
+        call(
+            &mut runtime,
+            "collection.create",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "collectionId": child_id,
+                "title": "Child",
+                "parentCollectionId": parent_id
+            }),
+        );
+        let cycle = runtime
+            .handle(
+                "collection.move",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "operationId": fresh_uuid(),
+                    "collectionId": parent_id,
+                    "parentCollectionId": child_id
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(cycle.code, "collection-state-conflict");
+    }
+
+    #[test]
+    fn collection_list_enforces_the_native_message_result_limit() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "collection-size-password");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let commands = (0..200)
+            .map(|index| MdbxWriteCommand::CreateProjectWithParent {
+                project_id: fresh_uuid(),
+                title: format!("{index:03}{}", "x".repeat(MAX_COLLECTION_TITLE_BYTES - 3)),
+                parent_project_id: None,
+            })
+            .collect();
+        vault
+            .execute_write_operation(
+                fresh_uuid(),
+                "collection-size-fixture".to_string(),
+                commands,
+            )
+            .unwrap();
+        drop(vault);
+
+        let error = runtime
+            .handle(
+                "collection.list",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "deleted": false,
+                    "excludeRoot": true,
+                    "pageSize": 200
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "collection-result-too-large");
     }
 
     #[test]

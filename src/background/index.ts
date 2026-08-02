@@ -584,6 +584,53 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.listCollections(vaultHandle, request);
     }
+    case "MDBX2_COLLECTION_CREATE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.createCollection(
+        vaultHandle,
+        request.operationId,
+        request.collectionId,
+        request.title,
+        request.parentCollectionId
+      );
+    }
+    case "MDBX2_COLLECTION_RENAME": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.renameCollection(
+        vaultHandle,
+        request.operationId,
+        request.collectionId,
+        request.title
+      );
+    }
+    case "MDBX2_COLLECTION_MOVE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.moveCollection(
+        vaultHandle,
+        request.operationId,
+        request.collectionId,
+        request.parentCollectionId
+      );
+    }
+    case "MDBX2_COLLECTION_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error("删除 MDBX2 文件夹需要明确确认。");
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.deleteCollection(vaultHandle, request.operationId, request.collectionId);
+    }
+    case "MDBX2_COLLECTION_RESTORE": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.restoreCollection(
+        vaultHandle,
+        request.operationId,
+        request.collectionId,
+        request.parentCollectionId
+      );
+    }
     case "MDBX2_OBJECT_LIST": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);

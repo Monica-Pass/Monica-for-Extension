@@ -2,10 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import type { ProviderAccount } from "../core/model";
 import {
+  MDBX2_MAX_COLLECTION_TITLE_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_SNAPSHOT_NAME_BYTES,
   type Mdbx2CommitDiffItem,
   type Mdbx2CommitHistoryItem,
+  type Mdbx2CollectionSummary,
   type Mdbx2ConflictResolutionChoice,
   type Mdbx2ConflictSummary,
   type Mdbx2HostStatus,
@@ -22,6 +24,7 @@ import {
 import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from "../providers/mdbx2/mdbx2-history";
 import { mdbx2ConflictChoiceDescription, mdbx2ConflictChoiceLabel, presentMdbx2Conflict } from "../providers/mdbx2/mdbx2-conflicts";
 import { formatMdbx2SnapshotBytes, presentMdbx2Snapshot, presentMdbx2SnapshotNode } from "../providers/mdbx2/mdbx2-snapshots";
+import { mdbx2CollectionDescendantIds, presentMdbx2Collections } from "../providers/mdbx2/mdbx2-collections";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
@@ -30,6 +33,17 @@ type BusyState = "" | "probe" | "upload" | "download" | "open" | "save" | "publi
 type SnapshotBusyState = "" | "list" | "structure" | "prune-plan" | "prune" | "create" | "delete" | "restore";
 type SnapshotStructureMode = "snapshot" | "compare";
 type SnapshotMutationAction = "delete" | "restore";
+type CollectionView = "active" | "deleted";
+type CollectionMutationKind = "create" | "rename" | "move" | "delete" | "restore";
+interface PendingCollectionMutation {
+  kind: CollectionMutationKind;
+  operationId: string;
+  collectionId: string;
+  title: string;
+  parentCollectionId?: string;
+  attempted: boolean;
+  uncertain: boolean;
+}
 interface PendingConflictResolution { item: Mdbx2ConflictSummary; choice: Mdbx2ConflictResolutionChoice; operationId: string }
 interface PendingHistoryRevert { item: Mdbx2CommitHistoryItem; operationId: string; attempted: boolean }
 interface PendingSnapshotCreate { operationId: string; name: string }
@@ -73,6 +87,18 @@ const pendingSource = ref<Mdbx2VaultSource | undefined>();
 const pendingOriginKey = ref("");
 const inspection = ref<Mdbx2VaultInspection | undefined>();
 const revealVaultPassword = ref(false);
+const activeCollections = ref<Mdbx2CollectionSummary[]>([]);
+const deletedCollections = ref<Mdbx2CollectionSummary[]>([]);
+const activeCollectionCursor = ref<string | undefined>();
+const deletedCollectionCursor = ref<string | undefined>();
+const activeCollectionsLoaded = ref(false);
+const deletedCollectionsLoaded = ref(false);
+const collectionView = ref<CollectionView>("active");
+const collectionBusy = ref<"" | "list" | "mutate">("");
+const collectionLoadCount = ref(0);
+const collectionError = ref("");
+const pendingCollectionMutation = ref<PendingCollectionMutation | undefined>();
+const collectionConfirmButton = ref<HTMLElement | null>(null);
 const historyItems = ref<Mdbx2CommitHistoryItem[]>([]);
 const historyCursor = ref<string | undefined>();
 const historyLoaded = ref(false);
@@ -132,9 +158,28 @@ const selectedConflict = computed(() => conflictItems.value.find((item) => item.
 const selectedSnapshot = computed(() => snapshotItems.value.find((item) => item.snapshotId === selectedSnapshotId.value));
 const snapshotNameBytes = computed(() => new TextEncoder().encode(snapshotName.value.trim()).byteLength);
 const snapshotNameTooLong = computed(() => snapshotNameBytes.value > MDBX2_MAX_SNAPSHOT_NAME_BYTES);
+const collectionTitleBytes = computed(() => new TextEncoder().encode(pendingCollectionMutation.value?.title.trim() || "").byteLength);
+const collectionTitleInvalid = computed(() => {
+  const pending = pendingCollectionMutation.value;
+  return Boolean(pending && (pending.kind === "create" || pending.kind === "rename")
+    && (!pending.title.trim() || collectionTitleBytes.value > MDBX2_MAX_COLLECTION_TITLE_BYTES));
+});
+const collectionRows = computed(() => presentMdbx2Collections(
+  collectionView.value === "active" ? activeCollections.value : deletedCollections.value,
+  [...activeCollections.value, ...deletedCollections.value]
+));
+const collectionMoveBlockedIds = computed(() => {
+  const pending = pendingCollectionMutation.value;
+  if (!pending || pending.kind !== "move") return new Set<string>();
+  return mdbx2CollectionDescendantIds(activeCollections.value, pending.collectionId).add(pending.collectionId);
+});
+const collectionParentOptions = computed(() => presentMdbx2Collections(
+  activeCollections.value.filter((item) => !collectionMoveBlockedIds.value.has(item.collectionId)),
+  activeCollections.value
+));
 const snapshotMutating = computed(() => snapshotBusy.value === "prune" || snapshotBusy.value === "create" || snapshotBusy.value === "delete" || snapshotBusy.value === "restore");
 const historyMutating = computed(() => historyBusy.value === "revert");
-const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value);
+const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value || collectionBusy.value === "mutate");
 const dialogLocked = computed(() => Boolean(busy.value) || managerMutationLocked.value);
 const dialogTitle = computed(() => {
   if (isExisting.value) return `管理 ${activeProvider.value?.name || form.name}`;
@@ -166,7 +211,7 @@ async function refreshStatus() {
     ]);
     runtimeStatus.value = nextRuntime;
     syncStatus.value = nextSync;
-    if (nextRuntime?.open) await Promise.all([loadSnapshots(true), loadConflicts(true)]);
+    if (nextRuntime?.open) await Promise.all([loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadConflicts(true)]);
   } catch (cause) {
     error.value = errorMessage(cause);
   } finally {
@@ -256,7 +301,7 @@ async function unlockExisting() {
     runtimeStatus.value = { vaultHandle: opened.session.vaultHandle, open: true, available: true };
     emit("changed");
     clearSecrets();
-    await Promise.all([loadSnapshots(true), loadHistory(true), loadConflicts(true)]);
+    await Promise.all([loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadHistory(true), loadConflicts(true)]);
     emit("notice", `${opened.account.name} 已解锁；现在可以查看提交历史或执行增量同步。`);
   } catch (cause) {
     error.value = errorMessage(cause);
@@ -309,6 +354,157 @@ async function publishBootstrap() {
   } finally {
     busy.value = "";
   }
+}
+
+async function loadCollections(view: CollectionView, reset = false) {
+  if (!providerId.value || !vaultOpen.value || collectionBusy.value === "mutate") return;
+  collectionLoadCount.value += 1;
+  collectionBusy.value = "list";
+  collectionError.value = "";
+  try {
+    const deleted = view === "deleted";
+    const cursor = reset
+      ? undefined
+      : deleted ? deletedCollectionCursor.value : activeCollectionCursor.value;
+    const page = await vaultClient.listMdbx2Collections(providerId.value, {
+      deleted,
+      excludeRoot: true,
+      pageSize: 200,
+      cursor
+    });
+    const current = reset
+      ? []
+      : deleted ? deletedCollections.value : activeCollections.value;
+    const merged = [...new Map([...current, ...page.items].map((item) => [item.collectionId, item])).values()];
+    if (deleted) {
+      deletedCollections.value = merged;
+      deletedCollectionCursor.value = page.nextCursor;
+      deletedCollectionsLoaded.value = true;
+    } else {
+      activeCollections.value = merged;
+      activeCollectionCursor.value = page.nextCursor;
+      activeCollectionsLoaded.value = true;
+    }
+  } catch (cause) {
+    collectionError.value = collectionErrorMessage(cause);
+  } finally {
+    collectionLoadCount.value = Math.max(0, collectionLoadCount.value - 1);
+    if (!collectionLoadCount.value) collectionBusy.value = "";
+  }
+}
+
+async function changeCollectionView(view: CollectionView) {
+  if (collectionBusy.value === "mutate" || pendingCollectionMutation.value) return;
+  collectionView.value = view;
+  const loaded = view === "active" ? activeCollectionsLoaded.value : deletedCollectionsLoaded.value;
+  if (!loaded) await loadCollections(view, true);
+}
+
+async function beginCollectionMutation(kind: CollectionMutationKind, item?: Mdbx2CollectionSummary) {
+  if (collectionBusy.value || pendingCollectionMutation.value || managerMutationLocked.value) return;
+  const isCreate = kind === "create";
+  const collectionId = isCreate ? crypto.randomUUID() : item?.collectionId;
+  if (!collectionId) return;
+  const activeParent = item?.groupId && activeCollections.value.some((candidate) => candidate.collectionId === item.groupId)
+    ? item.groupId
+    : undefined;
+  pendingCollectionMutation.value = {
+    kind,
+    operationId: crypto.randomUUID(),
+    collectionId,
+    title: isCreate ? "" : item?.title || "",
+    parentCollectionId: kind === "rename" || kind === "delete" ? undefined : activeParent,
+    attempted: false,
+    uncertain: false
+  };
+  collectionError.value = "";
+  await nextTick();
+  if (kind === "create" || kind === "rename") {
+    document.querySelector<HTMLInputElement>("#mdbx2-collection-title-input")?.focus();
+  } else {
+    collectionConfirmButton.value?.focus();
+  }
+}
+
+function cancelCollectionMutation() {
+  if (!pendingCollectionMutation.value || pendingCollectionMutation.value.uncertain || collectionBusy.value) return;
+  pendingCollectionMutation.value = undefined;
+  collectionError.value = "";
+}
+
+async function submitCollectionMutation() {
+  const pending = pendingCollectionMutation.value;
+  if (!pending || !providerId.value || collectionBusy.value || collectionTitleInvalid.value) return;
+  pending.attempted = true;
+  collectionBusy.value = "mutate";
+  collectionError.value = "";
+  let completed = false;
+  try {
+    const result = pending.kind === "create"
+      ? await vaultClient.createMdbx2Collection(providerId.value, pending.operationId, pending.collectionId, pending.title, pending.parentCollectionId)
+      : pending.kind === "rename"
+        ? await vaultClient.renameMdbx2Collection(providerId.value, pending.operationId, pending.collectionId, pending.title)
+        : pending.kind === "move"
+          ? await vaultClient.moveMdbx2Collection(providerId.value, pending.operationId, pending.collectionId, pending.parentCollectionId)
+          : pending.kind === "delete"
+            ? await vaultClient.deleteMdbx2Collection(providerId.value, pending.operationId, pending.collectionId)
+            : await vaultClient.restoreMdbx2Collection(providerId.value, pending.operationId, pending.collectionId, pending.parentCollectionId);
+    emit("notice", collectionMutationNotice(pending.kind, result.alreadyCommitted));
+    pendingCollectionMutation.value = undefined;
+    completed = true;
+  } catch (cause) {
+    collectionError.value = collectionErrorMessage(cause);
+    if (errorCode(cause) === "native-host-disconnected") {
+      pending.uncertain = true;
+    } else {
+      pending.attempted = false;
+      pending.uncertain = false;
+      pending.operationId = crypto.randomUUID();
+    }
+  } finally {
+    collectionBusy.value = "";
+  }
+  if (completed) await refreshAfterCollectionMutation();
+}
+
+async function refreshAfterCollectionMutation() {
+  await Promise.all([
+    loadCollections("active", true),
+    loadCollections("deleted", true),
+    loadHistory(true),
+    loadSnapshots(true),
+    vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
+  ]);
+  emit("changed");
+}
+
+function collectionMutationHeading(pending: PendingCollectionMutation): string {
+  return ({
+    create: "新建文件夹",
+    rename: "重命名文件夹",
+    move: `移动“${pending.title}”`,
+    delete: `删除“${pending.title}”？`,
+    restore: `恢复“${pending.title}”`
+  } as const)[pending.kind];
+}
+
+function collectionMutationDescription(pending: PendingCollectionMutation): string {
+  if (pending.uncertain) return "Native Host 响应中断，原操作标识已保留。安全重试会确认原结果，不会产生第二次文件夹操作。";
+  if (pending.kind === "delete") return "文件夹会进入回收站，并生成新的同步提交。MDBX2 只允许删除空文件夹；其中仍有条目或子文件夹时，Core 会拒绝操作。";
+  if (pending.kind === "restore") return "恢复后可以选择顶层或当前活动文件夹作为父级，并生成新的同步提交。";
+  if (pending.kind === "move") return "选择新的父级；当前文件夹及其下级已从候选中排除。";
+  return "文件夹名称和层级会写入 MDBX2，并通过增量同步发送到其他设备。";
+}
+
+function collectionMutationButtonLabel(pending: PendingCollectionMutation): string {
+  if (collectionBusy.value === "mutate") return "正在保存…";
+  if (pending.uncertain) return "安全重试";
+  return ({ create: "创建", rename: "保存名称", move: "确认移动", delete: "确认删除", restore: "确认恢复" } as const)[pending.kind];
+}
+
+function collectionMutationNotice(kind: CollectionMutationKind, replayed: boolean): string {
+  const action = ({ create: "文件夹已创建", rename: "文件夹名称已更新", move: "文件夹层级已更新", delete: "文件夹已移至回收站", restore: "文件夹已恢复" } as const)[kind];
+  return replayed ? `${action}，原操作结果已确认。` : `${action}。`;
 }
 
 async function loadHistory(reset = false) {
@@ -824,6 +1020,7 @@ function closeDialog() {
   if (dialogLocked.value) return;
   void releasePendingSource();
   clearSecrets();
+  clearCollections();
   clearSnapshots();
   clearHistory();
   clearConflicts();
@@ -846,6 +1043,20 @@ function clearHistory() {
   selectedCommitId.value = "";
   commitDiffItems.value = [];
   pendingHistoryRevert.value = undefined;
+}
+
+function clearCollections() {
+  activeCollections.value = [];
+  deletedCollections.value = [];
+  activeCollectionCursor.value = undefined;
+  deletedCollectionCursor.value = undefined;
+  activeCollectionsLoaded.value = false;
+  deletedCollectionsLoaded.value = false;
+  collectionView.value = "active";
+  collectionBusy.value = "";
+  collectionLoadCount.value = 0;
+  collectionError.value = "";
+  pendingCollectionMutation.value = undefined;
 }
 
 function clearSnapshots() {
@@ -926,6 +1137,18 @@ function snapshotErrorMessage(cause: unknown): string {
   if (code === "snapshot-prune-authorization-required") return "MDBX2 安全策略要求重新解锁保险库后再清理自动快照。";
   if (code === "snapshot-prune-inspection-failed") return "Native Host 无法安全验证自动快照保留状态；没有执行删除。";
   if (code === "native-host-disconnected") return "Native Host 在清理期间断开。原计划令牌已经保留，请使用同一确认按钮安全重试。";
+  return errorMessage(cause);
+}
+
+function collectionErrorMessage(cause: unknown): string {
+  const code = errorCode(cause);
+  if (code === "collection-result-too-large") return "文件夹列表超过单次安全响应上限，请减少每页数量后重试。";
+  if (code === "collection-title-invalid" || code === "params-invalid") return "文件夹名称不能为空，且最多为 4096 个 UTF-8 字节。";
+  if (code === "collection-root-protected" || code === "collection-parent-invalid") return "MDBX2 根目录受保护；顶层文件夹应选择“顶层”，文件夹也不能成为自己的父级。";
+  if (code === "collection-state-conflict") return "当前文件夹状态不允许此操作。请确认名称未重复、父级有效，并在删除前移走条目和子文件夹。";
+  if (code === "collection-operation-mismatch") return "此操作标识已用于另一项文件夹修改，已生成新的操作标识；核对当前状态后可以重试。";
+  if (code === "collection-authorization-required") return "MDBX2 安全策略要求重新解锁保险库后再修改文件夹。";
+  if (code === "native-host-disconnected") return "Native Host 在文件夹写入期间断开。原操作标识已保留，请使用同一按钮安全重试。";
   return errorMessage(cause);
 }
 
@@ -1011,6 +1234,76 @@ function conflictErrorMessage(cause: unknown): string {
           <span><strong>{{ syncStatus?.initialized ? '增量同步已注册' : syncStatus?.configured ? 'WebDAV 已配置' : '仅本机模式' }}</strong><small>{{ syncStatus?.hasLocalChanges ? '存在待发布修改' : 'checkpoint 已保存' }}</small></span>
           <span><strong>{{ syncStatus?.blockedStreamCount || 0 }} 个受阻 stream</strong><small>{{ syncStatus?.remoteStreamCount || 0 }} 个远端 stream</small></span>
         </div>
+
+        <section v-if="isExisting && vaultOpen" class="mdbx2-collection-panel field-wide" aria-labelledby="mdbx2-collection-title">
+          <div class="mdbx2-collection-header">
+            <div>
+              <strong id="mdbx2-collection-title">文件夹</strong>
+              <small>与 Monica Android 共用 MDBX2 Collection 层级；根目录和技术标识保持隐藏。</small>
+            </div>
+            <div class="mdbx2-collection-header-actions">
+              <m3e-button variant="text" type="button" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation)" @click="loadCollections(collectionView, true)"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新</m3e-button>
+              <m3e-button v-if="collectionView === 'active'" variant="tonal" type="button" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation) || managerMutationLocked" @click="beginCollectionMutation('create')"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>新建文件夹</m3e-button>
+            </div>
+          </div>
+
+          <div class="mdbx2-collection-tabs" role="group" aria-label="文件夹状态">
+            <button type="button" :aria-pressed="collectionView === 'active'" :class="{ active: collectionView === 'active' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('active')"><m3e-icon name="folder" />当前文件夹 <span>{{ activeCollections.length }}</span></button>
+            <button type="button" :aria-pressed="collectionView === 'deleted'" :class="{ active: collectionView === 'deleted' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('deleted')"><m3e-icon name="delete" />回收站 <span>{{ deletedCollections.length }}</span></button>
+          </div>
+
+          <div v-if="pendingCollectionMutation" class="mdbx2-collection-editor" :class="{ danger: pendingCollectionMutation.kind === 'delete' }" role="group" aria-labelledby="mdbx2-collection-editor-title" aria-live="polite">
+            <span class="mdbx2-collection-editor-icon"><m3e-icon :name="pendingCollectionMutation.kind === 'delete' ? 'warning' : pendingCollectionMutation.kind === 'restore' ? 'restore_from_trash' : 'drive_file_move'" /></span>
+            <div class="mdbx2-collection-editor-copy">
+              <strong id="mdbx2-collection-editor-title">{{ collectionMutationHeading(pendingCollectionMutation) }}</strong>
+              <small>{{ collectionMutationDescription(pendingCollectionMutation) }}</small>
+            </div>
+
+            <label v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'rename'" class="mdbx2-collection-editor-field" for="mdbx2-collection-title-input">
+              <span>文件夹名称</span>
+              <input id="mdbx2-collection-title-input" v-model="pendingCollectionMutation.title" autocomplete="off" :aria-invalid="collectionTitleInvalid" aria-describedby="mdbx2-collection-title-help" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'" @keydown.enter.prevent="submitCollectionMutation" />
+              <small id="mdbx2-collection-title-help" :class="{ error: collectionTitleInvalid }">{{ collectionTitleBytes }} / {{ MDBX2_MAX_COLLECTION_TITLE_BYTES }} UTF-8 字节</small>
+            </label>
+
+            <label v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'move' || pendingCollectionMutation.kind === 'restore'" class="mdbx2-collection-editor-field" for="mdbx2-collection-parent">
+              <span>父级</span>
+              <select id="mdbx2-collection-parent" v-model="pendingCollectionMutation.parentCollectionId" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'">
+                <option :value="undefined">顶层</option>
+                <option v-for="row in collectionParentOptions" :key="row.item.collectionId" :value="row.item.collectionId">{{ row.path }}</option>
+              </select>
+              <small>顶层文件夹使用空父级，与 Android 的 MDBX2 目录规则一致。</small>
+            </label>
+
+            <div class="mdbx2-collection-editor-actions">
+              <m3e-button variant="text" type="button" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'" @click="cancelCollectionMutation">取消</m3e-button>
+              <m3e-button ref="collectionConfirmButton" variant="filled" type="button" :class="{ 'mdbx2-collection-delete': pendingCollectionMutation.kind === 'delete' }" :disabled="collectionBusy === 'mutate' || collectionTitleInvalid" @click="submitCollectionMutation">{{ collectionMutationButtonLabel(pendingCollectionMutation) }}</m3e-button>
+            </div>
+          </div>
+
+          <p v-if="collectionError" class="form-error mdbx2-collection-error" role="alert">{{ collectionError }}</p>
+          <div v-if="collectionBusy === 'list' && !collectionRows.length" class="mdbx2-collection-empty" role="status"><m3e-icon name="progress_activity" /><span>正在读取文件夹…</span></div>
+          <div v-else-if="(collectionView === 'active' ? activeCollectionsLoaded : deletedCollectionsLoaded) && !collectionRows.length" class="mdbx2-collection-empty"><m3e-icon :name="collectionView === 'active' ? 'folder_open' : 'delete_sweep'" /><span>{{ collectionView === 'active' ? '尚未创建自定义文件夹。未分类项目仍保存在受保护的根目录。' : '回收站中没有文件夹。' }}</span></div>
+
+          <div v-if="collectionRows.length" class="mdbx2-collection-list" role="list" :aria-label="collectionView === 'active' ? '当前 MDBX2 文件夹' : 'MDBX2 文件夹回收站'">
+            <article v-for="row in collectionRows" :key="row.item.collectionId" class="mdbx2-collection-row" role="listitem">
+              <span class="mdbx2-collection-icon"><m3e-icon :name="collectionView === 'active' ? 'folder' : 'folder_delete'" /></span>
+              <span class="mdbx2-collection-copy">
+                <strong>{{ row.item.title }}</strong>
+                <small>{{ row.depth ? row.path : '顶层' }}<template v-if="row.hierarchyState !== 'ready'"> · {{ row.parentPath }}</template></small>
+              </span>
+              <div v-if="collectionView === 'active'" class="mdbx2-collection-row-actions" aria-label="文件夹操作">
+                <m3e-icon-button type="button" :aria-label="`重命名 ${row.item.title}`" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation) || managerMutationLocked" @click="beginCollectionMutation('rename', row.item)"><m3e-icon name="edit" /></m3e-icon-button>
+                <m3e-icon-button type="button" :aria-label="`移动 ${row.item.title}`" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation) || managerMutationLocked" @click="beginCollectionMutation('move', row.item)"><m3e-icon name="drive_file_move" /></m3e-icon-button>
+                <m3e-icon-button type="button" :aria-label="`删除 ${row.item.title}`" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation) || managerMutationLocked" @click="beginCollectionMutation('delete', row.item)"><m3e-icon name="delete" /></m3e-icon-button>
+              </div>
+              <m3e-button v-else variant="tonal" type="button" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation) || managerMutationLocked" @click="beginCollectionMutation('restore', row.item)"><m3e-icon slot="icon" name="restore_from_trash"></m3e-icon>恢复</m3e-button>
+            </article>
+          </div>
+
+          <div v-if="collectionView === 'active' ? activeCollectionCursor : deletedCollectionCursor" class="mdbx2-collection-more">
+            <m3e-button variant="text" type="button" :disabled="Boolean(collectionBusy) || Boolean(pendingCollectionMutation)" @click="loadCollections(collectionView, false)">加载更多文件夹</m3e-button>
+          </div>
+        </section>
 
         <section v-if="isExisting && vaultOpen" class="mdbx2-snapshot-panel field-wide" aria-labelledby="mdbx2-snapshot-title">
           <div class="mdbx2-snapshot-header">
@@ -1360,6 +1653,56 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-runtime-summary small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-progress { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--app-muted); }
 .mdbx2-progress progress { width: min(220px, 40%); accent-color: var(--app-primary); }
+.mdbx2-collection-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-collection-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.mdbx2-collection-header > div:first-child,
+.mdbx2-collection-copy,
+.mdbx2-collection-editor-copy { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-collection-header small,
+.mdbx2-collection-copy small,
+.mdbx2-collection-editor-copy small,
+.mdbx2-collection-editor-field small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-collection-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mdbx2-collection-header-actions m3e-button,
+.mdbx2-collection-more m3e-button { min-height: 44px; }
+.mdbx2-collection-tabs { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-collection-tabs button { min-width: 0; min-height: 44px; border: 0; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; color: var(--app-text); background: transparent; cursor: pointer; font: inherit; font-weight: 600; }
+.mdbx2-collection-tabs button + button { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-collection-tabs button.active { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-collection-tabs button:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-collection-tabs button:disabled { cursor: progress; opacity: .56; }
+.mdbx2-collection-tabs m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-collection-tabs span { color: var(--app-muted); font-variant-numeric: tabular-nums; }
+.mdbx2-collection-editor { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-collection-editor.danger { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-collection-editor.danger small { color: inherit; opacity: .84; }
+.mdbx2-collection-editor-icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--app-primary); }
+.mdbx2-collection-editor.danger .mdbx2-collection-editor-icon { color: inherit; }
+.mdbx2-collection-editor-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-collection-editor-field { grid-column: 2 / -1; min-width: 0; display: grid; gap: 6px; font-weight: 600; }
+.mdbx2-collection-editor-field input,
+.mdbx2-collection-editor-field select { box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; padding: 9px 12px; color: var(--app-text); background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); font: inherit; }
+.mdbx2-collection-editor-field input:focus-visible,
+.mdbx2-collection-editor-field select:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: 2px; }
+.mdbx2-collection-editor-field input[aria-invalid="true"] { border-color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-collection-editor-field small.error { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-collection-editor-actions { grid-column: 2 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mdbx2-collection-editor-actions m3e-button { min-height: 44px; }
+.mdbx2-collection-delete { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-collection-error { margin: 0; padding: 0 16px 12px; }
+.mdbx2-collection-list { background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-collection-row { min-width: 0; min-height: 64px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 16px; }
+.mdbx2-collection-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
+.mdbx2-collection-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-collection-copy strong,
+.mdbx2-collection-copy small { overflow-wrap: anywhere; }
+.mdbx2-collection-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.mdbx2-collection-row-actions m3e-icon-button { flex: 0 0 44px; inline-size: 44px; block-size: 44px; min-inline-size: 44px; max-inline-size: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; overflow: clip; --m3e-icon-button-container-height: 44px; --m3e-icon-button-icon-size: 20px; --m3e-icon-button-default-leading-space: 0px; --m3e-icon-button-default-trailing-space: 0px; }
+.mdbx2-collection-row-actions m3e-icon-button:last-child { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-collection-row > m3e-button { min-height: 44px; }
+.mdbx2-collection-empty { min-height: 64px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
+.mdbx2-collection-empty m3e-icon { flex: 0 0 24px; --m3e-icon-size: 20px; }
+.mdbx2-collection-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
 .mdbx2-snapshot-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .mdbx2-snapshot-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-snapshot-header > div,
@@ -1541,6 +1884,18 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-runtime-summary span + span { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-progress { align-items: stretch; flex-direction: column; }
   .mdbx2-progress progress { width: 100%; }
+  .mdbx2-collection-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-collection-header-actions { align-items: stretch; flex-direction: column; }
+  .mdbx2-collection-tabs { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-collection-tabs button + button { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+  .mdbx2-collection-editor { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-collection-editor-field,
+  .mdbx2-collection-editor-actions { grid-column: 1 / -1; }
+  .mdbx2-collection-editor-actions { align-items: stretch; flex-direction: column; }
+  .mdbx2-collection-row { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-collection-row-actions,
+  .mdbx2-collection-row > m3e-button { grid-column: 2; justify-self: stretch; }
+  .mdbx2-collection-row-actions { justify-content: flex-start; }
   .mdbx2-snapshot-header { align-items: stretch; flex-direction: column; }
   .mdbx2-snapshot-create { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .mdbx2-snapshot-retention,

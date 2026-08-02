@@ -12,6 +12,8 @@ import {
   MDBX2_MAX_BINARY_CHUNK_BYTES,
   MDBX2_MAX_CONFLICT_PAGE_SIZE,
   MDBX2_MAX_CONFLICT_RESULT_BYTES,
+  MDBX2_MAX_COLLECTION_RESULT_BYTES,
+  MDBX2_MAX_COLLECTION_TITLE_BYTES,
   MDBX2_MAX_INBOUND_FILE_BYTES,
   MDBX2_MAX_HISTORY_PAGE_SIZE,
   MDBX2_MAX_HISTORY_REVERT_ITEMS,
@@ -83,6 +85,9 @@ const HELLO = {
   maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
   maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
   maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+  maxCollectionTitleBytes: MDBX2_MAX_COLLECTION_TITLE_BYTES,
+  maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
+  supportsCollectionMutation: true,
   maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
@@ -150,6 +155,7 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxBinaryChunkBytes: 64 * 1024 })).toThrow("分块限制");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsHistoryRevert: false })).toThrow("历史恢复能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsSnapshotPrune: false })).toThrow("自动快照清理能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsCollectionMutation: false })).toThrow("Collection 管理能力");
   });
 
   it("preserves stable Host error codes and retryability", async () => {
@@ -166,6 +172,108 @@ describe("MDBX2 Native Messaging client", () => {
     const client = new Mdbx2NativeClient(runtime, () => "request-2");
 
     await expect(client.hello()).rejects.toMatchObject({ code: "vault-locked", retryable: true });
+    client.close();
+  });
+
+  it("validates bounded Collection list and all retry-safe mutation methods", async () => {
+    const runtime = new FakeRuntime();
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const operationId = "22222222-2222-4222-8222-222222222222";
+    const collectionId = "33333333-3333-4333-8333-333333333333";
+    const parentCollectionId = "44444444-4444-4444-8444-444444444444";
+    const commitId = "55555555-5555-4555-8555-555555555555";
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string; method: string; params: Record<string, unknown> };
+      requests.push({ method: request.method, params: request.params });
+      const collection = {
+        collectionId,
+        title: request.method === "collection.rename" ? request.params.title : "Accounts",
+        collectionTypeId: null,
+        profileSchemaVersion: null,
+        groupId: request.method === "collection.move" || request.method === "collection.restore"
+          ? request.params.parentCollectionId
+          : parentCollectionId,
+        iconRef: null,
+        favorite: false,
+        archived: false,
+        attachmentCount: 0,
+        headCommitId: commitId,
+        deleted: request.method === "collection.delete",
+        updatedAt: "2026-08-02T00:00:00Z"
+      };
+      const result = request.method === "collection.list"
+        ? { items: [collection], nextCursor: null }
+        : { operationId, commitId, alreadyCommitted: false, collection };
+      runtime.port.onMessage.emit({
+        protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        ok: true,
+        result
+      } as never);
+    };
+    let requestNumber = 0;
+    const client = new Mdbx2NativeClient(runtime, () => `collection-request-${++requestNumber}`);
+
+    await expect(client.listCollections(vaultHandle, { excludeRoot: true, pageSize: 50 })).resolves.toMatchObject({ items: [{ collectionId }] });
+    await expect(client.createCollection(vaultHandle, operationId, collectionId, "  Accounts  ", parentCollectionId)).resolves.toMatchObject({ operationId, collection: { title: "Accounts" } });
+    await expect(client.renameCollection(vaultHandle, operationId, collectionId, "Work")).resolves.toMatchObject({ collection: { title: "Work" } });
+    await expect(client.moveCollection(vaultHandle, operationId, collectionId)).resolves.toMatchObject({ collection: { groupId: undefined } });
+    await expect(client.deleteCollection(vaultHandle, operationId, collectionId)).resolves.toMatchObject({ collection: { deleted: true } });
+    await expect(client.restoreCollection(vaultHandle, operationId, collectionId, parentCollectionId)).resolves.toMatchObject({ collection: { groupId: parentCollectionId, deleted: false } });
+
+    expect(requests.map(({ method }) => method)).toEqual([
+      "collection.list", "collection.create", "collection.rename", "collection.move", "collection.delete", "collection.restore"
+    ]);
+    expect(requests[0].params).toMatchObject({ deleted: false, excludeRoot: true, pageSize: 50, cursor: null });
+    expect(requests[1].params).toMatchObject({ operationId, collectionId, title: "Accounts", parentCollectionId });
+    expect(requests[3].params).toMatchObject({ parentCollectionId: null });
+    client.close();
+  });
+
+  it("rejects invalid Collection titles, mismatched targets, and extra result fields", async () => {
+    const runtime = new FakeRuntime();
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const operationId = "22222222-2222-4222-8222-222222222222";
+    const collectionId = "33333333-3333-4333-8333-333333333333";
+    const otherCollectionId = "44444444-4444-4444-8444-444444444444";
+    const commitId = "55555555-5555-4555-8555-555555555555";
+    const client = new Mdbx2NativeClient(runtime, () => "collection-invalid-request");
+
+    await expect(client.createCollection(vaultHandle, operationId, collectionId, "   ")).rejects.toMatchObject({ code: "collection-title-invalid" });
+    await expect(client.createCollection(vaultHandle, operationId, collectionId, "x".repeat(MDBX2_MAX_COLLECTION_TITLE_BYTES + 1))).rejects.toMatchObject({ code: "collection-title-invalid" });
+    expect(runtime.port.messages).toHaveLength(0);
+
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({
+        protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          operationId,
+          commitId,
+          alreadyCommitted: false,
+          collection: {
+            collectionId: otherCollectionId,
+            title: "Accounts",
+            collectionTypeId: null,
+            profileSchemaVersion: null,
+            groupId: null,
+            iconRef: null,
+            favorite: false,
+            archived: false,
+            attachmentCount: 0,
+            headCommitId: commitId,
+            deleted: false,
+            updatedAt: "2026-08-02T00:00:00Z"
+          },
+          leakedPayload: "forbidden"
+        }
+      } as never);
+    };
+    await expect(client.renameCollection(vaultHandle, operationId, collectionId, "Accounts"))
+      .rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 

@@ -168,6 +168,7 @@ async function installAttachmentManagerMock(page: Page): Promise<void> {
         if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪" } };
         if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "55555555-5555-4555-8555-555555555555", open: true, available: true } };
         if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: false, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 1, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: attachments.length } };
+        if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };
         if (message.type === "PROVIDER_ATTACHMENT_LIST") return { ok: true, data: { items: attachments.map((attachment) => ({ ...attachment })) } };
         if (message.type === "PROVIDER_ATTACHMENT_READ_BEGIN") {
           const attachmentId = String(message.attachmentId);

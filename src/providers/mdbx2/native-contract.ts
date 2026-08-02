@@ -9,6 +9,8 @@ export const MDBX2_MAX_INBOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 export const MDBX2_MAX_ACTIVE_TRANSFERS = 4;
 export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
 export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
+export const MDBX2_MAX_COLLECTION_TITLE_BYTES = 4096;
+export const MDBX2_MAX_COLLECTION_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
 export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
@@ -43,6 +45,11 @@ export type Mdbx2NativeMethod =
   | "vault.status"
   | "vault.lock"
   | "collection.list"
+  | "collection.create"
+  | "collection.rename"
+  | "collection.move"
+  | "collection.delete"
+  | "collection.restore"
   | "object.list"
   | "object.reveal"
   | "object.upsert"
@@ -296,6 +303,13 @@ export interface Mdbx2CollectionSummary {
 export interface Mdbx2CollectionSummaryPage {
   items: Mdbx2CollectionSummary[];
   nextCursor?: string;
+}
+
+export interface Mdbx2CollectionMutationResult {
+  operationId: string;
+  commitId: string;
+  alreadyCommitted: boolean;
+  collection: Mdbx2CollectionSummary;
 }
 
 export interface Mdbx2ObjectSummary {
@@ -642,6 +656,9 @@ export interface Mdbx2HostCapabilities {
   maxActiveTransfers: typeof MDBX2_MAX_ACTIVE_TRANSFERS;
   maxObjectPayloadBytes: typeof MDBX2_MAX_OBJECT_PAYLOAD_BYTES;
   maxSummaryPageSize: typeof MDBX2_MAX_SUMMARY_PAGE_SIZE;
+  maxCollectionTitleBytes: typeof MDBX2_MAX_COLLECTION_TITLE_BYTES;
+  maxCollectionResultBytes: typeof MDBX2_MAX_COLLECTION_RESULT_BYTES;
+  supportsCollectionMutation: true;
   maxObjectBatchMutations: typeof MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
   maxObjectBatchIntentBytes: typeof MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
@@ -735,6 +752,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxActiveTransfers !== MDBX2_MAX_ACTIVE_TRANSFERS) throw incompatible("Native Host 并发传输限制与插件不一致。");
   if (value.maxObjectPayloadBytes !== MDBX2_MAX_OBJECT_PAYLOAD_BYTES) throw incompatible("Native Host Object 载荷限制与插件不一致。");
   if (value.maxSummaryPageSize !== MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatible("Native Host 摘要分页限制与插件不一致。");
+  if (value.maxCollectionTitleBytes !== MDBX2_MAX_COLLECTION_TITLE_BYTES) throw incompatible("Native Host Collection 标题限制与插件不一致。");
+  if (value.maxCollectionResultBytes !== MDBX2_MAX_COLLECTION_RESULT_BYTES) throw incompatible("Native Host Collection 响应限制与插件不一致。");
+  if (value.supportsCollectionMutation !== true) throw incompatible("Native Host 未启用 MDBX2 Collection 管理能力。");
   if (value.maxObjectBatchMutations !== MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw incompatible("Native Host Object 批量数量限制与插件不一致。");
   if (value.maxObjectBatchIntentBytes !== MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw incompatible("Native Host Object 批量大小限制与插件不一致。");
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
@@ -781,6 +801,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,
     maxObjectPayloadBytes: MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
     maxSummaryPageSize: MDBX2_MAX_SUMMARY_PAGE_SIZE,
+    maxCollectionTitleBytes: MDBX2_MAX_COLLECTION_TITLE_BYTES,
+    maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
+    supportsCollectionMutation: true,
     maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
     maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,

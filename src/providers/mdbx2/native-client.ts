@@ -2,6 +2,7 @@ import {
   MDBX2_BLOB_REFERENCE_PAGE_SIZE,
   MDBX2_FORMAT_VERSION,
   MDBX2_MAX_BINARY_CHUNK_BYTES,
+  MDBX2_MAX_COLLECTION_TITLE_BYTES,
   MDBX2_MAX_ATTACHMENT_BYTES,
   MDBX2_MAX_ATTACHMENT_PAGE_SIZE,
   MDBX2_MAX_CONFLICT_PAGE_SIZE,
@@ -48,6 +49,7 @@ import {
   type Mdbx2ExternalBlobReferencePage,
   type Mdbx2InboundTransferPurpose,
   type Mdbx2CollectionSummaryPage,
+  type Mdbx2CollectionMutationResult,
   type Mdbx2NativeMethod,
   type Mdbx2NativeRequest,
   type Mdbx2ObjectDeleteResult,
@@ -182,14 +184,96 @@ export class Mdbx2NativeClient {
     return booleanResult(result.locked, "Native Host 锁定状态无效。");
   }
 
-  async listCollections(vaultHandle: string, input: { deleted?: boolean; pageSize?: number; cursor?: string } = {}, timeoutMs = 15_000): Promise<Mdbx2CollectionSummaryPage> {
+  async listCollections(vaultHandle: string, input: { deleted?: boolean; excludeRoot?: boolean; pageSize?: number; cursor?: string } = {}, timeoutMs = 15_000): Promise<Mdbx2CollectionSummaryPage> {
     const pageSize = pageSizeValue(input.pageSize);
     return collectionSummaryPage(await this.request("collection.list", {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       deleted: Boolean(input.deleted),
+      excludeRoot: Boolean(input.excludeRoot),
       pageSize,
       cursor: input.cursor || null
     }, timeoutMs));
+  }
+
+  async createCollection(
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    title: string,
+    parentCollectionId?: string,
+    timeoutMs = 60_000
+  ): Promise<Mdbx2CollectionMutationResult> {
+    return this.collectionMutation("collection.create", vaultHandle, operationId, collectionId, {
+      title: collectionTitleValue(title),
+      parentCollectionId: parentCollectionId ? opaqueHandle(parentCollectionId, "父 Collection") : null
+    }, timeoutMs);
+  }
+
+  async renameCollection(
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    title: string,
+    timeoutMs = 60_000
+  ): Promise<Mdbx2CollectionMutationResult> {
+    return this.collectionMutation("collection.rename", vaultHandle, operationId, collectionId, {
+      title: collectionTitleValue(title)
+    }, timeoutMs);
+  }
+
+  async moveCollection(
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    parentCollectionId?: string,
+    timeoutMs = 60_000
+  ): Promise<Mdbx2CollectionMutationResult> {
+    return this.collectionMutation("collection.move", vaultHandle, operationId, collectionId, {
+      parentCollectionId: parentCollectionId ? opaqueHandle(parentCollectionId, "父 Collection") : null
+    }, timeoutMs);
+  }
+
+  async deleteCollection(
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    timeoutMs = 60_000
+  ): Promise<Mdbx2CollectionMutationResult> {
+    return this.collectionMutation("collection.delete", vaultHandle, operationId, collectionId, {}, timeoutMs);
+  }
+
+  async restoreCollection(
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    parentCollectionId?: string,
+    timeoutMs = 60_000
+  ): Promise<Mdbx2CollectionMutationResult> {
+    return this.collectionMutation("collection.restore", vaultHandle, operationId, collectionId, {
+      parentCollectionId: parentCollectionId ? opaqueHandle(parentCollectionId, "父 Collection") : null
+    }, timeoutMs);
+  }
+
+  private async collectionMutation(
+    method: "collection.create" | "collection.rename" | "collection.move" | "collection.delete" | "collection.restore",
+    vaultHandle: string,
+    operationId: string,
+    collectionId: string,
+    input: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Mdbx2CollectionMutationResult> {
+    const normalizedOperationId = opaqueHandle(operationId, "Collection 操作");
+    const normalizedCollectionId = opaqueHandle(collectionId, "Collection");
+    const result = collectionMutationResult(await this.request(method, {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库"),
+      operationId: normalizedOperationId,
+      collectionId: normalizedCollectionId,
+      ...input
+    }, timeoutMs));
+    if (result.operationId !== normalizedOperationId || result.collection.collectionId !== normalizedCollectionId) {
+      throw incompatibleResult("Native Host MDBX2 Collection 响应与请求目标不一致。");
+    }
+    return result;
   }
 
   async listObjects(vaultHandle: string, collectionId: string, input: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string } = {}, timeoutMs = 15_000): Promise<Mdbx2ObjectSummaryPage> {
@@ -1167,27 +1251,46 @@ function vaultSessionSummary(input: unknown): Mdbx2VaultSessionSummary {
 }
 
 function collectionSummaryPage(input: unknown): Mdbx2CollectionSummaryPage {
-  const value = objectResult(input, "Native Host Collection 分页响应无效。");
+  const value = exactObjectResult(input, ["items", "nextCursor"], "Native Host Collection 分页响应无效。");
   if (!Array.isArray(value.items) || value.items.length > MDBX2_MAX_SUMMARY_PAGE_SIZE) throw incompatibleResult("Native Host Collection 分页大小无效。");
   return {
-    items: value.items.map((candidate) => {
-      const item = objectResult(candidate, "Native Host Collection 摘要无效。");
-      return {
-        collectionId: opaqueHandle(item.collectionId, "Collection"),
-        title: textResult(item.title, 64 * 1024, true, "Collection 标题无效。"),
-        collectionTypeId: optionalString(item.collectionTypeId, 512, "Collection 类型"),
-        profileSchemaVersion: optionalInteger(item.profileSchemaVersion, "Collection Profile Schema 版本"),
-        groupId: optionalString(item.groupId, 4096, "Collection 分组"),
-        iconRef: optionalString(item.iconRef, 4096, "Collection 图标引用"),
-        favorite: booleanResult(item.favorite, "Collection 收藏状态无效。"),
-        archived: booleanResult(item.archived, "Collection 归档状态无效。"),
-        attachmentCount: safeInteger(item.attachmentCount, "Collection 附件数量"),
-        headCommitId: textResult(item.headCommitId, 128, false, "Collection Commit ID 无效。"),
-        deleted: booleanResult(item.deleted, "Collection 删除状态无效。"),
-        updatedAt: textResult(item.updatedAt, 128, false, "Collection 更新时间无效。")
-      };
-    }),
+    items: value.items.map(collectionSummaryResult),
     nextCursor: optionalString(value.nextCursor, 4096, "Collection 游标")
+  };
+}
+
+function collectionSummaryResult(input: unknown): Mdbx2CollectionSummaryPage["items"][number] {
+  const item = exactObjectResult(input, [
+    "collectionId", "title", "collectionTypeId", "profileSchemaVersion", "groupId", "iconRef",
+    "favorite", "archived", "attachmentCount", "headCommitId", "deleted", "updatedAt"
+  ], "Native Host Collection 摘要无效。");
+  return {
+    collectionId: opaqueHandle(item.collectionId, "Collection"),
+    title: textResult(item.title, 64 * 1024, true, "Collection 标题无效。"),
+    collectionTypeId: optionalString(item.collectionTypeId, 512, "Collection 类型"),
+    profileSchemaVersion: optionalInteger(item.profileSchemaVersion, "Collection Profile Schema 版本"),
+    groupId: optionalOpaqueHandle(item.groupId, "Collection 分组"),
+    iconRef: optionalString(item.iconRef, 4096, "Collection 图标引用"),
+    favorite: booleanResult(item.favorite, "Collection 收藏状态无效。"),
+    archived: booleanResult(item.archived, "Collection 归档状态无效。"),
+    attachmentCount: safeInteger(item.attachmentCount, "Collection 附件数量"),
+    headCommitId: textResult(item.headCommitId, 128, false, "Collection Commit ID 无效。"),
+    deleted: booleanResult(item.deleted, "Collection 删除状态无效。"),
+    updatedAt: textResult(item.updatedAt, 128, false, "Collection 更新时间无效。")
+  };
+}
+
+function collectionMutationResult(input: unknown): Mdbx2CollectionMutationResult {
+  const value = exactObjectResult(
+    input,
+    ["operationId", "commitId", "alreadyCommitted", "collection"],
+    "Native Host MDBX2 Collection 修改响应无效。"
+  );
+  return {
+    operationId: opaqueHandle(value.operationId, "Collection 操作"),
+    commitId: opaqueHandle(value.commitId, "Collection Commit"),
+    alreadyCommitted: booleanResult(value.alreadyCommitted, "Collection 幂等状态无效。"),
+    collection: collectionSummaryResult(value.collection)
   };
 }
 
@@ -1766,6 +1869,14 @@ function optionalOpaqueHandle(value: unknown, label: string): string | undefined
 function safeInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw incompatibleResult(`${label}无效。`);
   return value;
+}
+
+function collectionTitleValue(value: string): string {
+  const title = typeof value === "string" ? value.trim() : "";
+  if (!title || title.includes("\0") || new TextEncoder().encode(title).byteLength > MDBX2_MAX_COLLECTION_TITLE_BYTES) {
+    throw new Mdbx2NativeHostError("collection-title-invalid", "MDBX2 文件夹名称无效或超过 4096 个 UTF-8 字节。", false);
+  }
+  return title;
 }
 
 function pageSizeValue(value: number | undefined): number {

@@ -87,6 +87,19 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(historyRevertResponse.ok).toBe(false);
     expect(historyRevertResponse.error).toContain("只允许 Monica 管理页调用");
+    const collectionRequests = [
+      { type: "MDBX2_COLLECTION_LIST", providerId: "manager-only-provider", excludeRoot: true, pageSize: 50 },
+      { type: "MDBX2_COLLECTION_CREATE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222", title: "Accounts" },
+      { type: "MDBX2_COLLECTION_RENAME", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222", title: "Work" },
+      { type: "MDBX2_COLLECTION_MOVE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222" },
+      { type: "MDBX2_COLLECTION_DELETE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222", confirmed: true },
+      { type: "MDBX2_COLLECTION_RESTORE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222" }
+    ];
+    for (const request of collectionRequests) {
+      const collectionResponse = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as RuntimeResponse;
+      expect(collectionResponse.ok).toBe(false);
+      expect(collectionResponse.error).toContain("只允许 Monica 管理页调用");
+    }
     const snapshotRequests = [
       { type: "MDBX2_SNAPSHOT_LIST", providerId: "manager-only-provider", pageSize: 20 },
       { type: "MDBX2_SNAPSHOT_STRUCTURE", providerId: "manager-only-provider", snapshotId: "11111111-1111-4111-8111-111111111111", side: "snapshot", pageSize: 100 },

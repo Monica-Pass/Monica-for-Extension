@@ -77,6 +77,7 @@ test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disc
           if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "44444444-4444-4444-8444-444444444444", open: true, available: true } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: cleaned, pendingBootstrap: false, pendingSegment: cleaned, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 0 } };
+          if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_SNAPSHOT_LIST") return { ok: true, data: { items: cleaned ? [manual] : [automaticB, automaticA, manual] } };
           if (message.type === "MDBX2_SNAPSHOT_PRUNE_PLAN") {

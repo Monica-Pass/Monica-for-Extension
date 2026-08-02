@@ -111,6 +111,7 @@ test("MDBX2 history recovery keeps one operation identity and remains usable at 
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: recovered, pendingBootstrap: false, pendingSegment: recovered, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 0 } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: [] } };
+          if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_SNAPSHOT_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_HISTORY_LIST") return { ok: true, data: { items: recovered ? [{ ...recoveryHistory, operationId: revertOperationIds[0] }, sourceHistory, systemHistory] : [sourceHistory, systemHistory] } };
           if (message.type === "MDBX2_HISTORY_DIFF") return { ok: true, data: { items: message.commitId === sourceCommitId ? [{
