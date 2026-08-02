@@ -87,6 +87,15 @@ describe("extension runtime client", () => {
     ]);
   });
 
+  it("sends MDBX2 diagnostics refresh through the typed manager contract", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await vaultClient.mdbx2VaultDiagnostics("provider-1");
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_VAULT_DIAGNOSTICS", providerId: "provider-1" });
+  });
+
   it("preserves the snapshot unknown-outcome code for safe manager recovery", async () => {
     const sendMessage = vi.fn().mockResolvedValue({
       ok: false,

@@ -502,6 +502,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
       return mdbx2NativeClient.vaultStatus(vaultHandle);
     }
+    case "MDBX2_VAULT_DIAGNOSTICS": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.vaultDiagnostics(vaultHandle);
+    }
     case "MDBX2_VAULT_LOCK": {
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);

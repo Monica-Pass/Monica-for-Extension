@@ -17,6 +17,7 @@ import {
   type Mdbx2SnapshotStructureSide,
   type Mdbx2UnlockMethod,
   type Mdbx2VaultCredential,
+  type Mdbx2VaultDiagnosticsReport,
   type Mdbx2VaultInspection,
   type Mdbx2VaultRuntimeStatus,
   type Mdbx2VaultSource
@@ -25,6 +26,15 @@ import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from ".
 import { mdbx2ConflictChoiceDescription, mdbx2ConflictChoiceLabel, presentMdbx2Conflict } from "../providers/mdbx2/mdbx2-conflicts";
 import { formatMdbx2SnapshotBytes, presentMdbx2Snapshot, presentMdbx2SnapshotNode } from "../providers/mdbx2/mdbx2-snapshots";
 import { mdbx2CollectionDescendantIds, presentMdbx2Collections } from "../providers/mdbx2/mdbx2-collections";
+import {
+  formatMdbx2DiagnosticCount,
+  formatMdbx2DiagnosticTime,
+  mdbx2HealthCategoryLabel,
+  mdbx2HealthSeverityIcon,
+  mdbx2HealthSeverityLabel,
+  presentMdbx2Health,
+  summarizeMdbx2HealthCounts
+} from "../providers/mdbx2/mdbx2-diagnostics";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
@@ -78,6 +88,9 @@ const providerId = ref(props.provider?.id || "");
 const hostStatus = ref<Mdbx2HostStatus | null>(props.hostStatus || null);
 const runtimeStatus = ref<Mdbx2VaultRuntimeStatus | undefined>(props.runtimeStatus);
 const syncStatus = ref<Mdbx2ManagerSyncStatus | undefined>(props.syncStatus);
+const vaultDiagnostics = ref<Mdbx2VaultDiagnosticsReport | undefined>();
+const diagnosticsBusy = ref(false);
+const diagnosticsError = ref("");
 const busy = ref<BusyState>("");
 const error = ref("");
 const uploadProgress = ref(0);
@@ -150,6 +163,7 @@ const form = reactive({
 const isExisting = computed(() => Boolean(providerId.value));
 const hostReady = computed(() => hostStatus.value?.availability === "ready");
 const vaultOpen = computed(() => runtimeStatus.value?.open === true);
+const diagnosticHealth = computed(() => vaultDiagnostics.value ? presentMdbx2Health(vaultDiagnostics.value.health) : undefined);
 const remoteFieldsComplete = computed(() => Boolean(form.baseUrl.trim() && form.remotePath.trim()));
 const needsSecurityKey = computed(() => form.unlockMethod !== "password");
 const canPublish = computed(() => isExisting.value && vaultOpen.value && remoteFieldsComplete.value && !syncStatus.value?.initialized);
@@ -211,11 +225,30 @@ async function refreshStatus() {
     ]);
     runtimeStatus.value = nextRuntime;
     syncStatus.value = nextSync;
-    if (nextRuntime?.open) await Promise.all([loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadConflicts(true)]);
+    if (nextRuntime?.open) await Promise.all([
+      loadVaultDiagnostics(),
+      loadCollections("active", true),
+      loadCollections("deleted", true),
+      loadSnapshots(true),
+      loadConflicts(true)
+    ]);
   } catch (cause) {
     error.value = errorMessage(cause);
   } finally {
     busy.value = "";
+  }
+}
+
+async function loadVaultDiagnostics() {
+  if (!providerId.value || !vaultOpen.value || diagnosticsBusy.value) return;
+  diagnosticsBusy.value = true;
+  diagnosticsError.value = "";
+  try {
+    vaultDiagnostics.value = await vaultClient.mdbx2VaultDiagnostics(providerId.value);
+  } catch (cause) {
+    diagnosticsError.value = diagnosticsErrorMessage(cause);
+  } finally {
+    diagnosticsBusy.value = false;
   }
 }
 
@@ -259,6 +292,8 @@ async function connectNewSource() {
     activeProvider.value = opened.account;
     providerId.value = opened.account.id;
     runtimeStatus.value = { vaultHandle: opened.session.vaultHandle, open: true, available: true };
+    vaultDiagnostics.value = opened.session;
+    diagnosticsError.value = "";
 
     if (form.mode === "remote") {
       activeProvider.value = await vaultClient.saveMdbx2WebDav(
@@ -299,6 +334,8 @@ async function unlockExisting() {
     });
     activeProvider.value = opened.account;
     runtimeStatus.value = { vaultHandle: opened.session.vaultHandle, open: true, available: true };
+    vaultDiagnostics.value = opened.session;
+    diagnosticsError.value = "";
     emit("changed");
     clearSecrets();
     await Promise.all([loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadHistory(true), loadConflicts(true)]);
@@ -469,6 +506,7 @@ async function submitCollectionMutation() {
 
 async function refreshAfterCollectionMutation() {
   await Promise.all([
+    loadVaultDiagnostics(),
     loadCollections("active", true),
     loadCollections("deleted", true),
     loadHistory(true),
@@ -594,6 +632,7 @@ async function confirmHistoryRevert() {
 
 async function refreshAfterHistoryRevert() {
   await Promise.all([
+    loadVaultDiagnostics(),
     loadHistory(true),
     loadSnapshots(true),
     vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
@@ -652,6 +691,7 @@ async function confirmConflictResolution() {
   if (!pending || !providerId.value || conflictBusy.value || snapshotMutating.value) return;
   conflictBusy.value = "resolve";
   conflictError.value = "";
+  let completed = false;
   try {
     await vaultClient.resolveMdbx2Conflict(
       providerId.value,
@@ -663,6 +703,7 @@ async function confirmConflictResolution() {
     selectedConflictId.value = "";
     pendingConflictResolution.value = undefined;
     syncStatus.value = await vaultClient.mdbx2SyncStatus(providerId.value).catch(() => syncStatus.value);
+    completed = true;
     emit("changed");
     emit("notice", `${mdbx2ConflictChoiceLabel(pending.choice)}；此决定将在下次增量同步时发布。`);
   } catch (cause) {
@@ -670,6 +711,7 @@ async function confirmConflictResolution() {
   } finally {
     conflictBusy.value = "";
   }
+  if (completed) await loadVaultDiagnostics();
 }
 
 async function loadSnapshots(reset = false) {
@@ -908,6 +950,7 @@ async function confirmSnapshotMutation() {
 
 async function refreshAfterSnapshotMutation() {
   await Promise.all([
+    loadVaultDiagnostics(),
     loadSnapshots(true),
     loadHistory(true),
     vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
@@ -1121,6 +1164,16 @@ function errorCode(cause: unknown): string {
   return cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
 }
 
+function diagnosticsErrorMessage(cause: unknown): string {
+  const code = errorCode(cause);
+  if (code === "vault-diagnostics-result-too-large") return "诊断摘要超过 Native Messaging 安全上限，保险库内容没有被修改。";
+  if (code === "vault-diagnostics-failed" || code === "vault-health-check-failed") return "Native Host 无法完成只读健康检查。请保留本机副本并重试；此操作不会尝试修复数据。";
+  if (code === "vault-locked") return "保险库已经锁定，请重新解锁后刷新诊断。";
+  if (code === "native-host-incompatible") return "Native Host 返回了不兼容的诊断摘要。请更新 Host 后再试。";
+  if (code === "native-host-disconnected") return "Native Host 在健康检查期间断开。上次诊断结果仍可查看，可以安全重试。";
+  return errorMessage(cause);
+}
+
 function snapshotErrorMessage(cause: unknown): string {
   const code = errorCode(cause);
   if (code === "snapshot-result-too-large") return "快照记录超过单次安全上限，请缩小分页后重试。";
@@ -1234,6 +1287,113 @@ function conflictErrorMessage(cause: unknown): string {
           <span><strong>{{ syncStatus?.initialized ? '增量同步已注册' : syncStatus?.configured ? 'WebDAV 已配置' : '仅本机模式' }}</strong><small>{{ syncStatus?.hasLocalChanges ? '存在待发布修改' : 'checkpoint 已保存' }}</small></span>
           <span><strong>{{ syncStatus?.blockedStreamCount || 0 }} 个受阻 stream</strong><small>{{ syncStatus?.remoteStreamCount || 0 }} 个远端 stream</small></span>
         </div>
+
+        <section
+          v-if="isExisting && vaultOpen"
+          class="mdbx2-diagnostics-panel field-wide"
+          :aria-busy="diagnosticsBusy"
+          aria-labelledby="mdbx2-diagnostics-title"
+        >
+          <div class="mdbx2-diagnostics-header">
+            <div>
+              <strong id="mdbx2-diagnostics-title">保险库诊断</strong>
+              <small>只显示健康类别和聚合数量；本机路径、Vault／Device ID、原始描述与对象标识不会进入管理页。</small>
+            </div>
+            <m3e-button
+              variant="tonal"
+              type="button"
+              aria-label="刷新保险库诊断"
+              :disabled="diagnosticsBusy || managerMutationLocked"
+              @click="loadVaultDiagnostics"
+            ><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ diagnosticsBusy ? '正在检查…' : '刷新诊断' }}</m3e-button>
+          </div>
+
+          <p v-if="diagnosticsError" class="form-error mdbx2-diagnostics-error" role="alert">{{ diagnosticsError }}</p>
+          <div v-if="diagnosticsBusy && !vaultDiagnostics" class="mdbx2-diagnostics-empty" role="status" aria-live="polite">
+            <m3e-icon name="progress_activity" />
+            <span>正在执行只读健康检查…</span>
+          </div>
+
+          <template v-if="vaultDiagnostics && diagnosticHealth">
+            <div class="mdbx2-diagnostics-health" :data-tone="diagnosticHealth.tone" aria-live="polite">
+              <span class="mdbx2-diagnostics-health-icon"><m3e-icon :name="diagnosticHealth.icon" /></span>
+              <div class="mdbx2-diagnostics-health-copy">
+                <strong>{{ diagnosticHealth.headline }}</strong>
+                <small>{{ diagnosticHealth.supporting }}</small>
+                <small class="mdbx2-diagnostics-health-meta">
+                  <time :datetime="new Date(vaultDiagnostics.checkedAtUnixSeconds * 1000).toISOString()">{{ formatMdbx2DiagnosticTime(vaultDiagnostics.checkedAtUnixSeconds) }}</time>
+                  · {{ vaultDiagnostics.formatVersion }} · Schema {{ vaultDiagnostics.schemaVersion }}
+                </small>
+              </div>
+              <span class="mdbx2-diagnostics-severity-summary">{{ summarizeMdbx2HealthCounts(vaultDiagnostics.health) }}</span>
+            </div>
+
+            <dl class="mdbx2-diagnostics-key-facts" aria-label="MDBX2 诊断概览">
+              <div><dt>主文件</dt><dd>{{ formatMdbx2SnapshotBytes(vaultDiagnostics.fileSizeBytes) }}</dd></div>
+              <div><dt>未解决冲突</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.unresolvedConflictCount) }}</dd></div>
+              <div><dt>文件夹</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.folderCount) }}</dd></div>
+              <div><dt>有效条目</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.entryCount) }}</dd></div>
+            </dl>
+
+            <div v-if="vaultDiagnostics.health.categories.length" class="mdbx2-diagnostics-category-list" role="list" aria-label="MDBX2 健康类别">
+              <div
+                v-for="category in vaultDiagnostics.health.categories"
+                :key="category.category"
+                class="mdbx2-diagnostics-category-row"
+                :data-severity="category.highestSeverity"
+                role="listitem"
+              >
+                <span class="mdbx2-diagnostics-category-icon"><m3e-icon :name="mdbx2HealthSeverityIcon(category.highestSeverity)" /></span>
+                <span class="mdbx2-diagnostics-category-copy">
+                  <strong>{{ mdbx2HealthCategoryLabel(category.category) }}</strong>
+                  <small>最高级别：{{ mdbx2HealthSeverityLabel(category.highestSeverity) }}</small>
+                </span>
+                <span class="mdbx2-diagnostics-category-count">{{ formatMdbx2DiagnosticCount(category.count) }} 项</span>
+              </div>
+            </div>
+
+            <details class="mdbx2-diagnostics-details">
+              <summary>
+                <m3e-icon name="monitoring" />
+                <span><strong>查看聚合统计</strong><small>展开数据库、同步历史与附件规模；不会读取条目标题或内容。</small></span>
+                <m3e-icon class="mdbx2-diagnostics-details-chevron" name="expand_more" />
+              </summary>
+              <div class="mdbx2-diagnostics-stat-groups">
+                <section aria-labelledby="mdbx2-diagnostics-data-title">
+                  <h3 id="mdbx2-diagnostics-data-title">数据库规模</h3>
+                  <dl>
+                    <div><dt>有效条目</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.entryCount) }}</dd></div>
+                    <div><dt>已删除条目</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.deletedEntryCount) }}</dd></div>
+                    <div><dt>文件夹（不含根目录）</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.folderCount) }}</dd></div>
+                    <div><dt>目录记录（含系统根）</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.projectCount) }}</dd></div>
+                    <div><dt>已删除目录</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.deletedProjectCount) }}</dd></div>
+                    <div><dt>数据库快照</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.snapshotCount) }}</dd></div>
+                  </dl>
+                </section>
+                <section aria-labelledby="mdbx2-diagnostics-sync-title">
+                  <h3 id="mdbx2-diagnostics-sync-title">同步历史</h3>
+                  <dl>
+                    <div><dt>提交</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.commitCount) }}</dd></div>
+                    <div><dt>分支</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.branchCount) }}</dd></div>
+                    <div><dt>设备</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.deviceCount) }}</dd></div>
+                    <div><dt>删除标记</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.tombstoneCount) }}</dd></div>
+                    <div><dt>未解决冲突</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.unresolvedConflictCount) }}</dd></div>
+                  </dl>
+                </section>
+                <section aria-labelledby="mdbx2-diagnostics-attachment-title">
+                  <h3 id="mdbx2-diagnostics-attachment-title">附件</h3>
+                  <dl>
+                    <div><dt>有效附件</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.attachmentCount) }}</dd></div>
+                    <div><dt>已删除附件</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.deletedAttachmentCount) }}</dd></div>
+                    <div><dt>外置加密附件</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.externalAttachmentCount) }}</dd></div>
+                    <div><dt>原始体积</dt><dd>{{ formatMdbx2SnapshotBytes(vaultDiagnostics.diagnostics.originalAttachmentBytes) }}</dd></div>
+                    <div><dt>加密存储体积</dt><dd>{{ formatMdbx2SnapshotBytes(vaultDiagnostics.diagnostics.storedAttachmentBytes) }}</dd></div>
+                  </dl>
+                </section>
+              </div>
+            </details>
+          </template>
+        </section>
 
         <section v-if="isExisting && vaultOpen" class="mdbx2-collection-panel field-wide" aria-labelledby="mdbx2-collection-title">
           <div class="mdbx2-collection-header">
@@ -1653,6 +1813,56 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-runtime-summary small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-progress { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--app-muted); }
 .mdbx2-progress progress { width: min(220px, 40%); accent-color: var(--app-primary); }
+.mdbx2-diagnostics-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-diagnostics-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.mdbx2-diagnostics-header > div,
+.mdbx2-diagnostics-health-copy,
+.mdbx2-diagnostics-category-copy,
+.mdbx2-diagnostics-details summary > span { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-diagnostics-header small,
+.mdbx2-diagnostics-health-copy small,
+.mdbx2-diagnostics-category-copy small,
+.mdbx2-diagnostics-details small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-diagnostics-header > m3e-button { min-height: 44px; flex: 0 0 auto; }
+.mdbx2-diagnostics-error { margin: 0 16px 12px; }
+.mdbx2-diagnostics-empty { min-height: 64px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
+.mdbx2-diagnostics-empty m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-diagnostics-health { min-height: 80px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
+.mdbx2-diagnostics-health[data-tone="healthy"] { color: var(--md-sys-color-on-tertiary-container, var(--app-text)); background: var(--md-sys-color-tertiary-container, var(--app-surface-high)); }
+.mdbx2-diagnostics-health[data-tone="attention"] { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-diagnostics-health[data-tone="danger"] { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-diagnostics-health[data-tone] .mdbx2-diagnostics-health-copy small { color: inherit; opacity: .82; }
+.mdbx2-diagnostics-health-icon { inline-size: 44px; block-size: 44px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 10%, transparent); }
+.mdbx2-diagnostics-health-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-diagnostics-health-meta { font-variant-numeric: tabular-nums; }
+.mdbx2-diagnostics-severity-summary { max-width: 18rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.mdbx2-diagnostics-key-facts { margin: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mdbx2-diagnostics-key-facts > div { min-width: 0; display: grid; align-content: center; gap: 2px; padding: 12px 16px; }
+.mdbx2-diagnostics-key-facts > div + div { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-key-facts dt { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-diagnostics-key-facts dd { margin: 0; font-size: 1.08rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mdbx2-diagnostics-category-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-category-row { min-height: 56px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px 16px; }
+.mdbx2-diagnostics-category-row + .mdbx2-diagnostics-category-row { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-category-row[data-severity="error"],
+.mdbx2-diagnostics-category-row[data-severity="critical"] { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-diagnostics-category-icon { inline-size: 32px; block-size: 32px; display: grid; place-items: center; }
+.mdbx2-diagnostics-category-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-diagnostics-category-count { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mdbx2-diagnostics-details { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-details summary { min-height: 56px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 8px 16px; cursor: pointer; list-style: none; }
+.mdbx2-diagnostics-details summary::-webkit-details-marker { display: none; }
+.mdbx2-diagnostics-details summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-diagnostics-details summary > m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-diagnostics-details[open] .mdbx2-diagnostics-details-chevron { transform: rotate(180deg); }
+.mdbx2-diagnostics-stat-groups { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-stat-groups > section { padding: 12px 16px; }
+.mdbx2-diagnostics-stat-groups > section + section { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-diagnostics-stat-groups h3 { margin: 0 0 8px; font-size: 1rem; }
+.mdbx2-diagnostics-stat-groups dl { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; }
+.mdbx2-diagnostics-stat-groups dl > div { min-width: 0; display: grid; gap: 2px; padding: 8px 12px; }
+.mdbx2-diagnostics-stat-groups dt { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-diagnostics-stat-groups dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .mdbx2-collection-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .mdbx2-collection-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-collection-header > div:first-child,
@@ -1884,6 +2094,14 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-runtime-summary span + span { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-progress { align-items: stretch; flex-direction: column; }
   .mdbx2-progress progress { width: 100%; }
+  .mdbx2-diagnostics-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-diagnostics-health { grid-template-columns: 44px minmax(0, 1fr); }
+  .mdbx2-diagnostics-severity-summary { grid-column: 2; max-width: none; text-align: left; }
+  .mdbx2-diagnostics-key-facts { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-diagnostics-key-facts > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+  .mdbx2-diagnostics-category-row { grid-template-columns: 32px minmax(0, 1fr); }
+  .mdbx2-diagnostics-category-count { grid-column: 2; white-space: normal; }
+  .mdbx2-diagnostics-stat-groups dl { grid-template-columns: minmax(0, 1fr); }
   .mdbx2-collection-header { align-items: stretch; flex-direction: column; }
   .mdbx2-collection-header-actions { align-items: stretch; flex-direction: column; }
   .mdbx2-collection-tabs { grid-template-columns: minmax(0, 1fr); }

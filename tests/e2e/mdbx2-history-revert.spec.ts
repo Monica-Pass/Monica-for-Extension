@@ -109,6 +109,11 @@ test("MDBX2 history recovery keeps one operation identity and remains usable at 
           }
           if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
+          if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
+            checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
+            health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+            diagnostics: { commitCount: recovered ? 3 : 2, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0, unresolvedConflictCount: 0, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 1, deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0, originalAttachmentBytes: 0, storedAttachmentBytes: 0 }
+          } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: recovered, pendingBootstrap: false, pendingSegment: recovered, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 0 } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };

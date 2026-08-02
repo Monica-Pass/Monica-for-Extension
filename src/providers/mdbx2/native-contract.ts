@@ -11,6 +11,24 @@ export const MDBX2_MAX_OBJECT_PAYLOAD_BYTES = 512 * 1024;
 export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
 export const MDBX2_MAX_COLLECTION_TITLE_BYTES = 4096;
 export const MDBX2_MAX_COLLECTION_RESULT_BYTES = 850 * 1024;
+export const MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES = 14;
+export const MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES = 64 * 1024;
+export const MDBX2_VAULT_DIAGNOSTIC_CATEGORIES = [
+  "integrity",
+  "vault-header-integrity",
+  "incremental-integrity-root",
+  "commit-chain",
+  "commit-integrity",
+  "attachment-chunks",
+  "snapshots",
+  "orphans",
+  "collection-profiles",
+  "tombstones",
+  "tombstone-acknowledgements",
+  "purge-receipts",
+  "stale-heads",
+  "other"
+] as const;
 export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
 export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
@@ -43,6 +61,7 @@ export type Mdbx2NativeMethod =
   | "vault.inspect"
   | "vault.open"
   | "vault.status"
+  | "vault.diagnostics"
   | "vault.lock"
   | "collection.list"
   | "collection.create"
@@ -257,6 +276,7 @@ export interface Mdbx2VaultDiagnosticsSummary {
   snapshotCount: number;
   unresolvedConflictCount: number;
   projectCount: number;
+  folderCount: number;
   deletedProjectCount: number;
   entryCount: number;
   deletedEntryCount: number;
@@ -267,16 +287,40 @@ export interface Mdbx2VaultDiagnosticsSummary {
   storedAttachmentBytes: number;
 }
 
-export interface Mdbx2VaultSessionSummary {
+export type Mdbx2VaultHealthSeverity = "info" | "warning" | "error" | "critical";
+export type Mdbx2VaultHealthCategory = typeof MDBX2_VAULT_DIAGNOSTIC_CATEGORIES[number];
+
+export interface Mdbx2VaultHealthCategorySummary {
+  category: Mdbx2VaultHealthCategory;
+  count: number;
+  highestSeverity: Mdbx2VaultHealthSeverity;
+}
+
+export interface Mdbx2VaultHealthSummary {
+  healthy: boolean;
+  issueCount: number;
+  infoCount: number;
+  warningCount: number;
+  errorCount: number;
+  criticalCount: number;
+  categories: Mdbx2VaultHealthCategorySummary[];
+}
+
+export interface Mdbx2VaultDiagnosticsReport {
+  checkedAtUnixSeconds: number;
+  fileSizeBytes: number;
+  formatVersion: typeof MDBX2_FORMAT_VERSION;
+  schemaVersion: number;
+  health: Mdbx2VaultHealthSummary;
+  diagnostics: Mdbx2VaultDiagnosticsSummary;
+}
+
+export interface Mdbx2VaultSessionSummary extends Mdbx2VaultDiagnosticsReport {
   vaultHandle: string;
   vaultId: string;
   deviceId: string;
-  formatVersion: typeof MDBX2_FORMAT_VERSION;
-  schemaVersion: number;
   migrated: boolean;
   preUpgradeBackupCreated: boolean;
-  health: { healthy: boolean; issueCount: number };
-  diagnostics: Mdbx2VaultDiagnosticsSummary;
 }
 
 export interface Mdbx2VaultRuntimeStatus {
@@ -659,6 +703,9 @@ export interface Mdbx2HostCapabilities {
   maxCollectionTitleBytes: typeof MDBX2_MAX_COLLECTION_TITLE_BYTES;
   maxCollectionResultBytes: typeof MDBX2_MAX_COLLECTION_RESULT_BYTES;
   supportsCollectionMutation: true;
+  maxVaultDiagnosticCategories: typeof MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES;
+  maxVaultDiagnosticsResultBytes: typeof MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES;
+  supportsVaultDiagnostics: true;
   maxObjectBatchMutations: typeof MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
   maxObjectBatchIntentBytes: typeof MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
@@ -755,6 +802,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxCollectionTitleBytes !== MDBX2_MAX_COLLECTION_TITLE_BYTES) throw incompatible("Native Host Collection 标题限制与插件不一致。");
   if (value.maxCollectionResultBytes !== MDBX2_MAX_COLLECTION_RESULT_BYTES) throw incompatible("Native Host Collection 响应限制与插件不一致。");
   if (value.supportsCollectionMutation !== true) throw incompatible("Native Host 未启用 MDBX2 Collection 管理能力。");
+  if (value.maxVaultDiagnosticCategories !== MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES) throw incompatible("Native Host 诊断类别限制与插件不一致。");
+  if (value.maxVaultDiagnosticsResultBytes !== MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES) throw incompatible("Native Host 诊断响应限制与插件不一致。");
+  if (value.supportsVaultDiagnostics !== true) throw incompatible("Native Host 未启用 MDBX2 诊断刷新能力。");
   if (value.maxObjectBatchMutations !== MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw incompatible("Native Host Object 批量数量限制与插件不一致。");
   if (value.maxObjectBatchIntentBytes !== MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw incompatible("Native Host Object 批量大小限制与插件不一致。");
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
@@ -804,6 +854,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxCollectionTitleBytes: MDBX2_MAX_COLLECTION_TITLE_BYTES,
     maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
     supportsCollectionMutation: true,
+    maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+    maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
+    supportsVaultDiagnostics: true,
     maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
     maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,

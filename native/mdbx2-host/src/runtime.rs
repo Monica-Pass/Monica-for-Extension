@@ -4,8 +4,9 @@ use mdbx_ffi::{
     MdbxAttachmentBatchCommand, MdbxAttachmentContentLimits, MdbxAttachmentCreateRequest,
     MdbxAttachmentRecord, MdbxAttachmentSummary, MdbxAttachmentWriteResult, MdbxCommitHistoryItem,
     MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance, MdbxDeviceContext,
-    MdbxManagedSnapshotSummary, MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxSnapshotKind,
-    MdbxSnapshotStructureNode, MdbxVault, MdbxWriteCommand,
+    MdbxHealthIssue, MdbxHealthIssueSeverity, MdbxManagedSnapshotSummary, MdbxMigrationInfo,
+    MdbxObjectDisclosureLimits, MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxVault,
+    MdbxWriteCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -43,6 +44,24 @@ const MAX_OBJECT_TYPE_ID_BYTES: usize = 512;
 const MAX_TITLE_BYTES: usize = 64 * 1024;
 const MAX_COLLECTION_TITLE_BYTES: usize = 4096;
 pub const MAX_COLLECTION_RESULT_BYTES: usize = 850 * 1024;
+pub const MAX_VAULT_DIAGNOSTIC_CATEGORIES: usize = 14;
+pub const MAX_VAULT_DIAGNOSTICS_RESULT_BYTES: usize = 64 * 1024;
+const VAULT_DIAGNOSTIC_CATEGORIES: [&str; MAX_VAULT_DIAGNOSTIC_CATEGORIES] = [
+    "integrity",
+    "vault-header-integrity",
+    "incremental-integrity-root",
+    "commit-chain",
+    "commit-integrity",
+    "attachment-chunks",
+    "snapshots",
+    "orphans",
+    "collection-profiles",
+    "tombstones",
+    "tombstone-acknowledgements",
+    "purge-receipts",
+    "stale-heads",
+    "other",
+];
 pub const MAX_OBJECT_BATCH_MUTATIONS: usize = 50;
 pub const MAX_OBJECT_BATCH_INTENT_BYTES: usize = 384 * 1024;
 const MAX_OBJECT_BATCH_COMMANDS: usize = 256;
@@ -439,6 +458,7 @@ impl HostRuntime {
             "vault.inspect" => self.vault_inspect(params),
             "vault.open" => self.vault_open(params),
             "vault.status" => self.vault_status(params),
+            "vault.diagnostics" => self.vault_diagnostics(params),
             "vault.lock" => self.vault_lock(params),
             "collection.list" => self.collection_list(params),
             "collection.create" => self.collection_create(params),
@@ -552,6 +572,15 @@ impl HostRuntime {
             json!(MAX_COLLECTION_RESULT_BYTES),
         );
         result_object.insert("supportsCollectionMutation".to_string(), json!(true));
+        result_object.insert(
+            "maxVaultDiagnosticCategories".to_string(),
+            json!(MAX_VAULT_DIAGNOSTIC_CATEGORIES),
+        );
+        result_object.insert(
+            "maxVaultDiagnosticsResultBytes".to_string(),
+            json!(MAX_VAULT_DIAGNOSTICS_RESULT_BYTES),
+        );
+        result_object.insert("supportsVaultDiagnostics".to_string(), json!(true));
         result_object.insert(
             "maxHistoryRevertItems".to_string(),
             json!(MAX_HISTORY_REVERT_ITEMS),
@@ -915,55 +944,27 @@ impl HostRuntime {
         };
         let after = inspect_exact_mdbx2(&working_path)?;
         let info = vault.info();
-        let health = vault.health_check().map_err(|_| {
+        let schema_version = after.schema_version.ok_or_else(|| {
             RpcFailure::new(
-                "vault-health-check-failed",
-                "MDBX2 vault health check failed.",
+                "vault-invalid",
+                "Initialized MDBX2 vault did not report a Schema version.",
                 false,
             )
         })?;
-        let diagnostics = vault.diagnostics_summary().map_err(|_| {
-            RpcFailure::new(
-                "vault-diagnostics-failed",
-                "MDBX2 vault diagnostics failed.",
-                false,
-            )
-        })?;
+        let mut result = vault_diagnostics_report(&vault, &working_path, schema_version)?;
         self.vaults.insert(vault_handle.clone(), vault);
         if is_import {
             let _ = fs::remove_file(&source.path);
         }
-
-        Ok(json!({
-            "vaultHandle": vault_handle,
-            "vaultId": info.vault_id,
-            "deviceId": info.device_id,
-            "formatVersion": MDBX_FORMAT_VERSION,
-            "schemaVersion": after.schema_version,
-            "migrated": before.requires_upgrade,
-            "preUpgradeBackupCreated": backup_created,
-            "health": {
-                "healthy": health.healthy,
-                "issueCount": health.issues.len()
-            },
-            "diagnostics": {
-                "commitCount": diagnostics.commit_count,
-                "tombstoneCount": diagnostics.tombstone_count,
-                "branchCount": diagnostics.branch_count,
-                "deviceCount": diagnostics.device_count,
-                "snapshotCount": diagnostics.snapshot_count,
-                "unresolvedConflictCount": diagnostics.unresolved_conflict_count,
-                "projectCount": diagnostics.project_count,
-                "deletedProjectCount": diagnostics.deleted_project_count,
-                "entryCount": diagnostics.entry_count,
-                "deletedEntryCount": diagnostics.deleted_entry_count,
-                "attachmentCount": diagnostics.attachment_count,
-                "deletedAttachmentCount": diagnostics.deleted_attachment_count,
-                "externalAttachmentCount": diagnostics.external_attachment_count,
-                "originalAttachmentBytes": diagnostics.original_attachment_bytes,
-                "storedAttachmentBytes": diagnostics.stored_attachment_bytes
-            }
-        }))
+        let result_object = result
+            .as_object_mut()
+            .ok_or_else(|| RpcFailure::storage("MDBX2 vault diagnostics projection is invalid."))?;
+        result_object.insert("vaultHandle".to_string(), json!(vault_handle));
+        result_object.insert("vaultId".to_string(), json!(info.vault_id));
+        result_object.insert("deviceId".to_string(), json!(info.device_id));
+        result_object.insert("migrated".to_string(), json!(before.requires_upgrade));
+        result_object.insert("preUpgradeBackupCreated".to_string(), json!(backup_created));
+        Ok(result)
     }
 
     fn vault_lock(&mut self, params: Value) -> Result<Value, RpcFailure> {
@@ -993,6 +994,27 @@ impl HostRuntime {
             "open": self.vaults.contains_key(&vault_handle),
             "available": available
         }))
+    }
+
+    fn vault_diagnostics(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "vault.diagnostics params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let working_path = self
+            .root
+            .join("vaults")
+            .join(&vault_handle)
+            .join("vault.mdbx");
+        let inspection = inspect_exact_mdbx2(&working_path)?;
+        let schema_version = inspection.schema_version.ok_or_else(|| {
+            RpcFailure::new(
+                "vault-invalid",
+                "Initialized MDBX2 vault did not report a Schema version.",
+                false,
+            )
+        })?;
+        vault_diagnostics_report(&vault, &working_path, schema_version)
     }
 
     fn collection_list(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -4209,6 +4231,130 @@ fn migration_json(source: &VaultSource, info: &MdbxMigrationInfo) -> Value {
     })
 }
 
+fn vault_diagnostics_report(
+    vault: &Arc<MdbxVault>,
+    working_path: &Path,
+    schema_version: u32,
+) -> Result<Value, RpcFailure> {
+    let health = vault.health_check().map_err(|_| {
+        RpcFailure::new(
+            "vault-health-check-failed",
+            "MDBX2 vault health check failed.",
+            false,
+        )
+    })?;
+    let diagnostics = vault.diagnostics_summary().map_err(|_| {
+        RpcFailure::new(
+            "vault-diagnostics-failed",
+            "MDBX2 vault diagnostics failed.",
+            false,
+        )
+    })?;
+    let file_size_bytes = fs::metadata(working_path)
+        .map_err(|_| RpcFailure::storage("MDBX2 local working copy metadata could not be read."))?
+        .len();
+    let root_collection_id = monica_root_collection_id(vault);
+    let root_collection_count = vault
+        .get_collection_summary(root_collection_id)
+        .map_err(|_| {
+            RpcFailure::new(
+                "vault-diagnostics-failed",
+                "MDBX2 root Collection state could not be inspected.",
+                false,
+            )
+        })?
+        .filter(|summary| !summary.deleted)
+        .map(|_| 1_u64)
+        .unwrap_or(0);
+    let health_projection = vault_health_projection(health.healthy, &health.issues);
+
+    bounded_vault_diagnostics_result(json!({
+        "checkedAtUnixSeconds": unix_seconds()?,
+        "fileSizeBytes": file_size_bytes,
+        "formatVersion": MDBX_FORMAT_VERSION,
+        "schemaVersion": schema_version,
+        "health": health_projection,
+        "diagnostics": {
+            "commitCount": diagnostics.commit_count,
+            "tombstoneCount": diagnostics.tombstone_count,
+            "branchCount": diagnostics.branch_count,
+            "deviceCount": diagnostics.device_count,
+            "snapshotCount": diagnostics.snapshot_count,
+            "unresolvedConflictCount": diagnostics.unresolved_conflict_count,
+            "projectCount": diagnostics.project_count,
+            "folderCount": diagnostics.project_count.saturating_sub(root_collection_count),
+            "deletedProjectCount": diagnostics.deleted_project_count,
+            "entryCount": diagnostics.entry_count,
+            "deletedEntryCount": diagnostics.deleted_entry_count,
+            "attachmentCount": diagnostics.attachment_count,
+            "deletedAttachmentCount": diagnostics.deleted_attachment_count,
+            "externalAttachmentCount": diagnostics.external_attachment_count,
+            "originalAttachmentBytes": diagnostics.original_attachment_bytes,
+            "storedAttachmentBytes": diagnostics.stored_attachment_bytes
+        }
+    }))
+}
+
+fn vault_health_projection(healthy: bool, issues: &[MdbxHealthIssue]) -> Value {
+    let mut severity_counts = [0_u64; 4];
+    let mut categories: HashMap<&'static str, (u64, usize)> = HashMap::new();
+    for issue in issues {
+        let severity_rank = vault_health_severity_rank(&issue.severity);
+        severity_counts[severity_rank] = severity_counts[severity_rank].saturating_add(1);
+        let category = safe_vault_health_category(&issue.category);
+        let entry = categories.entry(category).or_insert((0, severity_rank));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry.1.max(severity_rank);
+    }
+    let category_rows = VAULT_DIAGNOSTIC_CATEGORIES
+        .iter()
+        .filter_map(|category| {
+            categories.get(category).map(|(count, severity_rank)| {
+                json!({
+                    "category": category,
+                    "count": count,
+                    "highestSeverity": vault_health_severity_label(*severity_rank)
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "healthy": healthy,
+        "issueCount": issues.len(),
+        "infoCount": severity_counts[0],
+        "warningCount": severity_counts[1],
+        "errorCount": severity_counts[2],
+        "criticalCount": severity_counts[3],
+        "categories": category_rows
+    })
+}
+
+fn safe_vault_health_category(category: &str) -> &'static str {
+    VAULT_DIAGNOSTIC_CATEGORIES
+        .iter()
+        .copied()
+        .find(|candidate| *candidate != "other" && *candidate == category)
+        .unwrap_or("other")
+}
+
+fn vault_health_severity_rank(severity: &MdbxHealthIssueSeverity) -> usize {
+    match severity {
+        MdbxHealthIssueSeverity::Info => 0,
+        MdbxHealthIssueSeverity::Warning => 1,
+        MdbxHealthIssueSeverity::Error => 2,
+        MdbxHealthIssueSeverity::Critical => 3,
+    }
+}
+
+fn vault_health_severity_label(rank: usize) -> &'static str {
+    match rank {
+        0 => "info",
+        1 => "warning",
+        2 => "error",
+        _ => "critical",
+    }
+}
+
 fn monica_root_collection_id(vault: &Arc<MdbxVault>) -> String {
     java_name_uuid(format!("monica-root:{}", vault.info().vault_id).as_bytes())
 }
@@ -4605,6 +4751,20 @@ fn reject_unknown(params: Map<String, Value>) -> Result<(), RpcFailure> {
             "Native request contains unknown parameters.",
         ))
     }
+}
+
+fn bounded_vault_diagnostics_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 vault diagnostics could not be encoded."))?
+        .len();
+    if size > MAX_VAULT_DIAGNOSTICS_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "vault-diagnostics-result-too-large",
+            "MDBX2 vault diagnostics exceed the Native Messaging safety limit.",
+            false,
+        ));
+    }
+    Ok(value)
 }
 
 fn bounded_collection_result(value: Value) -> Result<Value, RpcFailure> {
@@ -6690,6 +6850,114 @@ mod tests {
             )["open"],
             false
         );
+    }
+
+    #[test]
+    fn vault_diagnostics_refresh_is_bounded_and_identifier_free() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "diagnostics-password");
+        let collection_id = fresh_uuid();
+        call(
+            &mut runtime,
+            "collection.create",
+            json!({
+                "vaultHandle": vault_handle.clone(),
+                "operationId": fresh_uuid(),
+                "collectionId": collection_id,
+                "title": "Personal",
+                "parentCollectionId": null
+            }),
+        );
+        let report = call(
+            &mut runtime,
+            "vault.diagnostics",
+            json!({ "vaultHandle": vault_handle.clone() }),
+        );
+        assert_eq!(report["formatVersion"], MDBX_FORMAT_VERSION);
+        assert!(report["schemaVersion"].as_u64().unwrap() >= 1);
+        assert!(report["checkedAtUnixSeconds"].as_u64().unwrap() > 0);
+        assert!(report["fileSizeBytes"].as_u64().unwrap() > 0);
+        assert_eq!(report["health"]["healthy"], true);
+        assert_eq!(report["health"]["issueCount"], 0);
+        assert!(report["health"]["categories"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(report["diagnostics"]["folderCount"], 1);
+        assert_eq!(report["diagnostics"]["projectCount"], 1);
+        assert!(serde_json::to_vec(&report).unwrap().len() <= MAX_VAULT_DIAGNOSTICS_RESULT_BYTES);
+        for hidden in [
+            "vaultHandle",
+            "vaultId",
+            "deviceId",
+            "filePath",
+            "description",
+            "issues",
+        ] {
+            assert!(report.get(hidden).is_none());
+        }
+        assert!(!serde_json::to_string(&report)
+            .unwrap()
+            .contains(&vault_handle));
+
+        let unexpected = runtime
+            .handle(
+                "vault.diagnostics",
+                json!({ "vaultHandle": vault_handle.clone(), "includeDescriptions": true }),
+            )
+            .unwrap_err();
+        assert_eq!(unexpected.code, "params-invalid");
+        call(
+            &mut runtime,
+            "vault.lock",
+            json!({ "vaultHandle": vault_handle.clone() }),
+        );
+        let locked = runtime
+            .handle("vault.diagnostics", json!({ "vaultHandle": vault_handle }))
+            .unwrap_err();
+        assert_eq!(locked.code, "vault-locked");
+    }
+
+    #[test]
+    fn vault_health_projection_aggregates_safe_categories_without_descriptions() {
+        let issues = vec![
+            MdbxHealthIssue {
+                severity: MdbxHealthIssueSeverity::Warning,
+                category: "attachment-chunks".to_string(),
+                description: "sensitive attachment id 11111111-1111-4111-8111-111111111111"
+                    .to_string(),
+            },
+            MdbxHealthIssue {
+                severity: MdbxHealthIssueSeverity::Critical,
+                category: "attachment-chunks".to_string(),
+                description: "sensitive local path C:\\private\\vault.mdbx".to_string(),
+            },
+            MdbxHealthIssue {
+                severity: MdbxHealthIssueSeverity::Info,
+                category: "future-category-with-user-data".to_string(),
+                description: "secret@example.test".to_string(),
+            },
+        ];
+        let projection = vault_health_projection(false, &issues);
+        assert_eq!(projection["issueCount"], 3);
+        assert_eq!(projection["infoCount"], 1);
+        assert_eq!(projection["warningCount"], 1);
+        assert_eq!(projection["errorCount"], 0);
+        assert_eq!(projection["criticalCount"], 1);
+        assert_eq!(projection["categories"].as_array().unwrap().len(), 2);
+        assert_eq!(projection["categories"][0]["category"], "attachment-chunks");
+        assert_eq!(projection["categories"][0]["count"], 2);
+        assert_eq!(projection["categories"][0]["highestSeverity"], "critical");
+        assert_eq!(projection["categories"][1]["category"], "other");
+        let encoded = serde_json::to_string(&projection).unwrap();
+        for hidden in [
+            "11111111",
+            "C:\\private",
+            "secret@example.test",
+            "future-category",
+        ] {
+            assert!(!encoded.contains(hidden));
+        }
     }
 
     #[test]

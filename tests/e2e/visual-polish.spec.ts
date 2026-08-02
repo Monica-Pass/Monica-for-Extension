@@ -99,6 +99,11 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
           }
           if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
+          if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
+            checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
+            health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+            diagnostics: { commitCount: 1, tombstoneCount: 0, branchCount: 1, deviceCount: 2, snapshotCount: 0, unresolvedConflictCount: conflictResolved ? 0 : 1, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 1, deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0, originalAttachmentBytes: 0, storedAttachmentBytes: 0 }
+          } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: conflictResolved, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 3 } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: conflictResolved ? [] : [{ conflictId: "22222222-2222-4222-8222-222222222222", objectType: "entry", objectId: "33333333-3333-4333-8333-333333333333", displayTitle: "工作账号", contentType: "login", conflictingFields: ["title_ct", "payload", "project_id"], createdAt: "2026-08-02T00:00:00Z" }] } };
           if (message.type === "MDBX2_CONFLICT_RESOLVE") {
@@ -174,6 +179,11 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
           }
           if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
+          if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
+            checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
+            health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+            diagnostics: { commitCount: 1, tombstoneCount: 0, branchCount: 1, deviceCount: 2, snapshotCount: snapshots.length, unresolvedConflictCount: 0, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 0, deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0, originalAttachmentBytes: 0, storedAttachmentBytes: 0 }
+          } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: false, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 3 } };
           if (message.type === "MDBX2_CONFLICT_LIST") return { ok: true, data: { items: [] } };
           if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };

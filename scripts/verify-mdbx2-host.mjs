@@ -51,6 +51,9 @@ for (const required of ['"history.list"', '"history.diff"', '"history.revert"', 
 for (const required of ['"collection.list"', '"collection.create"', '"collection.rename"', '"collection.move"', '"collection.delete"', '"collection.restore"', 'MAX_COLLECTION_TITLE_BYTES', 'MAX_COLLECTION_RESULT_BYTES', '"supportsCollectionMutation".to_string()']) {
   if (!runtime.includes(required)) throw new Error(`MDBX2 Host Collection boundary is missing ${required}.`);
 }
+for (const required of ['"vault.diagnostics"', 'MAX_VAULT_DIAGNOSTIC_CATEGORIES', 'MAX_VAULT_DIAGNOSTICS_RESULT_BYTES', '"supportsVaultDiagnostics".to_string()', 'vault_health_projection']) {
+  if (!runtime.includes(required)) throw new Error(`MDBX2 Host diagnostics boundary is missing ${required}.`);
+}
 for (const required of ['"snapshot.prune.plan"', '"snapshot.prune.execute"', 'MAX_SNAPSHOT_PRUNE_CANDIDATES', 'MAX_SNAPSHOT_PRUNE_KEEP_LATEST', '"supportsSnapshotPrune".to_string()']) {
   if (!runtime.includes(required)) throw new Error(`MDBX2 Host snapshot prune boundary is missing ${required}.`);
 }
@@ -66,6 +69,9 @@ for (const required of ["MDBX2_MAX_HISTORY_PAGE_SIZE", "MDBX2_MAX_HISTORY_RESULT
 for (const required of ["MDBX2_MAX_COLLECTION_TITLE_BYTES", "MDBX2_MAX_COLLECTION_RESULT_BYTES", "supportsCollectionMutation: true", '"collection.create"', '"collection.restore"']) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension Collection contract is missing ${required}.`);
 }
+for (const required of ["MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES", "MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES", "supportsVaultDiagnostics: true", '"vault.diagnostics"', "Mdbx2VaultDiagnosticsReport"]) {
+  if (!contract.includes(required)) throw new Error(`MDBX2 extension diagnostics contract is missing ${required}.`);
+}
 for (const required of ["MDBX2_MAX_SNAPSHOT_PRUNE_CANDIDATES", "MDBX2_MAX_SNAPSHOT_PRUNE_KEEP_LATEST", "supportsSnapshotPrune: true", '"snapshot.prune.plan"', '"snapshot.prune.execute"']) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension snapshot prune contract is missing ${required}.`);
 }
@@ -76,4 +82,4 @@ for (const required of ["MDBX2_MAX_ATTACHMENT_BYTES", "MDBX2_MAX_ATTACHMENT_MEMO
   if (!contract.includes(required)) throw new Error(`MDBX2 extension attachment contract is missing ${required}.`);
 }
 
-console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, Collection, history read/revert, snapshot prune, conflict and attachment boundaries, and manifest template.`);
+console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, Collection, diagnostics, history read/revert, snapshot prune, conflict and attachment boundaries, and manifest template.`);

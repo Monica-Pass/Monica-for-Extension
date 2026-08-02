@@ -30,6 +30,8 @@ import {
   MDBX2_MAX_SNAPSHOT_STRUCTURE_NODES,
   MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
+  MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+  MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
@@ -88,6 +90,9 @@ const HELLO = {
   maxCollectionTitleBytes: MDBX2_MAX_COLLECTION_TITLE_BYTES,
   maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
   supportsCollectionMutation: true,
+  maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+  maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
+  supportsVaultDiagnostics: true,
   maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
@@ -124,6 +129,22 @@ const HELLO = {
   enabledSyncCapabilityIds: ["authenticated-state-delta-v8"]
 } as const;
 
+const DIAGNOSTIC_COUNTS = {
+  commitCount: 0, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0,
+  unresolvedConflictCount: 0, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 0,
+  deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0,
+  originalAttachmentBytes: 0, storedAttachmentBytes: 0
+} as const;
+
+const DIAGNOSTIC_REPORT = {
+  checkedAtUnixSeconds: 1785648000,
+  fileSizeBytes: 4096,
+  formatVersion: MDBX2_FORMAT_VERSION,
+  schemaVersion: 17,
+  health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+  diagnostics: DIAGNOSTIC_COUNTS
+} as const;
+
 afterEach(() => vi.useRealTimers());
 
 describe("MDBX2 Native Messaging client", () => {
@@ -156,6 +177,7 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsHistoryRevert: false })).toThrow("历史恢复能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsSnapshotPrune: false })).toThrow("自动快照清理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsCollectionMutation: false })).toThrow("Collection 管理能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultDiagnostics: false })).toThrow("诊断刷新能力");
   });
 
   it("preserves stable Host error codes and retryability", async () => {
@@ -283,12 +305,6 @@ describe("MDBX2 Native Messaging client", () => {
     let requestNumber = 0;
     runtime.port.onPost = (message) => {
       const request = message as { requestId: string; method: string };
-      const diagnostics = {
-        commitCount: 0, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0,
-        unresolvedConflictCount: 0, projectCount: 0, deletedProjectCount: 0, entryCount: 0,
-        deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0,
-        originalAttachmentBytes: 0, storedAttachmentBytes: 0
-      };
       const result: Record<string, unknown> = {
         "transfer.begin": { transferId: handle, nextOffset: 0, maxChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES },
         "transfer.chunk": { nextOffset: 3, acceptedBytes: 3, repeated: false },
@@ -299,10 +315,11 @@ describe("MDBX2 Native Messaging client", () => {
           unknownCriticalExtensions: false, targetFormatVersion: MDBX2_FORMAT_VERSION, targetSchemaVersion: 17
         },
         "vault.open": {
-          vaultHandle: handle, vaultId: handle, deviceId: handle, formatVersion: MDBX2_FORMAT_VERSION, schemaVersion: 17,
-          migrated: false, preUpgradeBackupCreated: false, health: { healthy: true, issueCount: 0 }, diagnostics
+          vaultHandle: handle, vaultId: handle, deviceId: handle,
+          migrated: false, preUpgradeBackupCreated: false, ...DIAGNOSTIC_REPORT
         },
         "vault.status": { vaultHandle: handle, open: true, available: true },
+        "vault.diagnostics": DIAGNOSTIC_REPORT,
         "vault.lock": { locked: true },
         "collection.list": { items: [{ collectionId: handle, title: ".monica-root", collectionTypeId: null, profileSchemaVersion: null, groupId: null, iconRef: null, favorite: false, archived: false, attachmentCount: 0, headCommitId: "commit-1", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
         "object.list": { items: [{ objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadSchemaVersion: 1, headCommitId: "commit-2", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
@@ -437,6 +454,7 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.inspectVault({ kind: "file", handle })).resolves.toMatchObject({ formatVersion: "MDBX-2", schemaVersion: 17 });
     await expect(client.openVault({ kind: "file", handle }, { method: "password", password: "" })).resolves.toMatchObject({ vaultHandle: handle, health: { healthy: true } });
     await expect(client.vaultStatus(handle)).resolves.toEqual({ vaultHandle: handle, open: true, available: true });
+    await expect(client.vaultDiagnostics(handle)).resolves.toMatchObject({ fileSizeBytes: 4096, health: { issueCount: 0 }, diagnostics: { folderCount: 0 } });
     await expect(client.listCollections(handle)).resolves.toMatchObject({ items: [{ collectionId: handle, title: ".monica-root" }] });
     await expect(client.listObjects(handle, handle)).resolves.toMatchObject({ items: [{ objectId: handle, objectTypeId: "login" }] });
     await expect(client.revealObject(handle, handle)).resolves.toMatchObject({ payloadSchemaVersion: 1, payloadJson: expect.stringContaining("password:1") });
@@ -475,6 +493,54 @@ describe("MDBX2 Native Messaging client", () => {
       credential: { method: "password", password: "" }
     });
     client.close();
+  });
+
+  it("rejects oversized disclosed or internally inconsistent vault diagnostics", async () => {
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const invalidReports: unknown[] = [
+      { ...DIAGNOSTIC_REPORT, filePath: "C:\\private\\vault.mdbx" },
+      {
+        ...DIAGNOSTIC_REPORT,
+        health: {
+          healthy: true, issueCount: 1, infoCount: 1, warningCount: 0, errorCount: 0, criticalCount: 0,
+          categories: [{ category: "future-user-category", count: 1, highestSeverity: "info" }]
+        }
+      },
+      {
+        ...DIAGNOSTIC_REPORT,
+        health: {
+          healthy: true, issueCount: 1, infoCount: 0, warningCount: 1, errorCount: 0, criticalCount: 0,
+          categories: []
+        }
+      },
+      {
+        ...DIAGNOSTIC_REPORT,
+        health: {
+          healthy: false, issueCount: 1, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 1,
+          categories: [{ category: "integrity", count: 1, highestSeverity: "warning" }]
+        }
+      },
+      { ...DIAGNOSTIC_REPORT, fileSizeBytes: Number.MAX_SAFE_INTEGER + 1 },
+      { ...DIAGNOSTIC_REPORT, checkedAtUnixSeconds: 8_640_000_001 },
+      { ...DIAGNOSTIC_REPORT, padding: "x".repeat(MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES) }
+    ];
+
+    for (const [index, result] of invalidReports.entries()) {
+      const runtime = new FakeRuntime();
+      runtime.port.onPost = (message) => {
+        const request = message as { requestId: string; method: string };
+        expect(request.method).toBe("vault.diagnostics");
+        runtime.port.onMessage.emit({
+          protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          result
+        } as never);
+      };
+      const client = new Mdbx2NativeClient(runtime, () => `diagnostics-invalid-${index}`);
+      await expect(client.vaultDiagnostics(vaultHandle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+      client.close();
+    }
   });
 
   it("validates durable sync files, streams, segments and Blob RPC responses", async () => {

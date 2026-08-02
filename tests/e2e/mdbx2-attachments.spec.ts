@@ -167,6 +167,11 @@ async function installAttachmentManagerMock(page: Page): Promise<void> {
         }
         if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪" } };
         if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "55555555-5555-4555-8555-555555555555", open: true, available: true } };
+        if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
+          checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
+          health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+          diagnostics: { commitCount: 1, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0, unresolvedConflictCount: 0, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 1, deletedEntryCount: 0, attachmentCount: attachments.length, deletedAttachmentCount: 0, externalAttachmentCount: attachments.length, originalAttachmentBytes: 5, storedAttachmentBytes: 5 }
+        } };
         if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: false, pendingBootstrap: false, pendingSegment: false, pendingRemoteAcknowledgement: false, remoteStreamCount: 1, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: attachments.length } };
         if (message.type === "MDBX2_COLLECTION_LIST") return { ok: true, data: { items: [] } };
         if (message.type === "PROVIDER_ATTACHMENT_LIST") return { ok: true, data: { items: attachments.map((attachment) => ({ ...attachment })) } };
