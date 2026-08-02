@@ -13,6 +13,7 @@ import {
 
 const EMAIL = "alice@example.com";
 const PASSWORD = "correct horse battery staple";
+const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 
 describe("Bitwarden cryptography", () => {
   it("matches independent Python PBKDF2 and master-password-hash vectors", async () => {
@@ -70,12 +71,12 @@ describe("Bitwarden cryptography", () => {
       const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pair.publicKey, plaintext));
       await expect(decryptBitwardenRsaBytes(`${type}.${bytesToBase64(encrypted)}`, privateKey)).resolves.toEqual(plaintext);
     }
-  });
+  }, RSA_FIXTURE_TIMEOUT_MS);
 
   it("rejects malformed or unsupported RSA CipherStrings", async () => {
     const pair = await crypto.subtle.generateKey({ name: "RSA-OAEP", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: "SHA-256" }, true, ["encrypt", "decrypt"]);
     const privateKey = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
     await expect(decryptBitwardenRsaBytes("2.invalid", privateKey)).rejects.toThrow("RSA");
     await expect(decryptBitwardenRsaBytes("3.AA==", privateKey)).rejects.toThrow("RSA");
-  });
+  }, RSA_FIXTURE_TIMEOUT_MS);
 });

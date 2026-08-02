@@ -7,6 +7,7 @@ const USER_KEY: BitwardenSymmetricKey = {
   encKey: Uint8Array.from({ length: 32 }, (_, index) => index),
   macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32)
 };
+const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 
 describe("Bitwarden organization keys", () => {
   it("unwraps valid organization keys and isolates malformed organizations", async () => {
@@ -29,7 +30,7 @@ describe("Bitwarden organization keys", () => {
     expect(result.keys.has("org-invalid")).toBe(false);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("org-invalid");
-  });
+  }, RSA_FIXTURE_TIMEOUT_MS);
 
   it("reports a missing private key only when organizations need it", async () => {
     await expect(resolveBitwardenOrganizationKeys({ Profile: { Organizations: [] } }, USER_KEY)).resolves.toEqual({ keys: new Map(), warnings: [] });

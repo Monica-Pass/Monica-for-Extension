@@ -7,6 +7,7 @@ import { BitwardenProvider } from "./bitwarden-provider";
 const KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32) };
 const ORGANIZATION_KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 64), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 96) };
 const OLD_REVISION = "2026-07-15T03:00:00.000Z";
+const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 
 describe("Bitwarden provider", () => {
   it("imports and updates a personal login Cipher", async () => {
@@ -60,7 +61,7 @@ describe("Bitwarden provider", () => {
     expect(result.conflicts).toEqual([]);
     expect(result.items[0]).toMatchObject({ password: "updated-shared-secret" });
     expect(putCount).toBe(1);
-  });
+  }, RSA_FIXTURE_TIMEOUT_MS);
 
   it("retains cached organization items when the organization key is unavailable", async () => {
     const remote = await organizationLoginCipher("remote-secret", OLD_REVISION);
