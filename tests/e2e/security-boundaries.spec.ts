@@ -136,6 +136,12 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId: "keepass-provider", itemId: "item-1", transferId: "11111111-1111-4111-8111-111111111111" },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId: "keepass-provider", transferId: "11111111-1111-4111-8111-111111111111" },
       { type: "PROVIDER_ATTACHMENT_DELETE", providerId: "keepass-provider", itemId: "item-1", attachmentId: "11111111-1111-4111-8111-111111111111", confirmed: true },
+      { type: "KEEPASS_GROUP_LIST", providerId: "keepass-provider", includeRecycleBin: true, pageSize: 50 },
+      { type: "KEEPASS_GROUP_CREATE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "Work" },
+      { type: "KEEPASS_GROUP_RENAME", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222", name: "Archive" },
+      { type: "KEEPASS_GROUP_MOVE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222" },
+      { type: "KEEPASS_GROUP_DELETE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222", confirmed: true },
+      { type: "KEEPASS_GROUP_RESTORE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222" },
       { type: "KEEPASS_EXPORT_FILE", providerId: "keepass-provider" }
     ];
     for (const request of attachmentRequests) {

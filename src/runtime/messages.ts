@@ -2,6 +2,7 @@ import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictReso
 import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult } from "../providers/attachments/attachment-contract";
 import type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture } from "../providers/mdbx2/native-contract";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
+import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
 import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
@@ -304,6 +305,12 @@ export type ExtensionRequest =
   | { type: "PROVIDER_ATTACHMENT_DELETE"; providerId: string; itemId: string; attachmentId: string; confirmed: boolean }
   | { type: "KEEPASS_OPEN"; input: KeePassOpenInput }
   | { type: "KEEPASS_STATUS"; providerId: string }
+  | { type: "KEEPASS_GROUP_LIST"; providerId: string; includeRecycleBin?: boolean; pageSize?: number; cursor?: string }
+  | { type: "KEEPASS_GROUP_CREATE"; providerId: string; operationId: string; name: string; parentGroupId?: string }
+  | { type: "KEEPASS_GROUP_RENAME"; providerId: string; operationId: string; groupId: string; name: string }
+  | { type: "KEEPASS_GROUP_MOVE"; providerId: string; operationId: string; groupId: string; targetParentGroupId?: string }
+  | { type: "KEEPASS_GROUP_DELETE"; providerId: string; operationId: string; groupId: string; confirmed: boolean }
+  | { type: "KEEPASS_GROUP_RESTORE"; providerId: string; operationId: string; groupId: string; targetParentGroupId?: string }
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
   | { type: "KEEPASS_LOCK"; providerId?: string }
   | { type: "PROVIDER_SYNC"; providerId: string }
@@ -318,4 +325,5 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
 export type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult };
 export type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, KeePassSessionSummary };
+export type { KeePassGroupMutationResult, KeePassGroupPage };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

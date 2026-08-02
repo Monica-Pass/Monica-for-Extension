@@ -13,6 +13,7 @@ import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
 import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
+import { KeePassGroupError } from "../providers/keepass/keepass-groups";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
@@ -168,7 +169,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -948,6 +949,37 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "KEEPASS_STATUS":
       assertManagerPage(sender);
       return keePassProvider.isUnlocked(request.providerId) ? keePassProvider.summarize(request.providerId) : undefined;
+    case "KEEPASS_GROUP_LIST": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.listGroups(account, request);
+    }
+    case "KEEPASS_GROUP_CREATE": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.createGroup(account, request.operationId, request.name, request.parentGroupId);
+    }
+    case "KEEPASS_GROUP_RENAME": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.renameGroup(account, request.operationId, request.groupId, request.name);
+    }
+    case "KEEPASS_GROUP_MOVE": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.moveGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+    }
+    case "KEEPASS_GROUP_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new KeePassGroupError("keepass-group-delete-confirmation-required", "删除 KeePass 分组需要明确确认。");
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.deleteGroup(account, request.operationId, request.groupId);
+    }
+    case "KEEPASS_GROUP_RESTORE": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccount(request.providerId);
+      return keePassProvider.restoreGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+    }
     case "KEEPASS_EXPORT_FILE": {
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
@@ -1908,6 +1940,14 @@ function pruneProviderAttachmentReads(): void {
 
 function unsupportedAttachmentProvider(kind: ProviderAccount["kind"]): ProviderAttachmentError {
   return new ProviderAttachmentError("attachment-provider-unsupported", `${kind} 附件操作尚未接入此共享传输接口。`);
+}
+
+async function requireKeePassAccount(providerId: string): Promise<ProviderAccount> {
+  const account = await service.getProvider(providerId);
+  if (!account || account.kind !== "keepass") {
+    throw new KeePassGroupError("keepass-group-provider-not-found", "KeePass 密码源不存在。");
+  }
+  return account;
 }
 
 async function requireMdbx2VaultHandle(providerId: string): Promise<string> {

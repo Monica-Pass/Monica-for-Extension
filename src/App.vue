@@ -8,6 +8,7 @@ import "@m3e/web/icon-button";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
+import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
@@ -97,6 +98,7 @@ const keePassFileInput = ref<HTMLInputElement | null>(null);
 const keePassKeyFileInput = ref<HTMLInputElement | null>(null);
 const revealKeePassPassword = ref(false);
 const keePassSessions = ref<Record<string, KeePassSessionSummary>>({});
+const keePassGroupsProvider = ref<ProviderAccount | undefined>();
 const mdbx2DialogOpen = ref(false);
 const mdbx2DialogMode = ref<"local" | "remote">("local");
 const editingMdbx2Id = ref<string | undefined>();
@@ -174,7 +176,7 @@ const keePassProtectionPreview = computed(() => {
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || exportBackupDialogOpen.value || attachmentDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -212,6 +214,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault();
     if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (keePassGroupsProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (exportBackupDialogOpen.value) closeExportBackupDialog();
     else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassDialogOpen.value) closeKeePassDialog();
@@ -314,6 +317,7 @@ async function lockVault() {
   mdbx2DialogOpen.value = false;
   editingMdbx2Id.value = undefined;
   closeAttachmentDialog();
+  closeKeePassGroups();
   closeKeePassDialog();
   keePassSessions.value = {};
   mdbx2RuntimeStatuses.value = {};
@@ -832,6 +836,7 @@ async function removeProvider(provider: ProviderAccount) {
     if (editingWebDavId.value === provider.id) closeWebDavDialog();
     if (editingBitwardenId.value === provider.id) closeBitwardenDialog();
     if (editingKeePassId.value === provider.id) closeKeePassDialog();
+    if (keePassGroupsProvider.value?.id === provider.id) closeKeePassGroups();
     if (editingMdbx2Id.value === provider.id) closeMdbx2Dialog();
     if (provider.kind === "keepass") {
       const next = { ...keePassSessions.value };
@@ -890,6 +895,19 @@ function closeKeePassDialog() {
   keePassError.value = "";
   if (keePassFileInput.value) keePassFileInput.value.value = "";
   if (keePassKeyFileInput.value) keePassKeyFileInput.value.value = "";
+}
+
+function openKeePassGroups(provider: ProviderAccount) {
+  if (!keePassSessionFor(provider.id)) return;
+  keePassGroupsProvider.value = provider;
+}
+
+function closeKeePassGroups() {
+  keePassGroupsProvider.value = undefined;
+}
+
+async function handleKeePassGroupsChanged() {
+  await Promise.all([refreshKeePassSessions(), refreshItems()]);
 }
 
 function selectKeePassDatabase(event: Event) {
@@ -1449,7 +1467,7 @@ function errorMessage(error: unknown) {
               <div v-if="keePassSessionFor(provider.id)?.dirty" class="provider-dirty-warning" role="status"><m3e-icon name="save"></m3e-icon><div><strong>有尚未导出的 KDBX 修改</strong><p>修改只在内存中。请立即导出并手动覆盖原文件；锁库、关闭浏览器或后台重启都会丢失未导出的文件改动。</p></div></div>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 KDBX 版本' : '接受文件删除' }}</m3e-button></div></div>
               <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>浏览器不能直接覆盖原文件，也不能直接连接 OneDrive 或 Google Drive。Twofish KDBX 请先在 Monica Android 或 KeePassXC 中转换为 AES-256。</span></p>
-              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="!keePassSessionFor(provider.id) || Boolean(keePassBusy) || Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" :variant="keePassSessionFor(provider.id)?.dirty ? 'filled' : 'text'" :disabled="Boolean(keePassBusy)" @click="exportKeePass(provider)"><m3e-icon slot="icon" name="download"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'export' ? '导出中…' : '导出 KDBX' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" variant="text" :disabled="Boolean(keePassBusy)" @click="lockKeePass(provider)"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'lock' ? '锁定中…' : '锁定' }}</m3e-button><m3e-icon-button aria-label="重新选择并解锁 KeePass" @click="openKeePassDialog(provider)"><m3e-icon name="folder_open"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 KeePass" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
+              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="!keePassSessionFor(provider.id) || Boolean(keePassBusy) || Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" variant="tonal" :disabled="Boolean(keePassBusy)" @click="openKeePassGroups(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理分组</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" :variant="keePassSessionFor(provider.id)?.dirty ? 'filled' : 'text'" :disabled="Boolean(keePassBusy)" @click="exportKeePass(provider)"><m3e-icon slot="icon" name="download"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'export' ? '导出中…' : '导出 KDBX' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" variant="text" :disabled="Boolean(keePassBusy)" @click="lockKeePass(provider)"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'lock' ? '锁定中…' : '锁定' }}</m3e-button><m3e-icon-button aria-label="重新选择并解锁 KeePass" @click="openKeePassDialog(provider)"><m3e-icon name="folder_open"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 KeePass" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
             </div></m3e-card>
             <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
               <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
@@ -1514,6 +1532,15 @@ function errorMessage(error: unknown) {
       :item="attachmentDialogItem"
       :providers="attachmentDialogProviders"
       @close="closeAttachmentDialog"
+      @notice="showNotice"
+    />
+
+    <KeePassGroupsDialog
+      v-if="keePassGroupsProvider"
+      :key="keePassGroupsProvider.id"
+      :provider="keePassGroupsProvider"
+      @close="closeKeePassGroups"
+      @changed="handleKeePassGroupsChanged"
       @notice="showNotice"
     />
 

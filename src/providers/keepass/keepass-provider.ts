@@ -10,6 +10,22 @@ import {
 } from "../attachments/attachment-contract";
 import { keePassSourceRecordFor, openKeePassVault, readKeePassEntries, type KeePassSkippedEntry, type KeePassVaultEntries } from "./keepass-vault";
 import { createKeePassEntry, removeKeePassEntry, writeKeePassEntry } from "./keepass-writer";
+import {
+  KEEPASS_GROUP_MAX_PAGE_SIZE,
+  KeePassGroupError,
+  createKeePassGroup,
+  deleteKeePassGroup,
+  listKeePassGroupRecords,
+  moveKeePassGroup,
+  renameKeePassGroup,
+  requireKeePassGroup,
+  restoreKeePassGroup,
+  truncateKeePassGroupText,
+  type KeePassGroupMutationResult,
+  type KeePassGroupPage,
+  type KeePassGroupRecord,
+  type KeePassGroupSummary
+} from "./keepass-groups";
 
 /**
  * What the settings UI is allowed to see. The open `Kdbx`, the master credential and the entry fields
@@ -34,6 +50,7 @@ interface KeePassSession {
   entries: KeePassVaultEntries;
   summary: Omit<KeePassSessionSummary, "itemCount" | "skipped" | "dirty">;
   dirty: boolean;
+  groupRevision: number;
 }
 
 export interface KeePassUnlockCredential {
@@ -56,6 +73,24 @@ interface KeePassAttachmentHandle {
   fileName: string;
 }
 
+interface KeePassGroupHandle {
+  providerId: string;
+  groupUuid: string;
+}
+
+interface KeePassGroupCursor {
+  providerId: string;
+  includeRecycleBin: boolean;
+  offset: number;
+  revision: number;
+}
+
+interface KeePassGroupOperationReceipt {
+  providerId: string;
+  intent: string;
+  result: KeePassGroupMutationResult;
+}
+
 /**
  * One adapter instance serves every `.kdbx` file, because `ProviderRegistry` keys adapters by
  * `ProviderKind` (`provider.ts:31`). Files are multiplexed on `account.id`.
@@ -70,6 +105,10 @@ export class KeePassProvider implements ProviderAdapter {
   private readonly sessions = new Map<string, KeePassSession>();
   private readonly attachmentHandles = new Map<string, KeePassAttachmentHandle>();
   private readonly attachmentHandleByKey = new Map<string, string>();
+  private readonly groupHandles = new Map<string, KeePassGroupHandle>();
+  private readonly groupHandleByKey = new Map<string, string>();
+  private readonly groupCursors = new Map<string, KeePassGroupCursor>();
+  private readonly groupOperationReceipts = new Map<string, KeePassGroupOperationReceipt>();
 
   async unlock(
     account: ProviderAccount,
@@ -96,7 +135,8 @@ export class KeePassProvider implements ProviderAdapter {
         cipherName: snapshot.cipherName,
         warnings: snapshot.warnings
       },
-      dirty: false
+      dirty: false,
+      groupRevision: 0
     });
     return this.summarize(account.id);
   }
@@ -124,6 +164,81 @@ export class KeePassProvider implements ProviderAdapter {
     const bytes = new Uint8Array(await session.database.save());
     session.dirty = false;
     return bytes;
+  }
+
+  listGroups(
+    account: ProviderAccount,
+    request: { includeRecycleBin?: boolean; cursor?: string; pageSize?: number } = {}
+  ): KeePassGroupPage {
+    const session = this.requireKeePassAccountSession(account);
+    const pageSize = request.pageSize ?? KEEPASS_GROUP_MAX_PAGE_SIZE;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > KEEPASS_GROUP_MAX_PAGE_SIZE) {
+      throw new KeePassGroupError("keepass-group-page-size-invalid", `KeePass 分组分页数量必须介于 1 和 ${KEEPASS_GROUP_MAX_PAGE_SIZE} 之间。`);
+    }
+    const includeRecycleBin = request.includeRecycleBin === true;
+    let offset = 0;
+    if (request.cursor) {
+      const cursor = this.groupCursors.get(request.cursor);
+      if (!cursor || cursor.providerId !== account.id || cursor.includeRecycleBin !== includeRecycleBin) {
+        throw new KeePassGroupError("keepass-group-cursor-invalid", "KeePass 分组分页标识已失效，请刷新列表。");
+      }
+      if (cursor.revision !== session.groupRevision) {
+        throw new KeePassGroupError("keepass-group-cursor-stale", "KeePass 分组已经发生变化，请从第一页重新加载。");
+      }
+      offset = cursor.offset;
+    }
+
+    const records = listKeePassGroupRecords(session.database, includeRecycleBin);
+    const items = records.slice(offset, offset + pageSize).map((record) => this.groupSummary(account.id, session, record));
+    const nextOffset = offset + items.length;
+    const nextCursor = nextOffset < records.length
+      ? this.createGroupCursor({ providerId: account.id, includeRecycleBin, offset: nextOffset, revision: session.groupRevision })
+      : undefined;
+    const rootName = truncateKeePassGroupText(session.database.getDefaultGroup().name?.trim() || "KeePass", 128).value;
+    return { items, nextCursor, rootName, recycleBinEnabled: session.database.meta.recycleBinEnabled !== false };
+  }
+
+  createGroup(account: ProviderAccount, operationId: string, name: unknown, parentGroupId?: string): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const parentUuid = parentGroupId ? this.requireGroupHandle(account.id, parentGroupId).groupUuid : undefined;
+    const intent = groupIntent("create", parentUuid ?? "root", name);
+    return this.runGroupMutation(account.id, session, operationId, intent, () => createKeePassGroup(session.database, parentUuid, name));
+  }
+
+  renameGroup(account: ProviderAccount, operationId: string, groupId: string, name: unknown): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const groupUuid = this.requireGroupHandle(account.id, groupId).groupUuid;
+    const intent = groupIntent("rename", groupUuid, name);
+    return this.runGroupMutation(account.id, session, operationId, intent, () => renameKeePassGroup(session.database, groupUuid, name));
+  }
+
+  moveGroup(account: ProviderAccount, operationId: string, groupId: string, targetParentGroupId?: string): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const groupUuid = this.requireGroupHandle(account.id, groupId).groupUuid;
+    const targetParentUuid = targetParentGroupId ? this.requireGroupHandle(account.id, targetParentGroupId).groupUuid : undefined;
+    const intent = groupIntent("move", groupUuid, targetParentUuid ?? "root");
+    return this.runGroupMutation(account.id, session, operationId, intent, () => moveKeePassGroup(session.database, groupUuid, targetParentUuid));
+  }
+
+  deleteGroup(account: ProviderAccount, operationId: string, groupId: string): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const groupUuid = this.requireGroupHandle(account.id, groupId).groupUuid;
+    const intent = groupIntent("delete", groupUuid);
+    return this.runGroupMutation(account.id, session, operationId, intent, () => ({
+      group: deleteKeePassGroup(session.database, groupUuid),
+      changed: true
+    }));
+  }
+
+  restoreGroup(account: ProviderAccount, operationId: string, groupId: string, targetParentGroupId?: string): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const groupUuid = this.requireGroupHandle(account.id, groupId).groupUuid;
+    const targetParentUuid = targetParentGroupId ? this.requireGroupHandle(account.id, targetParentGroupId).groupUuid : undefined;
+    const intent = groupIntent("restore", groupUuid, targetParentUuid ?? "previous-or-root");
+    return this.runGroupMutation(account.id, session, operationId, intent, () => ({
+      group: restoreKeePassGroup(session.database, groupUuid, targetParentUuid),
+      changed: true
+    }));
   }
 
   listAttachments(account: ProviderAccount, item: VaultItem): ProviderAttachmentSummary[] {
@@ -207,12 +322,17 @@ export class KeePassProvider implements ProviderAdapter {
   lockAccount(providerId: string): void {
     this.sessions.delete(providerId);
     this.removeProviderAttachmentHandles(providerId);
+    this.removeProviderGroupState(providerId);
   }
 
   lock(): void {
     this.sessions.clear();
     this.attachmentHandles.clear();
     this.attachmentHandleByKey.clear();
+    this.groupHandles.clear();
+    this.groupHandleByKey.clear();
+    this.groupCursors.clear();
+    this.groupOperationReceipts.clear();
   }
 
   async testConnection(account: ProviderAccount): Promise<void> {
@@ -351,6 +471,107 @@ export class KeePassProvider implements ProviderAdapter {
 
   private reread(session: KeePassSession, providerId: string): void {
     session.entries = readKeePassEntries(session.database, session.databaseId, providerId);
+    session.groupRevision += 1;
+  }
+
+  private requireKeePassAccountSession(account: ProviderAccount): KeePassSession {
+    if (account.kind !== "keepass") throw new KeePassGroupError("keepass-group-provider-invalid", "所选密码源不是 KeePass 数据库。");
+    return this.requireSession(account.id);
+  }
+
+  private runGroupMutation(
+    providerId: string,
+    session: KeePassSession,
+    operationId: string,
+    intent: string,
+    mutate: () => { group: kdbxweb.KdbxGroup; changed: boolean }
+  ): KeePassGroupMutationResult {
+    assertGroupOperationId(operationId);
+    const existing = this.groupOperationReceipts.get(operationId);
+    if (existing) {
+      if (existing.providerId !== providerId || existing.intent !== intent) {
+        throw new KeePassGroupError("keepass-group-operation-reused", "KeePass 分组操作标识已经用于其他操作。");
+      }
+      return existing.result;
+    }
+
+    const mutation = mutate();
+    if (mutation.changed) {
+      session.dirty = true;
+      this.reread(session, providerId);
+    }
+    const record = listKeePassGroupRecords(session.database, true).find((candidate) => candidate.uuid === mutation.group.uuid.toString());
+    if (!record) throw new KeePassGroupError("keepass-group-result-missing", "KeePass 分组操作完成后无法读取目标分组。");
+    const result = { changed: mutation.changed, group: this.groupSummary(providerId, session, record) };
+    if (this.groupOperationReceipts.size >= 256) this.groupOperationReceipts.delete(this.groupOperationReceipts.keys().next().value!);
+    this.groupOperationReceipts.set(operationId, { providerId, intent, result });
+    return result;
+  }
+
+  private groupSummary(providerId: string, session: KeePassSession, record: KeePassGroupRecord): KeePassGroupSummary {
+    requireKeePassGroup(session.database, record.uuid);
+    const name = truncateKeePassGroupText(record.name, 256);
+    const displayPath = truncateKeePassGroupText(record.displayPath, 1024);
+    return {
+      groupId: this.ensureGroupHandle(providerId, record.uuid),
+      parentGroupId: record.parentUuid === session.database.getDefaultGroup().uuid.toString()
+        ? undefined
+        : record.parentUuid ? this.ensureGroupHandle(providerId, record.parentUuid) : undefined,
+      name: name.value,
+      displayPath: displayPath.value,
+      depth: record.depth,
+      entryCount: record.entryCount,
+      childGroupCount: record.childGroupCount,
+      nameTruncated: name.truncated,
+      displayPathTruncated: displayPath.truncated,
+      isRecycleBin: record.isRecycleBin,
+      inRecycleBin: record.inRecycleBin,
+      canRename: !record.inRecycleBin,
+      canMove: !record.inRecycleBin,
+      canDelete: !record.inRecycleBin,
+      canRestore: record.canRestore
+    };
+  }
+
+  private ensureGroupHandle(providerId: string, groupUuid: string): string {
+    const key = `${providerId}\u0000${groupUuid}`;
+    const existing = this.groupHandleByKey.get(key);
+    if (existing) return existing;
+    const groupId = crypto.randomUUID();
+    this.groupHandles.set(groupId, { providerId, groupUuid });
+    this.groupHandleByKey.set(key, groupId);
+    return groupId;
+  }
+
+  private requireGroupHandle(providerId: string, groupId: string): KeePassGroupHandle {
+    const handle = typeof groupId === "string" ? this.groupHandles.get(groupId) : undefined;
+    if (!handle || handle.providerId !== providerId) {
+      throw new KeePassGroupError("keepass-group-handle-invalid", "KeePass 分组标识已失效，请刷新分组列表。");
+    }
+    return handle;
+  }
+
+  private createGroupCursor(cursor: KeePassGroupCursor): string {
+    if (this.groupCursors.size >= 256) this.groupCursors.delete(this.groupCursors.keys().next().value!);
+    const cursorId = crypto.randomUUID();
+    this.groupCursors.set(cursorId, cursor);
+    return cursorId;
+  }
+
+  private removeProviderGroupCursors(providerId: string): void {
+    for (const [cursorId, cursor] of this.groupCursors) if (cursor.providerId === providerId) this.groupCursors.delete(cursorId);
+  }
+
+  private removeProviderGroupState(providerId: string): void {
+    this.removeProviderGroupCursors(providerId);
+    for (const [groupId, handle] of this.groupHandles) {
+      if (handle.providerId !== providerId) continue;
+      this.groupHandles.delete(groupId);
+      this.groupHandleByKey.delete(`${providerId}\u0000${handle.groupUuid}`);
+    }
+    for (const [operationId, receipt] of this.groupOperationReceipts) {
+      if (receipt.providerId === providerId) this.groupOperationReceipts.delete(operationId);
+    }
   }
 
   private requireAttachmentEntry(account: ProviderAccount, item: VaultItem): { session: KeePassSession; entryUuid: string; entry: kdbxweb.KdbxEntry } {
@@ -476,6 +697,16 @@ function fingerprint(item: VaultItem): string {
 
 function attachmentHandleKey(providerId: string, entryUuid: string, fileName: string): string {
   return `${providerId}\u0000${entryUuid}\u0000${fileName}`;
+}
+
+function groupIntent(operation: string, ...parts: unknown[]): string {
+  return JSON.stringify([operation, ...parts]);
+}
+
+function assertGroupOperationId(operationId: string): void {
+  if (typeof operationId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(operationId)) {
+    throw new KeePassGroupError("keepass-group-operation-id-invalid", "KeePass 分组操作标识无效。");
+  }
 }
 
 function binaryValue(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): kdbxweb.KdbxBinary {

@@ -170,4 +170,29 @@ describe("extension runtime client", () => {
     ))
       .rejects.toMatchObject({ name: "ExtensionRuntimeError", code: "attachment-upload-digest-mismatch" });
   });
+
+  it("sends KeePass group lifecycle commands with explicit mutation identity and delete confirmation", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "keepass-1";
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const groupId = "22222222-2222-4222-8222-222222222222";
+    const parentGroupId = "33333333-3333-4333-8333-333333333333";
+
+    await vaultClient.listKeePassGroups(providerId, { includeRecycleBin: true, pageSize: 50, cursor: "next" });
+    await vaultClient.createKeePassGroup(providerId, operationId, "Work", parentGroupId);
+    await vaultClient.renameKeePassGroup(providerId, operationId, groupId, "Archive");
+    await vaultClient.moveKeePassGroup(providerId, operationId, groupId, parentGroupId);
+    await vaultClient.deleteKeePassGroup(providerId, operationId, groupId);
+    await vaultClient.restoreKeePassGroup(providerId, operationId, groupId, parentGroupId);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "KEEPASS_GROUP_LIST", providerId, includeRecycleBin: true, pageSize: 50, cursor: "next" },
+      { type: "KEEPASS_GROUP_CREATE", providerId, operationId, name: "Work", parentGroupId },
+      { type: "KEEPASS_GROUP_RENAME", providerId, operationId, groupId, name: "Archive" },
+      { type: "KEEPASS_GROUP_MOVE", providerId, operationId, groupId, targetParentGroupId: parentGroupId },
+      { type: "KEEPASS_GROUP_DELETE", providerId, operationId, groupId, confirmed: true },
+      { type: "KEEPASS_GROUP_RESTORE", providerId, operationId, groupId, targetParentGroupId: parentGroupId }
+    ]);
+  });
 });
