@@ -1,5 +1,6 @@
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
+import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
   expect(await locator.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }))).toEqual(
@@ -36,6 +37,7 @@ test("MDBX2 history recovery keeps one operation identity and remains usable at 
     await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 history visual password" }))).toMatchObject({ ok: true });
 
+    await installMdbx2TigaMock(page);
     await page.addInitScript(() => {
       const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: { type?: string }) => Promise<{ ok: boolean; data?: unknown; error?: string; code?: string }>;
       const sourceCommitId = "22222222-2222-4222-8222-222222222222";

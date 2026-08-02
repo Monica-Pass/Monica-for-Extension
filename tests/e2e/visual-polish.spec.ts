@@ -1,5 +1,6 @@
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
+import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 
 test("auth card omits the decorative avatar", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
@@ -86,6 +87,7 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 conflict visual password" }))).toMatchObject({ ok: true });
+    await installMdbx2TigaMock(page);
     await page.addInitScript(() => {
       const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: { type?: string }) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
       let conflictResolved = false;
@@ -160,6 +162,7 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 snapshot visual password" }))).toMatchObject({ ok: true });
+    await installMdbx2TigaMock(page);
     await page.addInitScript(() => {
       const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: { type?: string }) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
       const goodSnapshotId = "22222222-2222-4222-8222-222222222222";

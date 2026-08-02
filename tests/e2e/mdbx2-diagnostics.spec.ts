@@ -1,5 +1,6 @@
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
+import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
   expect(await locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -31,6 +32,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 diagnostics password" }))).toMatchObject({ ok: true });
 
+    await installMdbx2TigaMock(page);
     await page.addInitScript(() => {
       const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: { type?: string }) => Promise<{ ok: boolean; data?: unknown; error?: string; code?: string }>;
       let diagnosticsRequests = 0;

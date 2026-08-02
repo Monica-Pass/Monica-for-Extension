@@ -507,6 +507,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.vaultDiagnostics(vaultHandle);
     }
+    case "MDBX2_VAULT_TIGA": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.vaultTiga(vaultHandle);
+    }
     case "MDBX2_VAULT_LOCK": {
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);

@@ -23,6 +23,9 @@ import {
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
   MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
+  MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
+  MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
+  MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_SEGMENT_PAGE_SIZE,
@@ -89,11 +92,20 @@ import {
   type Mdbx2VaultInspection,
   type Mdbx2VaultRuntimeStatus,
   type Mdbx2VaultSessionSummary,
-  type Mdbx2VaultSource
+  type Mdbx2VaultSource,
+  type Mdbx2VaultTigaPosture,
+  type Mdbx2TigaAuditLevel,
+  type Mdbx2TigaBrowserLimitation,
+  type Mdbx2TigaCompliance,
+  type Mdbx2TigaDeviceAssurance,
+  type Mdbx2TigaProfile,
+  type Mdbx2TigaUnlockMethod
 } from "./native-contract";
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 
 const MAX_JAVASCRIPT_DATE_UNIX_SECONDS = 8_640_000_000;
+const MAX_UINT32 = 0xffff_ffff;
+const MAX_UINT8 = 0xff;
 
 interface NativeEvent<Listener extends (...args: never[]) => void> {
   addListener(listener: Listener): void;
@@ -189,6 +201,12 @@ export class Mdbx2NativeClient {
 
   async vaultDiagnostics(vaultHandle: string, timeoutMs = 60_000): Promise<Mdbx2VaultDiagnosticsReport> {
     return vaultDiagnosticsReport(await this.request("vault.diagnostics", {
+      vaultHandle: opaqueHandle(vaultHandle, "保险库")
+    }, timeoutMs));
+  }
+
+  async vaultTiga(vaultHandle: string, timeoutMs = 60_000): Promise<Mdbx2VaultTigaPosture> {
+    return vaultTigaPosture(await this.request("vault.tiga", {
       vaultHandle: opaqueHandle(vaultHandle, "保险库")
     }, timeoutMs));
   }
@@ -1342,6 +1360,164 @@ function vaultDiagnosticsReportValue(value: Record<string, unknown>): Mdbx2Vault
   };
 }
 
+function vaultTigaPosture(input: unknown): Mdbx2VaultTigaPosture {
+  let encodedBytes = Number.POSITIVE_INFINITY;
+  try {
+    encodedBytes = new TextEncoder().encode(JSON.stringify(input)).byteLength;
+  } catch {
+    throw incompatibleResult("Native Host MDBX2 Tiga 安全态势响应无法编码。");
+  }
+  if (encodedBytes > MDBX2_MAX_VAULT_TIGA_RESULT_BYTES) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 安全态势响应超过安全上限。");
+  }
+
+  const value = exactObjectResult(input, [
+    "checkedAtUnixSeconds", "profile", "compliance", "hasException", "warningCount", "unlock", "policy", "browser"
+  ], "Native Host MDBX2 Tiga 安全态势响应无效。");
+  const checkedAtUnixSeconds = safeInteger(value.checkedAtUnixSeconds, "Tiga 检查时间");
+  if (checkedAtUnixSeconds > MAX_JAVASCRIPT_DATE_UNIX_SECONDS) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 检查时间无效。");
+  }
+  const profile = tigaProfileResult(value.profile);
+  const compliance = tigaComplianceResult(value.compliance);
+  const hasException = booleanResult(value.hasException, "Tiga 例外状态无效。");
+  const warningCount = uint32Result(value.warningCount, "Tiga 策略警告数量");
+  if (hasException !== (compliance === "exception") || (compliance !== "compliant" && warningCount < 1)) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 合规状态关系无效。");
+  }
+
+  const unlockValue = exactObjectResult(value.unlock, [
+    "mode", "configuredMethods", "hasPortableUnlock", "hasSecurityKeyUnlock", "hasCombinedPasswordSecurityKey",
+    "hasRequiredCombinedStrength", "satisfiesPolicy", "warningCount"
+  ], "Native Host MDBX2 Tiga 解锁态势无效。");
+  const unlockMode = tigaProfileResult(unlockValue.mode);
+  if (unlockMode !== profile) throw incompatibleResult("Native Host MDBX2 Tiga 模式与解锁态势不一致。");
+  if (!Array.isArray(unlockValue.configuredMethods) || unlockValue.configuredMethods.length > MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 解锁方式数量无效。");
+  }
+  const configuredMethods = unlockValue.configuredMethods.map(tigaUnlockMethodResult);
+  if (new Set(configuredMethods).size !== configuredMethods.length) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 解锁方式重复。");
+  }
+  const hasPortableUnlock = booleanResult(unlockValue.hasPortableUnlock, "Tiga 可移植解锁状态无效。");
+  const hasSecurityKeyUnlock = booleanResult(unlockValue.hasSecurityKeyUnlock, "Tiga 安全密钥解锁状态无效。");
+  const hasCombinedPasswordSecurityKey = booleanResult(unlockValue.hasCombinedPasswordSecurityKey, "Tiga 组合解锁状态无效。");
+  const hasRequiredCombinedStrength = booleanResult(unlockValue.hasRequiredCombinedStrength, "Tiga 组合解锁强度状态无效。");
+  const satisfiesPolicy = booleanResult(unlockValue.satisfiesPolicy, "Tiga 解锁合规状态无效。");
+  const derivedPortable = configuredMethods.some((method) => method === "pin" || method === "password");
+  const derivedSecurityKey = configuredMethods.some((method) => method === "security-key" || method === "password-security-key");
+  const derivedCombined = configuredMethods.includes("password-security-key");
+  const derivedSatisfaction = profile === "power"
+    ? hasRequiredCombinedStrength && !hasPortableUnlock
+    : configuredMethods.length > 0 && hasPortableUnlock;
+  if (hasPortableUnlock !== derivedPortable
+      || hasSecurityKeyUnlock !== derivedSecurityKey
+      || hasCombinedPasswordSecurityKey !== derivedCombined
+      || (hasRequiredCombinedStrength && !hasCombinedPasswordSecurityKey)
+      || satisfiesPolicy !== derivedSatisfaction) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 解锁布尔关系无效。");
+  }
+
+  const policyValue = exactObjectResult(value.policy, [
+    "policyVersion", "portableUnlockAllowed", "minimumAuthFactors", "securityKeyRequired", "securityKeyRecommended",
+    "idleTimeoutSeconds", "maxLifetimeSeconds", "lockOnBackground", "freshAuthWindowSeconds", "revealRequiresFreshAuth",
+    "clipboardAllowed", "clipboardTtlSeconds", "copyRequiresFreshAuth", "secureClipboardRequired",
+    "screenCaptureProtectionRequired", "exportAllowed", "printAllowed", "egressRequiresFreshAuth",
+    "egressMinimumAuthFactors", "persistentPlaintextCacheAllowed", "attachmentTemporaryFilesAllowed",
+    "lockedCiphertextSyncAllowed", "minimumRecoveryMethods", "portableRecoveryRequired",
+    "administrationRequiresFreshAuth", "administrationMinimumAuthFactors", "auditDeletionAllowed",
+    "minimumDeviceAssurance", "auditLevel"
+  ], "Native Host MDBX2 Tiga 策略摘要无效。");
+  const policyVersion = positiveUint32Result(policyValue.policyVersion, "Tiga 策略版本");
+  const minimumAuthFactors = positiveUint8Result(policyValue.minimumAuthFactors, "Tiga 最低认证因子数量");
+  const idleTimeoutSeconds = positiveUint32Result(policyValue.idleTimeoutSeconds, "Tiga 空闲超时");
+  const maxLifetimeSeconds = positiveUint32Result(policyValue.maxLifetimeSeconds, "Tiga 最长会话时间");
+  if (idleTimeoutSeconds > maxLifetimeSeconds) throw incompatibleResult("Native Host MDBX2 Tiga 会话超时关系无效。");
+  const clipboardAllowed = booleanResult(policyValue.clipboardAllowed, "Tiga 剪贴板策略无效。");
+  const clipboardTtlSeconds = uint32Result(policyValue.clipboardTtlSeconds, "Tiga 剪贴板清除时间");
+  if (clipboardAllowed && clipboardTtlSeconds < 1) throw incompatibleResult("Native Host MDBX2 Tiga 剪贴板策略关系无效。");
+  const policy = {
+    policyVersion,
+    portableUnlockAllowed: booleanResult(policyValue.portableUnlockAllowed, "Tiga 可移植解锁策略无效。"),
+    minimumAuthFactors,
+    securityKeyRequired: booleanResult(policyValue.securityKeyRequired, "Tiga 安全密钥要求无效。"),
+    securityKeyRecommended: booleanResult(policyValue.securityKeyRecommended, "Tiga 安全密钥建议无效。"),
+    idleTimeoutSeconds,
+    maxLifetimeSeconds,
+    lockOnBackground: booleanResult(policyValue.lockOnBackground, "Tiga 后台锁定策略无效。"),
+    freshAuthWindowSeconds: uint32Result(policyValue.freshAuthWindowSeconds, "Tiga 新鲜认证窗口"),
+    revealRequiresFreshAuth: booleanResult(policyValue.revealRequiresFreshAuth, "Tiga 查看认证策略无效。"),
+    clipboardAllowed,
+    clipboardTtlSeconds,
+    copyRequiresFreshAuth: booleanResult(policyValue.copyRequiresFreshAuth, "Tiga 复制认证策略无效。"),
+    secureClipboardRequired: booleanResult(policyValue.secureClipboardRequired, "Tiga 安全剪贴板要求无效。"),
+    screenCaptureProtectionRequired: booleanResult(policyValue.screenCaptureProtectionRequired, "Tiga 截屏防护要求无效。"),
+    exportAllowed: booleanResult(policyValue.exportAllowed, "Tiga 导出策略无效。"),
+    printAllowed: booleanResult(policyValue.printAllowed, "Tiga 打印策略无效。"),
+    egressRequiresFreshAuth: booleanResult(policyValue.egressRequiresFreshAuth, "Tiga 数据导出认证策略无效。"),
+    egressMinimumAuthFactors: positiveUint8Result(policyValue.egressMinimumAuthFactors, "Tiga 数据导出认证因子数量"),
+    persistentPlaintextCacheAllowed: booleanResult(policyValue.persistentPlaintextCacheAllowed, "Tiga 明文缓存策略无效。"),
+    attachmentTemporaryFilesAllowed: booleanResult(policyValue.attachmentTemporaryFilesAllowed, "Tiga 附件临时文件策略无效。"),
+    lockedCiphertextSyncAllowed: booleanResult(policyValue.lockedCiphertextSyncAllowed, "Tiga 锁定同步策略无效。"),
+    minimumRecoveryMethods: positiveUint8Result(policyValue.minimumRecoveryMethods, "Tiga 最低恢复方式数量"),
+    portableRecoveryRequired: booleanResult(policyValue.portableRecoveryRequired, "Tiga 可移植恢复策略无效。"),
+    administrationRequiresFreshAuth: booleanResult(policyValue.administrationRequiresFreshAuth, "Tiga 管理认证策略无效。"),
+    administrationMinimumAuthFactors: positiveUint8Result(policyValue.administrationMinimumAuthFactors, "Tiga 管理认证因子数量"),
+    auditDeletionAllowed: booleanResult(policyValue.auditDeletionAllowed, "Tiga 审计删除策略无效。"),
+    minimumDeviceAssurance: tigaDeviceAssuranceResult(policyValue.minimumDeviceAssurance),
+    auditLevel: tigaAuditLevelResult(policyValue.auditLevel)
+  };
+
+  const browserValue = exactObjectResult(value.browser, [
+    "deviceAssurance", "secureClipboardAvailable", "screenCaptureProtectionAvailable", "secureTemporaryFilesAvailable", "limitations"
+  ], "Native Host MDBX2 Tiga 浏览器态势无效。");
+  const deviceAssurance = tigaDeviceAssuranceResult(browserValue.deviceAssurance);
+  const secureClipboardAvailable = booleanResult(browserValue.secureClipboardAvailable, "浏览器安全剪贴板能力无效。");
+  const screenCaptureProtectionAvailable = booleanResult(browserValue.screenCaptureProtectionAvailable, "浏览器截屏防护能力无效。");
+  const secureTemporaryFilesAvailable = booleanResult(browserValue.secureTemporaryFilesAvailable, "浏览器安全临时文件能力无效。");
+  if (deviceAssurance !== "standard" || secureClipboardAvailable || screenCaptureProtectionAvailable || !secureTemporaryFilesAvailable) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 浏览器能力声明与审核基线不一致。");
+  }
+  if (!Array.isArray(browserValue.limitations) || browserValue.limitations.length > MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 浏览器限制数量无效。");
+  }
+  const limitations = browserValue.limitations.map(tigaBrowserLimitationResult);
+  if (new Set(limitations).size !== limitations.length) throw incompatibleResult("Native Host MDBX2 Tiga 浏览器限制重复。");
+  const expectedLimitations: Mdbx2TigaBrowserLimitation[] = [];
+  if (policy.minimumDeviceAssurance === "trusted-hardware") expectedLimitations.push("device-assurance-insufficient");
+  if (policy.secureClipboardRequired) expectedLimitations.push("secure-clipboard-unavailable");
+  if (policy.screenCaptureProtectionRequired) expectedLimitations.push("screen-capture-protection-unavailable");
+  if (JSON.stringify(limitations) !== JSON.stringify(expectedLimitations)) {
+    throw incompatibleResult("Native Host MDBX2 Tiga 浏览器限制与策略要求不一致。");
+  }
+
+  return {
+    checkedAtUnixSeconds,
+    profile,
+    compliance,
+    hasException,
+    warningCount,
+    unlock: {
+      mode: unlockMode,
+      configuredMethods,
+      hasPortableUnlock,
+      hasSecurityKeyUnlock,
+      hasCombinedPasswordSecurityKey,
+      hasRequiredCombinedStrength,
+      satisfiesPolicy,
+      warningCount: uint32Result(unlockValue.warningCount, "Tiga 解锁警告数量")
+    },
+    policy,
+    browser: {
+      deviceAssurance,
+      secureClipboardAvailable,
+      screenCaptureProtectionAvailable,
+      secureTemporaryFilesAvailable,
+      limitations
+    }
+  };
+}
+
 function vaultHealthCategory(value: unknown): Mdbx2VaultHealthCategory {
   if (typeof value !== "string" || !MDBX2_VAULT_DIAGNOSTIC_CATEGORIES.includes(value as Mdbx2VaultHealthCategory)) {
     throw incompatibleResult("Native Host MDBX2 健康类别无效。");
@@ -1979,6 +2155,56 @@ function optionalOpaqueHandle(value: unknown, label: string): string | undefined
 function safeInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw incompatibleResult(`${label}无效。`);
   return value;
+}
+
+function uint32Result(value: unknown, label: string): number {
+  const number = safeInteger(value, label);
+  if (number > MAX_UINT32) throw incompatibleResult(`${label}无效。`);
+  return number;
+}
+
+function positiveUint32Result(value: unknown, label: string): number {
+  const number = uint32Result(value, label);
+  if (number < 1) throw incompatibleResult(`${label}无效。`);
+  return number;
+}
+
+function positiveUint8Result(value: unknown, label: string): number {
+  const number = positiveUint32Result(value, label);
+  if (number > MAX_UINT8) throw incompatibleResult(`${label}无效。`);
+  return number;
+}
+
+function tigaProfileResult(value: unknown): Mdbx2TigaProfile {
+  if (value === "sky" || value === "multi" || value === "power") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 模式无效。");
+}
+
+function tigaComplianceResult(value: unknown): Mdbx2TigaCompliance {
+  if (value === "compliant" || value === "exception" || value === "remediation-required") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 合规状态无效。");
+}
+
+function tigaUnlockMethodResult(value: unknown): Mdbx2TigaUnlockMethod {
+  if (value === "pin" || value === "password" || value === "security-key" || value === "password-security-key") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 解锁方式无效。");
+}
+
+function tigaDeviceAssuranceResult(value: unknown): Mdbx2TigaDeviceAssurance {
+  if (value === "unknown" || value === "standard" || value === "trusted-hardware") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 设备保障级别无效。");
+}
+
+function tigaAuditLevelResult(value: unknown): Mdbx2TigaAuditLevel {
+  if (value === "security-changes" || value === "sensitive-operations" || value === "all-decisions") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 审计级别无效。");
+}
+
+function tigaBrowserLimitationResult(value: unknown): Mdbx2TigaBrowserLimitation {
+  if (value === "device-assurance-insufficient"
+      || value === "secure-clipboard-unavailable"
+      || value === "screen-capture-protection-unavailable") return value;
+  throw incompatibleResult("Native Host MDBX2 Tiga 浏览器限制无效。");
 }
 
 function collectionTitleValue(value: string): string {

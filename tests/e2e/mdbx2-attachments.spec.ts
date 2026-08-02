@@ -1,6 +1,7 @@
 import { chromium, expect, test, type BrowserContext, type CDPSession, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 
 interface RuntimeResponse<T = unknown> {
   ok: boolean;
@@ -129,7 +130,8 @@ test("attachment commands reject popup and isolated content-script callers", asy
 });
 
 async function installAttachmentManagerMock(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+    await installMdbx2TigaMock(page);
+    await page.addInitScript(() => {
     const originalSend = chrome.runtime.sendMessage.bind(chrome.runtime) as (message: Record<string, unknown>) => Promise<RuntimeResponse>;
     const providerId = "11111111-1111-4111-8111-111111111111";
     const itemId = "attachment-demo-item";

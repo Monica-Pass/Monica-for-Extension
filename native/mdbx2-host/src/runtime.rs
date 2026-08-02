@@ -2,11 +2,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use md5::{Digest, Md5};
 use mdbx_ffi::{
     MdbxAttachmentBatchCommand, MdbxAttachmentContentLimits, MdbxAttachmentCreateRequest,
-    MdbxAttachmentRecord, MdbxAttachmentSummary, MdbxAttachmentWriteResult, MdbxCommitHistoryItem,
-    MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance, MdbxDeviceContext,
-    MdbxHealthIssue, MdbxHealthIssueSeverity, MdbxManagedSnapshotSummary, MdbxMigrationInfo,
-    MdbxObjectDisclosureLimits, MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxVault,
-    MdbxWriteCommand,
+    MdbxAttachmentRecord, MdbxAttachmentSummary, MdbxAttachmentWriteResult, MdbxAuditLevel,
+    MdbxCommitHistoryItem, MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance,
+    MdbxDeviceContext, MdbxHealthIssue, MdbxHealthIssueSeverity, MdbxManagedSnapshotSummary,
+    MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxPolicyCompliance, MdbxResolvedTigaPolicy,
+    MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxTigaMode, MdbxTigaScope, MdbxTigaScopeType,
+    MdbxTigaUnlockAssessment, MdbxUnlockMethodType, MdbxVault, MdbxWriteCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -46,6 +47,9 @@ const MAX_COLLECTION_TITLE_BYTES: usize = 4096;
 pub const MAX_COLLECTION_RESULT_BYTES: usize = 850 * 1024;
 pub const MAX_VAULT_DIAGNOSTIC_CATEGORIES: usize = 14;
 pub const MAX_VAULT_DIAGNOSTICS_RESULT_BYTES: usize = 64 * 1024;
+pub const MAX_VAULT_TIGA_RESULT_BYTES: usize = 16 * 1024;
+pub const MAX_VAULT_TIGA_UNLOCK_METHODS: usize = 4;
+pub const MAX_VAULT_TIGA_BROWSER_LIMITATIONS: usize = 3;
 const VAULT_DIAGNOSTIC_CATEGORIES: [&str; MAX_VAULT_DIAGNOSTIC_CATEGORIES] = [
     "integrity",
     "vault-header-integrity",
@@ -459,6 +463,7 @@ impl HostRuntime {
             "vault.open" => self.vault_open(params),
             "vault.status" => self.vault_status(params),
             "vault.diagnostics" => self.vault_diagnostics(params),
+            "vault.tiga" => self.vault_tiga(params),
             "vault.lock" => self.vault_lock(params),
             "collection.list" => self.collection_list(params),
             "collection.create" => self.collection_create(params),
@@ -581,6 +586,19 @@ impl HostRuntime {
             json!(MAX_VAULT_DIAGNOSTICS_RESULT_BYTES),
         );
         result_object.insert("supportsVaultDiagnostics".to_string(), json!(true));
+        result_object.insert(
+            "maxVaultTigaResultBytes".to_string(),
+            json!(MAX_VAULT_TIGA_RESULT_BYTES),
+        );
+        result_object.insert(
+            "maxVaultTigaUnlockMethods".to_string(),
+            json!(MAX_VAULT_TIGA_UNLOCK_METHODS),
+        );
+        result_object.insert(
+            "maxVaultTigaBrowserLimitations".to_string(),
+            json!(MAX_VAULT_TIGA_BROWSER_LIMITATIONS),
+        );
+        result_object.insert("supportsVaultTigaPosture".to_string(), json!(true));
         result_object.insert(
             "maxHistoryRevertItems".to_string(),
             json!(MAX_HISTORY_REVERT_ITEMS),
@@ -1015,6 +1033,14 @@ impl HostRuntime {
             )
         })?;
         vault_diagnostics_report(&vault, &working_path, schema_version)
+    }
+
+    fn vault_tiga(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "vault.tiga params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        vault_tiga_report(&vault)
     }
 
     fn collection_list(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -4355,6 +4381,180 @@ fn vault_health_severity_label(rank: usize) -> &'static str {
     }
 }
 
+fn vault_tiga_report(vault: &Arc<MdbxVault>) -> Result<Value, RpcFailure> {
+    let policy = vault
+        .resolve_tiga_policy(MdbxTigaScope {
+            scope_type: MdbxTigaScopeType::Vault,
+            scope_id: None,
+        })
+        .map_err(|_| {
+            RpcFailure::new(
+                "vault-tiga-failed",
+                "MDBX2 vault Tiga policy could not be resolved.",
+                false,
+            )
+        })?;
+    let assessment = vault.assess_tiga_unlock_policy().map_err(|_| {
+        RpcFailure::new(
+            "vault-tiga-failed",
+            "MDBX2 vault unlock posture could not be assessed.",
+            false,
+        )
+    })?;
+    if policy.profile != assessment.mode {
+        return Err(RpcFailure::new(
+            "vault-tiga-inconsistent",
+            "MDBX2 vault Tiga policy and unlock posture disagree.",
+            false,
+        ));
+    }
+
+    let mut configured_methods = assessment
+        .configured_methods
+        .iter()
+        .map(vault_tiga_unlock_method_label)
+        .collect::<Vec<_>>();
+    configured_methods.sort_unstable();
+    configured_methods.dedup();
+    if configured_methods.len() > MAX_VAULT_TIGA_UNLOCK_METHODS {
+        return Err(RpcFailure::new(
+            "vault-tiga-inconsistent",
+            "MDBX2 vault reported too many unlock method types.",
+            false,
+        ));
+    }
+
+    let browser = browser_management_device_context();
+    let mut limitations = Vec::new();
+    if vault_device_assurance_rank(&browser.assurance)
+        < vault_device_assurance_rank(&policy.minimum_device_assurance)
+    {
+        limitations.push("device-assurance-insufficient");
+    }
+    if policy.secure_clipboard_required && !browser.secure_clipboard_available {
+        limitations.push("secure-clipboard-unavailable");
+    }
+    if policy.screen_capture_protection_required && !browser.screen_capture_protection_available {
+        limitations.push("screen-capture-protection-unavailable");
+    }
+
+    bounded_vault_tiga_result(json!({
+        "checkedAtUnixSeconds": unix_seconds()?,
+        "profile": vault_tiga_mode_label(&policy.profile),
+        "compliance": vault_tiga_compliance_label(&policy.compliance),
+        "hasException": policy.exception_id.is_some(),
+        "warningCount": policy.warnings.len(),
+        "unlock": vault_tiga_unlock_json(&assessment, configured_methods),
+        "policy": vault_tiga_policy_json(&policy),
+        "browser": {
+            "deviceAssurance": vault_device_assurance_label(&browser.assurance),
+            "secureClipboardAvailable": browser.secure_clipboard_available,
+            "screenCaptureProtectionAvailable": browser.screen_capture_protection_available,
+            "secureTemporaryFilesAvailable": browser.secure_temp_files_available,
+            "limitations": limitations
+        }
+    }))
+}
+
+fn vault_tiga_unlock_json(
+    assessment: &MdbxTigaUnlockAssessment,
+    configured_methods: Vec<&'static str>,
+) -> Value {
+    json!({
+        "mode": vault_tiga_mode_label(&assessment.mode),
+        "configuredMethods": configured_methods,
+        "hasPortableUnlock": assessment.has_portable_unlock,
+        "hasSecurityKeyUnlock": assessment.has_security_key_unlock,
+        "hasCombinedPasswordSecurityKey": assessment.has_combined_password_security_key,
+        "hasRequiredCombinedStrength": assessment.has_required_combined_strength,
+        "satisfiesPolicy": assessment.satisfies_policy,
+        "warningCount": assessment.warnings.len()
+    })
+}
+
+fn vault_tiga_policy_json(policy: &MdbxResolvedTigaPolicy) -> Value {
+    json!({
+        "policyVersion": policy.policy_version,
+        "portableUnlockAllowed": policy.portable_unlock_allowed,
+        "minimumAuthFactors": policy.minimum_auth_factors,
+        "securityKeyRequired": policy.security_key_required,
+        "securityKeyRecommended": policy.security_key_recommended,
+        "idleTimeoutSeconds": policy.idle_timeout_secs,
+        "maxLifetimeSeconds": policy.max_lifetime_secs,
+        "lockOnBackground": policy.lock_on_background,
+        "freshAuthWindowSeconds": policy.fresh_auth_window_secs,
+        "revealRequiresFreshAuth": policy.reveal_requires_fresh_auth,
+        "clipboardAllowed": policy.clipboard_allowed,
+        "clipboardTtlSeconds": policy.clipboard_ttl_secs,
+        "copyRequiresFreshAuth": policy.copy_requires_fresh_auth,
+        "secureClipboardRequired": policy.secure_clipboard_required,
+        "screenCaptureProtectionRequired": policy.screen_capture_protection_required,
+        "exportAllowed": policy.export_allowed,
+        "printAllowed": policy.print_allowed,
+        "egressRequiresFreshAuth": policy.egress_requires_fresh_auth,
+        "egressMinimumAuthFactors": policy.egress_minimum_auth_factors,
+        "persistentPlaintextCacheAllowed": policy.persistent_plaintext_cache_allowed,
+        "attachmentTemporaryFilesAllowed": policy.attachment_temp_files_allowed,
+        "lockedCiphertextSyncAllowed": policy.locked_ciphertext_sync_allowed,
+        "minimumRecoveryMethods": policy.minimum_recovery_methods,
+        "portableRecoveryRequired": policy.portable_recovery_required,
+        "administrationRequiresFreshAuth": policy.administration_requires_fresh_auth,
+        "administrationMinimumAuthFactors": policy.administration_minimum_auth_factors,
+        "auditDeletionAllowed": policy.audit_deletion_allowed,
+        "minimumDeviceAssurance": vault_device_assurance_label(&policy.minimum_device_assurance),
+        "auditLevel": vault_tiga_audit_level_label(&policy.audit_level)
+    })
+}
+
+fn vault_tiga_mode_label(mode: &MdbxTigaMode) -> &'static str {
+    match mode {
+        MdbxTigaMode::Sky => "sky",
+        MdbxTigaMode::Multi => "multi",
+        MdbxTigaMode::Power => "power",
+    }
+}
+
+fn vault_tiga_compliance_label(compliance: &MdbxPolicyCompliance) -> &'static str {
+    match compliance {
+        MdbxPolicyCompliance::Compliant => "compliant",
+        MdbxPolicyCompliance::Exception => "exception",
+        MdbxPolicyCompliance::RemediationRequired => "remediation-required",
+    }
+}
+
+fn vault_tiga_unlock_method_label(method: &MdbxUnlockMethodType) -> &'static str {
+    match method {
+        MdbxUnlockMethodType::Pin => "pin",
+        MdbxUnlockMethodType::Password => "password",
+        MdbxUnlockMethodType::SecurityKey => "security-key",
+        MdbxUnlockMethodType::PasswordSecurityKey => "password-security-key",
+    }
+}
+
+fn vault_device_assurance_label(assurance: &MdbxDeviceAssurance) -> &'static str {
+    match assurance {
+        MdbxDeviceAssurance::Unknown => "unknown",
+        MdbxDeviceAssurance::Standard => "standard",
+        MdbxDeviceAssurance::TrustedHardware => "trusted-hardware",
+    }
+}
+
+fn vault_device_assurance_rank(assurance: &MdbxDeviceAssurance) -> u8 {
+    match assurance {
+        MdbxDeviceAssurance::Unknown => 0,
+        MdbxDeviceAssurance::Standard => 1,
+        MdbxDeviceAssurance::TrustedHardware => 2,
+    }
+}
+
+fn vault_tiga_audit_level_label(level: &MdbxAuditLevel) -> &'static str {
+    match level {
+        MdbxAuditLevel::SecurityChanges => "security-changes",
+        MdbxAuditLevel::SensitiveOperations => "sensitive-operations",
+        MdbxAuditLevel::AllDecisions => "all-decisions",
+    }
+}
+
 fn monica_root_collection_id(vault: &Arc<MdbxVault>) -> String {
     java_name_uuid(format!("monica-root:{}", vault.info().vault_id).as_bytes())
 }
@@ -4761,6 +4961,20 @@ fn bounded_vault_diagnostics_result(value: Value) -> Result<Value, RpcFailure> {
         return Err(RpcFailure::new(
             "vault-diagnostics-result-too-large",
             "MDBX2 vault diagnostics exceed the Native Messaging safety limit.",
+            false,
+        ));
+    }
+    Ok(value)
+}
+
+fn bounded_vault_tiga_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 vault Tiga posture could not be encoded."))?
+        .len();
+    if size > MAX_VAULT_TIGA_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "vault-tiga-result-too-large",
+            "MDBX2 vault Tiga posture exceeds the Native Messaging safety limit.",
             false,
         ));
     }
@@ -5959,11 +6173,20 @@ mod tests {
     }
 
     fn open_test_vault(runtime: &mut HostRuntime, password: &str) -> String {
+        open_test_vault_with_tiga_mode(runtime, password, mdbx_ffi::MdbxTigaMode::Multi)
+    }
+
+    fn open_test_vault_with_tiga_mode(
+        runtime: &mut HostRuntime,
+        password: &str,
+        mode: mdbx_ffi::MdbxTigaMode,
+    ) -> String {
         let source_path = runtime.root.join(format!("source-{}.mdbx", fresh_uuid()));
-        let source = mdbx_ffi::create_vault(
+        let source = mdbx_ffi::create_vault_with_tiga_mode(
             path_string(&source_path).unwrap(),
             password.to_string(),
             "snapshot-fixture-device".to_string(),
+            mode,
         )
         .unwrap();
         let file_handle = fresh_uuid();
@@ -6957,6 +7180,108 @@ mod tests {
             "future-category",
         ] {
             assert!(!encoded.contains(hidden));
+        }
+    }
+
+    #[test]
+    fn vault_tiga_posture_is_bounded_read_only_and_identifier_free() {
+        let (_root, mut runtime) = runtime();
+        let vault_handle = open_test_vault(&mut runtime, "tiga-posture-password");
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        let audit_count = vault.list_security_audit_events_v2(100).unwrap().len();
+        drop(vault);
+
+        let posture = call(
+            &mut runtime,
+            "vault.tiga",
+            json!({ "vaultHandle": vault_handle.clone() }),
+        );
+        assert_eq!(posture["profile"], "multi");
+        assert_eq!(posture["compliance"], "compliant");
+        assert_eq!(posture["hasException"], false);
+        assert_eq!(posture["unlock"]["mode"], "multi");
+        assert_eq!(posture["unlock"]["configuredMethods"], json!(["password"]));
+        assert_eq!(posture["unlock"]["satisfiesPolicy"], true);
+        assert_eq!(posture["browser"]["deviceAssurance"], "standard");
+        assert_eq!(posture["browser"]["secureClipboardAvailable"], false);
+        assert_eq!(
+            posture["browser"]["screenCaptureProtectionAvailable"],
+            false
+        );
+        assert_eq!(posture["browser"]["secureTemporaryFilesAvailable"], true);
+        assert!(posture["browser"]["limitations"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(serde_json::to_vec(&posture).unwrap().len() <= MAX_VAULT_TIGA_RESULT_BYTES);
+
+        let vault = runtime.require_open_vault(&vault_handle).unwrap();
+        assert_eq!(
+            vault.list_security_audit_events_v2(100).unwrap().len(),
+            audit_count
+        );
+        drop(vault);
+        let encoded = serde_json::to_string(&posture).unwrap();
+        for hidden in [
+            &vault_handle,
+            "exceptionId",
+            "warnings",
+            "eventId",
+            "sessionId",
+            "deviceId",
+            "commitId",
+            "policyFingerprint",
+        ] {
+            assert!(!encoded.contains(hidden));
+        }
+
+        let unexpected = runtime
+            .handle(
+                "vault.tiga",
+                json!({ "vaultHandle": vault_handle.clone(), "includeAudit": true }),
+            )
+            .unwrap_err();
+        assert_eq!(unexpected.code, "params-invalid");
+        call(
+            &mut runtime,
+            "vault.lock",
+            json!({ "vaultHandle": vault_handle.clone() }),
+        );
+        let locked = runtime
+            .handle("vault.tiga", json!({ "vaultHandle": vault_handle }))
+            .unwrap_err();
+        assert_eq!(locked.code, "vault-locked");
+    }
+
+    #[test]
+    fn vault_tiga_posture_preserves_profiles_and_browser_limitations() {
+        for (mode, expected, limitations) in [
+            (mdbx_ffi::MdbxTigaMode::Sky, "sky", Vec::<&str>::new()),
+            (mdbx_ffi::MdbxTigaMode::Multi, "multi", Vec::<&str>::new()),
+            (
+                mdbx_ffi::MdbxTigaMode::Power,
+                "power",
+                vec![
+                    "device-assurance-insufficient",
+                    "secure-clipboard-unavailable",
+                    "screen-capture-protection-unavailable",
+                ],
+            ),
+        ] {
+            let (_root, mut runtime) = runtime();
+            let vault_handle = open_test_vault_with_tiga_mode(
+                &mut runtime,
+                &format!("tiga-{expected}-password"),
+                mode,
+            );
+            let posture = call(
+                &mut runtime,
+                "vault.tiga",
+                json!({ "vaultHandle": vault_handle }),
+            );
+            assert_eq!(posture["profile"], expected);
+            assert_eq!(posture["unlock"]["mode"], expected);
+            assert_eq!(posture["browser"]["limitations"], json!(limitations));
         }
     }
 

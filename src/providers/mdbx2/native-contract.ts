@@ -13,6 +13,9 @@ export const MDBX2_MAX_COLLECTION_TITLE_BYTES = 4096;
 export const MDBX2_MAX_COLLECTION_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES = 14;
 export const MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES = 64 * 1024;
+export const MDBX2_MAX_VAULT_TIGA_RESULT_BYTES = 16 * 1024;
+export const MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS = 4;
+export const MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS = 3;
 export const MDBX2_VAULT_DIAGNOSTIC_CATEGORIES = [
   "integrity",
   "vault-header-integrity",
@@ -62,6 +65,7 @@ export type Mdbx2NativeMethod =
   | "vault.open"
   | "vault.status"
   | "vault.diagnostics"
+  | "vault.tiga"
   | "vault.lock"
   | "collection.list"
   | "collection.create"
@@ -313,6 +317,78 @@ export interface Mdbx2VaultDiagnosticsReport {
   schemaVersion: number;
   health: Mdbx2VaultHealthSummary;
   diagnostics: Mdbx2VaultDiagnosticsSummary;
+}
+
+export type Mdbx2TigaProfile = "sky" | "multi" | "power";
+export type Mdbx2TigaCompliance = "compliant" | "exception" | "remediation-required";
+export type Mdbx2TigaUnlockMethod = "pin" | "password" | "security-key" | "password-security-key";
+export type Mdbx2TigaDeviceAssurance = "unknown" | "standard" | "trusted-hardware";
+export type Mdbx2TigaAuditLevel = "security-changes" | "sensitive-operations" | "all-decisions";
+export type Mdbx2TigaBrowserLimitation =
+  | "device-assurance-insufficient"
+  | "secure-clipboard-unavailable"
+  | "screen-capture-protection-unavailable";
+
+export interface Mdbx2TigaUnlockPosture {
+  mode: Mdbx2TigaProfile;
+  configuredMethods: Mdbx2TigaUnlockMethod[];
+  hasPortableUnlock: boolean;
+  hasSecurityKeyUnlock: boolean;
+  hasCombinedPasswordSecurityKey: boolean;
+  hasRequiredCombinedStrength: boolean;
+  satisfiesPolicy: boolean;
+  warningCount: number;
+}
+
+export interface Mdbx2TigaPolicySummary {
+  policyVersion: number;
+  portableUnlockAllowed: boolean;
+  minimumAuthFactors: number;
+  securityKeyRequired: boolean;
+  securityKeyRecommended: boolean;
+  idleTimeoutSeconds: number;
+  maxLifetimeSeconds: number;
+  lockOnBackground: boolean;
+  freshAuthWindowSeconds: number;
+  revealRequiresFreshAuth: boolean;
+  clipboardAllowed: boolean;
+  clipboardTtlSeconds: number;
+  copyRequiresFreshAuth: boolean;
+  secureClipboardRequired: boolean;
+  screenCaptureProtectionRequired: boolean;
+  exportAllowed: boolean;
+  printAllowed: boolean;
+  egressRequiresFreshAuth: boolean;
+  egressMinimumAuthFactors: number;
+  persistentPlaintextCacheAllowed: boolean;
+  attachmentTemporaryFilesAllowed: boolean;
+  lockedCiphertextSyncAllowed: boolean;
+  minimumRecoveryMethods: number;
+  portableRecoveryRequired: boolean;
+  administrationRequiresFreshAuth: boolean;
+  administrationMinimumAuthFactors: number;
+  auditDeletionAllowed: boolean;
+  minimumDeviceAssurance: Mdbx2TigaDeviceAssurance;
+  auditLevel: Mdbx2TigaAuditLevel;
+}
+
+export interface Mdbx2TigaBrowserPosture {
+  deviceAssurance: Mdbx2TigaDeviceAssurance;
+  secureClipboardAvailable: boolean;
+  screenCaptureProtectionAvailable: boolean;
+  secureTemporaryFilesAvailable: boolean;
+  limitations: Mdbx2TigaBrowserLimitation[];
+}
+
+export interface Mdbx2VaultTigaPosture {
+  checkedAtUnixSeconds: number;
+  profile: Mdbx2TigaProfile;
+  compliance: Mdbx2TigaCompliance;
+  hasException: boolean;
+  warningCount: number;
+  unlock: Mdbx2TigaUnlockPosture;
+  policy: Mdbx2TigaPolicySummary;
+  browser: Mdbx2TigaBrowserPosture;
 }
 
 export interface Mdbx2VaultSessionSummary extends Mdbx2VaultDiagnosticsReport {
@@ -706,6 +782,10 @@ export interface Mdbx2HostCapabilities {
   maxVaultDiagnosticCategories: typeof MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES;
   maxVaultDiagnosticsResultBytes: typeof MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES;
   supportsVaultDiagnostics: true;
+  maxVaultTigaResultBytes: typeof MDBX2_MAX_VAULT_TIGA_RESULT_BYTES;
+  maxVaultTigaUnlockMethods: typeof MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS;
+  maxVaultTigaBrowserLimitations: typeof MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS;
+  supportsVaultTigaPosture: true;
   maxObjectBatchMutations: typeof MDBX2_MAX_OBJECT_BATCH_MUTATIONS;
   maxObjectBatchIntentBytes: typeof MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES;
   maxHistoryPageSize: typeof MDBX2_MAX_HISTORY_PAGE_SIZE;
@@ -805,6 +885,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxVaultDiagnosticCategories !== MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES) throw incompatible("Native Host 诊断类别限制与插件不一致。");
   if (value.maxVaultDiagnosticsResultBytes !== MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES) throw incompatible("Native Host 诊断响应限制与插件不一致。");
   if (value.supportsVaultDiagnostics !== true) throw incompatible("Native Host 未启用 MDBX2 诊断刷新能力。");
+  if (value.maxVaultTigaResultBytes !== MDBX2_MAX_VAULT_TIGA_RESULT_BYTES) throw incompatible("Native Host Tiga 响应限制与插件不一致。");
+  if (value.maxVaultTigaUnlockMethods !== MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS) throw incompatible("Native Host Tiga 解锁方式限制与插件不一致。");
+  if (value.maxVaultTigaBrowserLimitations !== MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS) throw incompatible("Native Host Tiga 浏览器限制数量与插件不一致。");
+  if (value.supportsVaultTigaPosture !== true) throw incompatible("Native Host 未启用 MDBX2 Tiga 安全态势能力。");
   if (value.maxObjectBatchMutations !== MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw incompatible("Native Host Object 批量数量限制与插件不一致。");
   if (value.maxObjectBatchIntentBytes !== MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw incompatible("Native Host Object 批量大小限制与插件不一致。");
   if (value.maxHistoryPageSize !== MDBX2_MAX_HISTORY_PAGE_SIZE) throw incompatible("Native Host 历史分页限制与插件不一致。");
@@ -857,6 +941,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
     maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
     supportsVaultDiagnostics: true,
+    maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
+    maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
+    maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
+    supportsVaultTigaPosture: true,
     maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
     maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
     maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,

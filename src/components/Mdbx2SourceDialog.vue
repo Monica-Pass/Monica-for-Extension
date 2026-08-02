@@ -20,7 +20,8 @@ import {
   type Mdbx2VaultDiagnosticsReport,
   type Mdbx2VaultInspection,
   type Mdbx2VaultRuntimeStatus,
-  type Mdbx2VaultSource
+  type Mdbx2VaultSource,
+  type Mdbx2VaultTigaPosture
 } from "../providers/mdbx2/native-contract";
 import { formatMdbx2HistoryTime, presentMdbx2Diff, presentMdbx2History } from "../providers/mdbx2/mdbx2-history";
 import { mdbx2ConflictChoiceDescription, mdbx2ConflictChoiceLabel, presentMdbx2Conflict } from "../providers/mdbx2/mdbx2-conflicts";
@@ -35,6 +36,17 @@ import {
   presentMdbx2Health,
   summarizeMdbx2HealthCounts
 } from "../providers/mdbx2/mdbx2-diagnostics";
+import {
+  formatMdbx2TigaDuration,
+  mdbx2TigaAuditLevelLabel,
+  mdbx2TigaBooleanLabel,
+  mdbx2TigaBrowserLimitation,
+  mdbx2TigaComplianceLabel,
+  mdbx2TigaDeviceAssuranceLabel,
+  mdbx2TigaProfileLabel,
+  mdbx2TigaUnlockMethodLabel,
+  presentMdbx2Tiga
+} from "../providers/mdbx2/mdbx2-tiga";
 import { vaultClient } from "../runtime/client";
 import type { Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput } from "../runtime/messages";
 
@@ -91,6 +103,9 @@ const syncStatus = ref<Mdbx2ManagerSyncStatus | undefined>(props.syncStatus);
 const vaultDiagnostics = ref<Mdbx2VaultDiagnosticsReport | undefined>();
 const diagnosticsBusy = ref(false);
 const diagnosticsError = ref("");
+const vaultTiga = ref<Mdbx2VaultTigaPosture | undefined>();
+const tigaBusy = ref(false);
+const tigaError = ref("");
 const busy = ref<BusyState>("");
 const error = ref("");
 const uploadProgress = ref(0);
@@ -164,6 +179,7 @@ const isExisting = computed(() => Boolean(providerId.value));
 const hostReady = computed(() => hostStatus.value?.availability === "ready");
 const vaultOpen = computed(() => runtimeStatus.value?.open === true);
 const diagnosticHealth = computed(() => vaultDiagnostics.value ? presentMdbx2Health(vaultDiagnostics.value.health) : undefined);
+const tigaPresentation = computed(() => vaultTiga.value ? presentMdbx2Tiga(vaultTiga.value) : undefined);
 const remoteFieldsComplete = computed(() => Boolean(form.baseUrl.trim() && form.remotePath.trim()));
 const needsSecurityKey = computed(() => form.unlockMethod !== "password");
 const canPublish = computed(() => isExisting.value && vaultOpen.value && remoteFieldsComplete.value && !syncStatus.value?.initialized);
@@ -227,6 +243,7 @@ async function refreshStatus() {
     syncStatus.value = nextSync;
     if (nextRuntime?.open) await Promise.all([
       loadVaultDiagnostics(),
+      loadVaultTiga(),
       loadCollections("active", true),
       loadCollections("deleted", true),
       loadSnapshots(true),
@@ -249,6 +266,19 @@ async function loadVaultDiagnostics() {
     diagnosticsError.value = diagnosticsErrorMessage(cause);
   } finally {
     diagnosticsBusy.value = false;
+  }
+}
+
+async function loadVaultTiga() {
+  if (!providerId.value || !vaultOpen.value || tigaBusy.value) return;
+  tigaBusy.value = true;
+  tigaError.value = "";
+  try {
+    vaultTiga.value = await vaultClient.mdbx2VaultTiga(providerId.value);
+  } catch (cause) {
+    tigaError.value = tigaErrorMessage(cause);
+  } finally {
+    tigaBusy.value = false;
   }
 }
 
@@ -338,7 +368,7 @@ async function unlockExisting() {
     diagnosticsError.value = "";
     emit("changed");
     clearSecrets();
-    await Promise.all([loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadHistory(true), loadConflicts(true)]);
+    await Promise.all([loadVaultTiga(), loadCollections("active", true), loadCollections("deleted", true), loadSnapshots(true), loadHistory(true), loadConflicts(true)]);
     emit("notice", `${opened.account.name} 已解锁；现在可以查看提交历史或执行增量同步。`);
   } catch (cause) {
     error.value = errorMessage(cause);
@@ -1174,6 +1204,16 @@ function diagnosticsErrorMessage(cause: unknown): string {
   return errorMessage(cause);
 }
 
+function tigaErrorMessage(cause: unknown): string {
+  const code = errorCode(cause);
+  if (code === "vault-tiga-result-too-large") return "Tiga 安全态势超过 Native Messaging 安全上限，保险库内容没有被修改。";
+  if (code === "vault-tiga-failed" || code === "vault-tiga-inconsistent") return "Native Host 无法生成一致的只读 Tiga 安全态势。请更新 Host 或重新解锁后重试。";
+  if (code === "vault-locked") return "保险库已经锁定，请重新解锁后刷新 Tiga 安全态势。";
+  if (code === "native-host-incompatible") return "Native Host 返回了不兼容的 Tiga 安全态势。请更新 Host 后再试。";
+  if (code === "native-host-disconnected") return "Native Host 在读取安全态势期间断开。上次有效结果仍可查看，可以安全重试。";
+  return errorMessage(cause);
+}
+
 function snapshotErrorMessage(cause: unknown): string {
   const code = errorCode(cause);
   if (code === "snapshot-result-too-large") return "快照记录超过单次安全上限，请缩小分页后重试。";
@@ -1390,6 +1430,117 @@ function conflictErrorMessage(cause: unknown): string {
                     <div><dt>加密存储体积</dt><dd>{{ formatMdbx2SnapshotBytes(vaultDiagnostics.diagnostics.storedAttachmentBytes) }}</dd></div>
                   </dl>
                 </section>
+              </div>
+            </details>
+          </template>
+        </section>
+
+        <section
+          v-if="isExisting && vaultOpen"
+          class="mdbx2-tiga-panel field-wide"
+          :aria-busy="tigaBusy"
+          aria-labelledby="mdbx2-tiga-title"
+        >
+          <div class="mdbx2-tiga-header">
+            <div>
+              <strong id="mdbx2-tiga-title">Tiga 安全态势</strong>
+              <small>只读显示 Sky／Multi／Power、解锁合规与浏览器能力差异；不提供策略修改、例外编辑或审计操作。</small>
+            </div>
+            <m3e-button
+              variant="tonal"
+              type="button"
+              aria-label="刷新 Tiga 安全态势"
+              :disabled="tigaBusy || managerMutationLocked"
+              @click="loadVaultTiga"
+            ><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tigaBusy ? '正在检查…' : '刷新态势' }}</m3e-button>
+          </div>
+
+          <p v-if="tigaError" class="form-error mdbx2-tiga-error" role="alert">{{ tigaError }}</p>
+          <div v-if="tigaBusy && !vaultTiga" class="mdbx2-tiga-empty" role="status" aria-live="polite">
+            <m3e-icon name="progress_activity" />
+            <span>正在读取只读 Tiga 策略与解锁态势…</span>
+          </div>
+
+          <template v-if="vaultTiga && tigaPresentation">
+            <div class="mdbx2-tiga-overview" :data-tone="tigaPresentation.tone" aria-live="polite">
+              <span class="mdbx2-tiga-overview-icon"><m3e-icon :name="tigaPresentation.icon" /></span>
+              <div class="mdbx2-tiga-overview-copy">
+                <strong>{{ tigaPresentation.headline }}</strong>
+                <small>{{ tigaPresentation.supporting }}</small>
+                <small class="mdbx2-tiga-overview-meta">
+                  <time :datetime="new Date(vaultTiga.checkedAtUnixSeconds * 1000).toISOString()">{{ formatMdbx2DiagnosticTime(vaultTiga.checkedAtUnixSeconds) }}</time>
+                  · 策略版本 {{ vaultTiga.policy.policyVersion }}
+                </small>
+              </div>
+              <span class="mdbx2-tiga-profile-badge">{{ mdbx2TigaProfileLabel(vaultTiga.profile) }}</span>
+            </div>
+
+            <dl class="mdbx2-tiga-key-facts" aria-label="MDBX2 Tiga 安全态势概览">
+              <div><dt>策略状态</dt><dd>{{ mdbx2TigaComplianceLabel(vaultTiga.compliance) }}</dd></div>
+              <div><dt>解锁配置</dt><dd>{{ vaultTiga.unlock.satisfiesPolicy ? '满足当前模式' : '需要调整' }}</dd></div>
+              <div><dt>已配置方式</dt><dd>{{ vaultTiga.unlock.configuredMethods.map(mdbx2TigaUnlockMethodLabel).join('、') || '未配置' }}</dd></div>
+              <div><dt>浏览器限制</dt><dd>{{ vaultTiga.browser.limitations.length ? `${vaultTiga.browser.limitations.length} 项` : '无额外限制' }}</dd></div>
+            </dl>
+
+            <div v-if="vaultTiga.browser.limitations.length" class="mdbx2-tiga-limitations" role="list" aria-label="浏览器环境限制">
+              <div v-for="limitation in vaultTiga.browser.limitations" :key="limitation" class="mdbx2-tiga-limitation-row" role="listitem">
+                <span class="mdbx2-tiga-limitation-icon"><m3e-icon :name="mdbx2TigaBrowserLimitation(limitation).icon" /></span>
+                <span class="mdbx2-tiga-limitation-copy">
+                  <strong>{{ mdbx2TigaBrowserLimitation(limitation).label }}</strong>
+                  <small>{{ mdbx2TigaBrowserLimitation(limitation).description }}</small>
+                </span>
+              </div>
+            </div>
+
+            <details class="mdbx2-tiga-details">
+              <summary>
+                <m3e-icon name="policy" />
+                <span><strong>查看只读策略详情</strong><small>展开解锁、会话、敏感操作、恢复和审计要求；不会显示原始警告或技术标识。</small></span>
+                <m3e-icon class="mdbx2-tiga-details-chevron" name="expand_more" />
+              </summary>
+              <div class="mdbx2-tiga-policy-groups">
+                <section aria-labelledby="mdbx2-tiga-unlock-title">
+                  <h3 id="mdbx2-tiga-unlock-title">解锁与会话</h3>
+                  <dl>
+                    <div><dt>最低认证因子</dt><dd>{{ vaultTiga.policy.minimumAuthFactors }}</dd></div>
+                    <div><dt>安全密钥</dt><dd>{{ vaultTiga.policy.securityKeyRequired ? '必须' : vaultTiga.policy.securityKeyRecommended ? '建议' : '不要求' }}</dd></div>
+                    <div><dt>可移植解锁</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.portableUnlockAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>空闲锁定</dt><dd>{{ formatMdbx2TigaDuration(vaultTiga.policy.idleTimeoutSeconds) }}</dd></div>
+                    <div><dt>最长会话</dt><dd>{{ formatMdbx2TigaDuration(vaultTiga.policy.maxLifetimeSeconds) }}</dd></div>
+                    <div><dt>进入后台</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.lockOnBackground, '立即锁定', '保持当前会话') }}</dd></div>
+                    <div><dt>新鲜认证窗口</dt><dd>{{ formatMdbx2TigaDuration(vaultTiga.policy.freshAuthWindowSeconds) }}</dd></div>
+                    <div><dt>解锁警告</dt><dd>{{ formatMdbx2DiagnosticCount(vaultTiga.unlock.warningCount) }} 项</dd></div>
+                  </dl>
+                </section>
+                <section aria-labelledby="mdbx2-tiga-disclosure-title">
+                  <h3 id="mdbx2-tiga-disclosure-title">敏感操作</h3>
+                  <dl>
+                    <div><dt>查看敏感值</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.revealRequiresFreshAuth, '需要重新认证', '沿用当前会话') }}</dd></div>
+                    <div><dt>复制敏感值</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.copyRequiresFreshAuth, '需要重新认证', '沿用当前会话') }}</dd></div>
+                    <div><dt>剪贴板</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.clipboardAllowed, `允许，${formatMdbx2TigaDuration(vaultTiga.policy.clipboardTtlSeconds)} 清除`, '不允许') }}</dd></div>
+                    <div><dt>安全剪贴板</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.secureClipboardRequired, '必须', '不要求') }}</dd></div>
+                    <div><dt>截屏防护</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.screenCaptureProtectionRequired, '必须', '不要求') }}</dd></div>
+                    <div><dt>设备保障</dt><dd>{{ mdbx2TigaDeviceAssuranceLabel(vaultTiga.policy.minimumDeviceAssurance) }}</dd></div>
+                    <div><dt>策略警告</dt><dd>{{ formatMdbx2DiagnosticCount(vaultTiga.warningCount) }} 项</dd></div>
+                  </dl>
+                </section>
+                <section aria-labelledby="mdbx2-tiga-egress-title">
+                  <h3 id="mdbx2-tiga-egress-title">导出、数据与恢复</h3>
+                  <dl>
+                    <div><dt>导出</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.exportAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>打印</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.printAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>导出认证因子</dt><dd>{{ vaultTiga.policy.egressMinimumAuthFactors }}</dd></div>
+                    <div><dt>持久明文缓存</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.persistentPlaintextCacheAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>附件临时文件</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.attachmentTemporaryFilesAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>锁定时密文同步</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.lockedCiphertextSyncAllowed, '允许', '不允许') }}</dd></div>
+                    <div><dt>最低恢复方式</dt><dd>{{ vaultTiga.policy.minimumRecoveryMethods }}</dd></div>
+                    <div><dt>可移植恢复</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.portableRecoveryRequired, '必须', '不要求') }}</dd></div>
+                    <div><dt>管理认证因子</dt><dd>{{ vaultTiga.policy.administrationMinimumAuthFactors }}</dd></div>
+                    <div><dt>审计范围</dt><dd>{{ mdbx2TigaAuditLevelLabel(vaultTiga.policy.auditLevel) }}</dd></div>
+                    <div><dt>删除审计</dt><dd>{{ mdbx2TigaBooleanLabel(vaultTiga.policy.auditDeletionAllowed, '策略允许', '策略禁止') }}</dd></div>
+                  </dl>
+                </section>
+                <p class="mdbx2-tiga-readonly-note"><m3e-icon name="info" /><span>此页面只解释当前策略。修改模式、例外、恢复策略、密钥轮换或审计记录必须在支持这些管理能力的客户端完成。</span></p>
               </div>
             </details>
           </template>
@@ -1863,6 +2014,56 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-stat-groups dl > div { min-width: 0; display: grid; gap: 2px; padding: 8px 12px; }
 .mdbx2-diagnostics-stat-groups dt { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-diagnostics-stat-groups dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mdbx2-tiga-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.mdbx2-tiga-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
+.mdbx2-tiga-header > div,
+.mdbx2-tiga-overview-copy,
+.mdbx2-tiga-limitation-copy,
+.mdbx2-tiga-details summary > span { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-tiga-header small,
+.mdbx2-tiga-overview-copy small,
+.mdbx2-tiga-limitation-copy small,
+.mdbx2-tiga-details small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-tiga-header > m3e-button { min-height: 44px; flex: 0 0 auto; }
+.mdbx2-tiga-error { margin: 0 16px 12px; }
+.mdbx2-tiga-empty { min-height: 64px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
+.mdbx2-tiga-empty m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-tiga-overview { min-height: 80px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
+.mdbx2-tiga-overview[data-tone="healthy"] { color: var(--md-sys-color-on-tertiary-container, var(--app-text)); background: var(--md-sys-color-tertiary-container, var(--app-surface-high)); }
+.mdbx2-tiga-overview[data-tone="attention"] { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-tiga-overview[data-tone="danger"] { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-tiga-overview[data-tone] .mdbx2-tiga-overview-copy small { color: inherit; opacity: .82; }
+.mdbx2-tiga-overview-icon { inline-size: 44px; block-size: 44px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 10%, transparent); }
+.mdbx2-tiga-overview-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-tiga-overview-meta { font-variant-numeric: tabular-nums; }
+.mdbx2-tiga-profile-badge { min-height: 32px; border: 1px solid color-mix(in srgb, currentColor 32%, transparent); border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; font-weight: 700; letter-spacing: .02em; }
+.mdbx2-tiga-key-facts { margin: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mdbx2-tiga-key-facts > div { min-width: 0; display: grid; align-content: center; gap: 2px; padding: 12px 16px; }
+.mdbx2-tiga-key-facts > div + div { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-tiga-key-facts dt { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-tiga-key-facts dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.mdbx2-tiga-limitations { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-tiga-limitation-row { min-height: 64px; display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 16px; color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-tiga-limitation-row + .mdbx2-tiga-limitation-row { border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.mdbx2-tiga-limitation-icon { inline-size: 44px; block-size: 44px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 10%, transparent); }
+.mdbx2-tiga-limitation-icon m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-tiga-limitation-copy small { color: inherit; opacity: .82; }
+.mdbx2-tiga-details { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-tiga-details summary { min-height: 56px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 8px 16px; cursor: pointer; list-style: none; }
+.mdbx2-tiga-details summary::-webkit-details-marker { display: none; }
+.mdbx2-tiga-details summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-tiga-details summary > m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-tiga-details[open] .mdbx2-tiga-details-chevron { transform: rotate(180deg); }
+.mdbx2-tiga-policy-groups { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-tiga-policy-groups > section { padding: 12px 16px; }
+.mdbx2-tiga-policy-groups > section + section { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-tiga-policy-groups h3 { margin: 0 0 8px; font-size: 1rem; }
+.mdbx2-tiga-policy-groups dl { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mdbx2-tiga-policy-groups dl > div { min-width: 0; display: grid; gap: 2px; padding: 8px 12px; }
+.mdbx2-tiga-policy-groups dt { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-tiga-policy-groups dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mdbx2-tiga-readonly-note { margin: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 12px; padding: 12px 16px; color: var(--app-muted); background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-tiga-readonly-note m3e-icon { --m3e-icon-size: 20px; justify-self: center; }
 .mdbx2-collection-panel { border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .mdbx2-collection-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-collection-header > div:first-child,
@@ -2102,6 +2303,12 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-diagnostics-category-row { grid-template-columns: 32px minmax(0, 1fr); }
   .mdbx2-diagnostics-category-count { grid-column: 2; white-space: normal; }
   .mdbx2-diagnostics-stat-groups dl { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-tiga-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-tiga-overview { grid-template-columns: 44px minmax(0, 1fr); }
+  .mdbx2-tiga-profile-badge { grid-column: 2; justify-self: start; }
+  .mdbx2-tiga-key-facts { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-tiga-key-facts > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+  .mdbx2-tiga-policy-groups dl { grid-template-columns: minmax(0, 1fr); }
   .mdbx2-collection-header { align-items: stretch; flex-direction: column; }
   .mdbx2-collection-header-actions { align-items: stretch; flex-direction: column; }
   .mdbx2-collection-tabs { grid-template-columns: minmax(0, 1fr); }

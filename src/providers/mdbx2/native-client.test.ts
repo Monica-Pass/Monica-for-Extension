@@ -32,6 +32,9 @@ import {
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
   MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
+  MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
+  MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
+  MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
@@ -93,6 +96,10 @@ const HELLO = {
   maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
   maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   supportsVaultDiagnostics: true,
+  maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
+  maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
+  maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
+  supportsVaultTigaPosture: true,
   maxObjectBatchMutations: MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   maxObjectBatchIntentBytes: MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   maxHistoryPageSize: MDBX2_MAX_HISTORY_PAGE_SIZE,
@@ -145,6 +152,62 @@ const DIAGNOSTIC_REPORT = {
   diagnostics: DIAGNOSTIC_COUNTS
 } as const;
 
+const TIGA_POSTURE = {
+  checkedAtUnixSeconds: 1785648000,
+  profile: "multi",
+  compliance: "compliant",
+  hasException: false,
+  warningCount: 0,
+  unlock: {
+    mode: "multi",
+    configuredMethods: ["password"],
+    hasPortableUnlock: true,
+    hasSecurityKeyUnlock: false,
+    hasCombinedPasswordSecurityKey: false,
+    hasRequiredCombinedStrength: false,
+    satisfiesPolicy: true,
+    warningCount: 1
+  },
+  policy: {
+    policyVersion: 2,
+    portableUnlockAllowed: true,
+    minimumAuthFactors: 1,
+    securityKeyRequired: false,
+    securityKeyRecommended: true,
+    idleTimeoutSeconds: 600,
+    maxLifetimeSeconds: 7200,
+    lockOnBackground: true,
+    freshAuthWindowSeconds: 300,
+    revealRequiresFreshAuth: true,
+    clipboardAllowed: true,
+    clipboardTtlSeconds: 30,
+    copyRequiresFreshAuth: true,
+    secureClipboardRequired: false,
+    screenCaptureProtectionRequired: false,
+    exportAllowed: true,
+    printAllowed: true,
+    egressRequiresFreshAuth: true,
+    egressMinimumAuthFactors: 1,
+    persistentPlaintextCacheAllowed: false,
+    attachmentTemporaryFilesAllowed: false,
+    lockedCiphertextSyncAllowed: true,
+    minimumRecoveryMethods: 1,
+    portableRecoveryRequired: true,
+    administrationRequiresFreshAuth: true,
+    administrationMinimumAuthFactors: 1,
+    auditDeletionAllowed: true,
+    minimumDeviceAssurance: "standard",
+    auditLevel: "sensitive-operations"
+  },
+  browser: {
+    deviceAssurance: "standard",
+    secureClipboardAvailable: false,
+    screenCaptureProtectionAvailable: false,
+    secureTemporaryFilesAvailable: true,
+    limitations: []
+  }
+} as const;
+
 afterEach(() => vi.useRealTimers());
 
 describe("MDBX2 Native Messaging client", () => {
@@ -178,6 +241,7 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsSnapshotPrune: false })).toThrow("自动快照清理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsCollectionMutation: false })).toThrow("Collection 管理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultDiagnostics: false })).toThrow("诊断刷新能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultTigaPosture: false })).toThrow("Tiga 安全态势能力");
   });
 
   it("preserves stable Host error codes and retryability", async () => {
@@ -320,6 +384,7 @@ describe("MDBX2 Native Messaging client", () => {
         },
         "vault.status": { vaultHandle: handle, open: true, available: true },
         "vault.diagnostics": DIAGNOSTIC_REPORT,
+        "vault.tiga": TIGA_POSTURE,
         "vault.lock": { locked: true },
         "collection.list": { items: [{ collectionId: handle, title: ".monica-root", collectionTypeId: null, profileSchemaVersion: null, groupId: null, iconRef: null, favorite: false, archived: false, attachmentCount: 0, headCommitId: "commit-1", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
         "object.list": { items: [{ objectId: handle, collectionId: handle, objectTypeId: "login", title: "Example", payloadSchemaVersion: 1, headCommitId: "commit-2", deleted: false, updatedAt: "2026-08-02T00:00:00Z" }], nextCursor: null },
@@ -455,6 +520,7 @@ describe("MDBX2 Native Messaging client", () => {
     await expect(client.openVault({ kind: "file", handle }, { method: "password", password: "" })).resolves.toMatchObject({ vaultHandle: handle, health: { healthy: true } });
     await expect(client.vaultStatus(handle)).resolves.toEqual({ vaultHandle: handle, open: true, available: true });
     await expect(client.vaultDiagnostics(handle)).resolves.toMatchObject({ fileSizeBytes: 4096, health: { issueCount: 0 }, diagnostics: { folderCount: 0 } });
+    await expect(client.vaultTiga(handle)).resolves.toMatchObject({ profile: "multi", unlock: { configuredMethods: ["password"], satisfiesPolicy: true }, browser: { limitations: [] } });
     await expect(client.listCollections(handle)).resolves.toMatchObject({ items: [{ collectionId: handle, title: ".monica-root" }] });
     await expect(client.listObjects(handle, handle)).resolves.toMatchObject({ items: [{ objectId: handle, objectTypeId: "login" }] });
     await expect(client.revealObject(handle, handle)).resolves.toMatchObject({ payloadSchemaVersion: 1, payloadJson: expect.stringContaining("password:1") });
@@ -539,6 +605,45 @@ describe("MDBX2 Native Messaging client", () => {
       };
       const client = new Mdbx2NativeClient(runtime, () => `diagnostics-invalid-${index}`);
       await expect(client.vaultDiagnostics(vaultHandle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+      client.close();
+    }
+  });
+
+  it("rejects disclosed or internally inconsistent vault Tiga posture", async () => {
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const invalidPostures: unknown[] = [
+      { ...TIGA_POSTURE, auditEvents: [] },
+      { ...TIGA_POSTURE, hasException: true },
+      { ...TIGA_POSTURE, compliance: "exception", warningCount: 0, hasException: true },
+      { ...TIGA_POSTURE, unlock: { ...TIGA_POSTURE.unlock, mode: "power" } },
+      { ...TIGA_POSTURE, unlock: { ...TIGA_POSTURE.unlock, configuredMethods: ["password", "password"] } },
+      { ...TIGA_POSTURE, unlock: { ...TIGA_POSTURE.unlock, hasPortableUnlock: false } },
+      { ...TIGA_POSTURE, unlock: { ...TIGA_POSTURE.unlock, hasRequiredCombinedStrength: true } },
+      { ...TIGA_POSTURE, policy: { ...TIGA_POSTURE.policy, minimumAuthFactors: 0 } },
+      { ...TIGA_POSTURE, policy: { ...TIGA_POSTURE.policy, idleTimeoutSeconds: 7201 } },
+      { ...TIGA_POSTURE, policy: { ...TIGA_POSTURE.policy, clipboardTtlSeconds: 0 } },
+      { ...TIGA_POSTURE, policy: { ...TIGA_POSTURE.policy, secureClipboardRequired: true } },
+      { ...TIGA_POSTURE, browser: { ...TIGA_POSTURE.browser, secureClipboardAvailable: true } },
+      { ...TIGA_POSTURE, browser: { ...TIGA_POSTURE.browser, limitations: ["future-browser-capability"] } },
+      { ...TIGA_POSTURE, checkedAtUnixSeconds: 8_640_000_001 },
+      { ...TIGA_POSTURE, padding: "x".repeat(MDBX2_MAX_VAULT_TIGA_RESULT_BYTES) }
+    ];
+
+    for (const [index, result] of invalidPostures.entries()) {
+      const runtime = new FakeRuntime();
+      runtime.port.onPost = (message) => {
+        const request = message as { requestId: string; method: string; params: unknown };
+        expect(request.method).toBe("vault.tiga");
+        expect(request.params).toEqual({ vaultHandle });
+        runtime.port.onMessage.emit({
+          protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          result
+        } as never);
+      };
+      const client = new Mdbx2NativeClient(runtime, () => `tiga-invalid-${index}`);
+      await expect(client.vaultTiga(vaultHandle)).rejects.toMatchObject({ code: "native-host-incompatible" });
       client.close();
     }
   });

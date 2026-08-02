@@ -96,6 +96,15 @@ describe("extension runtime client", () => {
     expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_VAULT_DIAGNOSTICS", providerId: "provider-1" });
   });
 
+  it("sends MDBX2 Tiga posture through the typed manager contract", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await vaultClient.mdbx2VaultTiga("provider-1");
+
+    expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_VAULT_TIGA", providerId: "provider-1" });
+  });
+
   it("preserves the snapshot unknown-outcome code for safe manager recovery", async () => {
     const sendMessage = vi.fn().mockResolvedValue({
       ok: false,
