@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "./sender-policy";
+import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "./sender-policy";
 
 const runtimeId = "monica-extension-id";
 const extensionRoot = `chrome-extension://${runtimeId}/`;
@@ -28,6 +28,12 @@ describe("runtime sender policy", () => {
     expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example", origin: "https://attacker.example", tab: { id: 7 } as chrome.tabs.Tab }), runtimeId)).toThrow();
     expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: "https://login.example", origin: "https://login.example", tab: { id: 7 } as chrome.tabs.Tab, documentId: "" }), runtimeId)).toThrow();
     expect(() => requireTrustedWebPageSender(sender({ id: runtimeId, url: `${extensionRoot}index.html`, tab: { id: 7 } as chrome.tabs.Tab }), runtimeId)).toThrow();
+  });
+
+  it("keeps batch transfer commands on the manager page and rejects popup callers", () => {
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}index.html` }), runtimeId, extensionRoot)).not.toThrow();
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}popup.html` }), runtimeId, extensionRoot)).toThrow("管理页");
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: "https://example.com/index.html" }), runtimeId, extensionRoot)).toThrow();
   });
 
   it("allows sensitive operations only on HTTPS or exact loopback HTTP", () => {

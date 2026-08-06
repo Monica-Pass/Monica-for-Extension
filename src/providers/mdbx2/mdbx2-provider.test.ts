@@ -146,6 +146,50 @@ describe("MDBX2 provider", () => {
     expect(result.items.filter((item) => referenceForTest(item)?.revision === "commit-batch")).toHaveLength(2);
   });
 
+  it("writes a prepared transfer batch with a caller-owned retry scope", async () => {
+    const runtime = new FakeRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const first = createLoginItem({
+      title: "Transfer one",
+      username: "one",
+      password: "secret-one",
+      uris: ["https://one.example"],
+      providerRefs: []
+    });
+    const second = createLoginItem({
+      title: "Transfer two",
+      username: "two",
+      password: "secret-two",
+      uris: ["https://two.example"],
+      providerRefs: []
+    });
+    const result = await provider.createBatch(account, "ab".repeat(32), [first, second]);
+
+    expect(runtime.lastOperationScope).toBe("ab".repeat(32));
+    expect(result.items).toHaveLength(2);
+    expect(result.items.every((item) => referenceForTest(item)?.remoteId)).toBe(true);
+  });
+
+  it("rejects a non-SHA operation scope before calling the Native Runtime", async () => {
+    const runtime = new FakeRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const item = createLoginItem({ title: "Transfer", password: "secret", providerRefs: [] });
+    await expect(provider.createBatch(account, "transfer:operation:0", [item])).rejects.toThrow("64 位小写 SHA-256");
+    expect(runtime.lastOperationScope).toBeUndefined();
+  });
+
+  it("applies a bounded Android payload patch while retaining the item model", async () => {
+    const runtime = new FakeRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const item = createLoginItem({ title: "Patched", password: "secret", providerRefs: [] });
+    const result = await provider.createPreparedBatch(account, "cd".repeat(32), [{
+      item,
+      payloadPatch: { bitwarden_mode: false, bound_note_entry_id: null }
+    }]);
+    expect(result.items[0]).toMatchObject({ title: "Patched" });
+    expect(runtime.writes[runtime.writes.length - 1]?.payloadJson).toContain('"bound_note_entry_id":null');
+  });
+
   it("recovers a committed Object operation after the Native Host response is lost", async () => {
     const runtime = new FakeRuntime();
     const provider = new Mdbx2Provider(runtime);
@@ -218,6 +262,6 @@ describe("MDBX2 provider", () => {
   });
 });
 
-function referenceForTest(item: { providerRefs: Array<{ providerId: string; revision?: string }> }) {
+function referenceForTest(item: { providerRefs: Array<{ providerId: string; remoteId?: string; revision?: string }> }) {
   return item.providerRefs.find((reference) => reference.providerId === account.id);
 }

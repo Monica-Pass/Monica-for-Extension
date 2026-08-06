@@ -41,6 +41,20 @@ export interface Mdbx2CloudSynchronizer {
   synchronize(input: Mdbx2CloudSyncInput, signal?: AbortSignal): Promise<Mdbx2CloudSyncReport>;
 }
 
+export interface Mdbx2BatchWriteResult {
+  operationScope: string;
+  commitId: string;
+  alreadyCommitted: boolean;
+  items: VaultItem[];
+}
+
+export interface Mdbx2BatchWriteEntry {
+  item: VaultItem;
+  originalPayload?: Record<string, unknown>;
+  originalItem?: VaultItem;
+  payloadPatch?: Record<string, unknown>;
+}
+
 interface RemoteObject {
   record: Mdbx2ObjectRecord;
   summary: Mdbx2ObjectSummary;
@@ -371,6 +385,76 @@ export class Mdbx2Provider implements ProviderAdapter {
     const finalized = finalizeWritten(item, account.id, result);
     this.session(account).originals.set(result.objectId, finalized);
     return finalized;
+  }
+
+  /**
+   * Writes a prepared transfer batch through the Core's authenticated object operation. The caller
+   * owns the operation scope so an MV3 response-loss retry can submit the identical intent.
+   */
+  async createBatch(
+    account: ProviderAccount,
+    operationScope: string,
+    items: readonly VaultItem[]
+  ): Promise<Mdbx2BatchWriteResult> {
+    return this.createPreparedBatch(account, operationScope, items.map((item) => ({ item })));
+  }
+
+  async createPreparedBatch(
+    account: ProviderAccount,
+    operationScope: string,
+    entries: readonly Mdbx2BatchWriteEntry[]
+  ): Promise<Mdbx2BatchWriteResult> {
+    await this.testConnection(account);
+    if (!/^[a-f0-9]{64}$/.test(operationScope)) throw new Error("MDBX2 批量传输操作范围必须是 64 位小写 SHA-256。");
+    if (!entries.length || entries.length > MDBX2_MAX_OBJECT_BATCH_MUTATIONS) throw new Error("MDBX2 批量传输数量超出限制。");
+    const mutations = entries.map((entry) => {
+      const encoded = encodeMdbx2Object(entry.item, entry.originalPayload, entry.originalItem);
+      if (!encoded) throw new Error(`项目「${entry.item.title || entry.item.id}」无法写入 MDBX2。`);
+      if (entry.payloadPatch) {
+        const payload = JSON.parse(encoded.payloadJson) as Record<string, unknown>;
+        encoded.payloadJson = JSON.stringify({ ...payload, ...entry.payloadPatch });
+      }
+      return { kind: "upsert" as const, ...encoded };
+    });
+    const intentBytes = new TextEncoder().encode(JSON.stringify(mutations)).byteLength;
+    if (intentBytes > MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) throw new Error("MDBX2 批量传输载荷超出限制。");
+    const result = await this.runtime.mutateObjects(vaultHandleOf(account), operationScope, mutations);
+    if (result.items.length !== entries.length) throw new Error("MDBX2 批量传输结果数量不一致。");
+    const committedId = result.commitId;
+    if (!committedId) throw new Error("MDBX2 批量传输结果缺少 Commit 标识。");
+    const session = this.session(account);
+    const finalized: VaultItem[] = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const input = mutations[index];
+      const written = result.items[index];
+      if (written.kind !== "upsert" || written.logicalObjectId !== input.logicalObjectId) {
+        throw new Error("MDBX2 批量传输结果顺序或逻辑 ID 不一致。");
+      }
+      const commitId = committedId;
+      const objectId = written.objectId;
+      const collectionId = written.collectionId;
+      const objectTypeId = written.objectTypeId;
+      if (!commitId || !objectId || !collectionId || !objectTypeId) throw new Error("MDBX2 批量传输结果缺少核心提交信息。");
+      const writeResult: Mdbx2ObjectWriteResult = {
+        commitId,
+        alreadyCommitted: Boolean(result.alreadyCommitted),
+        logicalObjectId: written.logicalObjectId,
+        objectId,
+        collectionId,
+        objectTypeId
+      };
+      const payload = JSON.parse(input.payloadJson) as Record<string, unknown>;
+      session.payloads.set(objectId, payload);
+      const item = finalizeWritten(entries[index].item, account.id, writeResult);
+      session.originals.set(objectId, item);
+      finalized.push(item);
+    }
+    return {
+      operationScope,
+      commitId: committedId,
+      alreadyCommitted: Boolean(result.alreadyCommitted),
+      items: finalized
+    };
   }
 
   async update(account: ProviderAccount, item: VaultItem): Promise<VaultItem> {

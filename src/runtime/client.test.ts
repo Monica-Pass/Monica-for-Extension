@@ -87,6 +87,30 @@ describe("extension runtime client", () => {
     ]);
   });
 
+  it("sends MDBX2 batch planning and execution with a reusable operation identity", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const input = {
+      operationId: "11111111-1111-4111-8111-111111111111",
+      operationCreatedAt: "2026-08-06T12:00:00.000Z",
+      itemIds: ["item-1", "item-2"],
+      targetProviderId: "mdbx-target",
+      targetCollectionId: "22222222-2222-4222-8222-222222222222",
+      preserveCategories: true,
+      action: "move" as const
+    };
+
+    await vaultClient.planMdbx2BatchTransfer(input);
+    await vaultClient.executeMdbx2BatchTransfer(input, true);
+    await vaultClient.mdbx2BatchTransferStatus(input.operationId);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "MDBX2_BATCH_TRANSFER_PLAN", input },
+      { type: "MDBX2_BATCH_TRANSFER_EXECUTE", input, confirmed: true },
+      { type: "MDBX2_BATCH_TRANSFER_STATUS", operationId: input.operationId }
+    ]);
+  });
+
   it("sends MDBX2 diagnostics refresh through the typed manager contract", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
     vi.stubGlobal("chrome", { runtime: { sendMessage } });

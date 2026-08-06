@@ -16,6 +16,20 @@ export function assertTrustedExtensionPage(
   }
 }
 
+export function assertTrustedManagerPage(
+  sender: chrome.runtime.MessageSender,
+  runtimeId: string,
+  extensionRoot: string,
+  managerPath = "/index.html"
+): void {
+  assertTrustedExtensionPage(sender, runtimeId, extensionRoot);
+  const actual = new URL(sender.url || "");
+  const manager = new URL(`${extensionRoot}${managerPath.replace(/^\//, "")}`);
+  if (actual.origin !== manager.origin || actual.pathname !== manager.pathname) {
+    throw new Error("此命令只允许 Monica 管理页调用。");
+  }
+}
+
 export function requireTrustedWebPageSender(sender: chrome.runtime.MessageSender, runtimeId: string): WebPageSenderContext {
   const url = sender.url || "";
   const parsed = new URL(url);

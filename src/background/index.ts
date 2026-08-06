@@ -10,6 +10,9 @@ import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
+import { Mdbx2BatchTransferCoordinator, type Mdbx2BatchTransferProgress, type Mdbx2BatchTransferStatus } from "../providers/mdbx2/mdbx2-batch-transfer-coordinator";
+import { assertMdbx2TransferOperationId } from "../providers/mdbx2/mdbx2-transfer-identity";
+import { Mdbx2TransferAttachmentService } from "../providers/mdbx2/mdbx2-transfer-attachments";
 import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
@@ -22,7 +25,7 @@ import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLog
 import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
-import { assertTrustedExtensionPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
+import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
 import { hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
@@ -45,6 +48,18 @@ const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator)
 providers.register(mdbx2Provider);
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
+const mdbx2TransferAttachmentService = new Mdbx2TransferAttachmentService(
+  mdbx2NativeClient,
+  keePassProvider,
+  (providerId) => service.getProviderSourceRecords(providerId)
+);
+const mdbx2BatchTransferCoordinator = new Mdbx2BatchTransferCoordinator(
+  service,
+  providers,
+  mdbx2Provider,
+  mdbx2NativeClient,
+  mdbx2TransferAttachmentService
+);
 const providerAttachmentUploads = new ProviderAttachmentUploadStore();
 const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
@@ -54,6 +69,8 @@ const PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH = Math.ceil(PROVIDER_ATTACHMEN
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
 const PASSKEY_COMPLETION_TTL_MS = 2 * 60_000;
 const activeProviderSyncs = new Map<string, AbortController>();
+const MDBX2_BATCH_TRANSFER_STATUS_TTL_MS = 10 * 60_000;
+const mdbx2BatchTransferStatuses = new Map<string, Mdbx2BatchTransferStatus>();
 
 interface PendingCredentialCapture extends CredentialCaptureInput {
   id: string;
@@ -152,6 +169,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") mdbx2NativeClient.close();
       if (status !== "unlocked") mdbx2Provider.lock();
       if (status !== "unlocked") keePassProvider.lock();
+      if (status !== "unlocked") mdbx2BatchTransferStatuses.clear();
     });
   }
 });
@@ -203,6 +221,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
+      mdbx2BatchTransferStatuses.clear();
       return service.lock();
     }
     case "VAULT_CHANGE_MASTER_PASSWORD":
@@ -663,6 +682,43 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.deleteObject(vaultHandle, request.operationId, request.logicalObjectId);
     }
+    case "MDBX2_BATCH_TRANSFER_PLAN":
+      assertManagerPage(sender);
+      return mdbx2BatchTransferCoordinator.plan(request.input);
+    case "MDBX2_BATCH_TRANSFER_EXECUTE": {
+      assertManagerPage(sender);
+      pruneMdbx2BatchTransferStatuses();
+      const operationId = assertMdbx2TransferOperationId(request.input.operationId || crypto.randomUUID());
+      const input = { ...request.input, operationId, confirmed: request.confirmed === true };
+      recordMdbx2BatchTransferProgress({
+        operationId,
+        phase: "preparing",
+        processed: 0,
+        total: new Set(request.input.itemIds).size,
+        completedCount: 0,
+        blockedCount: 0,
+        failedCount: 0
+      });
+      try {
+        return await mdbx2BatchTransferCoordinator.execute(input, recordMdbx2BatchTransferProgress);
+      } catch (error) {
+        const current = mdbx2BatchTransferStatuses.get(operationId);
+        recordMdbx2BatchTransferProgress({
+          operationId,
+          phase: "failed",
+          processed: current?.processed || 0,
+          total: current?.total || new Set(request.input.itemIds).size,
+          completedCount: current?.completedCount || 0,
+          blockedCount: current?.blockedCount || 0,
+          failedCount: Math.max(current?.failedCount || 0, 1)
+        });
+        throw error;
+      }
+    }
+    case "MDBX2_BATCH_TRANSFER_STATUS":
+      assertManagerPage(sender);
+      pruneMdbx2BatchTransferStatuses();
+      return mdbx2BatchTransferStatuses.get(assertMdbx2TransferOperationId(request.operationId));
     case "MDBX2_HISTORY_LIST": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
@@ -1991,13 +2047,28 @@ async function requireMdbx2VaultHandle(providerId: string): Promise<string> {
   return vaultHandle;
 }
 
-function assertManagerPage(sender: chrome.runtime.MessageSender): void {
-  assertExtensionPage(sender);
-  const actual = new URL(sender.url || "");
-  const manager = new URL(chrome.runtime.getURL("index.html"));
-  if (actual.origin !== manager.origin || actual.pathname !== manager.pathname) {
-    throw new Error("此 MDBX2 管理命令只允许 Monica 管理页调用。");
+function recordMdbx2BatchTransferProgress(progress: Mdbx2BatchTransferProgress): void {
+  mdbx2BatchTransferStatuses.set(progress.operationId, {
+    ...progress,
+    finished: progress.phase === "completed" || progress.phase === "failed",
+    updatedAt: new Date().toISOString()
+  });
+  pruneMdbx2BatchTransferStatuses();
+}
+
+function pruneMdbx2BatchTransferStatuses(now = Date.now()): void {
+  for (const [operationId, status] of mdbx2BatchTransferStatuses) {
+    const updatedAt = Date.parse(status.updatedAt);
+    if (!Number.isFinite(updatedAt) || now - updatedAt > MDBX2_BATCH_TRANSFER_STATUS_TTL_MS) {
+      mdbx2BatchTransferStatuses.delete(operationId);
+    }
   }
+}
+
+function assertManagerPage(sender: chrome.runtime.MessageSender): void {
+  const managerPageUrl = chrome.runtime.getURL("index.html");
+  const extensionRoot = managerPageUrl.slice(0, -"/index.html".length);
+  assertTrustedManagerPage(sender, chrome.runtime.id, `${extensionRoot}/`);
 }
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {

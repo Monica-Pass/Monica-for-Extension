@@ -10,6 +10,7 @@ import AppearancePanel from "./components/AppearancePanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
 import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
 import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
+import Mdbx2BatchTransferDialog from "./components/Mdbx2BatchTransferDialog.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
@@ -101,6 +102,8 @@ const revealKeePassPassword = ref(false);
 const keePassSessions = ref<Record<string, KeePassSessionSummary>>({});
 const keePassGroupsProvider = ref<ProviderAccount | undefined>();
 const mdbx2DialogOpen = ref(false);
+const mdbx2BatchTransferDialogOpen = ref(false);
+const mdbx2BatchTransferTargetProviderId = ref<string | undefined>();
 const mdbx2DialogMode = ref<"local" | "remote">("local");
 const editingMdbx2Id = ref<string | undefined>();
 const mdbx2HostStatus = ref<Mdbx2HostStatus | null>(null);
@@ -182,7 +185,7 @@ const keePassProtectionPreview = computed(() => {
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -221,6 +224,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
     event.preventDefault();
     if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (mdbx2BatchTransferDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassGroupsProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (exportBackupDialogOpen.value) closeExportBackupDialog();
     else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
@@ -322,6 +326,8 @@ async function lockVault() {
   webDavDialogOpen.value = false;
   bitwardenDialogOpen.value = false;
   mdbx2DialogOpen.value = false;
+  mdbx2BatchTransferDialogOpen.value = false;
+  mdbx2BatchTransferTargetProviderId.value = undefined;
   editingMdbx2Id.value = undefined;
   closeAttachmentDialog();
   closeKeePassHistory();
@@ -707,6 +713,20 @@ function openMdbx2Dialog(provider?: ProviderAccount, mode: "local" | "remote" = 
 function closeMdbx2Dialog() {
   mdbx2DialogOpen.value = false;
   editingMdbx2Id.value = undefined;
+}
+
+function openMdbx2BatchTransfer(provider?: ProviderAccount) {
+  mdbx2BatchTransferTargetProviderId.value = provider?.id;
+  mdbx2BatchTransferDialogOpen.value = true;
+}
+
+function closeMdbx2BatchTransfer() {
+  mdbx2BatchTransferDialogOpen.value = false;
+  mdbx2BatchTransferTargetProviderId.value = undefined;
+}
+
+async function handleMdbx2BatchTransferCompleted() {
+  await Promise.all([refreshItems(), refreshProviders()]);
 }
 
 async function handleMdbx2Changed() {
@@ -1469,6 +1489,7 @@ function errorMessage(error: unknown) {
               <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>可移植 .mdbx 只用于首次加入与完整备份；日常多设备同步使用 Commit DAG、不可变增量段和加密 Blob。MDBX1 不受支持。</span></p>
               <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : mdbx2SyncFor(provider.id)?.initialized ? '增量同步已注册，尚未执行首次同步。' : '尚未发布或注册 WebDAV bootstrap。' }}</p>
               <div class="source-actions">
+                <m3e-button variant="tonal" :disabled="!mdbx2RuntimeFor(provider.id)?.open || Boolean(mdbx2Busy)" @click="openMdbx2BatchTransfer(provider)"><m3e-icon slot="icon" name="drive_file_move"></m3e-icon>批量传输</m3e-button>
                 <m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
                 <m3e-button v-else-if="mdbx2CanSync(provider)" variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button>
                 <m3e-button v-else variant="tonal" :disabled="Boolean(mdbx2Busy)" @click="openMdbx2Dialog(provider)"><m3e-icon slot="icon" :name="mdbx2RuntimeFor(provider.id)?.open ? 'cloud_upload' : 'lock_open'"></m3e-icon>{{ mdbx2RuntimeFor(provider.id)?.open ? '配置并发布' : '解锁并设置' }}</m3e-button>
@@ -1548,6 +1569,17 @@ function errorMessage(error: unknown) {
     </div>
 
     <VaultItemEditor v-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" @cancel="vaultEditorOpen = false" @save="saveVaultItem" />
+
+    <Mdbx2BatchTransferDialog
+      v-if="mdbx2BatchTransferDialogOpen"
+      :items="vaultItems"
+      :providers="providers"
+      :runtime-statuses="mdbx2RuntimeStatuses"
+      :initial-target-provider-id="mdbx2BatchTransferTargetProviderId"
+      @close="closeMdbx2BatchTransfer"
+      @completed="handleMdbx2BatchTransferCompleted"
+      @notice="showNotice"
+    />
 
     <Mdbx2SourceDialog
       v-if="mdbx2DialogOpen"

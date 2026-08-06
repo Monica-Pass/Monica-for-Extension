@@ -22,6 +22,12 @@ export interface RestoreEncryptedVaultOptions {
   currentPassword?: string;
 }
 
+export interface CompletedMdbx2TransferEntry {
+  expected: VaultItem;
+  result: VaultItem;
+  action: "copy" | "move";
+}
+
 export class VaultLockedError extends Error {
   constructor(message = "Vault is locked") {
     super(message);
@@ -546,6 +552,90 @@ export class SecureVaultService {
       state.updatedAt = now;
       await this.persist(state, key, envelope.kdf);
       return committed;
+    });
+  }
+
+  /**
+   * Adopts Objects already committed by the MDBX2 Core. Keeping this separate from `importItems`
+   * prevents a successful Native Host write from being queued a second time as a local mutation.
+   */
+  async applyCompletedMdbx2Transfer(entries: CompletedMdbx2TransferEntry[], targetProviderId?: string): Promise<VaultItem[]> {
+    return this.runExclusive(async () => {
+      if (!Array.isArray(entries) || entries.length < 1 || entries.length > 200) throw new Error("MDBX2 批量传输结果数量无效。");
+      const { state, envelope, key } = await this.mutableContext();
+      const currentById = new Map(state.items.map((item) => [item.id, item]));
+      const resultIds = new Set<string>();
+      const existingById = new Map(state.items.map((item) => [item.id, item]));
+      for (const entry of entries) {
+        if (!entry || !entry.expected || !entry.result || (entry.action !== "copy" && entry.action !== "move")) throw new Error("MDBX2 批量传输结果格式无效。");
+        const current = currentById.get(entry.expected.id);
+        const sameMoveIdentity = entry.action === "move" && entry.result.id === entry.expected.id;
+        const existingResult = sameMoveIdentity ? undefined : existingById.get(entry.result.id);
+        if (existingResult && JSON.stringify(existingResult) !== JSON.stringify(entry.result)) throw new Error(`目标项目「${entry.result.title || entry.result.id}」已存在不同内容。`);
+        if (sameMoveIdentity && current && JSON.stringify(current) === JSON.stringify(entry.result)) {
+          // A response-loss retry has already adopted this move.
+        } else if (!existingResult && (!current || JSON.stringify(current) !== JSON.stringify(entry.expected))) {
+          throw new Error(`项目「${entry.expected.title || entry.expected.id}」在传输期间发生变化，请重新读取后重试。`);
+        }
+        if (resultIds.has(entry.result.id)) throw new Error("MDBX2 批量传输结果包含重复项目 ID。");
+        resultIds.add(entry.result.id);
+        if (entry.action === "copy" && entry.result.id === entry.expected.id && !existingResult) throw new Error("MDBX2 复制结果不能复用来源项目 ID。");
+        const targetReference = entry.result.providerRefs.find((reference) => targetProviderId ? reference.providerId === targetProviderId : Boolean(reference.remoteId));
+        if (!targetReference) throw new Error("MDBX2 批量传输结果缺少已提交的远端 Object 标识。");
+      }
+      const replaceById = new Map(entries.filter((entry) => entry.action === "move").map((entry) => [entry.expected.id, entry.result]));
+      const copies = entries.filter((entry) => entry.action === "copy" && !existingById.has(entry.result.id)).map((entry) => entry.result);
+      state.items = [
+        ...copies.slice().reverse(),
+        ...state.items.map((item) => replaceById.get(item.id) || item)
+      ];
+      const affectedIds = new Set(entries.flatMap((entry) => [entry.expected.id, entry.result.id]));
+      state.mutationQueue = state.mutationQueue.filter((mutation) => !affectedIds.has(mutation.itemId));
+      state.providerConflicts = state.providerConflicts.filter((conflict) => !affectedIds.has(conflict.itemId));
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return entries.map((entry) => structuredClone(entry.result));
+    });
+  }
+
+  /**
+   * Deletes a foreign source and adopts a committed MDBX2 result while holding the vault mutation
+   * lock. If persistence fails after the provider deletion, retrying the same entry is idempotent:
+   * the already-adopted result is returned or the source deletion callback is invoked again.
+   */
+  async finalizeCompletedMdbx2Transfer(
+    entry: CompletedMdbx2TransferEntry,
+    targetProviderId: string,
+    deleteSource?: () => Promise<void>
+  ): Promise<VaultItem> {
+    return this.runExclusive(async () => {
+      if (!entry || !entry.expected || !entry.result || (entry.action !== "copy" && entry.action !== "move")) throw new Error("MDBX2 批量传输结果格式无效。");
+      const { state, envelope, key } = await this.mutableContext();
+      const sameMoveIdentity = entry.action === "move" && entry.result.id === entry.expected.id;
+      const existingResult = sameMoveIdentity ? undefined : state.items.find((item) => item.id === entry.result.id);
+      if (existingResult) {
+        if (JSON.stringify(existingResult) !== JSON.stringify(entry.result)) throw new Error(`目标项目「${entry.result.title || entry.result.id}」已存在不同内容。`);
+        return structuredClone(existingResult);
+      }
+      const current = state.items.find((item) => item.id === entry.expected.id);
+      if (sameMoveIdentity && current && JSON.stringify(current) === JSON.stringify(entry.result)) return structuredClone(current);
+      if (!current || JSON.stringify(current) !== JSON.stringify(entry.expected)) throw new Error(`项目「${entry.expected.title || entry.expected.id}」在传输期间发生变化，请重新读取后重试。`);
+      const targetReference = entry.result.providerRefs.find((reference) => reference.providerId === targetProviderId && Boolean(reference.remoteId));
+      if (!targetReference) throw new Error("MDBX2 批量传输结果缺少目标密码源引用。");
+      if (entry.action === "copy" && entry.expected.id === entry.result.id) throw new Error("MDBX2 复制结果不能复用来源项目 ID。");
+      if (entry.action === "move" && deleteSource) await deleteSource();
+
+      if (entry.action === "copy") {
+        state.items = [structuredClone(entry.result), ...state.items];
+      } else {
+        state.items = state.items.map((item) => item.id === entry.expected.id ? structuredClone(entry.result) : item);
+      }
+      const affectedIds = new Set([entry.expected.id, entry.result.id]);
+      state.mutationQueue = state.mutationQueue.filter((mutation) => !affectedIds.has(mutation.itemId));
+      state.providerConflicts = state.providerConflicts.filter((conflict) => !affectedIds.has(conflict.itemId));
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return structuredClone(entry.result);
     });
   }
 
