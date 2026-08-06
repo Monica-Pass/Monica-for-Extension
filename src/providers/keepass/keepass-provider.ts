@@ -26,6 +26,14 @@ import {
   type KeePassGroupRecord,
   type KeePassGroupSummary
 } from "./keepass-groups";
+import {
+  KeePassHistoryError,
+  KeePassHistoryStore,
+  type KeePassHistoryDetail,
+  type KeePassHistoryFieldValue,
+  type KeePassHistoryPage,
+  type KeePassHistoryRestoreResult
+} from "./keepass-history";
 
 /**
  * What the settings UI is allowed to see. The open `Kdbx`, the master credential and the entry fields
@@ -51,6 +59,7 @@ interface KeePassSession {
   summary: Omit<KeePassSessionSummary, "itemCount" | "skipped" | "dirty">;
   dirty: boolean;
   groupRevision: number;
+  historyRevision: number;
 }
 
 export interface KeePassUnlockCredential {
@@ -109,6 +118,7 @@ export class KeePassProvider implements ProviderAdapter {
   private readonly groupHandleByKey = new Map<string, string>();
   private readonly groupCursors = new Map<string, KeePassGroupCursor>();
   private readonly groupOperationReceipts = new Map<string, KeePassGroupOperationReceipt>();
+  private readonly historyStore = new KeePassHistoryStore();
 
   async unlock(
     account: ProviderAccount,
@@ -136,7 +146,8 @@ export class KeePassProvider implements ProviderAdapter {
         warnings: snapshot.warnings
       },
       dirty: false,
-      groupRevision: 0
+      groupRevision: 0,
+      historyRevision: 0
     });
     return this.summarize(account.id);
   }
@@ -241,6 +252,53 @@ export class KeePassProvider implements ProviderAdapter {
     }));
   }
 
+  listEntryHistory(
+    account: ProviderAccount,
+    item: VaultItem,
+    request: { pageSize?: number; cursor?: string } = {}
+  ): KeePassHistoryPage {
+    const { session, entryUuid, entry } = this.requireHistoryEntry(account, item);
+    return this.historyStore.list(account.id, entryUuid, entry, session.historyRevision, request);
+  }
+
+  getEntryHistoryDetail(account: ProviderAccount, item: VaultItem, historyId: string): KeePassHistoryDetail {
+    const { session, entryUuid, entry } = this.requireHistoryEntry(account, item);
+    return this.historyStore.detail(account.id, entryUuid, entry, session.historyRevision, historyId);
+  }
+
+  readEntryHistoryField(
+    account: ProviderAccount,
+    item: VaultItem,
+    historyId: string,
+    fieldId: string
+  ): KeePassHistoryFieldValue {
+    const { session, entryUuid, entry } = this.requireHistoryEntry(account, item);
+    return this.historyStore.readField(account.id, entryUuid, entry, session.historyRevision, historyId, fieldId);
+  }
+
+  restoreEntryHistory(
+    account: ProviderAccount,
+    item: VaultItem,
+    operationId: string,
+    historyId: string
+  ): KeePassHistoryRestoreResult {
+    const { session, entryUuid, entry } = this.requireHistoryEntry(account, item);
+    const mutation = this.historyStore.restore(
+      session.database,
+      account.id,
+      entryUuid,
+      entry,
+      session.historyRevision,
+      operationId,
+      historyId
+    );
+    if (!mutation.replayed) {
+      session.dirty = true;
+      this.reread(session, account.id);
+    }
+    return mutation.result;
+  }
+
   listAttachments(account: ProviderAccount, item: VaultItem): ProviderAttachmentSummary[] {
     const { entryUuid, entry } = this.requireAttachmentEntry(account, item);
     return [...entry.binaries.entries()].map(([fileName, binary]) => this.attachmentSummary(
@@ -323,6 +381,7 @@ export class KeePassProvider implements ProviderAdapter {
     this.sessions.delete(providerId);
     this.removeProviderAttachmentHandles(providerId);
     this.removeProviderGroupState(providerId);
+    this.historyStore.clearProvider(providerId);
   }
 
   lock(): void {
@@ -333,6 +392,7 @@ export class KeePassProvider implements ProviderAdapter {
     this.groupHandleByKey.clear();
     this.groupCursors.clear();
     this.groupOperationReceipts.clear();
+    this.historyStore.clear();
   }
 
   async testConnection(account: ProviderAccount): Promise<void> {
@@ -472,6 +532,8 @@ export class KeePassProvider implements ProviderAdapter {
   private reread(session: KeePassSession, providerId: string): void {
     session.entries = readKeePassEntries(session.database, session.databaseId, providerId);
     session.groupRevision += 1;
+    session.historyRevision += 1;
+    this.historyStore.invalidateProviderViews(providerId);
   }
 
   private requireKeePassAccountSession(account: ProviderAccount): KeePassSession {
@@ -582,6 +644,17 @@ export class KeePassProvider implements ProviderAdapter {
     if (!entryUuid) throw new ProviderAttachmentError("attachment-target-unsynced", "此项目尚未写入 KeePass，保存并同步后才能管理附件。");
     const entry = session.entries.entriesByUuid.get(entryUuid);
     if (!entry) throw new ProviderAttachmentError("attachment-target-not-found", "KeePass 条目已不存在，请重新同步数据库。");
+    return { session, entryUuid, entry };
+  }
+
+  private requireHistoryEntry(account: ProviderAccount, item: VaultItem): { session: KeePassSession; entryUuid: string; entry: kdbxweb.KdbxEntry } {
+    if (account.kind !== "keepass") throw new KeePassHistoryError("keepass-history-provider-invalid", "所选密码源不是 KeePass 数据库。");
+    const session = this.requireSession(account.id);
+    const reference = referenceOf(item, account.id);
+    const entryUuid = reference?.remoteId || item.keepassEntryUuid;
+    if (!entryUuid) throw new KeePassHistoryError("keepass-history-target-unsynced", "此项目尚未写入 KeePass，保存并同步后才能查看历史。");
+    const entry = session.entries.entriesByUuid.get(entryUuid);
+    if (!entry) throw new KeePassHistoryError("keepass-history-target-not-found", "KeePass 条目已不存在，请重新同步数据库。");
     return { session, entryUuid, entry };
   }
 

@@ -195,4 +195,26 @@ describe("extension runtime client", () => {
       { type: "KEEPASS_GROUP_RESTORE", providerId, operationId, groupId, targetParentGroupId: parentGroupId }
     ]);
   });
+
+  it("sends KeePass history disclosure and confirmed restore commands", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "keepass-1";
+    const itemId = "item-1";
+    const historyId = "22222222-2222-4222-8222-222222222222";
+    const fieldId = "33333333-3333-4333-8333-333333333333";
+    const operationId = "11111111-1111-4111-8111-111111111111";
+
+    await vaultClient.listKeePassHistory(providerId, itemId, { pageSize: 25, cursor: "next" });
+    await vaultClient.getKeePassHistoryDetail(providerId, itemId, historyId);
+    await vaultClient.revealKeePassHistoryField(providerId, itemId, historyId, fieldId);
+    await vaultClient.restoreKeePassHistory(providerId, itemId, operationId, historyId);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "KEEPASS_HISTORY_LIST", providerId, itemId, pageSize: 25, cursor: "next" },
+      { type: "KEEPASS_HISTORY_DETAIL", providerId, itemId, historyId },
+      { type: "KEEPASS_HISTORY_FIELD_REVEAL", providerId, itemId, historyId, fieldId },
+      { type: "KEEPASS_HISTORY_RESTORE", providerId, itemId, operationId, historyId, confirmed: true }
+    ]);
+  });
 });

@@ -1078,12 +1078,13 @@ tbody tr:hover td {
     display: none;
   }
 
-  .action-cell {
+  .data-card .action-cell {
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
     min-height: 52px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
@@ -1091,11 +1092,11 @@ tbody tr:hover td {
     border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 36%, transparent);
   }
 
-  .action-cell::before {
+  .data-card .action-cell::before {
     display: none;
   }
 
-  .action-cell m3e-icon-button {
+  .data-card .action-cell m3e-icon-button {
     width: 44px;
     min-width: 44px;
     max-width: 44px;

@@ -142,6 +142,10 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       { type: "KEEPASS_GROUP_MOVE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222" },
       { type: "KEEPASS_GROUP_DELETE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222", confirmed: true },
       { type: "KEEPASS_GROUP_RESTORE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222" },
+      { type: "KEEPASS_HISTORY_LIST", providerId: "keepass-provider", itemId: "item-1", pageSize: 20 },
+      { type: "KEEPASS_HISTORY_DETAIL", providerId: "keepass-provider", itemId: "item-1", historyId: "22222222-2222-4222-8222-222222222222" },
+      { type: "KEEPASS_HISTORY_FIELD_REVEAL", providerId: "keepass-provider", itemId: "item-1", historyId: "22222222-2222-4222-8222-222222222222", fieldId: "33333333-3333-4333-8333-333333333333" },
+      { type: "KEEPASS_HISTORY_RESTORE", providerId: "keepass-provider", itemId: "item-1", operationId: "11111111-1111-4111-8111-111111111111", historyId: "22222222-2222-4222-8222-222222222222", confirmed: true },
       { type: "KEEPASS_EXPORT_FILE", providerId: "keepass-provider" }
     ];
     for (const request of attachmentRequests) {
@@ -149,6 +153,16 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       expect(attachmentResponse.ok).toBe(false);
       expect(attachmentResponse.error).toContain("只允许 Monica 管理页调用");
     }
+    const unconfirmedHistoryRestore = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
+      type: "KEEPASS_HISTORY_RESTORE",
+      providerId: "keepass-provider",
+      itemId: "item-1",
+      operationId: "11111111-1111-4111-8111-111111111111",
+      historyId: "22222222-2222-4222-8222-222222222222",
+      confirmed: false
+    })) as RuntimeResponse;
+    expect(unconfirmedHistoryRestore.ok).toBe(false);
+    expect(unconfirmedHistoryRestore.error).toContain("需要明确确认");
     const conflictListResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_CONFLICT_LIST",
       providerId: "manager-only-provider",

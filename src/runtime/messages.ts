@@ -3,6 +3,7 @@ import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, Provider
 import type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture } from "../providers/mdbx2/native-contract";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
+import type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
 import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
@@ -311,6 +312,10 @@ export type ExtensionRequest =
   | { type: "KEEPASS_GROUP_MOVE"; providerId: string; operationId: string; groupId: string; targetParentGroupId?: string }
   | { type: "KEEPASS_GROUP_DELETE"; providerId: string; operationId: string; groupId: string; confirmed: boolean }
   | { type: "KEEPASS_GROUP_RESTORE"; providerId: string; operationId: string; groupId: string; targetParentGroupId?: string }
+  | { type: "KEEPASS_HISTORY_LIST"; providerId: string; itemId: string; pageSize?: number; cursor?: string }
+  | { type: "KEEPASS_HISTORY_DETAIL"; providerId: string; itemId: string; historyId: string }
+  | { type: "KEEPASS_HISTORY_FIELD_REVEAL"; providerId: string; itemId: string; historyId: string; fieldId: string }
+  | { type: "KEEPASS_HISTORY_RESTORE"; providerId: string; itemId: string; operationId: string; historyId: string; confirmed: boolean }
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
   | { type: "KEEPASS_LOCK"; providerId?: string }
   | { type: "PROVIDER_SYNC"; providerId: string }
@@ -326,4 +331,5 @@ export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictReso
 export type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult };
 export type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, KeePassSessionSummary };
 export type { KeePassGroupMutationResult, KeePassGroupPage };
+export type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

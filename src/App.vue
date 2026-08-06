@@ -9,6 +9,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import AppearancePanel from "./components/AppearancePanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
 import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
+import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
@@ -116,6 +117,8 @@ const exportBackupError = ref("");
 const attachmentDialogOpen = ref(false);
 const attachmentDialogItem = ref<VaultItem | undefined>();
 const attachmentDialogProviders = ref<ProviderAccount[]>([]);
+const keePassHistoryItem = ref<VaultItem | undefined>();
+const keePassHistoryProviders = ref<ProviderAccount[]>([]);
 // protectionMode drives currentPassword validation when replacing the live vault.
 // It is a best-effort UI hint persisted alongside the session; the runtime still
 // authoritatively re-derives the envelope key, so a stale value can never weaken
@@ -163,6 +166,9 @@ const externalProviders = computed(() => providers.value.filter((provider) => pr
 const attachmentProviderById = computed(() => new Map(providers.value
   .filter((provider) => provider.kind === "keepass" || provider.kind === "mdbx2")
   .map((provider) => [provider.id, provider])));
+const keePassHistoryProviderById = computed(() => new Map(keePassProviders.value
+  .filter((provider) => Boolean(keePassSessions.value[provider.id]))
+  .map((provider) => [provider.id, provider])));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
 const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
@@ -176,7 +182,7 @@ const keePassProtectionPreview = computed(() => {
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -213,7 +219,8 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (!dialog) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassGroupsProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (exportBackupDialogOpen.value) closeExportBackupDialog();
     else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
@@ -317,6 +324,7 @@ async function lockVault() {
   mdbx2DialogOpen.value = false;
   editingMdbx2Id.value = undefined;
   closeAttachmentDialog();
+  closeKeePassHistory();
   closeKeePassGroups();
   closeKeePassDialog();
   keePassSessions.value = {};
@@ -433,6 +441,32 @@ function closeAttachmentDialog() {
   attachmentDialogOpen.value = false;
   attachmentDialogItem.value = undefined;
   attachmentDialogProviders.value = [];
+}
+
+function keePassHistoryProvidersFor(item: VaultItem): ProviderAccount[] {
+  const seen = new Set<string>();
+  return item.providerRefs.flatMap((reference) => {
+    const provider = keePassHistoryProviderById.value.get(reference.providerId);
+    if (!provider || seen.has(provider.id)) return [];
+    seen.add(provider.id);
+    return [provider];
+  });
+}
+
+function openKeePassHistory(item: VaultItem) {
+  const candidates = keePassHistoryProvidersFor(item);
+  if (!candidates.length) return;
+  keePassHistoryItem.value = item;
+  keePassHistoryProviders.value = candidates;
+}
+
+function closeKeePassHistory() {
+  keePassHistoryItem.value = undefined;
+  keePassHistoryProviders.value = [];
+}
+
+async function handleKeePassHistoryChanged() {
+  await Promise.all([refreshKeePassSessions(), refreshItems()]);
 }
 
 function vaultItemStatus(item: VaultItem): string {
@@ -837,6 +871,7 @@ async function removeProvider(provider: ProviderAccount) {
     if (editingBitwardenId.value === provider.id) closeBitwardenDialog();
     if (editingKeePassId.value === provider.id) closeKeePassDialog();
     if (keePassGroupsProvider.value?.id === provider.id) closeKeePassGroups();
+    if (keePassHistoryProviders.value.some((candidate) => candidate.id === provider.id)) closeKeePassHistory();
     if (editingMdbx2Id.value === provider.id) closeMdbx2Dialog();
     if (provider.kind === "keepass") {
       const next = { ...keePassSessions.value };
@@ -1011,6 +1046,7 @@ async function lockKeePass(provider: ProviderAccount) {
     const next = { ...keePassSessions.value };
     delete next[provider.id];
     keePassSessions.value = next;
+    if (keePassHistoryProviders.value.some((candidate) => candidate.id === provider.id)) closeKeePassHistory();
     showNotice(`${provider.name} 已锁定；密码、密钥文件和解锁后的数据库对象均已从后台会话中清除。`);
   } catch (error) {
     showNotice(errorMessage(error));
@@ -1385,7 +1421,7 @@ function errorMessage(error: unknown) {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>全部登录项</h2><p>{{ filteredCredentials.length }} 个结果</p></div>
             <div v-if="filteredCredentials.length" class="table-wrap"><table><thead><tr><th>名称</th><th>用户名</th><th>匹配网站</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? '没有匹配的登录项' : '加密密码库还是空的' }}</h2><p>{{ query ? '换一个关键词试试。' : '添加第一个账号后即可在 Popup 中匹配。' }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">添加登录项</m3e-button></div>
           </m3e-card>
@@ -1402,7 +1438,7 @@ function errorMessage(error: unknown) {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
             <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>
@@ -1532,6 +1568,16 @@ function errorMessage(error: unknown) {
       :item="attachmentDialogItem"
       :providers="attachmentDialogProviders"
       @close="closeAttachmentDialog"
+      @notice="showNotice"
+    />
+
+    <KeePassHistoryDialog
+      v-if="keePassHistoryItem"
+      :key="`${keePassHistoryItem.id}:${keePassHistoryProviders.map((provider) => provider.id).join(',')}`"
+      :item="keePassHistoryItem"
+      :providers="keePassHistoryProviders"
+      @close="closeKeePassHistory"
+      @changed="handleKeePassHistoryChanged"
       @notice="showNotice"
     />
 

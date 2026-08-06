@@ -14,6 +14,7 @@ import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncCon
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
 import { KeePassProvider } from "../providers/keepass/keepass-provider";
 import { KeePassGroupError } from "../providers/keepass/keepass-groups";
+import { KeePassHistoryError } from "../providers/keepass/keepass-history";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
@@ -169,7 +170,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -979,6 +980,29 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
       return keePassProvider.restoreGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+    }
+    case "KEEPASS_HISTORY_LIST": {
+      assertManagerPage(sender);
+      const { account, item } = await requireKeePassHistoryTarget(request.providerId, request.itemId);
+      return keePassProvider.listEntryHistory(account, item, request);
+    }
+    case "KEEPASS_HISTORY_DETAIL": {
+      assertManagerPage(sender);
+      const { account, item } = await requireKeePassHistoryTarget(request.providerId, request.itemId);
+      return keePassProvider.getEntryHistoryDetail(account, item, request.historyId);
+    }
+    case "KEEPASS_HISTORY_FIELD_REVEAL": {
+      assertManagerPage(sender);
+      const { account, item } = await requireKeePassHistoryTarget(request.providerId, request.itemId);
+      return keePassProvider.readEntryHistoryField(account, item, request.historyId, request.fieldId);
+    }
+    case "KEEPASS_HISTORY_RESTORE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) {
+        throw new KeePassHistoryError("keepass-history-restore-confirmation-required", "恢复 KeePass 历史版本需要明确确认。");
+      }
+      const { account, item } = await requireKeePassHistoryTarget(request.providerId, request.itemId);
+      return keePassProvider.restoreEntryHistory(account, item, request.operationId, request.historyId);
     }
     case "KEEPASS_EXPORT_FILE": {
       assertManagerPage(sender);
@@ -1948,6 +1972,14 @@ async function requireKeePassAccount(providerId: string): Promise<ProviderAccoun
     throw new KeePassGroupError("keepass-group-provider-not-found", "KeePass 密码源不存在。");
   }
   return account;
+}
+
+async function requireKeePassHistoryTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {
+  const [account, item] = await Promise.all([requireKeePassAccount(providerId), service.getItem(itemId)]);
+  if (!item || !item.providerRefs.some((reference) => reference.providerId === providerId)) {
+    throw new KeePassHistoryError("keepass-history-target-not-found", "KeePass 历史项目不存在或不属于所选密码源。");
+  }
+  return { account, item };
 }
 
 async function requireMdbx2VaultHandle(providerId: string): Promise<string> {

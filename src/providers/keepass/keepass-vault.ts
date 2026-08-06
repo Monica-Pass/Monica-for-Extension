@@ -262,6 +262,7 @@ function buildLoginItem(fields: KeePassEntryFields, base: MonicaItemBase): Login
     username: projection.username,
     password: projection.password,
     uris: projection.url ? [projection.url] : [],
+    uriRules: projection.url ? [{ uri: projection.url, matchType: "base-domain" }] : [],
     customFields: projection.customFields,
     // Android would have emitted a second TOTP row for this entry; here the credential rides along on
     // the login instead, since both rows would otherwise claim the same entry-derived id.
