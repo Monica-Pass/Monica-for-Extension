@@ -89,7 +89,7 @@ export const vaultClient = {
       providerId,
       planHandle,
       operationId,
-      decisions,
+      decisions: decisions.map(({ itemHandle, choice }) => ({ itemHandle, choice })),
       ...(confirmedDelete ? { confirmedDelete: true as const } : {})
     }),
   mdbx2VaultTiga: (providerId: string) => send<Mdbx2VaultTigaPosture>({ type: "MDBX2_VAULT_TIGA", providerId }),

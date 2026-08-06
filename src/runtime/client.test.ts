@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { vaultClient } from "./client";
+import type { Mdbx2HealthRepairDecision } from "./messages";
 
 describe("extension runtime client", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -176,6 +177,31 @@ describe("extension runtime client", () => {
       name: "ExtensionRuntimeError",
       code: "health-repair-outcome-unknown"
     });
+  });
+
+  it("copies reactive health repair decisions into clone-safe message data", async () => {
+    const decision = new Proxy({
+      itemHandle: "33333333-3333-4333-8333-333333333333",
+      choice: "keep-content" as const
+    }, {});
+    const decisions = new Proxy([decision], {});
+    const sendMessage = vi.fn().mockImplementation(async (message: unknown) => {
+      structuredClone(message);
+      return { ok: true, data: {} };
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await vaultClient.applyMdbx2HealthRepair(
+      "provider-1",
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      decisions
+    );
+
+    const message = sendMessage.mock.calls[0]?.[0] as { decisions: Mdbx2HealthRepairDecision[] };
+    expect(message.decisions).toEqual([{ itemHandle: decision.itemHandle, choice: decision.choice }]);
+    expect(message.decisions).not.toBe(decisions);
+    expect(message.decisions[0]).not.toBe(decision);
   });
 
   it("sends MDBX2 Tiga posture through the typed manager contract", async () => {

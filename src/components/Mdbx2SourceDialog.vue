@@ -10,6 +10,9 @@ import {
   type Mdbx2CollectionSummary,
   type Mdbx2ConflictResolutionChoice,
   type Mdbx2ConflictSummary,
+  type Mdbx2HealthRepairChoice,
+  type Mdbx2HealthRepairDecision,
+  type Mdbx2HealthRepairPlan,
   type Mdbx2HostStatus,
   type Mdbx2ManagedSnapshotSummary,
   type Mdbx2SnapshotPrunePlan,
@@ -39,6 +42,10 @@ import {
   summarizeMdbx2HealthCounts
 } from "../providers/mdbx2/mdbx2-diagnostics";
 import {
+  presentMdbx2HealthRepairAutomatic,
+  presentMdbx2HealthRepairConflict
+} from "../providers/mdbx2/mdbx2-health-repair";
+import {
   formatMdbx2TigaDuration,
   mdbx2TigaAuditLevelLabel,
   mdbx2TigaBooleanLabel,
@@ -57,6 +64,8 @@ type BusyState = "" | "probe" | "upload" | "download" | "open" | "save" | "publi
 type SnapshotBusyState = "" | "list" | "structure" | "prune-plan" | "prune" | "create" | "delete" | "restore";
 type SnapshotStructureMode = "snapshot" | "compare";
 type SnapshotMutationAction = "delete" | "restore";
+type HealthRepairBusyState = "" | "plan" | "apply" | "refresh";
+type HealthRepairRecoveryState = "" | "stale" | "unknown";
 type CollectionView = "active" | "deleted";
 type CollectionMutationKind = "create" | "rename" | "move" | "delete" | "restore";
 interface PendingCollectionMutation {
@@ -107,6 +116,18 @@ const diagnosticsBusy = ref(false);
 const diagnosticsError = ref("");
 const diagnosticsDetails = ref<HTMLDetailsElement | null>(null);
 const diagnosticsAttachmentTarget = ref<HTMLElement | null>(null);
+const healthRepairPanel = ref<HTMLElement | null>(null);
+const confirmHealthRepairDeleteButton = ref<HTMLElement | null>(null);
+const applyHealthRepairButton = ref<HTMLElement | null>(null);
+const healthRepairPlan = ref<Mdbx2HealthRepairPlan | undefined>();
+const healthRepairBusy = ref<HealthRepairBusyState>("");
+const healthRepairError = ref("");
+const healthRepairDecisions = ref<Mdbx2HealthRepairDecision[]>([]);
+const healthRepairConflictIndex = ref(0);
+const healthRepairDeleteConfirmation = ref("");
+const healthRepairOperationId = ref("");
+const healthRepairAttempted = ref(false);
+const healthRepairRecovery = ref<HealthRepairRecoveryState>("");
 const collectionPanel = ref<HTMLElement | null>(null);
 const snapshotPanel = ref<HTMLElement | null>(null);
 const historyPanel = ref<HTMLElement | null>(null);
@@ -194,6 +215,14 @@ const canPublish = computed(() => isExisting.value && vaultOpen.value && remoteF
 const selectedHistoryItem = computed(() => historyItems.value.find((item) => item.commitId === selectedCommitId.value));
 const selectedConflict = computed(() => conflictItems.value.find((item) => item.conflictId === selectedConflictId.value));
 const selectedSnapshot = computed(() => snapshotItems.value.find((item) => item.snapshotId === selectedSnapshotId.value));
+const currentHealthRepairConflict = computed(() => healthRepairPlan.value?.conflicts[healthRepairConflictIndex.value]);
+const healthRepairReviewReady = computed(() => Boolean(
+  healthRepairPlan.value?.canApply
+  && healthRepairConflictIndex.value >= healthRepairPlan.value.conflicts.length
+));
+const healthRepairKeepCount = computed(() => healthRepairDecisions.value.filter((item) => item.choice === "keep-content").length);
+const healthRepairDeleteCount = computed(() => healthRepairDecisions.value.filter((item) => item.choice === "delete-object").length);
+const healthRepairPlanActive = computed(() => Boolean(healthRepairPlan.value?.canApply));
 const snapshotNameBytes = computed(() => new TextEncoder().encode(snapshotName.value.trim()).byteLength);
 const snapshotNameTooLong = computed(() => snapshotNameBytes.value > MDBX2_MAX_SNAPSHOT_NAME_BYTES);
 const collectionTitleBytes = computed(() => new TextEncoder().encode(pendingCollectionMutation.value?.title.trim() || "").byteLength);
@@ -217,8 +246,9 @@ const collectionParentOptions = computed(() => presentMdbx2Collections(
 ));
 const snapshotMutating = computed(() => snapshotBusy.value === "prune" || snapshotBusy.value === "create" || snapshotBusy.value === "delete" || snapshotBusy.value === "restore");
 const historyMutating = computed(() => historyBusy.value === "revert");
-const managerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value || collectionBusy.value === "mutate");
-const dialogLocked = computed(() => Boolean(busy.value) || managerMutationLocked.value);
+const otherManagerMutationLocked = computed(() => conflictBusy.value === "resolve" || snapshotMutating.value || historyMutating.value || collectionBusy.value === "mutate");
+const managerMutationLocked = computed(() => otherManagerMutationLocked.value || Boolean(healthRepairBusy.value) || healthRepairPlanActive.value);
+const dialogLocked = computed(() => Boolean(busy.value) || otherManagerMutationLocked.value || Boolean(healthRepairBusy.value));
 const dialogTitle = computed(() => {
   if (isExisting.value) return `管理 ${activeProvider.value?.name || form.name}`;
   return form.mode === "remote" ? "从 WebDAV 加入 MDBX2" : "打开 MDBX2 保险库";
@@ -275,6 +305,187 @@ async function loadVaultDiagnostics() {
   } finally {
     diagnosticsBusy.value = false;
   }
+}
+
+async function requestHealthRepairPlan() {
+  if (!providerId.value || !vaultOpen.value || healthRepairBusy.value || otherManagerMutationLocked.value || healthRepairPlan.value) return;
+  clearHealthRepairReview();
+  healthRepairBusy.value = "plan";
+  healthRepairError.value = "";
+  let planned = false;
+  try {
+    const plan = await vaultClient.planMdbx2HealthRepair(providerId.value);
+    if (!plan.itemCount && !plan.blockerCount) {
+      emit("notice", "当前没有 Native Host 可安全处理的删除标记问题；保险库内容未修改。");
+      return;
+    }
+    healthRepairPlan.value = plan;
+    healthRepairOperationId.value = plan.canApply ? crypto.randomUUID() : "";
+    planned = true;
+  } catch (cause) {
+    healthRepairError.value = healthRepairErrorMessage(cause);
+  } finally {
+    healthRepairBusy.value = "";
+  }
+  if (planned) await focusHealthRepairStep();
+}
+
+function cancelHealthRepairFlow() {
+  if (healthRepairBusy.value || healthRepairAttempted.value) return;
+  clearHealthRepairReview();
+}
+
+function chooseHealthRepairKeep() {
+  recordHealthRepairDecision("keep-content");
+}
+
+async function requestHealthRepairDelete() {
+  const conflict = currentHealthRepairConflict.value;
+  if (!conflict || healthRepairBusy.value || healthRepairAttempted.value || healthRepairRecovery.value) return;
+  healthRepairDeleteConfirmation.value = conflict.itemHandle;
+  await nextTick();
+  confirmHealthRepairDeleteButton.value?.focus();
+}
+
+function cancelHealthRepairDelete() {
+  if (healthRepairBusy.value || healthRepairAttempted.value) return;
+  healthRepairDeleteConfirmation.value = "";
+  void focusHealthRepairStep();
+}
+
+function confirmHealthRepairDelete() {
+  if (healthRepairDeleteConfirmation.value !== currentHealthRepairConflict.value?.itemHandle) return;
+  recordHealthRepairDecision("delete-object");
+}
+
+function recordHealthRepairDecision(choice: Mdbx2HealthRepairChoice) {
+  const conflict = currentHealthRepairConflict.value;
+  if (!conflict || healthRepairBusy.value || healthRepairAttempted.value || healthRepairRecovery.value) return;
+  const next = healthRepairDecisions.value.slice(0, healthRepairConflictIndex.value);
+  next.push({ itemHandle: conflict.itemHandle, choice });
+  healthRepairDecisions.value = next;
+  healthRepairConflictIndex.value += 1;
+  healthRepairDeleteConfirmation.value = "";
+  void focusHealthRepairStep();
+}
+
+function previousHealthRepairConflict() {
+  if (healthRepairBusy.value || healthRepairAttempted.value || healthRepairRecovery.value || healthRepairConflictIndex.value < 1) return;
+  healthRepairConflictIndex.value -= 1;
+  healthRepairDecisions.value = healthRepairDecisions.value.slice(0, healthRepairConflictIndex.value);
+  healthRepairDeleteConfirmation.value = "";
+  healthRepairError.value = "";
+  void focusHealthRepairStep();
+}
+
+async function applyHealthRepair() {
+  const plan = healthRepairPlan.value;
+  if (!providerId.value
+      || !plan?.canApply
+      || !plan.planHandle
+      || !healthRepairReviewReady.value
+      || healthRepairDecisions.value.length !== plan.conflictCount
+      || !healthRepairOperationId.value
+      || healthRepairBusy.value
+      || healthRepairRecovery.value) return;
+  healthRepairBusy.value = "apply";
+  healthRepairError.value = "";
+  healthRepairAttempted.value = true;
+  let completed = false;
+  let repairedCount = 0;
+  let alreadyApplied = false;
+  try {
+    const result = await vaultClient.applyMdbx2HealthRepair(
+      providerId.value,
+      plan.planHandle,
+      healthRepairOperationId.value,
+      healthRepairDecisions.value,
+      healthRepairDeleteCount.value > 0
+    );
+    completed = true;
+    repairedCount = result.repairedCount;
+    alreadyApplied = result.alreadyApplied;
+    clearHealthRepairReview();
+  } catch (cause) {
+    const code = errorCode(cause);
+    healthRepairError.value = healthRepairErrorMessage(cause);
+    if ([
+      "health-repair-plan-stale",
+      "health-repair-plan-unknown",
+      "health-repair-blocked",
+      "health-repair-intent-mismatch",
+      "health-repair-decisions-incomplete",
+      "native-host-incompatible"
+    ].includes(code)) healthRepairRecovery.value = "stale";
+    if (code === "health-repair-outcome-unknown") healthRepairRecovery.value = "unknown";
+  } finally {
+    healthRepairBusy.value = "";
+  }
+  if (!completed) return;
+  emit("notice", `${alreadyApplied ? "健康修复结果已确认" : "健康修复已完成"}，共处理 ${repairedCount.toLocaleString("zh-CN")} 项；修复前恢复快照已经保留。`);
+  await refreshAfterHealthRepair();
+}
+
+function reviewHealthRepairOutcomeInstead() {
+  if (!healthRepairAttempted.value || healthRepairBusy.value || !healthRepairError.value) return;
+  healthRepairRecovery.value = "unknown";
+  healthRepairError.value = "已停止直接重试。请刷新诊断、快照和提交历史核对最终状态，再生成新的处理计划。";
+  void focusHealthRepairStep();
+}
+
+async function reconcileHealthRepairState() {
+  if (!providerId.value || healthRepairBusy.value) return;
+  healthRepairBusy.value = "refresh";
+  healthRepairError.value = "";
+  try {
+    await Promise.all([
+      loadVaultDiagnostics(),
+      loadCollections("active", true),
+      loadCollections("deleted", true),
+      loadSnapshots(true),
+      loadConflicts(true),
+      loadHistory(true),
+      vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
+    ]);
+    clearHealthRepairReview();
+    emit("changed");
+    emit("notice", "已刷新诊断、文件夹、快照、冲突、提交历史和同步状态。请根据当前结果重新检查可处理问题。");
+  } finally {
+    healthRepairBusy.value = "";
+  }
+}
+
+async function refreshAfterHealthRepair() {
+  await Promise.all([
+    loadVaultDiagnostics(),
+    loadCollections("active", true),
+    loadCollections("deleted", true),
+    loadSnapshots(true),
+    loadConflicts(true),
+    loadHistory(true),
+    vaultClient.mdbx2SyncStatus(providerId.value).then((status) => { syncStatus.value = status; }).catch(() => undefined)
+  ]);
+  emit("changed");
+}
+
+function clearHealthRepairReview() {
+  healthRepairPlan.value = undefined;
+  healthRepairError.value = "";
+  healthRepairDecisions.value = [];
+  healthRepairConflictIndex.value = 0;
+  healthRepairDeleteConfirmation.value = "";
+  healthRepairOperationId.value = "";
+  healthRepairAttempted.value = false;
+  healthRepairRecovery.value = "";
+}
+
+async function focusHealthRepairStep() {
+  await nextTick();
+  const target = healthRepairReviewReady.value ? applyHealthRepairButton.value : healthRepairPanel.value;
+  if (!target) return;
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  target.scrollIntoView({ behavior, block: "nearest" });
+  target.focus({ preventScroll: true });
 }
 
 async function activateHealthGuidance(action: Mdbx2HealthGuidanceAction) {
@@ -1132,8 +1343,14 @@ function webDavSettings(): Mdbx2WebDavSettingsInput {
 
 function closeDialog() {
   if (dialogLocked.value) return;
+  if (healthRepairAttempted.value && healthRepairError.value && !healthRepairRecovery.value) {
+    healthRepairError.value = "这次处理已经发送到 Native Host。请使用同一按钮重试，或选择“改为核对状态”后再关闭，避免丢失可恢复的操作标识。";
+    void focusHealthRepairStep();
+    return;
+  }
   void releasePendingSource();
   clearSecrets();
+  clearHealthRepairReview();
   clearCollections();
   clearSnapshots();
   clearHistory();
@@ -1242,6 +1459,23 @@ function diagnosticsErrorMessage(cause: unknown): string {
   if (code === "vault-locked") return "保险库已经锁定，请重新解锁后刷新诊断。";
   if (code === "native-host-incompatible") return "Native Host 返回了不兼容的诊断摘要。请更新 Host 后再试。";
   if (code === "native-host-disconnected") return "Native Host 在健康检查期间断开。上次诊断结果仍可查看，可以安全重试。";
+  return errorMessage(cause);
+}
+
+function healthRepairErrorMessage(cause: unknown): string {
+  const code = errorCode(cause);
+  if (code === "health-repair-plan-too-large" || code === "health-repair-result-too-large") return "可处理问题超过浏览器审核的 500 项或 64 KiB 响应上限。没有执行部分修复，请先在桌面端处理或缩小问题范围。";
+  if (code === "health-repair-plan-stale") return "保险库在计划生成后已经变化，旧计划已安全失效且没有重复写入。请刷新状态并重新检查。";
+  if (code === "health-repair-plan-unknown") return "Native Host 已不再保留这份处理计划。没有执行写入，请重新检查可处理问题。";
+  if (code === "health-repair-outcome-unknown") return "Native Host 无法证明这次处理是否已经提交。不要选择相反结果；请刷新诊断、快照与提交历史进行核对。";
+  if (code === "health-repair-intent-mismatch") return "重试使用了不同的操作标识或选择，Native Host 已拒绝写入。请刷新状态后生成新计划。";
+  if (code === "health-repair-decisions-incomplete") return "每个内容与删除状态冲突都必须选择一次。请返回检查遗漏项。";
+  if (code === "health-repair-blocked") return "仍存在不能自动处理的严重完整性问题。没有执行修复，请先按诊断建议处理阻断项。";
+  if (code === "health-repair-authorization-required") return "MDBX2 安全策略要求重新验证后再处理。请重新解锁本机副本，并使用同一确认按钮重试。";
+  if (code === "health-repair-delete-confirmation-required") return "删除选择缺少独立危险确认，后台已在 Native Messaging 前拒绝操作。";
+  if (code === "native-host-disconnected" || code === "native-request-timeout") return "Native Host 在处理期间断开，原操作标识和选择仍保留。请使用同一“重试处理”按钮恢复，或改为刷新状态核对结果。";
+  if (code === "vault-locked") return "保险库已经锁定。请重新解锁后刷新状态，再生成新的处理计划。";
+  if (code === "native-host-incompatible") return "Native Host 返回了不兼容的健康修复数据。请更新 Host，刷新状态后重新检查。";
   return errorMessage(cause);
 }
 
@@ -1380,16 +1614,27 @@ function conflictErrorMessage(cause: unknown): string {
               <strong id="mdbx2-diagnostics-title">保险库诊断</strong>
               <small>只显示健康类别和聚合数量；本机路径、Vault／Device ID、原始描述与对象标识不会进入管理页。</small>
             </div>
-            <m3e-button
-              variant="tonal"
-              type="button"
-              aria-label="刷新保险库诊断"
-              :disabled="diagnosticsBusy || managerMutationLocked"
-              @click="loadVaultDiagnostics"
-            ><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ diagnosticsBusy ? '正在检查…' : '刷新诊断' }}</m3e-button>
+            <div class="mdbx2-diagnostics-actions">
+              <m3e-button
+                v-if="vaultDiagnostics?.health.issueCount && !healthRepairPlan"
+                variant="tonal"
+                type="button"
+                aria-label="检查 Native Host 可安全处理的问题"
+                :disabled="diagnosticsBusy || managerMutationLocked"
+                @click="requestHealthRepairPlan"
+              ><m3e-icon slot="icon" name="healing"></m3e-icon>{{ healthRepairBusy === 'plan' ? '正在分析…' : '检查可处理问题' }}</m3e-button>
+              <m3e-button
+                variant="tonal"
+                type="button"
+                aria-label="刷新保险库诊断"
+                :disabled="diagnosticsBusy || managerMutationLocked || Boolean(healthRepairPlan)"
+                @click="loadVaultDiagnostics"
+              ><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ diagnosticsBusy ? '正在检查…' : '刷新诊断' }}</m3e-button>
+            </div>
           </div>
 
           <p v-if="diagnosticsError" class="form-error mdbx2-diagnostics-error" role="alert">{{ diagnosticsError }}</p>
+          <p v-if="healthRepairError && !healthRepairPlan" class="form-error mdbx2-health-repair-error" role="alert">{{ healthRepairError }}</p>
           <div v-if="diagnosticsBusy && !vaultDiagnostics" class="mdbx2-diagnostics-empty" role="status" aria-live="polite">
             <m3e-icon name="progress_activity" />
             <span>正在执行只读健康检查…</span>
@@ -1408,6 +1653,134 @@ function conflictErrorMessage(cause: unknown): string {
               </div>
               <span class="mdbx2-diagnostics-severity-summary">{{ summarizeMdbx2HealthCounts(vaultDiagnostics.health) }}</span>
             </div>
+
+            <section
+              v-if="healthRepairPlan"
+              ref="healthRepairPanel"
+              class="mdbx2-health-repair"
+              :data-recovery="healthRepairRecovery || undefined"
+              tabindex="-1"
+              aria-labelledby="mdbx2-health-repair-title"
+              :aria-busy="Boolean(healthRepairBusy)"
+            >
+              <div class="mdbx2-health-repair-heading">
+                <span class="mdbx2-health-repair-heading-icon"><m3e-icon :name="healthRepairRecovery ? 'sync_problem' : healthRepairPlan.canApply ? 'healing' : 'shield_lock'" /></span>
+                <div>
+                  <strong id="mdbx2-health-repair-title">{{ healthRepairRecovery === 'unknown' ? '需要核对处理结果' : healthRepairRecovery === 'stale' ? '处理计划需要更新' : healthRepairPlan.canApply ? '健康修复计划' : '当前不能自动处理' }}</strong>
+                  <small v-if="!healthRepairRecovery">{{ healthRepairPlan.canApply ? `将处理 ${formatMdbx2DiagnosticCount(healthRepairPlan.itemCount)} 项；写入前会创建恢复快照，并在一个事务内完成。` : `发现 ${formatMdbx2DiagnosticCount(healthRepairPlan.blockerCount)} 个阻断问题；当前计划不会写入保险库。` }}</small>
+                  <small v-else>{{ healthRepairRecovery === 'unknown' ? '不要立即选择相反结果；先刷新诊断、快照、历史与同步状态。' : '旧计划已经安全停止，刷新状态后再生成新计划。' }}</small>
+                </div>
+                <span v-if="healthRepairPlan.canApply && !healthRepairRecovery" class="mdbx2-health-repair-count">{{ formatMdbx2DiagnosticCount(healthRepairPlan.automaticCount) }} 自动 · {{ formatMdbx2DiagnosticCount(healthRepairPlan.conflictCount) }} 待选择</span>
+              </div>
+
+              <p v-if="healthRepairError" class="form-error mdbx2-health-repair-error" role="alert">{{ healthRepairError }}</p>
+
+              <div v-if="healthRepairRecovery" class="mdbx2-health-repair-recovery" role="status" aria-live="polite">
+                <div class="mdbx2-health-repair-safety-note">
+                  <m3e-icon name="manage_search" />
+                  <span>刷新只读取聚合状态，不会重复执行修复。完成核对后，需要重新点击“检查可处理问题”。</span>
+                </div>
+                <div class="mdbx2-health-repair-actions">
+                  <m3e-button variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="clearHealthRepairReview">关闭计划</m3e-button>
+                  <m3e-button variant="filled" type="button" :disabled="Boolean(healthRepairBusy)" @click="reconcileHealthRepairState"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ healthRepairBusy === 'refresh' ? '正在刷新…' : '刷新并核对状态' }}</m3e-button>
+                </div>
+              </div>
+
+              <template v-else>
+                <div v-if="healthRepairPlan.automatic.length" class="mdbx2-health-repair-automatic" aria-labelledby="mdbx2-health-repair-automatic-title">
+                  <div class="mdbx2-health-repair-section-title">
+                    <strong id="mdbx2-health-repair-automatic-title">自动处理</strong>
+                    <small>这些项目没有歧义，不需要逐项选择。</small>
+                  </div>
+                  <div class="mdbx2-health-repair-list" role="list">
+                    <div v-for="item in healthRepairPlan.automatic" :key="`${item.kind}:${item.objectType}`" class="mdbx2-health-repair-row" role="listitem">
+                      <span class="mdbx2-health-repair-row-icon"><m3e-icon :name="presentMdbx2HealthRepairAutomatic(item).icon" /></span>
+                      <span><strong>{{ presentMdbx2HealthRepairAutomatic(item).title }}</strong><small>{{ presentMdbx2HealthRepairAutomatic(item).supporting }}</small></span>
+                      <strong>{{ formatMdbx2DiagnosticCount(item.itemCount) }} 项</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="!healthRepairPlan.canApply" class="mdbx2-health-repair-blockers" aria-labelledby="mdbx2-health-repair-blockers-title">
+                  <div class="mdbx2-health-repair-section-title">
+                    <strong id="mdbx2-health-repair-blockers-title">必须先处理的阻断项</strong>
+                    <small>只显示受控健康类别和数量；底层描述、路径和对象标识仍留在 Native Host。</small>
+                  </div>
+                  <div class="mdbx2-health-repair-list" role="list">
+                    <div v-for="blocker in healthRepairPlan.blockers" :key="blocker.category" class="mdbx2-health-repair-row danger" role="listitem">
+                      <span class="mdbx2-health-repair-row-icon"><m3e-icon name="error" /></span>
+                      <span><strong>{{ mdbx2HealthCategoryLabel(blocker.category) }}</strong><small>此类别包含不能由删除标记修复流程自动解决的严重问题。</small></span>
+                      <strong>{{ formatMdbx2DiagnosticCount(blocker.count) }} 项</strong>
+                    </div>
+                  </div>
+                  <div class="mdbx2-health-repair-actions">
+                    <m3e-button variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="cancelHealthRepairFlow">关闭计划</m3e-button>
+                    <m3e-button variant="tonal" type="button" :disabled="Boolean(healthRepairBusy)" @click="reconcileHealthRepairState"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新全部状态</m3e-button>
+                  </div>
+                </div>
+
+                <div v-else-if="currentHealthRepairConflict" class="mdbx2-health-repair-conflict" aria-labelledby="mdbx2-health-repair-conflict-title">
+                  <div class="mdbx2-health-repair-progress" role="status" aria-live="polite">
+                    <span>选择 {{ healthRepairConflictIndex + 1 }} / {{ healthRepairPlan.conflictCount }}</span>
+                    <progress :value="healthRepairConflictIndex + 1" :max="healthRepairPlan.conflictCount" />
+                  </div>
+                  <div class="mdbx2-health-repair-conflict-copy">
+                    <span class="mdbx2-health-repair-conflict-icon"><m3e-icon :name="presentMdbx2HealthRepairConflict(currentHealthRepairConflict).icon" /></span>
+                    <div>
+                      <strong id="mdbx2-health-repair-conflict-title">{{ presentMdbx2HealthRepairConflict(currentHealthRepairConflict).title }}</strong>
+                      <small>{{ presentMdbx2HealthRepairConflict(currentHealthRepairConflict).supporting }}</small>
+                    </div>
+                  </div>
+                  <div v-if="healthRepairDeleteConfirmation !== currentHealthRepairConflict.itemHandle" class="mdbx2-health-repair-choice-copy">
+                    <div><strong>保留内容</strong><small>移除异常删除标记，保留当前内容和后续编辑能力。</small></div>
+                    <div><strong>删除项目</strong><small>软删除当前项目，并归一为一个可同步的删除标记。</small></div>
+                  </div>
+                  <div v-if="healthRepairDeleteConfirmation !== currentHealthRepairConflict.itemHandle" class="mdbx2-health-repair-actions">
+                    <m3e-button variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="cancelHealthRepairFlow">取消全部</m3e-button>
+                    <m3e-button v-if="healthRepairConflictIndex" variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="previousHealthRepairConflict">上一步</m3e-button>
+                    <m3e-button variant="tonal" type="button" :disabled="Boolean(healthRepairBusy)" @click="chooseHealthRepairKeep"><m3e-icon slot="icon" name="check_circle"></m3e-icon>保留内容</m3e-button>
+                    <m3e-button class="mdbx2-health-repair-delete" variant="tonal" type="button" :disabled="Boolean(healthRepairBusy)" @click="requestHealthRepairDelete"><m3e-icon slot="icon" name="delete"></m3e-icon>删除项目</m3e-button>
+                  </div>
+                  <div v-else class="mdbx2-health-repair-delete-confirmation" role="group" aria-labelledby="mdbx2-health-repair-delete-title" aria-live="assertive">
+                    <span class="mdbx2-health-repair-delete-icon"><m3e-icon name="warning" /></span>
+                    <div><strong id="mdbx2-health-repair-delete-title">确认删除这个项目？</strong><small>项目内容会被软删除并保留一个规范的同步删除标记；修复前仍会创建恢复快照。此选择不会默认勾选。</small></div>
+                    <div class="mdbx2-health-repair-actions">
+                      <m3e-button variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="cancelHealthRepairDelete">返回选择</m3e-button>
+                      <m3e-button ref="confirmHealthRepairDeleteButton" class="mdbx2-health-repair-delete" variant="filled" type="button" aria-label="确认删除项目并继续" :disabled="Boolean(healthRepairBusy)" @click="confirmHealthRepairDelete">确认删除并继续</m3e-button>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="healthRepairReviewReady" class="mdbx2-health-repair-review" aria-labelledby="mdbx2-health-repair-review-title">
+                  <div class="mdbx2-health-repair-section-title">
+                    <strong id="mdbx2-health-repair-review-title">复核处理计划</strong>
+                    <small>提交后会先创建恢复快照，再在一个事务中应用全部选择。取消不会写入。</small>
+                  </div>
+                  <dl class="mdbx2-health-repair-review-counts">
+                    <div><dt>自动处理</dt><dd>{{ formatMdbx2DiagnosticCount(healthRepairPlan.automaticCount) }}</dd></div>
+                    <div><dt>保留内容</dt><dd>{{ formatMdbx2DiagnosticCount(healthRepairKeepCount) }}</dd></div>
+                    <div><dt>删除项目</dt><dd>{{ formatMdbx2DiagnosticCount(healthRepairDeleteCount) }}</dd></div>
+                  </dl>
+                  <div class="mdbx2-health-repair-safety-note">
+                    <m3e-icon name="backup" />
+                    <span>底层计划令牌和数据库技术标识不会进入页面；这里只保留本次安全重试所需的不透明句柄和选择。</span>
+                  </div>
+                  <div class="mdbx2-health-repair-actions">
+                    <m3e-button v-if="!healthRepairAttempted" variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="cancelHealthRepairFlow">取消全部</m3e-button>
+                    <m3e-button v-if="healthRepairPlan.conflictCount && !healthRepairAttempted" variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="previousHealthRepairConflict">返回上一项</m3e-button>
+                    <m3e-button v-if="healthRepairAttempted && healthRepairError" variant="text" type="button" :disabled="Boolean(healthRepairBusy)" @click="reviewHealthRepairOutcomeInstead">改为核对状态</m3e-button>
+                    <m3e-button
+                      ref="applyHealthRepairButton"
+                      variant="filled"
+                      type="button"
+                      :aria-label="healthRepairAttempted ? '重试健康修复处理' : '创建恢复快照并处理健康修复计划'"
+                      :disabled="Boolean(healthRepairBusy)"
+                      @click="applyHealthRepair"
+                    ><m3e-icon slot="icon" name="build_circle"></m3e-icon>{{ healthRepairBusy === 'apply' ? '正在处理…' : healthRepairAttempted ? '重试处理' : '确认处理' }}</m3e-button>
+                  </div>
+                </div>
+              </template>
+            </section>
 
             <div v-if="diagnosticGuidance.length" class="mdbx2-health-guidance-list" aria-labelledby="mdbx2-health-guidance-title">
               <div class="mdbx2-health-guidance-heading">
@@ -2054,7 +2427,8 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-health-copy small,
 .mdbx2-diagnostics-category-copy small,
 .mdbx2-diagnostics-details small { color: var(--app-muted); overflow-wrap: anywhere; }
-.mdbx2-diagnostics-header > m3e-button { min-height: 44px; flex: 0 0 auto; }
+.mdbx2-diagnostics-actions { display: flex !important; align-items: center; justify-content: flex-end; gap: 8px !important; }
+.mdbx2-diagnostics-actions > m3e-button { min-height: 44px; flex: 0 0 auto; }
 .mdbx2-diagnostics-error { margin: 0 16px 12px; }
 .mdbx2-diagnostics-empty { min-height: 64px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; color: var(--app-muted); text-align: center; }
 .mdbx2-diagnostics-empty m3e-icon { --m3e-icon-size: 20px; }
@@ -2069,6 +2443,63 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-health-icon m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-diagnostics-health-meta { font-variant-numeric: tabular-nums; }
 .mdbx2-diagnostics-severity-summary { max-width: 18rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.mdbx2-health-repair { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); background: var(--md-sys-color-surface-container-low, var(--app-surface)); scroll-margin-top: 16px; }
+.mdbx2-health-repair:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-health-repair-heading { min-height: 72px; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
+.mdbx2-health-repair-heading > div,
+.mdbx2-health-repair-row > span:nth-child(2),
+.mdbx2-health-repair-conflict-copy > div,
+.mdbx2-health-repair-delete-confirmation > div:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.mdbx2-health-repair-heading small,
+.mdbx2-health-repair-row small,
+.mdbx2-health-repair-conflict-copy small,
+.mdbx2-health-repair-choice-copy small,
+.mdbx2-health-repair-delete-confirmation small,
+.mdbx2-health-repair-section-title small { color: var(--app-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.mdbx2-health-repair-heading-icon { inline-size: 44px; block-size: 44px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.mdbx2-health-repair-heading-icon m3e-icon,
+.mdbx2-health-repair-row-icon m3e-icon,
+.mdbx2-health-repair-conflict-icon m3e-icon,
+.mdbx2-health-repair-delete-icon m3e-icon,
+.mdbx2-health-repair-safety-note m3e-icon { --m3e-icon-size: 20px; }
+.mdbx2-health-repair-count { max-width: 15rem; color: var(--app-muted); font-size: .82rem; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mdbx2-health-repair-error { margin: 0 16px 12px; }
+.mdbx2-health-repair[data-recovery="stale"] .mdbx2-health-repair-heading-icon,
+.mdbx2-health-repair[data-recovery="unknown"] .mdbx2-health-repair-heading-icon { color: var(--md-sys-color-error, #ba1a1a); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-health-repair-automatic,
+.mdbx2-health-repair-blockers,
+.mdbx2-health-repair-conflict,
+.mdbx2-health-repair-review,
+.mdbx2-health-repair-recovery { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-repair-section-title { min-height: 56px; display: grid; align-content: center; gap: 2px; padding: 10px 16px; }
+.mdbx2-health-repair-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-repair-row { min-height: 64px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 16px; }
+.mdbx2-health-repair-row + .mdbx2-health-repair-row { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-repair-row > strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mdbx2-health-repair-row-icon,
+.mdbx2-health-repair-conflict-icon,
+.mdbx2-health-repair-delete-icon { inline-size: 40px; block-size: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
+.mdbx2-health-repair-row.danger { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-health-repair-row.danger small { color: inherit; opacity: .84; }
+.mdbx2-health-repair-progress { display: grid; gap: 8px; padding: 12px 16px 8px; color: var(--app-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mdbx2-health-repair-progress progress { inline-size: 100%; block-size: 4px; accent-color: var(--app-primary); }
+.mdbx2-health-repair-conflict-copy { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px; padding: 12px 16px; }
+.mdbx2-health-repair-choice-copy { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mdbx2-health-repair-choice-copy > div { min-width: 0; display: grid; gap: 3px; padding: 12px 16px; }
+.mdbx2-health-repair-choice-copy > div + div { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-repair-actions { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.mdbx2-health-repair-actions > m3e-button { min-height: 44px; }
+.mdbx2-health-repair-delete { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-health-repair-delete-confirmation { border-top: 1px solid var(--md-sys-color-error, #ba1a1a); display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px; padding: 12px 16px 0; color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-health-repair-delete-confirmation > .mdbx2-health-repair-actions { grid-column: 1 / -1; margin-inline: -16px; color: inherit; border-color: color-mix(in srgb, currentColor 20%, transparent); background: color-mix(in srgb, currentColor 4%, transparent); }
+.mdbx2-health-repair-delete-icon { color: var(--md-sys-color-on-error-container, var(--app-text)); background: color-mix(in srgb, currentColor 10%, transparent); }
+.mdbx2-health-repair-review-counts { margin: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mdbx2-health-repair-review-counts > div { min-width: 0; display: grid; gap: 2px; padding: 12px 16px; }
+.mdbx2-health-repair-review-counts > div + div { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-repair-review-counts dt { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-health-repair-review-counts dd { margin: 0; font-size: 1.08rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mdbx2-health-repair-safety-note { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); min-height: 56px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-muted); line-height: 1.5; }
+.mdbx2-health-repair-recovery > .mdbx2-health-repair-safety-note { border-top: 0; }
 .mdbx2-health-guidance-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .mdbx2-health-guidance-heading { min-height: 56px; display: grid; align-content: center; gap: 2px; padding: 10px 16px; }
 .mdbx2-health-guidance-heading small { color: var(--app-muted); overflow-wrap: anywhere; }
@@ -2404,8 +2835,19 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-progress { align-items: stretch; flex-direction: column; }
   .mdbx2-progress progress { width: 100%; }
   .mdbx2-diagnostics-header { align-items: stretch; flex-direction: column; }
+  .mdbx2-diagnostics-actions { align-items: stretch; flex-direction: column; }
   .mdbx2-diagnostics-health { grid-template-columns: 44px minmax(0, 1fr); }
   .mdbx2-diagnostics-severity-summary { grid-column: 2; max-width: none; text-align: left; }
+  .mdbx2-health-repair-heading { grid-template-columns: 44px minmax(0, 1fr); }
+  .mdbx2-health-repair-count { grid-column: 2; max-width: none; text-align: left; }
+  .mdbx2-health-repair-row { grid-template-columns: 40px minmax(0, 1fr); }
+  .mdbx2-health-repair-row > strong { grid-column: 2; white-space: normal; }
+  .mdbx2-health-repair-choice-copy { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-health-repair-choice-copy > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+  .mdbx2-health-repair-actions { align-items: stretch; flex-direction: column; }
+  .mdbx2-health-repair-actions > m3e-button { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+  .mdbx2-health-repair-review-counts { grid-template-columns: minmax(0, 1fr); }
+  .mdbx2-health-repair-review-counts > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-health-guidance-row summary { grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: start; }
   .mdbx2-health-guidance-icon { grid-row: 1 / 3; }
   .mdbx2-health-guidance-severity { grid-column: 2; justify-self: start; white-space: normal; }
