@@ -93,6 +93,21 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(diagnosticsResponse.ok).toBe(false);
     expect(diagnosticsResponse.error).toContain("只允许 Monica 管理页调用");
+    const healthRepairRequests = [
+      { type: "MDBX2_HEALTH_REPAIR_PLAN", providerId: "manager-only-provider" },
+      {
+        type: "MDBX2_HEALTH_REPAIR_APPLY",
+        providerId: "manager-only-provider",
+        planHandle: "11111111-1111-4111-8111-111111111111",
+        operationId: "22222222-2222-4222-8222-222222222222",
+        decisions: [{ itemHandle: "33333333-3333-4333-8333-333333333333", choice: "keep-content" }]
+      }
+    ];
+    for (const request of healthRepairRequests) {
+      const healthRepairResponse = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as RuntimeResponse;
+      expect(healthRepairResponse.ok).toBe(false);
+      expect(healthRepairResponse.error).toContain("只允许 Monica 管理页调用");
+    }
     const tigaResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_VAULT_TIGA",
       providerId: "manager-only-provider"
@@ -163,6 +178,15 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(unconfirmedHistoryRestore.ok).toBe(false);
     expect(unconfirmedHistoryRestore.error).toContain("需要明确确认");
+    const unconfirmedHealthRepairDelete = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
+      type: "MDBX2_HEALTH_REPAIR_APPLY",
+      providerId: "manager-only-provider",
+      planHandle: "11111111-1111-4111-8111-111111111111",
+      operationId: "22222222-2222-4222-8222-222222222222",
+      decisions: [{ itemHandle: "33333333-3333-4333-8333-333333333333", choice: "delete-object" }]
+    })) as RuntimeResponse;
+    expect(unconfirmedHealthRepairDelete.ok).toBe(false);
+    expect(unconfirmedHealthRepairDelete.error).toContain("再次明确确认");
     const conflictListResponse = await popup.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_CONFLICT_LIST",
       providerId: "manager-only-provider",

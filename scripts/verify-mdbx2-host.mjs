@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const hostRoot = resolve(root, "native", "mdbx2-host");
-const coreRevision = "aafa22f195c626a8d8288d712bf42bccea134847";
+const coreRevision = "974c517465e7b6cac0947d2d59875aa4211fa16b";
 const expectedSource = `git+https://github.com/Monica-Pass/Mdbx.git?rev=${coreRevision}#${coreRevision}`;
 
 const [manifest, lockfile, toolchain, hostManifest, installer, uninstaller, runtime, contract] = await Promise.all([

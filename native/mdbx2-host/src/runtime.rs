@@ -4,15 +4,17 @@ use mdbx_ffi::{
     MdbxAttachmentBatchCommand, MdbxAttachmentContentLimits, MdbxAttachmentCreateRequest,
     MdbxAttachmentRecord, MdbxAttachmentSummary, MdbxAttachmentWriteResult, MdbxAuditLevel,
     MdbxCommitHistoryItem, MdbxConflictChoice, MdbxConflictSummary, MdbxDeviceAssurance,
-    MdbxDeviceContext, MdbxHealthIssue, MdbxHealthIssueSeverity, MdbxManagedSnapshotSummary,
-    MdbxMigrationInfo, MdbxObjectDisclosureLimits, MdbxPolicyCompliance, MdbxResolvedTigaPolicy,
-    MdbxSnapshotKind, MdbxSnapshotStructureNode, MdbxTigaMode, MdbxTigaScope, MdbxTigaScopeType,
+    MdbxDeviceContext, MdbxHealthIssue, MdbxHealthIssueSeverity, MdbxHealthRepairChoice,
+    MdbxHealthRepairDecision, MdbxHealthRepairItem, MdbxHealthRepairItemKind, MdbxHealthRepairPlan,
+    MdbxHealthRepairStatus, MdbxManagedSnapshotSummary, MdbxMigrationInfo,
+    MdbxObjectDisclosureLimits, MdbxPolicyCompliance, MdbxResolvedTigaPolicy, MdbxSnapshotKind,
+    MdbxSnapshotStructureNode, MdbxTigaMode, MdbxTigaScope, MdbxTigaScopeType,
     MdbxTigaUnlockAssessment, MdbxUnlockMethodType, MdbxVault, MdbxWriteCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -26,7 +28,7 @@ use crate::cloud_sync;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const HOST_NAME: &str = "com.monica_pass.mdbx2";
-pub const MDBX_CORE_REVISION: &str = "aafa22f195c626a8d8288d712bf42bccea134847";
+pub const MDBX_CORE_REVISION: &str = "974c517465e7b6cac0947d2d59875aa4211fa16b";
 pub const MDBX_FORMAT_VERSION: &str = "MDBX-2";
 pub const MAX_BINARY_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_INBOUND_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -51,6 +53,9 @@ pub const MAX_VAULT_DIAGNOSTICS_RESULT_BYTES: usize = 64 * 1024;
 pub const MAX_VAULT_TIGA_RESULT_BYTES: usize = 16 * 1024;
 pub const MAX_VAULT_TIGA_UNLOCK_METHODS: usize = 4;
 pub const MAX_VAULT_TIGA_BROWSER_LIMITATIONS: usize = 3;
+pub const MAX_HEALTH_REPAIR_ITEMS: usize = 500;
+pub const MAX_HEALTH_REPAIR_CONFLICTS: usize = 500;
+pub const MAX_HEALTH_REPAIR_RESULT_BYTES: usize = 64 * 1024;
 const VAULT_DIAGNOSTIC_CATEGORIES: [&str; MAX_VAULT_DIAGNOSTIC_CATEGORIES] = [
     "integrity",
     "vault-header-integrity",
@@ -120,6 +125,9 @@ pub const MAX_CONFLICT_RESULT_BYTES: usize = 850 * 1024;
 const MAX_CONFLICT_SCAN_PAGES: usize = 64;
 const MAX_CONFLICT_RESOLUTION_RECEIPTS: usize = 2048;
 const MAX_CONFLICT_RESOLUTION_STATE_BYTES: u64 = 1024 * 1024;
+const HEALTH_REPAIR_STATE_VERSION: u32 = 1;
+const MAX_HEALTH_REPAIR_RECEIPTS: usize = 64;
+const MAX_HEALTH_REPAIR_STATE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_ATTACHMENT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ATTACHMENT_PAGE_SIZE: u32 = 50;
 const MAX_ATTACHMENT_SESSIONS: usize = 4;
@@ -329,6 +337,119 @@ impl Default for ConflictResolutionState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum HealthRepairReceiptItemKind {
+    MissingTombstone,
+    DuplicateTombstones,
+    ActiveObjectTombstoneConflict,
+}
+
+impl HealthRepairReceiptItemKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingTombstone => "missing-tombstone",
+            Self::DuplicateTombstones => "duplicate-tombstones",
+            Self::ActiveObjectTombstoneConflict => "active-object-tombstone-conflict",
+        }
+    }
+
+    fn is_automatic(self) -> bool {
+        self != Self::ActiveObjectTombstoneConflict
+    }
+}
+
+impl From<MdbxHealthRepairItemKind> for HealthRepairReceiptItemKind {
+    fn from(value: MdbxHealthRepairItemKind) -> Self {
+        match value {
+            MdbxHealthRepairItemKind::MissingTombstone => Self::MissingTombstone,
+            MdbxHealthRepairItemKind::DuplicateTombstones => Self::DuplicateTombstones,
+            MdbxHealthRepairItemKind::ActiveObjectTombstoneConflict => {
+                Self::ActiveObjectTombstoneConflict
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum HealthRepairReceiptChoice {
+    KeepContent,
+    DeleteObject,
+}
+
+impl HealthRepairReceiptChoice {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::KeepContent => "keep-content",
+            Self::DeleteObject => "delete-object",
+        }
+    }
+
+    fn to_ffi(self) -> MdbxHealthRepairChoice {
+        match self {
+            Self::KeepContent => MdbxHealthRepairChoice::KeepContent,
+            Self::DeleteObject => MdbxHealthRepairChoice::DeleteObject,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HealthRepairItemReceipt {
+    item_handle: String,
+    repair_id: String,
+    kind: HealthRepairReceiptItemKind,
+    object_type: String,
+    object_id: String,
+    tombstone_count: u64,
+    automatic: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HealthRepairDecisionReceipt {
+    item_handle: String,
+    choice: HealthRepairReceiptChoice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HealthRepairReceipt {
+    vault_handle: String,
+    plan_handle: String,
+    plan_token: String,
+    plan_sha256: String,
+    items: Vec<HealthRepairItemReceipt>,
+    operation_id: Option<String>,
+    decisions: Vec<HealthRepairDecisionReceipt>,
+    decision_sha256: Option<String>,
+    completed: bool,
+    outcome_unknown: bool,
+    result_commit_id: Option<String>,
+    repaired_count: Option<u64>,
+    recovery_point_created: bool,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HealthRepairState {
+    version: u32,
+    revision: u64,
+    receipts: Vec<HealthRepairReceipt>,
+}
+
+impl Default for HealthRepairState {
+    fn default() -> Self {
+        Self {
+            version: HEALTH_REPAIR_STATE_VERSION,
+            revision: 0,
+            receipts: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ObjectMutation {
     Upsert {
@@ -430,6 +551,7 @@ pub struct HostRuntime {
     object_operations: ObjectOperationState,
     snapshot_operations: SnapshotOperationState,
     conflict_resolutions: ConflictResolutionState,
+    health_repairs: HealthRepairState,
     attachment_reads: HashMap<String, AttachmentReadSession>,
     attachment_uploads: HashMap<String, AttachmentUploadSession>,
 }
@@ -462,6 +584,7 @@ impl HostRuntime {
         let object_operations = load_object_operation_state(&root)?;
         let snapshot_operations = load_snapshot_operation_state(&root)?;
         let conflict_resolutions = load_conflict_resolution_state(&root)?;
+        let health_repairs = load_health_repair_state(&root)?;
         Ok(Self {
             root,
             device_id,
@@ -470,6 +593,7 @@ impl HostRuntime {
             object_operations,
             snapshot_operations,
             conflict_resolutions,
+            health_repairs,
             attachment_reads: HashMap::new(),
             attachment_uploads: HashMap::new(),
         })
@@ -487,6 +611,8 @@ impl HostRuntime {
             "vault.status" => self.vault_status(params),
             "vault.diagnostics" => self.vault_diagnostics(params),
             "vault.tiga" => self.vault_tiga(params),
+            "health.repair.plan" => self.health_repair_plan(params),
+            "health.repair.apply" => self.health_repair_apply(params),
             "vault.lock" => self.vault_lock(params),
             "collection.list" => self.collection_list(params),
             "collection.create" => self.collection_create(params),
@@ -614,6 +740,19 @@ impl HostRuntime {
         );
         result_object.insert("supportsVaultDiagnostics".to_string(), json!(true));
         result_object.insert("supportsVaultHealthIssueKinds".to_string(), json!(true));
+        result_object.insert(
+            "maxHealthRepairItems".to_string(),
+            json!(MAX_HEALTH_REPAIR_ITEMS),
+        );
+        result_object.insert(
+            "maxHealthRepairConflicts".to_string(),
+            json!(MAX_HEALTH_REPAIR_CONFLICTS),
+        );
+        result_object.insert(
+            "maxHealthRepairResultBytes".to_string(),
+            json!(MAX_HEALTH_REPAIR_RESULT_BYTES),
+        );
+        result_object.insert("supportsHealthRepair".to_string(), json!(true));
         result_object.insert(
             "maxVaultTigaResultBytes".to_string(),
             json!(MAX_VAULT_TIGA_RESULT_BYTES),
@@ -1069,6 +1208,183 @@ impl HostRuntime {
         reject_unknown(params)?;
         let vault = self.require_open_vault(&vault_handle)?;
         vault_tiga_report(&vault)
+    }
+
+    fn health_repair_plan(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "health.repair.plan params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let plan = vault.plan_health_repair().map_err(|_| {
+            RpcFailure::new(
+                "health-repair-plan-failed",
+                "MDBX2 health repair planning failed.",
+                false,
+            )
+        })?;
+        validate_health_repair_plan(&plan)?;
+        let item_count = plan
+            .automatic_items
+            .len()
+            .checked_add(plan.conflict_items.len())
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "health-repair-plan-too-large",
+                    "MDBX2 health repair plan exceeds the reviewed item limit.",
+                    false,
+                )
+            })?;
+        let automatic = health_repair_automatic_summaries(&plan.automatic_items);
+        let blockers = health_repair_blocker_summaries(&plan);
+        let mut plan_handle = None;
+        let mut conflicts = Vec::new();
+        if plan.can_apply && item_count > 0 {
+            let receipt = health_repair_receipt(&vault_handle, &plan)?;
+            plan_handle = Some(receipt.plan_handle.clone());
+            conflicts = receipt
+                .items
+                .iter()
+                .filter(|item| !item.automatic)
+                .map(health_repair_conflict_json)
+                .collect();
+            self.record_health_repair_plan(receipt)?;
+        }
+        bounded_health_repair_result(json!({
+            "planHandle": plan_handle,
+            "canApply": plan.can_apply,
+            "itemCount": item_count,
+            "automaticCount": plan.automatic_items.len(),
+            "conflictCount": plan.conflict_items.len(),
+            "blockerCount": plan.blockers.len(),
+            "automatic": automatic,
+            "conflicts": conflicts,
+            "blockers": blockers
+        }))
+    }
+
+    fn health_repair_apply(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "health.repair.apply params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let plan_handle = take_uuid(&mut params, "planHandle")?;
+        let operation_id = take_uuid(&mut params, "operationId")?;
+        let decisions = take_health_repair_decisions(&mut params)?;
+        reject_unknown(params)?;
+        let vault = self.require_open_vault(&vault_handle)?;
+        let receipt = self
+            .health_repair_receipt(&vault_handle, &plan_handle)
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "health-repair-plan-unknown",
+                    "MDBX2 health repair plan is unavailable; generate a new plan.",
+                    false,
+                )
+            })?;
+        validate_health_repair_decisions(&receipt, &decisions)?;
+        let decision_sha256 = health_repair_decision_sha256(&decisions)?;
+        let was_bound = receipt.operation_id.is_some();
+        let receipt = if let Some(existing_operation_id) = receipt.operation_id.as_deref() {
+            if existing_operation_id != operation_id
+                || receipt.decision_sha256.as_deref() != Some(decision_sha256.as_str())
+                || receipt.decisions != decisions
+            {
+                return Err(RpcFailure::new(
+                    "health-repair-intent-mismatch",
+                    "MDBX2 health repair plan was reused with a different operation or choice.",
+                    false,
+                ));
+            }
+            receipt
+        } else {
+            self.bind_health_repair_operation(
+                &vault_handle,
+                &plan_handle,
+                &operation_id,
+                decisions,
+                &decision_sha256,
+            )?
+        };
+        if receipt.completed {
+            return health_repair_result_json(&vault, &receipt, true);
+        }
+        if receipt.outcome_unknown {
+            return Err(RpcFailure::new(
+                "health-repair-outcome-unknown",
+                "MDBX2 health repair outcome cannot be proven; refresh diagnostics and create a new plan.",
+                false,
+            ));
+        }
+        if let Some(commit_id) = find_health_repair_commit(&vault, &receipt)? {
+            let completed = self.complete_health_repair(
+                &vault_handle,
+                &plan_handle,
+                &commit_id,
+                receipt.items.len() as u64,
+            )?;
+            return health_repair_result_json(&vault, &completed, true);
+        }
+
+        let current_plan = vault.plan_health_repair().map_err(|_| {
+            RpcFailure::new(
+                "health-repair-plan-failed",
+                "MDBX2 health repair plan could not be refreshed.",
+                false,
+            )
+        })?;
+        validate_health_repair_plan(&current_plan)?;
+        let current_plan_sha256 = health_repair_plan_sha256(&current_plan)?;
+        if current_plan.token != receipt.plan_token || current_plan_sha256 != receipt.plan_sha256 {
+            if was_bound {
+                self.mark_health_repair_unknown(&vault_handle, &plan_handle)?;
+                return Err(RpcFailure::new(
+                    "health-repair-outcome-unknown",
+                    "MDBX2 changed after an unfinished repair attempt; no repeated mutation was performed.",
+                    false,
+                ));
+            }
+            return Err(RpcFailure::new(
+                "health-repair-plan-stale",
+                "MDBX2 changed after planning; generate a new health repair plan.",
+                false,
+            ));
+        }
+        let ffi_decisions = health_repair_ffi_decisions(&receipt)?;
+        let apply_result = match vault.apply_health_repair(
+            receipt.plan_token.clone(),
+            operation_id,
+            ffi_decisions,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(commit_id) = find_health_repair_commit(&vault, &receipt)? {
+                    let completed = self.complete_health_repair(
+                        &vault_handle,
+                        &plan_handle,
+                        &commit_id,
+                        receipt.items.len() as u64,
+                    )?;
+                    return health_repair_result_json(&vault, &completed, true);
+                }
+                return Err(map_health_repair_apply_error(&error.to_string()));
+            }
+        };
+        if apply_result.status != MdbxHealthRepairStatus::Applied
+            || apply_result.snapshot_id.is_none()
+            || apply_result.commit_id.is_none()
+            || apply_result.repaired_count as usize != receipt.items.len()
+        {
+            return Err(RpcFailure::new(
+                "host-core-incompatible",
+                "MDBX2 health repair returned an unexpected result shape.",
+                false,
+            ));
+        }
+        let completed = self.complete_health_repair(
+            &vault_handle,
+            &plan_handle,
+            apply_result.commit_id.as_deref().unwrap_or_default(),
+            apply_result.repaired_count,
+        )?;
+        health_repair_result_json(&vault, &completed, apply_result.already_committed)
     }
 
     fn collection_list(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -3548,6 +3864,179 @@ impl HostRuntime {
             })
     }
 
+    fn health_repair_receipt(
+        &self,
+        vault_handle: &str,
+        plan_handle: &str,
+    ) -> Option<HealthRepairReceipt> {
+        self.health_repairs
+            .receipts
+            .iter()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.plan_handle == plan_handle
+            })
+            .cloned()
+    }
+
+    fn record_health_repair_plan(
+        &mut self,
+        receipt: HealthRepairReceipt,
+    ) -> Result<(), RpcFailure> {
+        let mut next_state = self.health_repairs.clone();
+        prune_health_repair_receipts(&mut next_state.receipts)?;
+        next_state.receipts.push(receipt);
+        let previous_state = std::mem::replace(&mut self.health_repairs, next_state);
+        if let Err(cause) = self.persist_health_repairs() {
+            self.health_repairs = previous_state;
+            return Err(cause);
+        }
+        Ok(())
+    }
+
+    fn bind_health_repair_operation(
+        &mut self,
+        vault_handle: &str,
+        plan_handle: &str,
+        operation_id: &str,
+        decisions: Vec<HealthRepairDecisionReceipt>,
+        decision_sha256: &str,
+    ) -> Result<HealthRepairReceipt, RpcFailure> {
+        if self.health_repairs.receipts.iter().any(|receipt| {
+            receipt.vault_handle == vault_handle
+                && receipt.operation_id.as_deref() == Some(operation_id)
+                && receipt.plan_handle != plan_handle
+        }) {
+            return Err(RpcFailure::new(
+                "health-repair-intent-mismatch",
+                "MDBX2 health repair operation ID is already bound to another plan.",
+                false,
+            ));
+        }
+        let mut next_state = self.health_repairs.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.plan_handle == plan_handle
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 health repair receipt is missing."))?;
+        if receipt.operation_id.is_some() || receipt.completed || receipt.outcome_unknown {
+            return Err(RpcFailure::new(
+                "health-repair-intent-mismatch",
+                "MDBX2 health repair plan cannot be rebound.",
+                false,
+            ));
+        }
+        receipt.operation_id = Some(operation_id.to_string());
+        receipt.decisions = decisions;
+        receipt.decision_sha256 = Some(decision_sha256.to_string());
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let result = receipt.clone();
+        let previous_state = std::mem::replace(&mut self.health_repairs, next_state);
+        if let Err(cause) = self.persist_health_repairs() {
+            self.health_repairs = previous_state;
+            return Err(cause);
+        }
+        Ok(result)
+    }
+
+    fn complete_health_repair(
+        &mut self,
+        vault_handle: &str,
+        plan_handle: &str,
+        commit_id: &str,
+        repaired_count: u64,
+    ) -> Result<HealthRepairReceipt, RpcFailure> {
+        if commit_id.is_empty() || commit_id.len() > 128 {
+            return Err(RpcFailure::new(
+                "host-core-incompatible",
+                "MDBX2 health repair returned an invalid Commit identifier.",
+                false,
+            ));
+        }
+        let mut next_state = self.health_repairs.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.plan_handle == plan_handle
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 health repair receipt is missing."))?;
+        if let Some(existing_commit_id) = receipt.result_commit_id.as_deref() {
+            if existing_commit_id != commit_id || receipt.repaired_count != Some(repaired_count) {
+                return Err(RpcFailure::new(
+                    "health-repair-commit-mismatch",
+                    "MDBX2 health repair resolved to a different Commit.",
+                    false,
+                ));
+            }
+            return Ok(receipt.clone());
+        }
+        receipt.completed = true;
+        receipt.outcome_unknown = false;
+        receipt.result_commit_id = Some(commit_id.to_string());
+        receipt.repaired_count = Some(repaired_count);
+        receipt.recovery_point_created = true;
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let result = receipt.clone();
+        let previous_state = std::mem::replace(&mut self.health_repairs, next_state);
+        if let Err(cause) = self.persist_health_repairs() {
+            self.health_repairs = previous_state;
+            return Err(cause);
+        }
+        Ok(result)
+    }
+
+    fn mark_health_repair_unknown(
+        &mut self,
+        vault_handle: &str,
+        plan_handle: &str,
+    ) -> Result<(), RpcFailure> {
+        let mut next_state = self.health_repairs.clone();
+        let receipt = next_state
+            .receipts
+            .iter_mut()
+            .find(|receipt| {
+                receipt.vault_handle == vault_handle && receipt.plan_handle == plan_handle
+            })
+            .ok_or_else(|| RpcFailure::storage("MDBX2 health repair receipt is missing."))?;
+        receipt.outcome_unknown = true;
+        receipt.updated_at_unix_secs = unix_seconds()?;
+        let previous_state = std::mem::replace(&mut self.health_repairs, next_state);
+        if let Err(cause) = self.persist_health_repairs() {
+            self.health_repairs = previous_state;
+            return Err(cause);
+        }
+        Ok(())
+    }
+
+    fn persist_health_repairs(&mut self) -> Result<(), RpcFailure> {
+        self.health_repairs.revision = self
+            .health_repairs
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RpcFailure::storage("MDBX2 health repair revision overflowed."))?;
+        let bytes = serde_json::to_vec(&self.health_repairs)
+            .map_err(|_| RpcFailure::storage("MDBX2 health repair state could not be encoded."))?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_HEALTH_REPAIR_STATE_BYTES {
+            return Err(RpcFailure::new(
+                "health-repair-state-too-large",
+                "MDBX2 health repair state exceeds the reviewed limit.",
+                false,
+            ));
+        }
+        let path = health_repair_state_path(&self.root, self.health_repairs.revision % 2);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|_| RpcFailure::storage("MDBX2 health repair state could not be opened."))?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| RpcFailure::storage("MDBX2 health repair state could not be persisted."))
+    }
+
     pub(crate) fn require_open_vault(
         &self,
         vault_handle: &str,
@@ -4116,6 +4605,141 @@ fn conflict_resolution_state_path(root: &Path, slot: u64) -> PathBuf {
         .join(format!("conflict-resolutions.state.{slot}.json"))
 }
 
+fn prune_health_repair_receipts(receipts: &mut Vec<HealthRepairReceipt>) -> Result<(), RpcFailure> {
+    while receipts.len() >= MAX_HEALTH_REPAIR_RECEIPTS {
+        let removable = receipts
+            .iter()
+            .enumerate()
+            .filter(|(_, receipt)| {
+                receipt.completed || receipt.outcome_unknown || receipt.operation_id.is_none()
+            })
+            .min_by_key(|(_, receipt)| receipt.updated_at_unix_secs)
+            .map(|(index, _)| index);
+        if let Some(index) = removable {
+            receipts.remove(index);
+        } else {
+            return Err(RpcFailure::new(
+                "health-repair-receipt-limit",
+                "MDBX2 has too many unfinished health repair operations.",
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_health_repair_state(root: &Path) -> std::io::Result<HealthRepairState> {
+    let mut candidates = Vec::new();
+    for slot in [0_u64, 1_u64] {
+        let path = health_repair_state_path(root, slot);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(bytes) = read_bounded(&path, MAX_HEALTH_REPAIR_STATE_BYTES) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_slice::<HealthRepairState>(&bytes) else {
+            continue;
+        };
+        if state.version != HEALTH_REPAIR_STATE_VERSION || state.revision % 2 != slot {
+            continue;
+        }
+        if validate_health_repair_state(&state) {
+            candidates.push(state);
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by_key(|state| state.revision)
+        .unwrap_or_default())
+}
+
+fn validate_health_repair_state(state: &HealthRepairState) -> bool {
+    if state.receipts.len() > MAX_HEALTH_REPAIR_RECEIPTS {
+        return false;
+    }
+    let mut plan_handles = HashSet::new();
+    let mut operation_ids = HashSet::new();
+    state.receipts.iter().all(|receipt| {
+        let items_valid = validate_health_repair_receipt_items(receipt);
+        let binding_valid = match receipt.operation_id.as_deref() {
+            None => {
+                receipt.decisions.is_empty()
+                    && receipt.decision_sha256.is_none()
+                    && !receipt.completed
+                    && !receipt.outcome_unknown
+            }
+            Some(operation_id) => {
+                canonical_uuid(operation_id).as_deref() == Some(operation_id)
+                    && operation_ids
+                        .insert((receipt.vault_handle.clone(), operation_id.to_string()))
+                    && receipt.decision_sha256.as_deref().is_some_and(valid_sha256)
+                    && health_repair_decision_sha256(&receipt.decisions)
+                        .ok()
+                        .as_deref()
+                        == receipt.decision_sha256.as_deref()
+                    && validate_health_repair_decisions(receipt, &receipt.decisions).is_ok()
+            }
+        };
+        let result_valid = if receipt.completed {
+            !receipt.outcome_unknown
+                && receipt.recovery_point_created
+                && receipt
+                    .result_commit_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty() && value.len() <= 128)
+                && receipt.repaired_count == Some(receipt.items.len() as u64)
+        } else {
+            receipt.result_commit_id.is_none()
+                && receipt.repaired_count.is_none()
+                && !receipt.recovery_point_created
+        };
+        canonical_uuid(&receipt.vault_handle).as_deref() == Some(receipt.vault_handle.as_str())
+            && canonical_uuid(&receipt.plan_handle).as_deref() == Some(receipt.plan_handle.as_str())
+            && valid_sha256(&receipt.plan_token)
+            && valid_sha256(&receipt.plan_sha256)
+            && health_repair_receipt_plan_sha256(receipt).ok().as_deref()
+                == Some(receipt.plan_sha256.as_str())
+            && items_valid
+            && binding_valid
+            && result_valid
+            && !(receipt.completed && receipt.outcome_unknown)
+            && receipt.updated_at_unix_secs > 0
+            && plan_handles.insert((receipt.vault_handle.clone(), receipt.plan_handle.clone()))
+    })
+}
+
+fn validate_health_repair_receipt_items(receipt: &HealthRepairReceipt) -> bool {
+    if receipt.items.is_empty() || receipt.items.len() > MAX_HEALTH_REPAIR_ITEMS {
+        return false;
+    }
+    let mut item_handles = HashSet::new();
+    let mut repair_ids = HashSet::new();
+    let mut conflict_count = 0_usize;
+    let valid = receipt.items.iter().all(|item| {
+        if !item.automatic {
+            conflict_count += 1;
+        }
+        canonical_uuid(&item.item_handle).as_deref() == Some(item.item_handle.as_str())
+            && !item.repair_id.is_empty()
+            && item.repair_id.len() <= 4096
+            && !item.object_type.is_empty()
+            && item.object_type.len() <= 128
+            && !item.object_id.is_empty()
+            && item.object_id.len() <= 4096
+            && item.tombstone_count <= u32::MAX as u64
+            && item.automatic == item.kind.is_automatic()
+            && item_handles.insert(item.item_handle.clone())
+            && repair_ids.insert(item.repair_id.clone())
+    });
+    valid && conflict_count <= MAX_HEALTH_REPAIR_CONFLICTS
+}
+
+fn health_repair_state_path(root: &Path, slot: u64) -> PathBuf {
+    root.join("operations")
+        .join(format!("health-repairs.state.{slot}.json"))
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -4399,6 +5023,501 @@ fn vault_health_projection(healthy: bool, issues: &[MdbxHealthIssue]) -> Value {
         "categories": category_rows,
         "issueKinds": issue_kind_rows
     })
+}
+
+fn validate_health_repair_plan(plan: &MdbxHealthRepairPlan) -> Result<(), RpcFailure> {
+    if !valid_sha256(&plan.token) {
+        return Err(RpcFailure::new(
+            "host-core-incompatible",
+            "MDBX2 health repair plan token is invalid.",
+            false,
+        ));
+    }
+    let item_count = plan
+        .automatic_items
+        .len()
+        .checked_add(plan.conflict_items.len())
+        .ok_or_else(|| {
+            RpcFailure::new(
+                "health-repair-plan-too-large",
+                "MDBX2 health repair plan exceeds the reviewed item limit.",
+                false,
+            )
+        })?;
+    if item_count > MAX_HEALTH_REPAIR_ITEMS
+        || plan.conflict_items.len() > MAX_HEALTH_REPAIR_CONFLICTS
+        || plan.blockers.len() > MAX_HEALTH_REPAIR_ITEMS
+    {
+        return Err(RpcFailure::new(
+            "health-repair-plan-too-large",
+            "MDBX2 health repair plan exceeds the reviewed item limit.",
+            false,
+        ));
+    }
+    if plan.can_apply != (item_count > 0 && plan.blockers.is_empty()) {
+        return Err(RpcFailure::new(
+            "host-core-incompatible",
+            "MDBX2 health repair applicability is inconsistent.",
+            false,
+        ));
+    }
+    let mut repair_ids = HashSet::new();
+    for item in &plan.automatic_items {
+        validate_health_repair_item(item, true, &mut repair_ids)?;
+    }
+    for item in &plan.conflict_items {
+        validate_health_repair_item(item, false, &mut repair_ids)?;
+    }
+    Ok(())
+}
+
+fn validate_health_repair_item(
+    item: &MdbxHealthRepairItem,
+    automatic: bool,
+    repair_ids: &mut HashSet<String>,
+) -> Result<(), RpcFailure> {
+    let kind = HealthRepairReceiptItemKind::from(item.kind);
+    if kind.is_automatic() != automatic
+        || item.repair_id.is_empty()
+        || item.repair_id.len() > 4096
+        || item.object_type.is_empty()
+        || item.object_type.len() > 128
+        || item.object_id.is_empty()
+        || item.object_id.len() > 4096
+        || item.tombstone_count > u32::MAX as u64
+        || !repair_ids.insert(item.repair_id.clone())
+    {
+        return Err(RpcFailure::new(
+            "host-core-incompatible",
+            "MDBX2 health repair item is invalid.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn health_repair_receipt(
+    vault_handle: &str,
+    plan: &MdbxHealthRepairPlan,
+) -> Result<HealthRepairReceipt, RpcFailure> {
+    let mut items = Vec::with_capacity(plan.automatic_items.len() + plan.conflict_items.len());
+    for item in &plan.automatic_items {
+        items.push(health_repair_item_receipt(item, true));
+    }
+    for item in &plan.conflict_items {
+        items.push(health_repair_item_receipt(item, false));
+    }
+    Ok(HealthRepairReceipt {
+        vault_handle: vault_handle.to_string(),
+        plan_handle: fresh_uuid(),
+        plan_token: plan.token.clone(),
+        plan_sha256: health_repair_plan_sha256(plan)?,
+        items,
+        operation_id: None,
+        decisions: Vec::new(),
+        decision_sha256: None,
+        completed: false,
+        outcome_unknown: false,
+        result_commit_id: None,
+        repaired_count: None,
+        recovery_point_created: false,
+        updated_at_unix_secs: unix_seconds()?,
+    })
+}
+
+fn health_repair_item_receipt(
+    item: &MdbxHealthRepairItem,
+    automatic: bool,
+) -> HealthRepairItemReceipt {
+    HealthRepairItemReceipt {
+        item_handle: fresh_uuid(),
+        repair_id: item.repair_id.clone(),
+        kind: item.kind.into(),
+        object_type: item.object_type.clone(),
+        object_id: item.object_id.clone(),
+        tombstone_count: item.tombstone_count,
+        automatic,
+    }
+}
+
+fn health_repair_plan_sha256(plan: &MdbxHealthRepairPlan) -> Result<String, RpcFailure> {
+    let rows = plan
+        .automatic_items
+        .iter()
+        .map(|item| health_repair_plan_item_json(item, true))
+        .chain(
+            plan.conflict_items
+                .iter()
+                .map(|item| health_repair_plan_item_json(item, false)),
+        )
+        .collect::<Vec<_>>();
+    health_repair_plan_digest(&plan.token, &rows)
+}
+
+fn health_repair_receipt_plan_sha256(receipt: &HealthRepairReceipt) -> Result<String, RpcFailure> {
+    let rows = receipt
+        .items
+        .iter()
+        .map(|item| {
+            json!({
+                "repairId": item.repair_id,
+                "kind": item.kind.as_str(),
+                "objectType": item.object_type,
+                "objectId": item.object_id,
+                "tombstoneCount": item.tombstone_count,
+                "automatic": item.automatic
+            })
+        })
+        .collect::<Vec<_>>();
+    health_repair_plan_digest(&receipt.plan_token, &rows)
+}
+
+fn health_repair_plan_item_json(item: &MdbxHealthRepairItem, automatic: bool) -> Value {
+    json!({
+        "repairId": item.repair_id,
+        "kind": HealthRepairReceiptItemKind::from(item.kind).as_str(),
+        "objectType": item.object_type,
+        "objectId": item.object_id,
+        "tombstoneCount": item.tombstone_count,
+        "automatic": automatic
+    })
+}
+
+fn health_repair_plan_digest(plan_token: &str, rows: &[Value]) -> Result<String, RpcFailure> {
+    let bytes = serde_json::to_vec(&(plan_token, rows))
+        .map_err(|_| RpcFailure::storage("MDBX2 health repair plan could not be hashed."))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn health_repair_automatic_summaries(items: &[MdbxHealthRepairItem]) -> Vec<Value> {
+    let mut groups = BTreeMap::<(&'static str, &'static str), (u64, u64)>::new();
+    for item in items {
+        let kind = HealthRepairReceiptItemKind::from(item.kind).as_str();
+        let object_type = safe_health_repair_object_type(&item.object_type);
+        let summary = groups.entry((kind, object_type)).or_insert((0, 0));
+        summary.0 = summary.0.saturating_add(1);
+        summary.1 = summary.1.saturating_add(item.tombstone_count);
+    }
+    groups
+        .into_iter()
+        .map(|((kind, object_type), (item_count, tombstone_count))| {
+            json!({
+                "kind": kind,
+                "objectType": object_type,
+                "itemCount": item_count,
+                "tombstoneCount": tombstone_count
+            })
+        })
+        .collect()
+}
+
+fn health_repair_blocker_summaries(plan: &MdbxHealthRepairPlan) -> Vec<Value> {
+    let mut categories = BTreeMap::<&'static str, u64>::new();
+    for blocker in &plan.blockers {
+        let category = safe_vault_health_category(&blocker.category);
+        *categories.entry(category).or_insert(0) += 1;
+    }
+    categories
+        .into_iter()
+        .map(|(category, count)| json!({ "category": category, "count": count }))
+        .collect()
+}
+
+fn health_repair_conflict_json(item: &HealthRepairItemReceipt) -> Value {
+    json!({
+        "itemHandle": item.item_handle,
+        "kind": item.kind.as_str(),
+        "objectType": safe_health_repair_object_type(&item.object_type),
+        "tombstoneCount": item.tombstone_count
+    })
+}
+
+fn safe_health_repair_object_type(object_type: &str) -> &'static str {
+    match object_type {
+        "project" => "project",
+        "entry" => "entry",
+        "attachment" => "attachment",
+        "object-relation" => "object-relation",
+        "object-label" => "object-label",
+        "object-label-assignment" => "object-label-assignment",
+        _ => "other",
+    }
+}
+
+fn take_health_repair_decisions(
+    params: &mut Map<String, Value>,
+) -> Result<Vec<HealthRepairDecisionReceipt>, RpcFailure> {
+    let decisions = params
+        .remove("decisions")
+        .ok_or_else(|| RpcFailure::invalid("health repair decisions are required."))?;
+    let Value::Array(decisions) = decisions else {
+        return Err(RpcFailure::invalid(
+            "health repair decisions must be an array.",
+        ));
+    };
+    if decisions.len() > MAX_HEALTH_REPAIR_CONFLICTS {
+        return Err(RpcFailure::invalid(
+            "health repair decisions exceed the reviewed conflict limit.",
+        ));
+    }
+    let mut parsed = Vec::with_capacity(decisions.len());
+    let mut handles = HashSet::new();
+    for decision in decisions {
+        let mut decision = take_object(decision, "health repair decision must be an object.")?;
+        let item_handle = take_uuid(&mut decision, "itemHandle")?;
+        let choice = match take_string(&mut decision, "choice", 32, false)?.as_str() {
+            "keep-content" => HealthRepairReceiptChoice::KeepContent,
+            "delete-object" => HealthRepairReceiptChoice::DeleteObject,
+            _ => {
+                return Err(RpcFailure::invalid(
+                    "health repair decision choice is unsupported.",
+                ))
+            }
+        };
+        reject_unknown(decision)?;
+        if !handles.insert(item_handle.clone()) {
+            return Err(RpcFailure::invalid(
+                "health repair decision itemHandle is duplicated.",
+            ));
+        }
+        parsed.push(HealthRepairDecisionReceipt {
+            item_handle,
+            choice,
+        });
+    }
+    parsed.sort_by(|left, right| left.item_handle.cmp(&right.item_handle));
+    Ok(parsed)
+}
+
+fn validate_health_repair_decisions(
+    receipt: &HealthRepairReceipt,
+    decisions: &[HealthRepairDecisionReceipt],
+) -> Result<(), RpcFailure> {
+    let mut expected = receipt
+        .items
+        .iter()
+        .filter(|item| !item.automatic)
+        .map(|item| item.item_handle.as_str())
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    let actual = decisions
+        .iter()
+        .map(|decision| decision.item_handle.as_str())
+        .collect::<Vec<_>>();
+    if expected != actual {
+        return Err(RpcFailure::new(
+            "health-repair-decisions-incomplete",
+            "Every MDBX2 health repair conflict requires exactly one choice.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn health_repair_decision_sha256(
+    decisions: &[HealthRepairDecisionReceipt],
+) -> Result<String, RpcFailure> {
+    let rows = decisions
+        .iter()
+        .map(|decision| {
+            json!({
+                "itemHandle": decision.item_handle,
+                "choice": decision.choice.as_str()
+            })
+        })
+        .collect::<Vec<_>>();
+    let bytes = serde_json::to_vec(&rows)
+        .map_err(|_| RpcFailure::storage("MDBX2 health repair choices could not be hashed."))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn health_repair_ffi_decisions(
+    receipt: &HealthRepairReceipt,
+) -> Result<Vec<MdbxHealthRepairDecision>, RpcFailure> {
+    let items = receipt
+        .items
+        .iter()
+        .filter(|item| !item.automatic)
+        .map(|item| (item.item_handle.as_str(), item.repair_id.as_str()))
+        .collect::<HashMap<_, _>>();
+    receipt
+        .decisions
+        .iter()
+        .map(|decision| {
+            let repair_id = items.get(decision.item_handle.as_str()).ok_or_else(|| {
+                RpcFailure::storage("MDBX2 health repair choice mapping is invalid.")
+            })?;
+            Ok(MdbxHealthRepairDecision {
+                repair_id: (*repair_id).to_string(),
+                choice: decision.choice.to_ffi(),
+            })
+        })
+        .collect()
+}
+
+fn find_health_repair_commit(
+    vault: &Arc<MdbxVault>,
+    receipt: &HealthRepairReceipt,
+) -> Result<Option<String>, RpcFailure> {
+    let operation_id = receipt
+        .operation_id
+        .as_deref()
+        .ok_or_else(|| RpcFailure::storage("MDBX2 health repair operation binding is missing."))?;
+    let mut cursor = None;
+    for _ in 0..MAX_OPERATION_HISTORY_PAGES {
+        let page = vault.list_commit_history(100, cursor).map_err(|_| {
+            RpcFailure::new(
+                "health-repair-history-failed",
+                "MDBX2 health repair history could not be inspected.",
+                false,
+            )
+        })?;
+        if let Some(item) = page
+            .items
+            .iter()
+            .find(|item| item.operation_id.as_deref() == Some(operation_id))
+        {
+            validate_health_repair_commit(item, receipt)?;
+            return Ok(Some(item.commit_id.clone()));
+        }
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(None);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(RpcFailure::new(
+        "health-repair-history-limit",
+        "MDBX2 history is too large to prove the unfinished repair outcome.",
+        false,
+    ))
+}
+
+fn validate_health_repair_commit(
+    commit: &MdbxCommitHistoryItem,
+    receipt: &HealthRepairReceipt,
+) -> Result<(), RpcFailure> {
+    if commit.operation_kind.as_deref() != Some("health-repair")
+        || commit.commit_kind != "change"
+        || commit.change_scope != "multi"
+        || commit.changes.len() != receipt.items.len().saturating_mul(2)
+    {
+        return Err(RpcFailure::new(
+            "health-repair-operation-mismatch",
+            "MDBX2 operation ID resolved to an incompatible Commit.",
+            false,
+        ));
+    }
+    let choices = receipt
+        .decisions
+        .iter()
+        .map(|decision| (decision.item_handle.as_str(), decision.choice))
+        .collect::<HashMap<_, _>>();
+    let mut expected = receipt
+        .items
+        .iter()
+        .flat_map(|item| {
+            let action = match choices.get(item.item_handle.as_str()) {
+                Some(HealthRepairReceiptChoice::DeleteObject) => "delete",
+                _ => "repair",
+            };
+            [
+                format!(
+                    "{}\n{}\n{}\ntombstone",
+                    item.object_type, item.object_id, action
+                ),
+                format!("multi\n{}\nchange\n", item.object_id),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let mut actual = commit
+        .changes
+        .iter()
+        .map(|change| {
+            let mut fields = change.fields.clone();
+            fields.sort();
+            format!(
+                "{}\n{}\n{}\n{}",
+                change.object_type,
+                change.object_id,
+                change.action,
+                fields.join(",")
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    actual.sort();
+    if expected != actual {
+        return Err(RpcFailure::new(
+            "health-repair-operation-mismatch",
+            "MDBX2 health repair Commit shape differs from the durable intent.",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn health_repair_result_json(
+    vault: &Arc<MdbxVault>,
+    receipt: &HealthRepairReceipt,
+    already_applied: bool,
+) -> Result<Value, RpcFailure> {
+    if !receipt.completed || receipt.outcome_unknown || !receipt.recovery_point_created {
+        return Err(RpcFailure::storage(
+            "MDBX2 health repair completion receipt is invalid.",
+        ));
+    }
+    let repaired_count = receipt
+        .repaired_count
+        .ok_or_else(|| RpcFailure::storage("MDBX2 health repair result count is missing."))?;
+    let health = vault.health_check().map_err(|_| {
+        RpcFailure::new(
+            "vault-health-check-failed",
+            "MDBX2 vault health check failed after repair.",
+            false,
+        )
+    })?;
+    bounded_health_repair_result(json!({
+        "status": "applied",
+        "repairedCount": repaired_count,
+        "alreadyApplied": already_applied,
+        "recoveryPointCreated": true,
+        "health": vault_health_projection(health.healthy, &health.issues)
+    }))
+}
+
+fn map_health_repair_apply_error(diagnostic: &str) -> RpcFailure {
+    let diagnostic = diagnostic.to_ascii_lowercase();
+    if diagnostic.contains("stale")
+        || diagnostic.contains("plan changed")
+        || diagnostic.contains("plan token")
+    {
+        RpcFailure::new(
+            "health-repair-plan-stale",
+            "MDBX2 changed during health repair; generate a new plan.",
+            false,
+        )
+    } else if diagnostic.contains("block") || diagnostic.contains("constraint") {
+        RpcFailure::new(
+            "health-repair-blocked",
+            "MDBX2 has integrity issues that cannot be repaired automatically.",
+            false,
+        )
+    } else if diagnostic.contains("authorization")
+        || diagnostic.contains("authentication")
+        || diagnostic.contains("fresh authentication")
+    {
+        RpcFailure::new(
+            "health-repair-authorization-required",
+            "MDBX2 health repair requires fresh authorization.",
+            false,
+        )
+    } else {
+        RpcFailure::new(
+            "health-repair-apply-failed",
+            "MDBX2 health repair failed without a proven Commit.",
+            false,
+        )
+    }
 }
 
 fn safe_vault_health_category(category: &str) -> &'static str {
@@ -5067,6 +6186,20 @@ fn bounded_vault_diagnostics_result(value: Value) -> Result<Value, RpcFailure> {
         return Err(RpcFailure::new(
             "vault-diagnostics-result-too-large",
             "MDBX2 vault diagnostics exceed the Native Messaging safety limit.",
+            false,
+        ));
+    }
+    Ok(value)
+}
+
+fn bounded_health_repair_result(value: Value) -> Result<Value, RpcFailure> {
+    let size = serde_json::to_vec(&value)
+        .map_err(|_| RpcFailure::storage("MDBX2 health repair result could not be encoded."))?
+        .len();
+    if size > MAX_HEALTH_REPAIR_RESULT_BYTES {
+        return Err(RpcFailure::new(
+            "health-repair-result-too-large",
+            "MDBX2 health repair result exceeds the Native Messaging safety limit.",
             false,
         ));
     }
@@ -6383,6 +7516,104 @@ mod tests {
                 }).to_string()
             }),
         )
+    }
+
+    struct HealthRepairFixture {
+        missing_object_id: String,
+        duplicate_object_id: String,
+        conflict_object_id: String,
+    }
+
+    fn health_repair_fixture(
+        runtime: &mut HostRuntime,
+        vault_handle: &str,
+        password: &str,
+    ) -> HealthRepairFixture {
+        let missing_logical_id = format!("health-missing:{}", fresh_uuid());
+        let duplicate_logical_id = format!("health-duplicate:{}", fresh_uuid());
+        let conflict_logical_id = format!("health-conflict:{}", fresh_uuid());
+        let missing = upsert_test_login(runtime, vault_handle, &missing_logical_id, "Missing");
+        let duplicate =
+            upsert_test_login(runtime, vault_handle, &duplicate_logical_id, "Duplicate");
+        let conflict = upsert_test_login(runtime, vault_handle, &conflict_logical_id, "Conflict");
+        call(
+            runtime,
+            "object.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "logicalObjectId": missing_logical_id
+            }),
+        );
+        call(
+            runtime,
+            "object.delete",
+            json!({
+                "vaultHandle": vault_handle,
+                "operationId": fresh_uuid(),
+                "logicalObjectId": duplicate_logical_id
+            }),
+        );
+        let missing_object_id = missing["objectId"].as_str().unwrap().to_string();
+        let duplicate_object_id = duplicate["objectId"].as_str().unwrap().to_string();
+        let conflict_object_id = conflict["objectId"].as_str().unwrap().to_string();
+        let device_id = runtime.device_id.clone();
+        call(
+            runtime,
+            "vault.lock",
+            json!({ "vaultHandle": vault_handle }),
+        );
+        let path = runtime
+            .root
+            .join("vaults")
+            .join(vault_handle)
+            .join("vault.mdbx");
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute(
+                "DELETE FROM tombstones WHERE target_object_type = 'entry' AND target_object_id = ?1",
+                rusqlite::params![missing_object_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tombstones (
+                    tombstone_id, target_object_type, target_object_id, delete_clock,
+                    deleted_by_device_id, deleted_at, purge_eligible_at, delete_commit_id
+                 )
+                 SELECT ?1, target_object_type, target_object_id, ?2,
+                        deleted_by_device_id, deleted_at, purge_eligible_at, delete_commit_id
+                 FROM tombstones
+                 WHERE target_object_type = 'entry' AND target_object_id = ?3
+                 LIMIT 1",
+                rusqlite::params![
+                    fresh_uuid(),
+                    format!(r#"{{"tombstone":"{}"}}"#, fresh_uuid()),
+                    duplicate_object_id
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tombstones (
+                    tombstone_id, target_object_type, target_object_id, delete_clock,
+                    deleted_by_device_id, deleted_at, purge_eligible_at, delete_commit_id
+                 ) VALUES (?1, 'entry', ?2, ?3, ?4, '2026-08-07T00:00:00Z', NULL, NULL)",
+                rusqlite::params![
+                    fresh_uuid(),
+                    conflict_object_id,
+                    format!(r#"{{"tombstone":"{}"}}"#, fresh_uuid()),
+                    device_id
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        reopen_test_vault(runtime, vault_handle, password);
+        HealthRepairFixture {
+            missing_object_id,
+            duplicate_object_id,
+            conflict_object_id,
+        }
     }
 
     fn call(runtime: &mut HostRuntime, method: &str, params: Value) -> Value {
@@ -8843,6 +10074,370 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.code, "collection-result-too-large");
+    }
+
+    #[test]
+    fn health_repair_plan_is_bounded_current_core_and_identifier_free() {
+        let (_root, mut runtime) = runtime();
+        let hello = call(&mut runtime, "host.hello", json!({}));
+        assert_eq!(hello["mdbxCoreRevision"], MDBX_CORE_REVISION);
+        assert_eq!(hello["supportsMdbx1"], false);
+        assert_eq!(hello["supportsHealthRepair"], true);
+        assert_eq!(hello["maxHealthRepairItems"], MAX_HEALTH_REPAIR_ITEMS);
+        assert_eq!(
+            hello["maxHealthRepairConflicts"],
+            MAX_HEALTH_REPAIR_CONFLICTS
+        );
+        assert_eq!(
+            hello["maxHealthRepairResultBytes"],
+            MAX_HEALTH_REPAIR_RESULT_BYTES
+        );
+
+        let password = "health-plan-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let fixture = health_repair_fixture(&mut runtime, &vault_handle, password);
+        let before = runtime
+            .require_open_vault(&vault_handle)
+            .unwrap()
+            .diagnostics_summary()
+            .unwrap();
+        let plan = call(
+            &mut runtime,
+            "health.repair.plan",
+            json!({ "vaultHandle": vault_handle }),
+        );
+        assert_eq!(plan["canApply"], true);
+        assert_eq!(plan["itemCount"], 3);
+        assert_eq!(plan["automaticCount"], 2);
+        assert_eq!(plan["conflictCount"], 1);
+        assert_eq!(plan["automatic"].as_array().unwrap().len(), 2);
+        let conflicts = plan["conflicts"].as_array().unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert!(canonical_uuid(conflicts[0]["itemHandle"].as_str().unwrap()).is_some());
+        assert_eq!(conflicts[0]["kind"], "active-object-tombstone-conflict");
+        assert_eq!(conflicts[0]["objectType"], "entry");
+        assert!(plan["blockers"].as_array().unwrap().is_empty());
+        assert!(serde_json::to_vec(&plan).unwrap().len() <= MAX_HEALTH_REPAIR_RESULT_BYTES);
+        let encoded = serde_json::to_string(&plan).unwrap();
+        assert!(!encoded.contains(&fixture.missing_object_id));
+        assert!(!encoded.contains(&fixture.duplicate_object_id));
+        assert!(!encoded.contains(&fixture.conflict_object_id));
+        assert!(!encoded.contains("repairId"));
+        assert!(!encoded.contains("planToken"));
+        assert!(!encoded.contains("description"));
+        let after = runtime
+            .require_open_vault(&vault_handle)
+            .unwrap()
+            .diagnostics_summary()
+            .unwrap();
+        assert_eq!(after.commit_count, before.commit_count);
+        assert_eq!(after.snapshot_count, before.snapshot_count);
+
+        let unknown = runtime
+            .handle(
+                "health.repair.plan",
+                json!({ "vaultHandle": vault_handle, "extra": true }),
+            )
+            .unwrap_err();
+        assert_eq!(unknown.code, "params-invalid");
+    }
+
+    #[test]
+    fn health_repair_apply_is_idempotent_and_rejects_changed_intent() {
+        let (_root, mut runtime) = runtime();
+        let password = "health-apply-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let fixture = health_repair_fixture(&mut runtime, &vault_handle, password);
+        let plan = call(
+            &mut runtime,
+            "health.repair.plan",
+            json!({ "vaultHandle": vault_handle }),
+        );
+        let plan_handle = plan["planHandle"].as_str().unwrap().to_string();
+        let item_handle = plan["conflicts"][0]["itemHandle"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let operation_id = fresh_uuid();
+        let request = json!({
+            "vaultHandle": vault_handle,
+            "planHandle": plan_handle,
+            "operationId": operation_id,
+            "decisions": [{ "itemHandle": item_handle, "choice": "keep-content" }]
+        });
+        let applied = call(&mut runtime, "health.repair.apply", request.clone());
+        assert_eq!(applied["status"], "applied");
+        assert_eq!(applied["repairedCount"], 3);
+        assert_eq!(applied["alreadyApplied"], false);
+        assert_eq!(applied["recoveryPointCreated"], true);
+        assert_eq!(applied["health"]["healthy"], true);
+        let encoded = serde_json::to_string(&applied).unwrap();
+        assert!(!encoded.contains(&fixture.missing_object_id));
+        assert!(!encoded.contains(&fixture.duplicate_object_id));
+        assert!(!encoded.contains(&fixture.conflict_object_id));
+        assert!(!encoded.contains(&operation_id));
+
+        let repeated = call(&mut runtime, "health.repair.apply", request.clone());
+        assert_eq!(repeated["status"], "applied");
+        assert_eq!(repeated["alreadyApplied"], true);
+
+        let changed_choice = runtime
+            .handle(
+                "health.repair.apply",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "planHandle": plan_handle,
+                    "operationId": operation_id,
+                    "decisions": [{ "itemHandle": item_handle, "choice": "delete-object" }]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(changed_choice.code, "health-repair-intent-mismatch");
+        let changed_operation = runtime
+            .handle(
+                "health.repair.apply",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "planHandle": plan_handle,
+                    "operationId": fresh_uuid(),
+                    "decisions": [{ "itemHandle": item_handle, "choice": "keep-content" }]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(changed_operation.code, "health-repair-intent-mismatch");
+    }
+
+    #[test]
+    fn health_repair_recovers_a_committed_lost_response_after_host_restart() {
+        let root = TestRoot::new();
+        let password = "health-restart-password";
+        let vault_handle;
+        let plan_handle;
+        let item_handle;
+        let operation_id = fresh_uuid();
+        {
+            let mut first = HostRuntime::new(root.0.clone()).unwrap();
+            vault_handle = open_test_vault(&mut first, password);
+            health_repair_fixture(&mut first, &vault_handle, password);
+            let plan = call(
+                &mut first,
+                "health.repair.plan",
+                json!({ "vaultHandle": vault_handle }),
+            );
+            plan_handle = plan["planHandle"].as_str().unwrap().to_string();
+            item_handle = plan["conflicts"][0]["itemHandle"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let decisions = vec![HealthRepairDecisionReceipt {
+                item_handle: item_handle.clone(),
+                choice: HealthRepairReceiptChoice::KeepContent,
+            }];
+            let decision_sha256 = health_repair_decision_sha256(&decisions).unwrap();
+            let receipt = first
+                .bind_health_repair_operation(
+                    &vault_handle,
+                    &plan_handle,
+                    &operation_id,
+                    decisions,
+                    &decision_sha256,
+                )
+                .unwrap();
+            let vault = first.require_open_vault(&vault_handle).unwrap();
+            let result = vault
+                .apply_health_repair(
+                    receipt.plan_token.clone(),
+                    operation_id.clone(),
+                    health_repair_ffi_decisions(&receipt).unwrap(),
+                )
+                .unwrap();
+            assert_eq!(result.status, MdbxHealthRepairStatus::Applied);
+            assert!(result.commit_id.is_some());
+        }
+
+        let mut resumed = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut resumed, &vault_handle, password);
+        let recovered = call(
+            &mut resumed,
+            "health.repair.apply",
+            json!({
+                "vaultHandle": vault_handle,
+                "planHandle": plan_handle,
+                "operationId": operation_id,
+                "decisions": [{ "itemHandle": item_handle, "choice": "keep-content" }]
+            }),
+        );
+        assert_eq!(recovered["status"], "applied");
+        assert_eq!(recovered["repairedCount"], 3);
+        assert_eq!(recovered["alreadyApplied"], true);
+        assert_eq!(recovered["recoveryPointCreated"], true);
+        assert_eq!(recovered["health"]["healthy"], true);
+    }
+
+    #[test]
+    fn health_repair_delete_choice_soft_deletes_and_normalizes_the_marker() {
+        let (_root, mut runtime) = runtime();
+        let password = "health-delete-password";
+        let vault_handle = open_test_vault(&mut runtime, password);
+        let fixture = health_repair_fixture(&mut runtime, &vault_handle, password);
+        let plan = call(
+            &mut runtime,
+            "health.repair.plan",
+            json!({ "vaultHandle": vault_handle }),
+        );
+        let result = call(
+            &mut runtime,
+            "health.repair.apply",
+            json!({
+                "vaultHandle": vault_handle,
+                "planHandle": plan["planHandle"],
+                "operationId": fresh_uuid(),
+                "decisions": [{
+                    "itemHandle": plan["conflicts"][0]["itemHandle"],
+                    "choice": "delete-object"
+                }]
+            }),
+        );
+        assert_eq!(result["status"], "applied");
+        assert_eq!(result["repairedCount"], 3);
+        assert_eq!(result["health"]["healthy"], true);
+        call(
+            &mut runtime,
+            "vault.lock",
+            json!({ "vaultHandle": vault_handle }),
+        );
+        let connection = Connection::open(
+            runtime
+                .root
+                .join("vaults")
+                .join(&vault_handle)
+                .join("vault.mdbx"),
+        )
+        .unwrap();
+        let deleted: i64 = connection
+            .query_row(
+                "SELECT deleted FROM entries WHERE entry_id = ?1",
+                rusqlite::params![fixture.conflict_object_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let markers: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM tombstones WHERE target_object_type = 'entry' AND target_object_id = ?1",
+                rusqlite::params![fixture.conflict_object_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(markers, 1);
+    }
+
+    #[test]
+    fn health_repair_stale_and_unfinished_changed_plans_fail_closed() {
+        let root = TestRoot::new();
+        let password = "health-stale-password";
+        let vault_handle;
+        let plan_handle;
+        let item_handle;
+        let pending_operation_id = fresh_uuid();
+        {
+            let mut first = HostRuntime::new(root.0.clone()).unwrap();
+            vault_handle = open_test_vault(&mut first, password);
+            health_repair_fixture(&mut first, &vault_handle, password);
+            let plan = call(
+                &mut first,
+                "health.repair.plan",
+                json!({ "vaultHandle": vault_handle }),
+            );
+            plan_handle = plan["planHandle"].as_str().unwrap().to_string();
+            item_handle = plan["conflicts"][0]["itemHandle"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let decisions = vec![HealthRepairDecisionReceipt {
+                item_handle: item_handle.clone(),
+                choice: HealthRepairReceiptChoice::KeepContent,
+            }];
+            let decision_sha256 = health_repair_decision_sha256(&decisions).unwrap();
+            first
+                .bind_health_repair_operation(
+                    &vault_handle,
+                    &plan_handle,
+                    &pending_operation_id,
+                    decisions,
+                    &decision_sha256,
+                )
+                .unwrap();
+
+            let extra = upsert_test_login(
+                &mut first,
+                &vault_handle,
+                &format!("health-extra:{}", fresh_uuid()),
+                "Extra conflict",
+            );
+            let extra_object_id = extra["objectId"].as_str().unwrap().to_string();
+            let device_id = first.device_id.clone();
+            call(
+                &mut first,
+                "vault.lock",
+                json!({ "vaultHandle": vault_handle }),
+            );
+            let connection = Connection::open(
+                first
+                    .root
+                    .join("vaults")
+                    .join(&vault_handle)
+                    .join("vault.mdbx"),
+            )
+            .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO tombstones (
+                        tombstone_id, target_object_type, target_object_id, delete_clock,
+                        deleted_by_device_id, deleted_at, purge_eligible_at, delete_commit_id
+                     ) VALUES (?1, 'entry', ?2, ?3, ?4, '2026-08-07T00:00:01Z', NULL, NULL)",
+                    rusqlite::params![
+                        fresh_uuid(),
+                        extra_object_id,
+                        format!(r#"{{"tombstone":"{}"}}"#, fresh_uuid()),
+                        device_id
+                    ],
+                )
+                .unwrap();
+        }
+
+        let mut resumed = HostRuntime::new(root.0.clone()).unwrap();
+        reopen_test_vault(&mut resumed, &vault_handle, password);
+        let error = resumed
+            .handle(
+                "health.repair.apply",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "planHandle": plan_handle,
+                    "operationId": pending_operation_id,
+                    "decisions": [{ "itemHandle": item_handle, "choice": "keep-content" }]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "health-repair-outcome-unknown");
+        let retry = resumed
+            .handle(
+                "health.repair.apply",
+                json!({
+                    "vaultHandle": vault_handle,
+                    "planHandle": plan_handle,
+                    "operationId": pending_operation_id,
+                    "decisions": [{ "itemHandle": item_handle, "choice": "keep-content" }]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(retry.code, "health-repair-outcome-unknown");
+        assert!(find_operation_commit(
+            &resumed.require_open_vault(&vault_handle).unwrap(),
+            &pending_operation_id
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]

@@ -584,7 +584,7 @@ dependencies = [
 [[package]]
 name = "mdbx-core"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=aafa22f195c626a8d8288d712bf42bccea134847#aafa22f195c626a8d8288d712bf42bccea134847"
+source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "chrono",
  "serde",
@@ -597,7 +597,7 @@ dependencies = [
 [[package]]
 name = "mdbx-crypto"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=aafa22f195c626a8d8288d712bf42bccea134847#aafa22f195c626a8d8288d712bf42bccea134847"
+source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -614,7 +614,7 @@ dependencies = [
 [[package]]
 name = "mdbx-ffi"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=aafa22f195c626a8d8288d712bf42bccea134847#aafa22f195c626a8d8288d712bf42bccea134847"
+source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "mdbx-core",
  "mdbx-storage",
@@ -632,7 +632,7 @@ dependencies = [
 [[package]]
 name = "mdbx-storage"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=aafa22f195c626a8d8288d712bf42bccea134847#aafa22f195c626a8d8288d712bf42bccea134847"
+source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "base64",
  "chrono",
@@ -653,7 +653,7 @@ dependencies = [
 [[package]]
 name = "mdbx-sync"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=aafa22f195c626a8d8288d712bf42bccea134847#aafa22f195c626a8d8288d712bf42bccea134847"
+source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "bincode",
  "chrono",

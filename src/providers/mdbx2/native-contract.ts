@@ -1,6 +1,6 @@
 export const MDBX2_NATIVE_HOST_NAME = "com.monica_pass.mdbx2";
 export const MDBX2_NATIVE_PROTOCOL_VERSION = 2;
-export const MDBX2_CORE_REVISION = "aafa22f195c626a8d8288d712bf42bccea134847";
+export const MDBX2_CORE_REVISION = "974c517465e7b6cac0947d2d59875aa4211fa16b";
 export const MDBX2_ENGINE_VERSION = "0.2.0";
 export const MDBX2_FORMAT_VERSION = "MDBX-2";
 export const MDBX2_SYNC_PROTOCOL_VERSION = 2;
@@ -14,6 +14,9 @@ export const MDBX2_MAX_COLLECTION_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES = 14;
 export const MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS = 20;
 export const MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES = 64 * 1024;
+export const MDBX2_MAX_HEALTH_REPAIR_ITEMS = 500;
+export const MDBX2_MAX_HEALTH_REPAIR_CONFLICTS = 500;
+export const MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES = 64 * 1024;
 export const MDBX2_MAX_VAULT_TIGA_RESULT_BYTES = 16 * 1024;
 export const MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS = 4;
 export const MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS = 3;
@@ -55,6 +58,20 @@ export const MDBX2_VAULT_HEALTH_ISSUE_KINDS = [
   "inactive-device",
   "unknown"
 ] as const;
+export const MDBX2_HEALTH_REPAIR_KINDS = [
+  "missing-tombstone",
+  "duplicate-tombstones",
+  "active-object-tombstone-conflict"
+] as const;
+export const MDBX2_HEALTH_REPAIR_OBJECT_TYPES = [
+  "project",
+  "entry",
+  "attachment",
+  "object-relation",
+  "object-label",
+  "object-label-assignment",
+  "other"
+] as const;
 export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
 export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
 export const MDBX2_MAX_HISTORY_PAGE_SIZE = 50;
@@ -89,6 +106,8 @@ export type Mdbx2NativeMethod =
   | "vault.status"
   | "vault.diagnostics"
   | "vault.tiga"
+  | "health.repair.plan"
+  | "health.repair.apply"
   | "vault.lock"
   | "collection.list"
   | "collection.create"
@@ -348,6 +367,54 @@ export interface Mdbx2VaultDiagnosticsReport {
   schemaVersion: number;
   health: Mdbx2VaultHealthSummary;
   diagnostics: Mdbx2VaultDiagnosticsSummary;
+}
+
+export type Mdbx2HealthRepairKind = typeof MDBX2_HEALTH_REPAIR_KINDS[number];
+export type Mdbx2HealthRepairObjectType = typeof MDBX2_HEALTH_REPAIR_OBJECT_TYPES[number];
+export type Mdbx2HealthRepairChoice = "keep-content" | "delete-object";
+
+export interface Mdbx2HealthRepairAutomaticSummary {
+  kind: Exclude<Mdbx2HealthRepairKind, "active-object-tombstone-conflict">;
+  objectType: Mdbx2HealthRepairObjectType;
+  itemCount: number;
+  tombstoneCount: number;
+}
+
+export interface Mdbx2HealthRepairConflict {
+  itemHandle: string;
+  kind: "active-object-tombstone-conflict";
+  objectType: Mdbx2HealthRepairObjectType;
+  tombstoneCount: number;
+}
+
+export interface Mdbx2HealthRepairBlockerSummary {
+  category: Mdbx2VaultHealthCategory;
+  count: number;
+}
+
+export interface Mdbx2HealthRepairPlan {
+  planHandle?: string;
+  canApply: boolean;
+  itemCount: number;
+  automaticCount: number;
+  conflictCount: number;
+  blockerCount: number;
+  automatic: Mdbx2HealthRepairAutomaticSummary[];
+  conflicts: Mdbx2HealthRepairConflict[];
+  blockers: Mdbx2HealthRepairBlockerSummary[];
+}
+
+export interface Mdbx2HealthRepairDecision {
+  itemHandle: string;
+  choice: Mdbx2HealthRepairChoice;
+}
+
+export interface Mdbx2HealthRepairApplyResult {
+  status: "applied";
+  repairedCount: number;
+  alreadyApplied: boolean;
+  recoveryPointCreated: true;
+  health: Mdbx2VaultHealthSummary;
 }
 
 export type Mdbx2TigaProfile = "sky" | "multi" | "power";
@@ -815,6 +882,10 @@ export interface Mdbx2HostCapabilities {
   maxVaultDiagnosticsResultBytes: typeof MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES;
   supportsVaultDiagnostics: true;
   supportsVaultHealthIssueKinds: true;
+  maxHealthRepairItems: typeof MDBX2_MAX_HEALTH_REPAIR_ITEMS;
+  maxHealthRepairConflicts: typeof MDBX2_MAX_HEALTH_REPAIR_CONFLICTS;
+  maxHealthRepairResultBytes: typeof MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES;
+  supportsHealthRepair: true;
   maxVaultTigaResultBytes: typeof MDBX2_MAX_VAULT_TIGA_RESULT_BYTES;
   maxVaultTigaUnlockMethods: typeof MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS;
   maxVaultTigaBrowserLimitations: typeof MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS;
@@ -920,6 +991,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxVaultDiagnosticsResultBytes !== MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES) throw incompatible("Native Host 诊断响应限制与插件不一致。");
   if (value.supportsVaultDiagnostics !== true) throw incompatible("Native Host 未启用 MDBX2 诊断刷新能力。");
   if (value.supportsVaultHealthIssueKinds !== true) throw incompatible("Native Host 未启用 MDBX2 脱敏诊断原因能力。");
+  if (value.maxHealthRepairItems !== MDBX2_MAX_HEALTH_REPAIR_ITEMS) throw incompatible("Native Host 健康修复数量限制与插件不一致。");
+  if (value.maxHealthRepairConflicts !== MDBX2_MAX_HEALTH_REPAIR_CONFLICTS) throw incompatible("Native Host 健康修复冲突限制与插件不一致。");
+  if (value.maxHealthRepairResultBytes !== MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES) throw incompatible("Native Host 健康修复响应限制与插件不一致。");
+  if (value.supportsHealthRepair !== true) throw incompatible("Native Host 未启用 MDBX2 健康修复能力。");
   if (value.maxVaultTigaResultBytes !== MDBX2_MAX_VAULT_TIGA_RESULT_BYTES) throw incompatible("Native Host Tiga 响应限制与插件不一致。");
   if (value.maxVaultTigaUnlockMethods !== MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS) throw incompatible("Native Host Tiga 解锁方式限制与插件不一致。");
   if (value.maxVaultTigaBrowserLimitations !== MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS) throw incompatible("Native Host Tiga 浏览器限制数量与插件不一致。");
@@ -978,6 +1053,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
     supportsVaultDiagnostics: true,
     supportsVaultHealthIssueKinds: true,
+    maxHealthRepairItems: MDBX2_MAX_HEALTH_REPAIR_ITEMS,
+    maxHealthRepairConflicts: MDBX2_MAX_HEALTH_REPAIR_CONFLICTS,
+    maxHealthRepairResultBytes: MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES,
+    supportsHealthRepair: true,
     maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
     maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
     maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,

@@ -34,7 +34,7 @@ const metadata = {
   platform: "windows-x64",
   hostName: "com.monica_pass.mdbx2",
   protocolVersion: 2,
-  coreRevision: "aafa22f195c626a8d8288d712bf42bccea134847",
+  coreRevision: "974c517465e7b6cac0947d2d59875aa4211fa16b",
   source: { commit: sourceCommit, trackedWorktreeClean: sourceTreeClean },
   executable: { file: executableName, size: executableBytes.length, sha256: sha256(executableBytes) },
   installScope: "current-user",

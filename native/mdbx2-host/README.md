@@ -7,7 +7,7 @@ This process is the trusted MDBX2 runtime for Monica Extension. It uses the exac
 `mdbx-ffi` is fetched from `https://github.com/Monica-Pass/Mdbx.git` at revision:
 
 ```text
-aafa22f195c626a8d8288d712bf42bccea134847
+974c517465e7b6cac0947d2d59875aa4211fa16b
 ```
 
 The Rust toolchain is pinned to `1.86.0` to match the MDBX2 release build.

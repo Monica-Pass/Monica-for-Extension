@@ -18,6 +18,9 @@ import {
   MDBX2_MAX_HISTORY_PAGE_SIZE,
   MDBX2_MAX_HISTORY_REVERT_ITEMS,
   MDBX2_MAX_HISTORY_RESULT_BYTES,
+  MDBX2_MAX_HEALTH_REPAIR_CONFLICTS,
+  MDBX2_MAX_HEALTH_REPAIR_ITEMS,
+  MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES,
   MDBX2_MAX_OBJECT_BATCH_MUTATIONS,
   MDBX2_MAX_OBJECT_PAYLOAD_BYTES,
@@ -99,6 +102,10 @@ const HELLO = {
   maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   supportsVaultDiagnostics: true,
   supportsVaultHealthIssueKinds: true,
+  maxHealthRepairItems: MDBX2_MAX_HEALTH_REPAIR_ITEMS,
+  maxHealthRepairConflicts: MDBX2_MAX_HEALTH_REPAIR_CONFLICTS,
+  maxHealthRepairResultBytes: MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES,
+  supportsHealthRepair: true,
   maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
   maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
   maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
@@ -162,6 +169,36 @@ const DIAGNOSTIC_REPORT = {
     issueKinds: []
   },
   diagnostics: DIAGNOSTIC_COUNTS
+} as const;
+
+const HEALTH_REPAIR_PLAN_HANDLE = "22222222-2222-4222-8222-222222222222";
+const HEALTH_REPAIR_ITEM_HANDLE = "33333333-3333-4333-8333-333333333333";
+const HEALTH_REPAIR_PLAN = {
+  planHandle: HEALTH_REPAIR_PLAN_HANDLE,
+  canApply: true,
+  itemCount: 3,
+  automaticCount: 2,
+  conflictCount: 1,
+  blockerCount: 0,
+  automatic: [
+    { kind: "missing-tombstone", objectType: "entry", itemCount: 1, tombstoneCount: 0 },
+    { kind: "duplicate-tombstones", objectType: "attachment", itemCount: 1, tombstoneCount: 2 }
+  ],
+  conflicts: [{
+    itemHandle: HEALTH_REPAIR_ITEM_HANDLE,
+    kind: "active-object-tombstone-conflict",
+    objectType: "project",
+    tombstoneCount: 1
+  }],
+  blockers: []
+} as const;
+
+const HEALTH_REPAIR_RESULT = {
+  status: "applied",
+  repairedCount: 3,
+  alreadyApplied: false,
+  recoveryPointCreated: true,
+  health: DIAGNOSTIC_REPORT.health
 } as const;
 
 const TIGA_POSTURE = {
@@ -254,6 +291,10 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsCollectionMutation: false })).toThrow("Collection 管理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultDiagnostics: false })).toThrow("诊断刷新能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultHealthIssueKinds: false })).toThrow("诊断原因能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxHealthRepairItems: 1 })).toThrow("健康修复数量限制");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxHealthRepairConflicts: 1 })).toThrow("健康修复冲突限制");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxHealthRepairResultBytes: 1 })).toThrow("健康修复响应限制");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsHealthRepair: false })).toThrow("健康修复能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultTigaPosture: false })).toThrow("Tiga 安全态势能力");
   });
 
@@ -572,6 +613,156 @@ describe("MDBX2 Native Messaging client", () => {
       credential: { method: "password", password: "" }
     });
     client.close();
+  });
+
+  it("plans and applies bounded identifier-free health repair through exact requests", async () => {
+    const runtime = new FakeRuntime();
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const operationId = "44444444-4444-4444-8444-444444444444";
+    let responseNumber = 0;
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string; method: string };
+      const result = responseNumber++ === 0 ? HEALTH_REPAIR_PLAN : HEALTH_REPAIR_RESULT;
+      runtime.port.onMessage.emit({
+        protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        ok: true,
+        result
+      } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime, () => crypto.randomUUID());
+
+    await expect(client.planHealthRepair(vaultHandle)).resolves.toEqual(HEALTH_REPAIR_PLAN);
+    await expect(client.applyHealthRepair(vaultHandle, HEALTH_REPAIR_PLAN_HANDLE, operationId, [{
+      itemHandle: HEALTH_REPAIR_ITEM_HANDLE,
+      choice: "keep-content"
+    }])).resolves.toEqual(HEALTH_REPAIR_RESULT);
+
+    expect(runtime.port.messages.map((message) => {
+      const request = message as { method: string; params: unknown };
+      return { method: request.method, params: request.params };
+    })).toEqual([
+      { method: "health.repair.plan", params: { vaultHandle } },
+      {
+        method: "health.repair.apply",
+        params: {
+          vaultHandle,
+          planHandle: HEALTH_REPAIR_PLAN_HANDLE,
+          operationId,
+          decisions: [{ itemHandle: HEALTH_REPAIR_ITEM_HANDLE, choice: "keep-content" }]
+        }
+      }
+    ]);
+    client.close();
+  });
+
+  it("rejects disclosed malformed or internally inconsistent health repair plans", async () => {
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const duplicateConflict = HEALTH_REPAIR_PLAN.conflicts[0];
+    const invalidPlans: unknown[] = [
+      { ...HEALTH_REPAIR_PLAN, corePlanToken: "forbidden" },
+      { ...HEALTH_REPAIR_PLAN, itemCount: 2 },
+      {
+        ...HEALTH_REPAIR_PLAN,
+        automatic: [
+          { ...HEALTH_REPAIR_PLAN.automatic[0], tombstoneCount: 1 },
+          HEALTH_REPAIR_PLAN.automatic[1]
+        ]
+      },
+      {
+        ...HEALTH_REPAIR_PLAN,
+        conflicts: [{ ...duplicateConflict, objectId: "forbidden" }]
+      },
+      {
+        ...HEALTH_REPAIR_PLAN,
+        itemCount: 4,
+        conflictCount: 2,
+        conflicts: [duplicateConflict, duplicateConflict]
+      },
+      {
+        planHandle: null,
+        canApply: false,
+        itemCount: 1,
+        automaticCount: 1,
+        conflictCount: 0,
+        blockerCount: 2,
+        automatic: [HEALTH_REPAIR_PLAN.automatic[0]],
+        conflicts: [],
+        blockers: [{ category: "integrity", count: 1 }]
+      },
+      { ...HEALTH_REPAIR_PLAN, itemCount: MDBX2_MAX_HEALTH_REPAIR_ITEMS + 1 },
+      { ...HEALTH_REPAIR_PLAN, padding: "x".repeat(MDBX2_MAX_HEALTH_REPAIR_RESULT_BYTES) }
+    ];
+
+    for (const [index, result] of invalidPlans.entries()) {
+      const runtime = new FakeRuntime();
+      runtime.port.onPost = (message) => {
+        const request = message as { requestId: string; method: string };
+        expect(request.method).toBe("health.repair.plan");
+        runtime.port.onMessage.emit({
+          protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          result
+        } as never);
+      };
+      const client = new Mdbx2NativeClient(runtime, () => `health-plan-invalid-${index}`);
+      await expect(client.planHealthRepair(vaultHandle)).rejects.toMatchObject({ code: "native-host-incompatible" });
+      client.close();
+    }
+  });
+
+  it("rejects unsafe health repair decisions and malformed apply results before disclosure", async () => {
+    const vaultHandle = "11111111-1111-4111-8111-111111111111";
+    const operationId = "44444444-4444-4444-8444-444444444444";
+    const requestRuntime = new FakeRuntime();
+    const requestClient = new Mdbx2NativeClient(requestRuntime, () => crypto.randomUUID());
+    const decision = { itemHandle: HEALTH_REPAIR_ITEM_HANDLE, choice: "keep-content" as const };
+
+    await expect(requestClient.applyHealthRepair(vaultHandle, HEALTH_REPAIR_PLAN_HANDLE, operationId, null as never))
+      .rejects.toMatchObject({ code: "params-invalid" });
+    await expect(requestClient.applyHealthRepair(vaultHandle, HEALTH_REPAIR_PLAN_HANDLE, operationId, [
+      decision,
+      decision
+    ])).rejects.toMatchObject({ code: "params-invalid" });
+    await expect(requestClient.applyHealthRepair(vaultHandle, HEALTH_REPAIR_PLAN_HANDLE, operationId, [{
+      itemHandle: HEALTH_REPAIR_ITEM_HANDLE,
+      choice: "future-choice" as never
+    }])).rejects.toMatchObject({ code: "params-invalid" });
+    await expect(requestClient.applyHealthRepair(
+      vaultHandle,
+      HEALTH_REPAIR_PLAN_HANDLE,
+      operationId,
+      Array.from({ length: MDBX2_MAX_HEALTH_REPAIR_CONFLICTS + 1 }, () => decision)
+    )).rejects.toMatchObject({ code: "params-invalid" });
+    expect(requestRuntime.port.messages).toHaveLength(0);
+    requestClient.close();
+
+    const invalidResults: unknown[] = [
+      { ...HEALTH_REPAIR_RESULT, commitId: "forbidden" },
+      { ...HEALTH_REPAIR_RESULT, status: "no-changes" },
+      { ...HEALTH_REPAIR_RESULT, recoveryPointCreated: false },
+      { ...HEALTH_REPAIR_RESULT, repairedCount: 0 },
+      { ...HEALTH_REPAIR_RESULT, repairedCount: MDBX2_MAX_HEALTH_REPAIR_ITEMS + 1 },
+      { ...HEALTH_REPAIR_RESULT, health: { ...HEALTH_REPAIR_RESULT.health, objectId: "forbidden" } }
+    ];
+    for (const [index, result] of invalidResults.entries()) {
+      const runtime = new FakeRuntime();
+      runtime.port.onPost = (message) => {
+        const request = message as { requestId: string; method: string };
+        expect(request.method).toBe("health.repair.apply");
+        runtime.port.onMessage.emit({
+          protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+          requestId: request.requestId,
+          ok: true,
+          result
+        } as never);
+      };
+      const client = new Mdbx2NativeClient(runtime, () => `health-apply-invalid-${index}`);
+      await expect(client.applyHealthRepair(vaultHandle, HEALTH_REPAIR_PLAN_HANDLE, operationId, [decision]))
+        .rejects.toMatchObject({ code: "native-host-incompatible" });
+      client.close();
+    }
   });
 
   it("rejects oversized disclosed or internally inconsistent vault diagnostics", async () => {

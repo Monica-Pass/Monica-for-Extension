@@ -73,7 +73,7 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
               config: { remotePath: "Monica/MDBX2/collections.mdbx", schemaVersion: 2, webDavBaseUrl: "https://dav.example.test", webDavUsername: "demo", webDavPasswordConfigured: true }
             }] };
           }
-          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
+          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "974c517465e7b6cac0947d2d59875aa4211fa16b" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "33333333-3333-4333-8333-333333333333", open: true, available: true } };
           if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
             checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,

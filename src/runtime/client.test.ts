@@ -120,6 +120,64 @@ describe("extension runtime client", () => {
     expect(sendMessage).toHaveBeenCalledWith({ type: "MDBX2_VAULT_DIAGNOSTICS", providerId: "provider-1" });
   });
 
+  it("sends MDBX2 health repair planning and confirmed destructive choices through the manager contract", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const providerId = "provider-1";
+    const planHandle = "11111111-1111-4111-8111-111111111111";
+    const operationId = "22222222-2222-4222-8222-222222222222";
+    const keepDecision = {
+      itemHandle: "33333333-3333-4333-8333-333333333333",
+      choice: "keep-content" as const
+    };
+    const deleteDecision = {
+      itemHandle: "44444444-4444-4444-8444-444444444444",
+      choice: "delete-object" as const
+    };
+
+    await vaultClient.planMdbx2HealthRepair(providerId);
+    await vaultClient.applyMdbx2HealthRepair(providerId, planHandle, operationId, [keepDecision]);
+    await vaultClient.applyMdbx2HealthRepair(providerId, planHandle, operationId, [deleteDecision], true);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "MDBX2_HEALTH_REPAIR_PLAN", providerId },
+      {
+        type: "MDBX2_HEALTH_REPAIR_APPLY",
+        providerId,
+        planHandle,
+        operationId,
+        decisions: [keepDecision]
+      },
+      {
+        type: "MDBX2_HEALTH_REPAIR_APPLY",
+        providerId,
+        planHandle,
+        operationId,
+        decisions: [deleteDecision],
+        confirmedDelete: true
+      }
+    ]);
+  });
+
+  it("preserves the health repair unknown-outcome code for fail-closed recovery", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({
+      ok: false,
+      error: "无法证明健康修复是否已提交。",
+      code: "health-repair-outcome-unknown"
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await expect(vaultClient.applyMdbx2HealthRepair(
+      "provider-1",
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      []
+    )).rejects.toMatchObject({
+      name: "ExtensionRuntimeError",
+      code: "health-repair-outcome-unknown"
+    });
+  });
+
   it("sends MDBX2 Tiga posture through the typed manager contract", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
     vi.stubGlobal("chrome", { runtime: { sendMessage } });

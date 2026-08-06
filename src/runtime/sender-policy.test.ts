@@ -34,6 +34,13 @@ describe("runtime sender policy", () => {
     expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}index.html` }), runtimeId, extensionRoot)).not.toThrow();
     expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}popup.html` }), runtimeId, extensionRoot)).toThrow("管理页");
     expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: "https://example.com/index.html" }), runtimeId, extensionRoot)).toThrow();
+    expect(() => assertTrustedManagerPage(sender({
+      id: runtimeId,
+      url: "https://example.com/login",
+      origin: "https://example.com",
+      tab: { id: 7 } as chrome.tabs.Tab,
+      frameId: 0
+    }), runtimeId, extensionRoot)).toThrow("插件页面");
   });
 
   it("allows sensitive operations only on HTTPS or exact loopback HTTP", () => {

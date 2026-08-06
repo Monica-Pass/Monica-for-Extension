@@ -99,7 +99,7 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
             if (!response.ok || !Array.isArray(response.data)) return response;
             return { ok: true, data: [...response.data, { id: "mdbx2-conflict-demo", kind: "mdbx2", name: "冲突演示库", enabled: true, isDefaultSaveTarget: false, config: { remotePath: "Monica/MDBX2/demo.mdbx", schemaVersion: 2, webDavBaseUrl: "https://dav.example.test", webDavUsername: "demo", webDavPasswordConfigured: true } }] };
           }
-          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
+          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "974c517465e7b6cac0947d2d59875aa4211fa16b" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
           if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
             checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
@@ -180,7 +180,7 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
             if (!response.ok || !Array.isArray(response.data)) return response;
             return { ok: true, data: [...response.data, { id: "mdbx2-snapshot-demo", kind: "mdbx2", name: "快照演示库", enabled: true, isDefaultSaveTarget: false, config: { remotePath: "Monica/MDBX2/demo.mdbx", schemaVersion: 2, webDavBaseUrl: "https://dav.example.test", webDavUsername: "demo", webDavPasswordConfigured: true } }] };
           }
-          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "aafa22f195c626a8d8288d712bf42bccea134847" } } };
+          if (message.type === "MDBX2_HOST_STATUS") return { ok: true, data: { availability: "ready", message: "测试 Host 已就绪", capabilities: { hostVersion: "0.1.0", mdbxCoreRevision: "974c517465e7b6cac0947d2d59875aa4211fa16b" } } };
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "11111111-1111-4111-8111-111111111111", open: true, available: true } };
           if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
             checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,

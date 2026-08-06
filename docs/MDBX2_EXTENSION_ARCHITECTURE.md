@@ -4,7 +4,7 @@
 
 Accepted for the first functional MDBX2 extension release.
 
-MDBX2 core authority is `Monica-Pass/Mdbx` revision `aafa22f195c626a8d8288d712bf42bccea134847`. Monica Android behavior authority is the current `main` integration built on that release line.
+MDBX2 core authority is `Monica-Pass/Mdbx` revision `974c517465e7b6cac0947d2d59875aa4211fa16b`. Monica Android behavior authority is the current `main` integration built on that release line.
 
 ## Product boundary
 

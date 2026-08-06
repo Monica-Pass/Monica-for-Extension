@@ -53,7 +53,7 @@ async function verifyArchive(path, checksumPath) {
   assert(equalBytes(builtExecutable, entries["monica-mdbx2-host.exe"]), "Packaged MDBX2 Host differs from the verified release build.");
   const metadata = JSON.parse(new TextDecoder().decode(entries["HOST-METADATA.json"]));
   assert(metadata.hostName === "com.monica_pass.mdbx2" && metadata.protocolVersion === 2, "MDBX2 Host metadata identity mismatch.");
-  assert(metadata.coreRevision === "aafa22f195c626a8d8288d712bf42bccea134847", "MDBX2 Host metadata core revision mismatch.");
+  assert(metadata.coreRevision === "974c517465e7b6cac0947d2d59875aa4211fa16b", "MDBX2 Host metadata core revision mismatch.");
   assert(metadata.source?.trackedWorktreeClean === sourceTreeClean && metadata.source?.commit === git("rev-parse", "HEAD"), "MDBX2 Host source evidence mismatch.");
   assert(metadata.executable?.size === builtExecutable.length && metadata.executable?.sha256 === sha256(builtExecutable), "MDBX2 Host executable metadata mismatch.");
   const installer = new TextDecoder().decode(entries["install-host.ps1"]);

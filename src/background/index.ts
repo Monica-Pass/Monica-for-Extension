@@ -528,6 +528,34 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.vaultDiagnostics(vaultHandle);
     }
+    case "MDBX2_HEALTH_REPAIR_PLAN": {
+      assertManagerPage(sender);
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.planHealthRepair(vaultHandle);
+    }
+    case "MDBX2_HEALTH_REPAIR_APPLY": {
+      assertManagerPage(sender);
+      if (!Array.isArray(request.decisions)) {
+        throw new Mdbx2NativeHostError("params-invalid", "MDBX2 健康修复选择无效。", false);
+      }
+      const hasDeleteChoice = request.decisions.some((decision) =>
+        (decision as { choice?: unknown } | null)?.choice === "delete-object"
+      );
+      if (hasDeleteChoice && request.confirmedDelete !== true) {
+        throw new Mdbx2NativeHostError(
+          "health-repair-delete-confirmation-required",
+          "删除冲突项目需要再次明确确认。",
+          false
+        );
+      }
+      const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
+      return mdbx2NativeClient.applyHealthRepair(
+        vaultHandle,
+        request.planHandle,
+        request.operationId,
+        request.decisions
+      );
+    }
     case "MDBX2_VAULT_TIGA": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
