@@ -15,15 +15,19 @@ import { assertMdbx2TransferOperationId } from "../providers/mdbx2/mdbx2-transfe
 import { Mdbx2TransferAttachmentService } from "../providers/mdbx2/mdbx2-transfer-attachments";
 import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
-import { KeePassProvider } from "../providers/keepass/keepass-provider";
+import { KeePassProvider, type KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import { KeePassGroupError } from "../providers/keepass/keepass-groups";
 import { KeePassHistoryError } from "../providers/keepass/keepass-history";
+import { KeePassRemoteSessionError, KeePassRemoteSessionService } from "../providers/keepass/keepass-remote-session";
+import { KeePassWebDavError } from "../providers/keepass/keepass-webdav-client";
+import { IndexedDbKeePassWorkingCopyStorage, KeePassWorkingCopyStoreError } from "../providers/keepass/keepass-working-copy-store";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
 import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
+import { ProviderTransportError } from "../providers/provider-transport";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
@@ -48,6 +52,8 @@ const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator)
 providers.register(mdbx2Provider);
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
+const keePassWorkingCopies = new IndexedDbKeePassWorkingCopyStorage();
+const keePassRemoteSessions = new KeePassRemoteSessionService(keePassProvider, keePassWorkingCopies);
 const mdbx2TransferAttachmentService = new Mdbx2TransferAttachmentService(
   mdbx2NativeClient,
   keePassProvider,
@@ -188,7 +194,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -1003,37 +1009,131 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
       throw unsupportedAttachmentProvider(account.kind);
     }
-    case "KEEPASS_OPEN": {
+    case "KEEPASS_WEBDAV_TEST": {
+      assertManagerPage(sender);
+      const input = { ...request.input };
+      request.input.webDavPassword = "";
+      try {
+        return await keePassRemoteSessions.probe(input);
+      } finally {
+        input.webDavPassword = "";
+      }
+    }
+    case "KEEPASS_WEBDAV_OPEN": {
       assertManagerPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      const input = { ...request.input };
+      request.input.webDavPassword = "";
+      request.input.databasePassword = "";
+      request.input.keyFile = undefined;
       const account: ProviderAccount = {
         id: existing?.id || crypto.randomUUID(),
         kind: "keepass",
-        name: request.input.name.trim() || request.input.fileName || "KeePass 数据库",
+        name: input.name.trim() || "KeePass WebDAV",
         enabled: true,
-        isDefaultSaveTarget: Boolean(request.input.isDefaultSaveTarget),
+        isDefaultSaveTarget: Boolean(input.isDefaultSaveTarget),
         config: {
-          ...existing?.config,
-          fileName: request.input.fileName,
-          protectionMode: request.input.keyFile
-            ? request.input.password ? "password-and-key-file" : "key-file"
-            : request.input.password ? "password" : "empty"
+          databaseId: Number.isSafeInteger(Number(existing?.config.databaseId)) && Number(existing?.config.databaseId) > 0
+            ? Number(existing?.config.databaseId)
+            : Date.now()
         },
         lastSyncAt: existing?.lastSyncAt,
         lastError: undefined
       };
-      // Unlocking first means a wrong credential never leaves a half-configured password source behind.
-      const session = await keePassProvider.unlock(account, base64ToBytes(request.input.file), {
-        password: request.input.password,
-        keyFile: request.input.keyFile ? base64ToBytes(request.input.keyFile) : undefined,
-        sourceName: request.input.fileName
-      });
-      return { account: await service.upsertProvider(account), session };
+      const previousWorkingCopy = await keePassWorkingCopies.read(account.id);
+      try {
+        const opened = await keePassRemoteSessions.open(account, input);
+        let persisted: ProviderAccount;
+        try {
+          persisted = await service.upsertProvider({ ...account, config: opened.accountConfig });
+        } catch (cause) {
+          const currentWorkingCopy = await keePassWorkingCopies.read(account.id).catch(() => undefined);
+          try {
+            if (previousWorkingCopy && currentWorkingCopy) {
+              await keePassWorkingCopies.save(previousWorkingCopy, currentWorkingCopy.revision).catch(() => undefined);
+            } else if (!previousWorkingCopy) {
+              await keePassWorkingCopies.delete(account.id).catch(() => undefined);
+            }
+          } finally {
+            currentWorkingCopy?.baseBytes.fill(0);
+            currentWorkingCopy?.workingBytes.fill(0);
+          }
+          keePassProvider.lockAccount(account.id);
+          throw cause;
+        }
+        return { account: persisted, session: opened.session };
+      } catch (cause) {
+        if (!existing) await keePassRemoteSessions.remove(account.id).catch(() => undefined);
+        throw cause;
+      } finally {
+        input.webDavPassword = "";
+        input.databasePassword = "";
+        input.keyFile = undefined;
+        previousWorkingCopy?.baseBytes.fill(0);
+        previousWorkingCopy?.workingBytes.fill(0);
+      }
     }
-    case "KEEPASS_STATUS":
+    case "KEEPASS_REMOTE_RESTORE": {
       assertManagerPage(sender);
-      return keePassProvider.isUnlocked(request.providerId) ? keePassProvider.summarize(request.providerId) : undefined;
+      const account = await requireKeePassAccountRecord(request.providerId);
+      return ensureKeePassSession(account, true);
+    }
+    case "KEEPASS_OPEN": {
+      assertManagerPage(sender);
+      const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
+      if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      const input = { ...request.input };
+      request.input.password = "";
+      request.input.keyFile = undefined;
+      request.input.file = "";
+      const account: ProviderAccount = {
+        id: existing?.id || crypto.randomUUID(),
+        kind: "keepass",
+        name: input.name.trim() || input.fileName || "KeePass 数据库",
+        enabled: true,
+        isDefaultSaveTarget: Boolean(input.isDefaultSaveTarget),
+        config: {
+          databaseId: Number.isSafeInteger(Number(existing?.config.databaseId)) && Number(existing?.config.databaseId) > 0
+            ? Number(existing?.config.databaseId)
+            : Date.now(),
+          sourceMode: "local-file",
+          fileName: input.fileName,
+          protectionMode: input.keyFile
+            ? input.password ? "password-and-key-file" : "key-file"
+            : input.password ? "password" : "empty"
+        },
+        lastSyncAt: existing?.lastSyncAt,
+        lastError: undefined
+      };
+      let fileBytes: Uint8Array | undefined;
+      let keyFileBytes: Uint8Array | undefined;
+      try {
+        fileBytes = base64ToBytes(input.file);
+        keyFileBytes = input.keyFile ? base64ToBytes(input.keyFile) : undefined;
+        // Unlocking first means a wrong credential never leaves a half-configured password source behind.
+        const session = await keePassProvider.unlock(account, fileBytes, {
+          password: input.password,
+          keyFile: keyFileBytes,
+          sourceName: input.fileName,
+          sourceMode: "local-file"
+        });
+        const persisted = await service.upsertProvider(account);
+        if (existing?.config.sourceMode === "webdav") await keePassWorkingCopies.delete(account.id).catch(() => undefined);
+        return { account: persisted, session };
+      } finally {
+        input.password = "";
+        input.keyFile = undefined;
+        input.file = "";
+        fileBytes?.fill(0);
+        keyFileBytes?.fill(0);
+      }
+    }
+    case "KEEPASS_STATUS": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccountRecord(request.providerId);
+      return ensureKeePassSession(account, false);
+    }
     case "KEEPASS_GROUP_LIST": {
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
@@ -1090,8 +1190,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "KEEPASS_EXPORT_FILE": {
       assertManagerPage(sender);
-      const account = await service.getProvider(request.providerId);
-      if (!account || account.kind !== "keepass") throw new Error("KeePass 密码源不存在。");
+      const account = await requireKeePassAccount(request.providerId);
       const fileName = typeof account.config.fileName === "string" && account.config.fileName ? account.config.fileName : "monica.kdbx";
       return { fileName, file: bytesToBase64(await keePassProvider.exportFile(account.id)) };
     }
@@ -1108,6 +1207,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (account.kind === "mdbx-legacy") throw new Error("MDBX1 密码源已停用，请先在 Monica Android 或桌面端升级为 MDBX2。");
       if (!account.enabled) throw new Error("此密码源已停用。");
       if (activeProviderSyncs.has(account.id)) throw new Error("此密码源正在同步。");
+      if (account.kind === "keepass") await ensureKeePassSession(account, true);
       const controller = new AbortController();
       activeProviderSyncs.set(account.id, controller);
       const startedAt = Date.now();
@@ -1156,6 +1256,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
       mdbx2Provider.lockAccount(request.providerId);
       keePassProvider.lockAccount(request.providerId);
+      await keePassWorkingCopies.delete(request.providerId).catch(() => undefined);
       return service.removeProvider(request.providerId);
   }
   throw new Error("不支持的 Monica 运行时命令。");
@@ -2012,6 +2113,7 @@ function stringAccountConfig(account: ProviderAccount, key: string): string {
 async function requireAttachmentTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {
   const [account, item] = await Promise.all([service.getProvider(providerId), service.getItem(itemId)]);
   if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
+  if (account.kind === "keepass") await ensureKeePassSession(account, true);
   if (!item || !item.providerRefs.some((reference) => reference.providerId === providerId)) {
     throw new ProviderAttachmentError("attachment-target-not-found", "附件项目不存在或不属于所选密码源。");
   }
@@ -2051,11 +2153,28 @@ function unsupportedAttachmentProvider(kind: ProviderAccount["kind"]): ProviderA
 }
 
 async function requireKeePassAccount(providerId: string): Promise<ProviderAccount> {
+  const account = await requireKeePassAccountRecord(providerId);
+  await ensureKeePassSession(account, true);
+  return account;
+}
+
+async function requireKeePassAccountRecord(providerId: string): Promise<ProviderAccount> {
   const account = await service.getProvider(providerId);
   if (!account || account.kind !== "keepass") {
     throw new KeePassGroupError("keepass-group-provider-not-found", "KeePass 密码源不存在。");
   }
   return account;
+}
+
+async function ensureKeePassSession(account: ProviderAccount, required: true): Promise<KeePassSessionSummary>;
+async function ensureKeePassSession(account: ProviderAccount, required: false): Promise<KeePassSessionSummary | undefined>;
+async function ensureKeePassSession(account: ProviderAccount, required: boolean): Promise<KeePassSessionSummary | undefined> {
+  if (keePassProvider.isUnlocked(account.id)) return keePassProvider.summarize(account.id);
+  if (account.config.sourceMode === "webdav") {
+    return (await keePassRemoteSessions.restore(account)).session;
+  }
+  if (required) throw new KeePassRemoteSessionError("remote-working-copy-missing", "此 KeePass 本地文件会话尚未解锁，请重新选择 .kdbx 文件。");
+  return undefined;
 }
 
 async function requireKeePassHistoryTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {

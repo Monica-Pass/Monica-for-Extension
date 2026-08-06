@@ -123,6 +123,41 @@ describe("encrypted vault", () => {
     expect(keePass.config).toEqual({ fileName: "personal.kdbx", protectionMode: "password-and-key-file" });
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/keepass-password-secret|keepass-key-secret/);
 
+    const remoteKeePass = await service.upsertProvider({
+      id: "keepass-remote",
+      kind: "keepass",
+      name: "Remote KeePass",
+      enabled: true,
+      isDefaultSaveTarget: false,
+      config: {
+        fileName: "remote.kdbx",
+        sourceMode: "webdav",
+        protectionMode: "password",
+        webDavBaseUrl: "https://dav.example.test/files/demo",
+        webDavUsername: "demo",
+        webDavPassword: "remote-webdav-secret",
+        remotePath: "vaults/remote.kdbx",
+        databasePassword: "remote-database-secret",
+        keyFile: "remote-key-file-secret",
+        workingCopyRevision: 2,
+        remoteEtag: '"etag-2"'
+      }
+    });
+    expect(remoteKeePass.config).toEqual({
+      fileName: "remote.kdbx",
+      sourceMode: "webdav",
+      protectionMode: "password",
+      webDavBaseUrl: "https://dav.example.test/files/demo",
+      webDavUsername: "demo",
+      remotePath: "vaults/remote.kdbx",
+      webDavPasswordConfigured: true,
+      databaseCredentialStored: true,
+      keyFileConfigured: true,
+      workingCopyAvailable: true,
+      remoteEtagAvailable: true
+    });
+    expect(JSON.stringify(await service.listProviders())).not.toMatch(/remote-webdav-secret|remote-database-secret|remote-key-file-secret|etag-2/);
+
     const mdbx2 = await service.upsertProvider({
       id: "mdbx2-1",
       kind: "mdbx2",

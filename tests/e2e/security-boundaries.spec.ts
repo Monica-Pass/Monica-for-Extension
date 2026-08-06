@@ -161,6 +161,27 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       { type: "KEEPASS_HISTORY_DETAIL", providerId: "keepass-provider", itemId: "item-1", historyId: "22222222-2222-4222-8222-222222222222" },
       { type: "KEEPASS_HISTORY_FIELD_REVEAL", providerId: "keepass-provider", itemId: "item-1", historyId: "22222222-2222-4222-8222-222222222222", fieldId: "33333333-3333-4333-8333-333333333333" },
       { type: "KEEPASS_HISTORY_RESTORE", providerId: "keepass-provider", itemId: "item-1", operationId: "11111111-1111-4111-8111-111111111111", historyId: "22222222-2222-4222-8222-222222222222", confirmed: true },
+      {
+        type: "KEEPASS_WEBDAV_TEST",
+        input: {
+          baseUrl: "https://dav.example.test/private",
+          username: "private-user",
+          webDavPassword: "private-webdav-password",
+          remotePath: "vaults/private.kdbx"
+        }
+      },
+      {
+        type: "KEEPASS_WEBDAV_OPEN",
+        input: {
+          name: "Private KeePass",
+          baseUrl: "https://dav.example.test/private",
+          username: "private-user",
+          webDavPassword: "private-webdav-password",
+          remotePath: "vaults/private.kdbx",
+          databasePassword: "private-database-password"
+        }
+      },
+      { type: "KEEPASS_REMOTE_RESTORE", providerId: "keepass-provider" },
       { type: "KEEPASS_EXPORT_FILE", providerId: "keepass-provider" }
     ];
     for (const request of attachmentRequests) {

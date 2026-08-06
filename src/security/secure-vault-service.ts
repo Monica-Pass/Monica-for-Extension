@@ -752,13 +752,25 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
   }
   if (provider.kind === "keepass") {
     const protectionMode = stringConfig(provider, "protectionMode");
+    const sourceMode = stringConfig(provider, "sourceMode");
     return {
       ...safe,
       config: {
         fileName: stringConfig(provider, "fileName") || undefined,
         protectionMode: ["password", "key-file", "password-and-key-file", "empty"].includes(protectionMode)
           ? protectionMode
-          : undefined
+          : undefined,
+        ...(sourceMode === "webdav" ? {
+          sourceMode: "webdav",
+          webDavBaseUrl: stringConfig(provider, "webDavBaseUrl") || undefined,
+          webDavUsername: stringConfig(provider, "webDavUsername") || undefined,
+          remotePath: stringConfig(provider, "remotePath") || undefined,
+          webDavPasswordConfigured: "webDavPassword" in provider.config,
+          databaseCredentialStored: "databasePassword" in provider.config,
+          keyFileConfigured: Boolean(stringConfig(provider, "keyFile")),
+          workingCopyAvailable: Number.isSafeInteger(provider.config.workingCopyRevision) && Number(provider.config.workingCopyRevision) > 0,
+          remoteEtagAvailable: Boolean(stringConfig(provider, "remoteEtag"))
+        } : sourceMode === "local-file" ? { sourceMode: "local-file" } : {})
       }
     };
   }

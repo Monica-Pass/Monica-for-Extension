@@ -15,7 +15,7 @@ interface RuntimeResponse<T = unknown> {
 
 async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserContext; manager: Page }> {
   const extensionPath = path.resolve("dist");
-  const context = await chromium.launchPersistentContext(testInfo.outputPath("keepass-attachment-profile"), {
+  const context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {
     channel: "chromium",
     headless: true,
     acceptDownloads: true,
@@ -66,12 +66,14 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     });
     await sourceDialog.getByLabel("数据库密码（可留空）").fill(DATABASE_PASSWORD);
     await sourceDialog.getByRole("button", { name: "解锁并连接" }).click();
+    await expect(sourceDialog).toHaveCount(0);
+    const providerCard = page.locator("m3e-card.source-card").filter({ has: page.getByRole("heading", { name: "KeePass Attachment Source" }) });
+    await expect(providerCard).toBeVisible();
 
     const providerResponse = await page.evaluate(async () => chrome.runtime.sendMessage({ type: "PROVIDER_LIST" })) as RuntimeResponse<Array<{ id: string; name: string }>>;
     expect(providerResponse, providerResponse.error).toMatchObject({ ok: true });
     const provider = providerResponse.data?.find((candidate) => candidate.name === "KeePass Attachment Source");
     expect(provider).toBeTruthy();
-    const providerCard = page.locator("m3e-card.source-card").filter({ has: page.getByRole("heading", { name: "KeePass Attachment Source" }) });
     await providerCard.getByRole("button", { name: "立即同步" }).click();
     await expect.poll(async () => (await listItems(page)).some((item) => item.title === "KeePass attachment account")).toBe(true);
 

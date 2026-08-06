@@ -325,4 +325,40 @@ describe("extension runtime client", () => {
       { type: "KEEPASS_HISTORY_RESTORE", providerId, itemId, operationId, historyId, confirmed: true }
     ]);
   });
+
+  it("sends manager KeePass WebDAV probe open and restore commands", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    const connection = {
+      baseUrl: "https://dav.example.test/files/demo",
+      username: "demo",
+      webDavPassword: "webdav secret",
+      remotePath: "vaults/main.kdbx"
+    };
+
+    await vaultClient.testKeePassWebDav(connection);
+    await vaultClient.openKeePassWebDav({
+      ...connection,
+      providerId: "keepass-remote",
+      name: "Remote KeePass",
+      databasePassword: "database secret",
+      keyFile: "a2V5"
+    });
+    await vaultClient.restoreKeePassRemote("keepass-remote");
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "KEEPASS_WEBDAV_TEST", input: connection },
+      {
+        type: "KEEPASS_WEBDAV_OPEN",
+        input: {
+          ...connection,
+          providerId: "keepass-remote",
+          name: "Remote KeePass",
+          databasePassword: "database secret",
+          keyFile: "a2V5"
+        }
+      },
+      { type: "KEEPASS_REMOTE_RESTORE", providerId: "keepass-remote" }
+    ]);
+  });
 });

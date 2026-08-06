@@ -41,6 +41,7 @@ import {
  */
 export interface KeePassSessionSummary {
   providerId: string;
+  sourceMode: "local-file" | "webdav";
   databaseName: string;
   versionMajor: number;
   cipherName?: string;
@@ -66,6 +67,8 @@ export interface KeePassUnlockCredential {
   password: string;
   keyFile?: Uint8Array;
   sourceName?: string;
+  sourceMode?: "local-file" | "webdav";
+  dirty?: boolean;
 }
 
 export interface KeePassAttachmentReadResult {
@@ -140,12 +143,13 @@ export class KeePassProvider implements ProviderAdapter {
       entries: { items: snapshot.items, skipped: snapshot.skipped, entriesByUuid: snapshot.entriesByUuid },
       summary: {
         providerId: account.id,
+        sourceMode: credential.sourceMode === "webdav" ? "webdav" : "local-file",
         databaseName: snapshot.database.meta.name || credential.sourceName || "KeePass 数据库",
         versionMajor: snapshot.versionMajor,
         cipherName: snapshot.cipherName,
         warnings: snapshot.warnings
       },
-      dirty: false,
+      dirty: Boolean(credential.dirty),
       groupRevision: 0,
       historyRevision: 0
     });
