@@ -12,6 +12,7 @@ export const MDBX2_MAX_SUMMARY_PAGE_SIZE = 200;
 export const MDBX2_MAX_COLLECTION_TITLE_BYTES = 4096;
 export const MDBX2_MAX_COLLECTION_RESULT_BYTES = 850 * 1024;
 export const MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES = 14;
+export const MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS = 20;
 export const MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES = 64 * 1024;
 export const MDBX2_MAX_VAULT_TIGA_RESULT_BYTES = 16 * 1024;
 export const MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS = 4;
@@ -31,6 +32,28 @@ export const MDBX2_VAULT_DIAGNOSTIC_CATEGORIES = [
   "purge-receipts",
   "stale-heads",
   "other"
+] as const;
+export const MDBX2_VAULT_HEALTH_ISSUE_KINDS = [
+  "basic-integrity",
+  "header-verification-pending",
+  "header-authentication-failed",
+  "integrity-root-pending",
+  "integrity-root-stale",
+  "commit-reference-missing",
+  "commit-authentication-pending",
+  "commit-authentication-failed",
+  "attachment-structure",
+  "snapshot-invalid",
+  "orphan-record",
+  "collection-profile",
+  "tombstone-duplicate",
+  "tombstone-missing",
+  "tombstone-stale",
+  "tombstone-acknowledgement",
+  "purge-record",
+  "device-reference",
+  "inactive-device",
+  "unknown"
 ] as const;
 export const MDBX2_MAX_OBJECT_BATCH_MUTATIONS = 50;
 export const MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES = 384 * 1024;
@@ -293,9 +316,16 @@ export interface Mdbx2VaultDiagnosticsSummary {
 
 export type Mdbx2VaultHealthSeverity = "info" | "warning" | "error" | "critical";
 export type Mdbx2VaultHealthCategory = typeof MDBX2_VAULT_DIAGNOSTIC_CATEGORIES[number];
+export type Mdbx2VaultHealthIssueKind = typeof MDBX2_VAULT_HEALTH_ISSUE_KINDS[number];
 
 export interface Mdbx2VaultHealthCategorySummary {
   category: Mdbx2VaultHealthCategory;
+  count: number;
+  highestSeverity: Mdbx2VaultHealthSeverity;
+}
+
+export interface Mdbx2VaultHealthIssueKindSummary {
+  kind: Mdbx2VaultHealthIssueKind;
   count: number;
   highestSeverity: Mdbx2VaultHealthSeverity;
 }
@@ -308,6 +338,7 @@ export interface Mdbx2VaultHealthSummary {
   errorCount: number;
   criticalCount: number;
   categories: Mdbx2VaultHealthCategorySummary[];
+  issueKinds: Mdbx2VaultHealthIssueKindSummary[];
 }
 
 export interface Mdbx2VaultDiagnosticsReport {
@@ -780,8 +811,10 @@ export interface Mdbx2HostCapabilities {
   maxCollectionResultBytes: typeof MDBX2_MAX_COLLECTION_RESULT_BYTES;
   supportsCollectionMutation: true;
   maxVaultDiagnosticCategories: typeof MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES;
+  maxVaultHealthIssueKinds: typeof MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS;
   maxVaultDiagnosticsResultBytes: typeof MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES;
   supportsVaultDiagnostics: true;
+  supportsVaultHealthIssueKinds: true;
   maxVaultTigaResultBytes: typeof MDBX2_MAX_VAULT_TIGA_RESULT_BYTES;
   maxVaultTigaUnlockMethods: typeof MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS;
   maxVaultTigaBrowserLimitations: typeof MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS;
@@ -883,8 +916,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxCollectionResultBytes !== MDBX2_MAX_COLLECTION_RESULT_BYTES) throw incompatible("Native Host Collection 响应限制与插件不一致。");
   if (value.supportsCollectionMutation !== true) throw incompatible("Native Host 未启用 MDBX2 Collection 管理能力。");
   if (value.maxVaultDiagnosticCategories !== MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES) throw incompatible("Native Host 诊断类别限制与插件不一致。");
+  if (value.maxVaultHealthIssueKinds !== MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS) throw incompatible("Native Host 诊断原因限制与插件不一致。");
   if (value.maxVaultDiagnosticsResultBytes !== MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES) throw incompatible("Native Host 诊断响应限制与插件不一致。");
   if (value.supportsVaultDiagnostics !== true) throw incompatible("Native Host 未启用 MDBX2 诊断刷新能力。");
+  if (value.supportsVaultHealthIssueKinds !== true) throw incompatible("Native Host 未启用 MDBX2 脱敏诊断原因能力。");
   if (value.maxVaultTigaResultBytes !== MDBX2_MAX_VAULT_TIGA_RESULT_BYTES) throw incompatible("Native Host Tiga 响应限制与插件不一致。");
   if (value.maxVaultTigaUnlockMethods !== MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS) throw incompatible("Native Host Tiga 解锁方式限制与插件不一致。");
   if (value.maxVaultTigaBrowserLimitations !== MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS) throw incompatible("Native Host Tiga 浏览器限制数量与插件不一致。");
@@ -939,8 +974,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
     supportsCollectionMutation: true,
     maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+    maxVaultHealthIssueKinds: MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS,
     maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
     supportsVaultDiagnostics: true,
+    supportsVaultHealthIssueKinds: true,
     maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
     maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
     maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,

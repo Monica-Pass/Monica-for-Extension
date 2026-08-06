@@ -6,6 +6,7 @@ import {
   mdbx2HealthCategoryLabel,
   mdbx2HealthSeverityIcon,
   presentMdbx2Health,
+  presentMdbx2HealthGuidance,
   summarizeMdbx2HealthCounts
 } from "./mdbx2-diagnostics";
 
@@ -17,6 +18,7 @@ const health = (overrides: Partial<Mdbx2VaultHealthSummary> = {}): Mdbx2VaultHea
   errorCount: 0,
   criticalCount: 0,
   categories: [],
+  issueKinds: [],
   ...overrides
 });
 
@@ -47,5 +49,35 @@ describe("MDBX2 diagnostics presentation", () => {
     expect(summarizeMdbx2HealthCounts(health())).toBe("未发现诊断问题");
     expect(summarizeMdbx2HealthCounts(health({ issueCount: 4, infoCount: 1, warningCount: 2, criticalCount: 1 })))
       .toBe("提示 1 · 警告 2 · 严重 1");
+  });
+
+  it("maps safe Host issue kinds to prioritized controlled recovery guidance", () => {
+    const guidance = presentMdbx2HealthGuidance(health({
+      healthy: false,
+      issueCount: 4,
+      warningCount: 1,
+      errorCount: 2,
+      criticalCount: 1,
+      categories: [
+        { category: "commit-chain", count: 1, highestSeverity: "critical" },
+        { category: "tombstones", count: 2, highestSeverity: "error" },
+        { category: "stale-heads", count: 1, highestSeverity: "warning" }
+      ],
+      issueKinds: [
+        { kind: "inactive-device", count: 1, highestSeverity: "warning" },
+        { kind: "tombstone-stale", count: 2, highestSeverity: "error" },
+        { kind: "commit-reference-missing", count: 1, highestSeverity: "critical" }
+      ]
+    }));
+
+    expect(guidance.map((item) => item.kind)).toEqual([
+      "commit-reference-missing",
+      "tombstone-stale",
+      "inactive-device"
+    ]);
+    expect(guidance[0]).toMatchObject({ title: "历史记录引用不完整", action: "history", actionLabel: "查看提交历史" });
+    expect(guidance[1].title).toBe("有效内容残留删除标记（2 项）");
+    expect(guidance[2]).toMatchObject({ action: "history", severity: "warning" });
+    expect(JSON.stringify(guidance)).not.toContain("commit-chain");
   });
 });

@@ -39,7 +39,7 @@ test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text
         fileSizeBytes: 2097152,
         formatVersion: "MDBX-2",
         schemaVersion: 17,
-        health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+        health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [], issueKinds: [] },
         diagnostics: {
           commitCount: 4, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: 0,
           unresolvedConflictCount: 0, projectCount: 1, folderCount: 0, deletedProjectCount: 0,

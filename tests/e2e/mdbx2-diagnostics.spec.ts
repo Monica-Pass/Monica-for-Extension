@@ -15,6 +15,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
 }
 
 test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text dark mode", async ({}, testInfo) => {
+  test.setTimeout(90_000);
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -30,7 +31,12 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     const extensionId = new URL(worker.url()).host;
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/index.html`);
-    expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 diagnostics password" }))).toMatchObject({ ok: true });
+    expect(await page.evaluate(async (masterPassword) => {
+      const status = await chrome.runtime.sendMessage({ type: "VAULT_STATUS" }) as { ok: boolean; data?: "uninitialized" | "locked" | "unlocked" };
+      if (status.data === "uninitialized") return chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword });
+      if (status.data === "locked") return chrome.runtime.sendMessage({ type: "VAULT_UNLOCK", masterPassword });
+      return { ok: true };
+    }, "mdbx2 diagnostics password")).toMatchObject({ ok: true });
 
     await installMdbx2TigaMock(page);
     await page.addInitScript(() => {
@@ -69,6 +75,10 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
           categories: [
             { category: "stale-heads", count: 1, highestSeverity: "warning" },
             { category: "other", count: 1, highestSeverity: "info" }
+          ],
+          issueKinds: [
+            { kind: "inactive-device", count: 1, highestSeverity: "warning" },
+            { kind: "unknown", count: 1, highestSeverity: "info" }
           ]
         },
         diagnostics: counts,
@@ -93,6 +103,11 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
             { category: "vault-header-integrity", count: 1, highestSeverity: "error" },
             { category: "commit-chain", count: 1, highestSeverity: "critical" },
             { category: "attachment-chunks", count: 1, highestSeverity: "warning" }
+          ],
+          issueKinds: [
+            { kind: "header-authentication-failed", count: 1, highestSeverity: "error" },
+            { kind: "commit-reference-missing", count: 1, highestSeverity: "critical" },
+            { kind: "attachment-structure", count: 1, highestSeverity: "warning" }
           ]
         },
         diagnostics: { ...counts, unresolvedConflictCount: 2, folderCount: 12, projectCount: 13, entryCount: 1245 }
@@ -121,7 +136,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
             diagnosticsRequests += 1;
             (window as Window & { __mdbx2DiagnosticsRequests?: number }).__mdbx2DiagnosticsRequests = diagnosticsRequests;
             if (diagnosticsRequests === 2) return { ok: false, error: "MDBX2 vault diagnostics failed.", code: "vault-diagnostics-failed" };
-            if (diagnosticsRequests >= 3) await new Promise((resolve) => setTimeout(resolve, 80));
+            if (diagnosticsRequests >= 3) await new Promise((resolve) => setTimeout(resolve, 300));
             return { ok: true, data: diagnosticsRequests >= 3 ? dangerReport : warningReport };
           }
           if (message.type === "MDBX2_COLLECTION_LIST" || message.type === "MDBX2_CONFLICT_LIST" || message.type === "MDBX2_SNAPSHOT_LIST" || message.type === "MDBX2_HISTORY_LIST") return { ok: true, data: { items: [] } };
@@ -142,9 +157,12 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await expect(panel).toHaveCSS("border-radius", "8px");
     await expect(panel).toHaveCSS("background-image", "none");
     await expect(panel.getByText("发现 2 项需要关注的诊断信号", { exact: true })).toBeVisible();
+    await expect(panel.getByText("存在长期未活动设备", { exact: true })).toBeVisible();
+    await expect(panel.getByText("发现未识别的数据库异常", { exact: true })).toBeVisible();
     await expect(panel.getByText("设备与分支 Head", { exact: true })).toBeVisible();
     await expect(panel.getByText("其他兼容性信号", { exact: true })).toBeVisible();
     await expect(panel).not.toContainText("stale-heads");
+    await expect(panel).not.toContainText("inactive-device");
     await expect(dialog).not.toContainText("C:\\private\\vault.mdbx");
     await expect(dialog).not.toContainText("private-vault-id");
     await expect(dialog).not.toContainText("private-device-id");
@@ -153,6 +171,15 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     const refresh = panel.getByRole("button", { name: "刷新保险库诊断" });
     expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await expectCentered(panel.locator(".mdbx2-diagnostics-health-icon"), panel.locator(".mdbx2-diagnostics-health-icon m3e-icon"));
+    const inactiveGuidance = panel.locator(".mdbx2-health-guidance-row", { hasText: "存在长期未活动设备" });
+    await inactiveGuidance.locator("summary").click();
+    await expect(inactiveGuidance).toHaveAttribute("open", "");
+    await expect(inactiveGuidance.getByText("这通常只是状态提示，不代表数据库内容损坏。", { exact: true })).toBeVisible();
+    const historyAction = inactiveGuidance.getByRole("button", { name: "查看提交历史" });
+    expect((await historyAction.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await historyAction.click();
+    await expect(dialog.locator(".mdbx2-history-panel")).toBeFocused();
+    await panel.scrollIntoViewIfNeeded();
     await refresh.click();
     await expect(panel.getByRole("alert")).toContainText("无法完成只读健康检查");
     await expect(panel.getByText("发现 2 项需要关注的诊断信号", { exact: true })).toBeVisible();
@@ -165,8 +192,13 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await expect(panel.getByText("保险库头认证", { exact: true })).toBeVisible();
     await expect(panel.getByText("提交链", { exact: true })).toBeVisible();
     await expect(panel.getByText("附件分片", { exact: true })).toBeVisible();
+    await expect(panel.getByText("数据库身份校验失败", { exact: true })).toBeVisible();
+    await expect(panel.getByText("历史记录引用不完整", { exact: true })).toBeVisible();
+    await expect(panel.getByText("附件分片不完整", { exact: true })).toBeVisible();
     await expect(panel.locator(".mdbx2-diagnostics-key-facts > div").nth(1).locator("dd")).toHaveText("2");
     expect(await page.evaluate(() => (window as Window & { __mdbx2DiagnosticsRequests?: number }).__mdbx2DiagnosticsRequests)).toBe(3);
+    await panel.locator(".mdbx2-health-guidance-row").first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-health-guidance-dark-375-200.png") });
 
     const details = panel.locator(".mdbx2-diagnostics-details");
     await expect(details).not.toHaveAttribute("open", "");
@@ -175,6 +207,12 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await expect(details.getByText("1,245", { exact: true })).toBeVisible();
     await expect(details.getByText("3 MiB", { exact: true })).toBeVisible();
     await expectCentered(panel.locator(".mdbx2-diagnostics-category-icon").first(), panel.locator(".mdbx2-diagnostics-category-icon m3e-icon").first());
+    await expectCentered(panel.locator(".mdbx2-health-guidance-icon").first(), panel.locator(".mdbx2-health-guidance-icon m3e-icon").first());
+
+    const attachmentGuidance = panel.locator(".mdbx2-health-guidance-row", { hasText: "附件分片不完整" });
+    await attachmentGuidance.locator("summary").click();
+    await attachmentGuidance.getByRole("button", { name: "查看附件统计" }).click();
+    await expect(panel.locator("#mdbx2-diagnostics-attachment-title").locator("..")).toBeFocused();
 
     expect(await panel.evaluate((element) => [...element.querySelectorAll("*")].every((child) => !getComputedStyle(child).backgroundImage.includes("gradient")))).toBe(true);
     expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches && matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
@@ -182,6 +220,8 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await expectNoHorizontalOverflow(dialog);
     await page.screenshot({ path: testInfo.outputPath("mdbx2-diagnostics-dark-375-200.png"), fullPage: true });
     await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
+    await panel.locator(".mdbx2-health-guidance-row").first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-health-guidance-dark-375.png") });
     await panel.scrollIntoViewIfNeeded();
     await panel.screenshot({ path: testInfo.outputPath("mdbx2-diagnostics-panel-dark-375.png") });
     await page.screenshot({ path: testInfo.outputPath("mdbx2-diagnostics-viewport-dark-375.png") });

@@ -31,6 +31,7 @@ import {
   MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+  MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS,
   MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
   MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
@@ -94,8 +95,10 @@ const HELLO = {
   maxCollectionResultBytes: MDBX2_MAX_COLLECTION_RESULT_BYTES,
   supportsCollectionMutation: true,
   maxVaultDiagnosticCategories: MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+  maxVaultHealthIssueKinds: MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS,
   maxVaultDiagnosticsResultBytes: MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   supportsVaultDiagnostics: true,
+  supportsVaultHealthIssueKinds: true,
   maxVaultTigaResultBytes: MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
   maxVaultTigaUnlockMethods: MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS,
   maxVaultTigaBrowserLimitations: MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
@@ -148,7 +151,16 @@ const DIAGNOSTIC_REPORT = {
   fileSizeBytes: 4096,
   formatVersion: MDBX2_FORMAT_VERSION,
   schemaVersion: 17,
-  health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+  health: {
+    healthy: true,
+    issueCount: 0,
+    infoCount: 0,
+    warningCount: 0,
+    errorCount: 0,
+    criticalCount: 0,
+    categories: [],
+    issueKinds: []
+  },
   diagnostics: DIAGNOSTIC_COUNTS
 } as const;
 
@@ -241,6 +253,7 @@ describe("MDBX2 Native Messaging client", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsSnapshotPrune: false })).toThrow("自动快照清理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsCollectionMutation: false })).toThrow("Collection 管理能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultDiagnostics: false })).toThrow("诊断刷新能力");
+    expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultHealthIssueKinds: false })).toThrow("诊断原因能力");
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsVaultTigaPosture: false })).toThrow("Tiga 安全态势能力");
   });
 
@@ -569,21 +582,43 @@ describe("MDBX2 Native Messaging client", () => {
         ...DIAGNOSTIC_REPORT,
         health: {
           healthy: true, issueCount: 1, infoCount: 1, warningCount: 0, errorCount: 0, criticalCount: 0,
-          categories: [{ category: "future-user-category", count: 1, highestSeverity: "info" }]
+          categories: [{ category: "future-user-category", count: 1, highestSeverity: "info" }],
+          issueKinds: [{ kind: "unknown", count: 1, highestSeverity: "info" }]
         }
       },
       {
         ...DIAGNOSTIC_REPORT,
         health: {
           healthy: true, issueCount: 1, infoCount: 0, warningCount: 1, errorCount: 0, criticalCount: 0,
-          categories: []
+          categories: [],
+          issueKinds: [{ kind: "inactive-device", count: 1, highestSeverity: "warning" }]
         }
       },
       {
         ...DIAGNOSTIC_REPORT,
         health: {
           healthy: false, issueCount: 1, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 1,
-          categories: [{ category: "integrity", count: 1, highestSeverity: "warning" }]
+          categories: [{ category: "integrity", count: 1, highestSeverity: "warning" }],
+          issueKinds: [{ kind: "basic-integrity", count: 1, highestSeverity: "critical" }]
+        }
+      },
+      {
+        ...DIAGNOSTIC_REPORT,
+        health: {
+          healthy: true, issueCount: 1, infoCount: 0, warningCount: 1, errorCount: 0, criticalCount: 0,
+          categories: [{ category: "stale-heads", count: 1, highestSeverity: "warning" }],
+          issueKinds: [{ kind: "future-user-kind", count: 1, highestSeverity: "warning" }]
+        }
+      },
+      {
+        ...DIAGNOSTIC_REPORT,
+        health: {
+          healthy: false, issueCount: 2, infoCount: 0, warningCount: 0, errorCount: 2, criticalCount: 0,
+          categories: [{ category: "tombstones", count: 2, highestSeverity: "error" }],
+          issueKinds: [
+            { kind: "tombstone-stale", count: 1, highestSeverity: "error" },
+            { kind: "tombstone-stale", count: 1, highestSeverity: "error" }
+          ]
         }
       },
       { ...DIAGNOSTIC_REPORT, fileSizeBytes: Number.MAX_SAFE_INTEGER + 1 },

@@ -42,6 +42,7 @@ The Host owns every MDBX2 invariant:
 - vault creation, open, unlock and lock;
 - stable device identity;
 - bounded Collection, Object, attachment, conflict, history and snapshot summaries;
+- identifier-free health categories and semantic issue kinds for controlled recovery guidance;
 - Tiga authorization and explicit secret disclosure;
 - typed multi-object write operations;
 - bounded batch mutation receipts and unknown-result recovery;
@@ -93,7 +94,9 @@ Large transfers use explicit begin, chunk, finish and abort methods. A transfer 
 
 The background uses `chrome.runtime.connectNative()`. The port keeps an MV3 Service Worker alive on supported Chrome versions; disconnect handlers reopen the port only when an active native task still exists.
 
-Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release, synchronization status, bounded commit history/diff and conflict list/resolution are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
+Manager commands for WebDAV configuration, bootstrap download, publication, registration, staged-file release, synchronization status, bounded health guidance, commit history/diff and conflict list/resolution are accepted only from `index.html`. Popup and content-script senders are rejected before Provider lookup or network access. Public status responses contain controlled enums, booleans and counts; WebDAV passwords and the opaque synchronization state handle remain in the encrypted Provider record.
+
+Health checks inspect Core descriptions only inside the Native Host. Before crossing Native Messaging, issues are reduced to allowlisted category and semantic issue-kind enums with count and highest severity. Raw descriptions, local paths, Vault/Device/Object/Commit identifiers and future unknown category strings never enter the manager page.
 
 History pages contain at most 50 commits and are additionally capped at 850 KiB before framing. Commit diffs inherit the core's 500-Object limit. The Host removes decrypted previous/current payload previews and returns only a `payloadChanged` flag, titles, deletion state and changed-field names. The M3E list presents human operation labels and times without showing technical Object or Commit IDs in the primary view.
 

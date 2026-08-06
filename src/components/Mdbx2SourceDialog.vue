@@ -34,6 +34,8 @@ import {
   mdbx2HealthSeverityIcon,
   mdbx2HealthSeverityLabel,
   presentMdbx2Health,
+  presentMdbx2HealthGuidance,
+  type Mdbx2HealthGuidanceAction,
   summarizeMdbx2HealthCounts
 } from "../providers/mdbx2/mdbx2-diagnostics";
 import {
@@ -103,6 +105,11 @@ const syncStatus = ref<Mdbx2ManagerSyncStatus | undefined>(props.syncStatus);
 const vaultDiagnostics = ref<Mdbx2VaultDiagnosticsReport | undefined>();
 const diagnosticsBusy = ref(false);
 const diagnosticsError = ref("");
+const diagnosticsDetails = ref<HTMLDetailsElement | null>(null);
+const diagnosticsAttachmentTarget = ref<HTMLElement | null>(null);
+const collectionPanel = ref<HTMLElement | null>(null);
+const snapshotPanel = ref<HTMLElement | null>(null);
+const historyPanel = ref<HTMLElement | null>(null);
 const vaultTiga = ref<Mdbx2VaultTigaPosture | undefined>();
 const tigaBusy = ref(false);
 const tigaError = ref("");
@@ -179,6 +186,7 @@ const isExisting = computed(() => Boolean(providerId.value));
 const hostReady = computed(() => hostStatus.value?.availability === "ready");
 const vaultOpen = computed(() => runtimeStatus.value?.open === true);
 const diagnosticHealth = computed(() => vaultDiagnostics.value ? presentMdbx2Health(vaultDiagnostics.value.health) : undefined);
+const diagnosticGuidance = computed(() => vaultDiagnostics.value ? presentMdbx2HealthGuidance(vaultDiagnostics.value.health) : []);
 const tigaPresentation = computed(() => vaultTiga.value ? presentMdbx2Tiga(vaultTiga.value) : undefined);
 const remoteFieldsComplete = computed(() => Boolean(form.baseUrl.trim() && form.remotePath.trim()));
 const needsSecurityKey = computed(() => form.unlockMethod !== "password");
@@ -267,6 +275,39 @@ async function loadVaultDiagnostics() {
   } finally {
     diagnosticsBusy.value = false;
   }
+}
+
+async function activateHealthGuidance(action: Mdbx2HealthGuidanceAction) {
+  if (action === "recheck") {
+    await loadVaultDiagnostics();
+    return;
+  }
+
+  if (action === "attachments") {
+    if (diagnosticsDetails.value) diagnosticsDetails.value.open = true;
+    await nextTick();
+    focusGuidanceTarget(diagnosticsAttachmentTarget.value);
+    return;
+  }
+
+  const target = action === "collections"
+    ? collectionPanel.value
+    : action === "snapshots"
+      ? snapshotPanel.value
+      : historyPanel.value;
+  focusGuidanceTarget(target);
+
+  if (managerMutationLocked.value) return;
+  if (action === "collections" && !activeCollectionsLoaded.value) await loadCollections("active", true);
+  if (action === "snapshots" && !snapshotLoaded.value) await loadSnapshots(true);
+  if (action === "history" && !historyLoaded.value) await loadHistory(true);
+}
+
+function focusGuidanceTarget(target: HTMLElement | null) {
+  if (!target) return;
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  target.scrollIntoView({ behavior, block: "start" });
+  target.focus({ preventScroll: true });
 }
 
 async function loadVaultTiga() {
@@ -1368,6 +1409,45 @@ function conflictErrorMessage(cause: unknown): string {
               <span class="mdbx2-diagnostics-severity-summary">{{ summarizeMdbx2HealthCounts(vaultDiagnostics.health) }}</span>
             </div>
 
+            <div v-if="diagnosticGuidance.length" class="mdbx2-health-guidance-list" aria-labelledby="mdbx2-health-guidance-title">
+              <div class="mdbx2-health-guidance-heading">
+                <strong id="mdbx2-health-guidance-title">建议处理</strong>
+                <small>按影响优先显示恢复步骤；只使用 Native Host 返回的脱敏原因码，不显示底层描述或标识。</small>
+              </div>
+              <details
+                v-for="guidance in diagnosticGuidance"
+                :key="guidance.kind"
+                class="mdbx2-health-guidance-row"
+                :data-severity="guidance.severity"
+              >
+                <summary>
+                  <span class="mdbx2-health-guidance-icon"><m3e-icon :name="guidance.icon" /></span>
+                  <span class="mdbx2-health-guidance-copy">
+                    <strong>{{ guidance.title }}</strong>
+                    <small>{{ guidance.summary }}</small>
+                  </span>
+                  <span class="mdbx2-health-guidance-severity">{{ mdbx2HealthSeverityLabel(guidance.severity) }} · {{ formatMdbx2DiagnosticCount(guidance.count) }} 项</span>
+                  <m3e-icon class="mdbx2-health-guidance-chevron" name="expand_more" />
+                </summary>
+                <div class="mdbx2-health-guidance-body">
+                  <div>
+                    <strong>可能影响</strong>
+                    <p>{{ guidance.impact }}</p>
+                  </div>
+                  <div>
+                    <strong>建议步骤</strong>
+                    <ol><li v-for="step in guidance.steps" :key="step">{{ step }}</li></ol>
+                  </div>
+                  <m3e-button
+                    variant="tonal"
+                    type="button"
+                    :disabled="guidance.action === 'recheck' && (diagnosticsBusy || managerMutationLocked)"
+                    @click="activateHealthGuidance(guidance.action)"
+                  ><m3e-icon slot="icon" :name="guidance.actionIcon"></m3e-icon>{{ guidance.actionLabel }}</m3e-button>
+                </div>
+              </details>
+            </div>
+
             <dl class="mdbx2-diagnostics-key-facts" aria-label="MDBX2 诊断概览">
               <div><dt>主文件</dt><dd>{{ formatMdbx2SnapshotBytes(vaultDiagnostics.fileSizeBytes) }}</dd></div>
               <div><dt>未解决冲突</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.unresolvedConflictCount) }}</dd></div>
@@ -1392,7 +1472,7 @@ function conflictErrorMessage(cause: unknown): string {
               </div>
             </div>
 
-            <details class="mdbx2-diagnostics-details">
+            <details ref="diagnosticsDetails" class="mdbx2-diagnostics-details">
               <summary>
                 <m3e-icon name="monitoring" />
                 <span><strong>查看聚合统计</strong><small>展开数据库、同步历史与附件规模；不会读取条目标题或内容。</small></span>
@@ -1420,7 +1500,7 @@ function conflictErrorMessage(cause: unknown): string {
                     <div><dt>未解决冲突</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.unresolvedConflictCount) }}</dd></div>
                   </dl>
                 </section>
-                <section aria-labelledby="mdbx2-diagnostics-attachment-title">
+                <section ref="diagnosticsAttachmentTarget" class="mdbx2-guidance-target" tabindex="-1" aria-labelledby="mdbx2-diagnostics-attachment-title">
                   <h3 id="mdbx2-diagnostics-attachment-title">附件</h3>
                   <dl>
                     <div><dt>有效附件</dt><dd>{{ formatMdbx2DiagnosticCount(vaultDiagnostics.diagnostics.attachmentCount) }}</dd></div>
@@ -1546,7 +1626,7 @@ function conflictErrorMessage(cause: unknown): string {
           </template>
         </section>
 
-        <section v-if="isExisting && vaultOpen" class="mdbx2-collection-panel field-wide" aria-labelledby="mdbx2-collection-title">
+        <section ref="collectionPanel" v-if="isExisting && vaultOpen" class="mdbx2-collection-panel mdbx2-guidance-target field-wide" tabindex="-1" aria-labelledby="mdbx2-collection-title">
           <div class="mdbx2-collection-header">
             <div>
               <strong id="mdbx2-collection-title">文件夹</strong>
@@ -1616,7 +1696,7 @@ function conflictErrorMessage(cause: unknown): string {
           </div>
         </section>
 
-        <section v-if="isExisting && vaultOpen" class="mdbx2-snapshot-panel field-wide" aria-labelledby="mdbx2-snapshot-title">
+        <section ref="snapshotPanel" v-if="isExisting && vaultOpen" class="mdbx2-snapshot-panel mdbx2-guidance-target field-wide" tabindex="-1" aria-labelledby="mdbx2-snapshot-title">
           <div class="mdbx2-snapshot-header">
             <div>
               <strong id="mdbx2-snapshot-title">数据库快照</strong>
@@ -1845,7 +1925,7 @@ function conflictErrorMessage(cause: unknown): string {
           <div v-if="conflictCursor" class="mdbx2-conflict-more"><m3e-button variant="text" type="button" :disabled="Boolean(conflictBusy) || snapshotMutating" @click="loadConflicts(false)">加载更多冲突</m3e-button></div>
         </section>
 
-        <section v-if="isExisting && vaultOpen" class="mdbx2-history-panel field-wide" aria-labelledby="mdbx2-history-title">
+        <section ref="historyPanel" v-if="isExisting && vaultOpen" class="mdbx2-history-panel mdbx2-guidance-target field-wide" tabindex="-1" aria-labelledby="mdbx2-history-title">
           <div class="mdbx2-history-header">
             <div><strong id="mdbx2-history-title">提交历史</strong><small>只显示可读操作摘要；密码和原始 payload 不会进入此页面。</small></div>
             <m3e-button variant="tonal" type="button" :disabled="Boolean(historyBusy) || managerMutationLocked" @click="loadHistory(true)"><m3e-icon slot="icon" name="history"></m3e-icon>{{ historyLoaded ? '刷新' : '加载历史' }}</m3e-button>
@@ -1981,12 +2061,40 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-health { min-height: 80px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
 .mdbx2-diagnostics-health[data-tone="healthy"] { color: var(--md-sys-color-on-tertiary-container, var(--app-text)); background: var(--md-sys-color-tertiary-container, var(--app-surface-high)); }
 .mdbx2-diagnostics-health[data-tone="attention"] { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.mdbx2-diagnostics-health[data-tone="danger"] { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
+.mdbx2-diagnostics-health[data-tone="danger"] { color: var(--app-text); background: color-mix(in srgb, var(--md-sys-color-error-container, var(--app-surface-high)) 42%, var(--app-surface)); box-shadow: inset 4px 0 0 var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-diagnostics-health[data-tone="danger"] .mdbx2-diagnostics-health-icon,
+.mdbx2-diagnostics-health[data-tone="danger"] .mdbx2-diagnostics-severity-summary { color: var(--md-sys-color-error, #ba1a1a); }
 .mdbx2-diagnostics-health[data-tone] .mdbx2-diagnostics-health-copy small { color: inherit; opacity: .82; }
 .mdbx2-diagnostics-health-icon { inline-size: 44px; block-size: 44px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 10%, transparent); }
 .mdbx2-diagnostics-health-icon m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-diagnostics-health-meta { font-variant-numeric: tabular-nums; }
 .mdbx2-diagnostics-severity-summary { max-width: 18rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.mdbx2-health-guidance-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-guidance-heading { min-height: 56px; display: grid; align-content: center; gap: 2px; padding: 10px 16px; }
+.mdbx2-health-guidance-heading small { color: var(--app-muted); overflow-wrap: anywhere; }
+.mdbx2-health-guidance-row { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.mdbx2-health-guidance-row summary { min-height: 72px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.mdbx2-health-guidance-row summary::-webkit-details-marker { display: none; }
+.mdbx2-health-guidance-row summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-health-guidance-icon { inline-size: 40px; block-size: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
+.mdbx2-health-guidance-icon m3e-icon,
+.mdbx2-health-guidance-chevron { --m3e-icon-size: 20px; }
+.mdbx2-health-guidance-copy { min-width: 0; display: grid; gap: 3px; }
+.mdbx2-health-guidance-copy small { color: var(--app-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.mdbx2-health-guidance-severity { color: var(--app-muted); font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.mdbx2-health-guidance-row[data-severity="error"] .mdbx2-health-guidance-icon,
+.mdbx2-health-guidance-row[data-severity="critical"] .mdbx2-health-guidance-icon,
+.mdbx2-health-guidance-row[data-severity="error"] .mdbx2-health-guidance-severity,
+.mdbx2-health-guidance-row[data-severity="critical"] .mdbx2-health-guidance-severity { color: var(--md-sys-color-error, #ba1a1a); }
+.mdbx2-health-guidance-row[open] .mdbx2-health-guidance-chevron { transform: rotate(180deg); }
+.mdbx2-health-guidance-body { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; gap: 12px; padding: 12px 16px 16px 68px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
+.mdbx2-health-guidance-body > div { display: grid; gap: 4px; }
+.mdbx2-health-guidance-body p { margin: 0; color: var(--app-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.mdbx2-health-guidance-body ol { margin: 0; padding-inline-start: 1.25rem; color: var(--app-muted); line-height: 1.55; }
+.mdbx2-health-guidance-body li + li { margin-top: 4px; }
+.mdbx2-health-guidance-body > m3e-button { min-height: 44px; justify-self: start; }
+.mdbx2-guidance-target { scroll-margin-top: 16px; }
+.mdbx2-guidance-target:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: 3px; }
 .mdbx2-diagnostics-key-facts { margin: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .mdbx2-diagnostics-key-facts > div { min-width: 0; display: grid; align-content: center; gap: 2px; padding: 12px 16px; }
 .mdbx2-diagnostics-key-facts > div + div { border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
@@ -2298,6 +2406,12 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-diagnostics-header { align-items: stretch; flex-direction: column; }
   .mdbx2-diagnostics-health { grid-template-columns: 44px minmax(0, 1fr); }
   .mdbx2-diagnostics-severity-summary { grid-column: 2; max-width: none; text-align: left; }
+  .mdbx2-health-guidance-row summary { grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: start; }
+  .mdbx2-health-guidance-icon { grid-row: 1 / 3; }
+  .mdbx2-health-guidance-severity { grid-column: 2; justify-self: start; white-space: normal; }
+  .mdbx2-health-guidance-chevron { grid-column: 3; grid-row: 1 / 3; align-self: center; }
+  .mdbx2-health-guidance-body { padding-left: 16px; }
+  .mdbx2-health-guidance-body > m3e-button { justify-self: stretch; }
   .mdbx2-diagnostics-key-facts { grid-template-columns: minmax(0, 1fr); }
   .mdbx2-diagnostics-key-facts > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
   .mdbx2-diagnostics-category-row { grid-template-columns: 32px minmax(0, 1fr); }

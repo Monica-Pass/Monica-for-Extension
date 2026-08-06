@@ -51,7 +51,7 @@ for (const required of ['"history.list"', '"history.diff"', '"history.revert"', 
 for (const required of ['"collection.list"', '"collection.create"', '"collection.rename"', '"collection.move"', '"collection.delete"', '"collection.restore"', 'MAX_COLLECTION_TITLE_BYTES', 'MAX_COLLECTION_RESULT_BYTES', '"supportsCollectionMutation".to_string()']) {
   if (!runtime.includes(required)) throw new Error(`MDBX2 Host Collection boundary is missing ${required}.`);
 }
-for (const required of ['"vault.diagnostics"', 'MAX_VAULT_DIAGNOSTIC_CATEGORIES', 'MAX_VAULT_DIAGNOSTICS_RESULT_BYTES', '"supportsVaultDiagnostics".to_string()', 'vault_health_projection']) {
+for (const required of ['"vault.diagnostics"', 'MAX_VAULT_DIAGNOSTIC_CATEGORIES', 'MAX_VAULT_HEALTH_ISSUE_KINDS', 'MAX_VAULT_DIAGNOSTICS_RESULT_BYTES', '"supportsVaultDiagnostics".to_string()', '"supportsVaultHealthIssueKinds".to_string()', 'vault_health_projection', 'safe_vault_health_issue_kind']) {
   if (!runtime.includes(required)) throw new Error(`MDBX2 Host diagnostics boundary is missing ${required}.`);
 }
 for (const required of ['"vault.tiga"', 'MAX_VAULT_TIGA_RESULT_BYTES', 'MAX_VAULT_TIGA_UNLOCK_METHODS', 'MAX_VAULT_TIGA_BROWSER_LIMITATIONS', '"supportsVaultTigaPosture".to_string()', 'vault_tiga_report']) {
@@ -72,7 +72,7 @@ for (const required of ["MDBX2_MAX_HISTORY_PAGE_SIZE", "MDBX2_MAX_HISTORY_RESULT
 for (const required of ["MDBX2_MAX_COLLECTION_TITLE_BYTES", "MDBX2_MAX_COLLECTION_RESULT_BYTES", "supportsCollectionMutation: true", '"collection.create"', '"collection.restore"']) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension Collection contract is missing ${required}.`);
 }
-for (const required of ["MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES", "MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES", "supportsVaultDiagnostics: true", '"vault.diagnostics"', "Mdbx2VaultDiagnosticsReport"]) {
+for (const required of ["MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES", "MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS", "MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES", "supportsVaultDiagnostics: true", "supportsVaultHealthIssueKinds: true", '"vault.diagnostics"', "Mdbx2VaultDiagnosticsReport"]) {
   if (!contract.includes(required)) throw new Error(`MDBX2 extension diagnostics contract is missing ${required}.`);
 }
 for (const required of ["MDBX2_MAX_VAULT_TIGA_RESULT_BYTES", "MDBX2_MAX_VAULT_TIGA_UNLOCK_METHODS", "MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS", "supportsVaultTigaPosture: true", '"vault.tiga"', "Mdbx2VaultTigaPosture"]) {

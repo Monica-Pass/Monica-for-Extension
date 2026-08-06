@@ -80,7 +80,7 @@ test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disc
           if (message.type === "MDBX2_VAULT_STATUS") return { ok: true, data: { vaultHandle: "44444444-4444-4444-8444-444444444444", open: true, available: true } };
           if (message.type === "MDBX2_VAULT_DIAGNOSTICS") return { ok: true, data: {
             checkedAtUnixSeconds: 1785648000, fileSizeBytes: 4096, formatVersion: "MDBX-2", schemaVersion: 17,
-            health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [] },
+            health: { healthy: true, issueCount: 0, infoCount: 0, warningCount: 0, errorCount: 0, criticalCount: 0, categories: [], issueKinds: [] },
             diagnostics: { commitCount: cleaned ? 2 : 1, tombstoneCount: 0, branchCount: 1, deviceCount: 1, snapshotCount: cleaned ? 1 : 3, unresolvedConflictCount: 0, projectCount: 0, folderCount: 0, deletedProjectCount: 0, entryCount: 0, deletedEntryCount: 0, attachmentCount: 0, deletedAttachmentCount: 0, externalAttachmentCount: 0, originalAttachmentBytes: 0, storedAttachmentBytes: 0 }
           } };
           if (message.type === "MDBX2_SYNC_STATUS") return { ok: true, data: { configured: true, registered: true, initialized: true, hasLocalChanges: cleaned, pendingBootstrap: false, pendingSegment: cleaned, pendingRemoteAcknowledgement: false, remoteStreamCount: 2, blockedStreamCount: 0, blobTransferCount: 0, verifiedRemoteBlobCount: 0 } };

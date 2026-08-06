@@ -46,6 +46,7 @@ const MAX_TITLE_BYTES: usize = 64 * 1024;
 const MAX_COLLECTION_TITLE_BYTES: usize = 4096;
 pub const MAX_COLLECTION_RESULT_BYTES: usize = 850 * 1024;
 pub const MAX_VAULT_DIAGNOSTIC_CATEGORIES: usize = 14;
+pub const MAX_VAULT_HEALTH_ISSUE_KINDS: usize = 20;
 pub const MAX_VAULT_DIAGNOSTICS_RESULT_BYTES: usize = 64 * 1024;
 pub const MAX_VAULT_TIGA_RESULT_BYTES: usize = 16 * 1024;
 pub const MAX_VAULT_TIGA_UNLOCK_METHODS: usize = 4;
@@ -65,6 +66,28 @@ const VAULT_DIAGNOSTIC_CATEGORIES: [&str; MAX_VAULT_DIAGNOSTIC_CATEGORIES] = [
     "purge-receipts",
     "stale-heads",
     "other",
+];
+const VAULT_HEALTH_ISSUE_KINDS: [&str; MAX_VAULT_HEALTH_ISSUE_KINDS] = [
+    "basic-integrity",
+    "header-verification-pending",
+    "header-authentication-failed",
+    "integrity-root-pending",
+    "integrity-root-stale",
+    "commit-reference-missing",
+    "commit-authentication-pending",
+    "commit-authentication-failed",
+    "attachment-structure",
+    "snapshot-invalid",
+    "orphan-record",
+    "collection-profile",
+    "tombstone-duplicate",
+    "tombstone-missing",
+    "tombstone-stale",
+    "tombstone-acknowledgement",
+    "purge-record",
+    "device-reference",
+    "inactive-device",
+    "unknown",
 ];
 pub const MAX_OBJECT_BATCH_MUTATIONS: usize = 50;
 pub const MAX_OBJECT_BATCH_INTENT_BYTES: usize = 384 * 1024;
@@ -582,10 +605,15 @@ impl HostRuntime {
             json!(MAX_VAULT_DIAGNOSTIC_CATEGORIES),
         );
         result_object.insert(
+            "maxVaultHealthIssueKinds".to_string(),
+            json!(MAX_VAULT_HEALTH_ISSUE_KINDS),
+        );
+        result_object.insert(
             "maxVaultDiagnosticsResultBytes".to_string(),
             json!(MAX_VAULT_DIAGNOSTICS_RESULT_BYTES),
         );
         result_object.insert("supportsVaultDiagnostics".to_string(), json!(true));
+        result_object.insert("supportsVaultHealthIssueKinds".to_string(), json!(true));
         result_object.insert(
             "maxVaultTigaResultBytes".to_string(),
             json!(MAX_VAULT_TIGA_RESULT_BYTES),
@@ -4324,11 +4352,16 @@ fn vault_diagnostics_report(
 fn vault_health_projection(healthy: bool, issues: &[MdbxHealthIssue]) -> Value {
     let mut severity_counts = [0_u64; 4];
     let mut categories: HashMap<&'static str, (u64, usize)> = HashMap::new();
+    let mut issue_kinds: HashMap<&'static str, (u64, usize)> = HashMap::new();
     for issue in issues {
         let severity_rank = vault_health_severity_rank(&issue.severity);
         severity_counts[severity_rank] = severity_counts[severity_rank].saturating_add(1);
         let category = safe_vault_health_category(&issue.category);
         let entry = categories.entry(category).or_insert((0, severity_rank));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry.1.max(severity_rank);
+        let issue_kind = safe_vault_health_issue_kind(issue);
+        let entry = issue_kinds.entry(issue_kind).or_insert((0, severity_rank));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = entry.1.max(severity_rank);
     }
@@ -4344,6 +4377,18 @@ fn vault_health_projection(healthy: bool, issues: &[MdbxHealthIssue]) -> Value {
             })
         })
         .collect::<Vec<_>>();
+    let issue_kind_rows = VAULT_HEALTH_ISSUE_KINDS
+        .iter()
+        .filter_map(|kind| {
+            issue_kinds.get(kind).map(|(count, severity_rank)| {
+                json!({
+                    "kind": kind,
+                    "count": count,
+                    "highestSeverity": vault_health_severity_label(*severity_rank)
+                })
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
         "healthy": healthy,
         "issueCount": issues.len(),
@@ -4351,7 +4396,8 @@ fn vault_health_projection(healthy: bool, issues: &[MdbxHealthIssue]) -> Value {
         "warningCount": severity_counts[1],
         "errorCount": severity_counts[2],
         "criticalCount": severity_counts[3],
-        "categories": category_rows
+        "categories": category_rows,
+        "issueKinds": issue_kind_rows
     })
 }
 
@@ -4361,6 +4407,66 @@ fn safe_vault_health_category(category: &str) -> &'static str {
         .copied()
         .find(|candidate| *candidate != "other" && *candidate == category)
         .unwrap_or("other")
+}
+
+fn safe_vault_health_issue_kind(issue: &MdbxHealthIssue) -> &'static str {
+    let description = issue.description.to_ascii_lowercase();
+    match issue.category.as_str() {
+        "integrity" => "basic-integrity",
+        "vault-header-integrity" => {
+            if description.contains("pending")
+                || description.contains("requires an unlocked keyring")
+            {
+                "header-verification-pending"
+            } else {
+                "header-authentication-failed"
+            }
+        }
+        "incremental-integrity-root" => {
+            if description.contains("pending")
+                || description.contains("incomplete")
+                || description.contains("requires an unlocked keyring")
+            {
+                "integrity-root-pending"
+            } else {
+                "integrity-root-stale"
+            }
+        }
+        "commit-chain" => "commit-reference-missing",
+        "commit-integrity" => {
+            if description.contains("pending")
+                || description.contains("cannot be verified without an unlocked keyring")
+                || description.contains("requires an unlocked keyring")
+            {
+                "commit-authentication-pending"
+            } else {
+                "commit-authentication-failed"
+            }
+        }
+        "attachment-chunks" => "attachment-structure",
+        "snapshots" => "snapshot-invalid",
+        "orphans" => "orphan-record",
+        "collection-profiles" => "collection-profile",
+        "tombstones" => {
+            if description.contains("typed tombstones") {
+                "tombstone-duplicate"
+            } else if description.contains("deleted without") {
+                "tombstone-missing"
+            } else {
+                "tombstone-stale"
+            }
+        }
+        "tombstone-acknowledgements" => "tombstone-acknowledgement",
+        "purge-receipts" => "purge-record",
+        "stale-heads" => {
+            if description.contains("last seen at") {
+                "inactive-device"
+            } else {
+                "device-reference"
+            }
+        }
+        _ => "unknown",
+    }
 }
 
 fn vault_health_severity_rank(severity: &MdbxHealthIssueSeverity) -> usize {
@@ -7172,6 +7278,11 @@ mod tests {
         assert_eq!(projection["categories"][0]["count"], 2);
         assert_eq!(projection["categories"][0]["highestSeverity"], "critical");
         assert_eq!(projection["categories"][1]["category"], "other");
+        assert_eq!(projection["issueKinds"].as_array().unwrap().len(), 2);
+        assert_eq!(projection["issueKinds"][0]["kind"], "attachment-structure");
+        assert_eq!(projection["issueKinds"][0]["count"], 2);
+        assert_eq!(projection["issueKinds"][0]["highestSeverity"], "critical");
+        assert_eq!(projection["issueKinds"][1]["kind"], "unknown");
         let encoded = serde_json::to_string(&projection).unwrap();
         for hidden in [
             "11111111",
@@ -7180,6 +7291,116 @@ mod tests {
             "future-category",
         ] {
             assert!(!encoded.contains(hidden));
+        }
+    }
+
+    #[test]
+    fn vault_health_issue_kinds_match_current_android_guidance_without_disclosure() {
+        let samples = [
+            ("integrity", "malformed database page", "basic-integrity"),
+            (
+                "vault-header-integrity",
+                "vault header authentication requires an unlocked keyring for verification",
+                "header-verification-pending",
+            ),
+            (
+                "vault-header-integrity",
+                "vault header authentication failed: sensitive-vault-id",
+                "header-authentication-failed",
+            ),
+            (
+                "incremental-integrity-root",
+                "incremental integrity root is incomplete",
+                "integrity-root-pending",
+            ),
+            (
+                "incremental-integrity-root",
+                "incremental integrity root is stale",
+                "integrity-root-stale",
+            ),
+            (
+                "commit-chain",
+                "commit secret-commit-id references non-existent parent",
+                "commit-reference-missing",
+            ),
+            (
+                "commit-integrity",
+                "commit cannot be verified without an unlocked keyring",
+                "commit-authentication-pending",
+            ),
+            (
+                "commit-integrity",
+                "commit authentication tag mismatch",
+                "commit-authentication-failed",
+            ),
+            (
+                "attachment-chunks",
+                "attachment secret-attachment-id has missing chunks",
+                "attachment-structure",
+            ),
+            ("snapshots", "snapshot digest mismatch", "snapshot-invalid"),
+            (
+                "orphans",
+                "entry references missing project",
+                "orphan-record",
+            ),
+            (
+                "collection-profiles",
+                "collection profile has no owner",
+                "collection-profile",
+            ),
+            (
+                "tombstones",
+                "entry has 2 typed tombstones",
+                "tombstone-duplicate",
+            ),
+            (
+                "tombstones",
+                "entry is deleted without a tombstone",
+                "tombstone-missing",
+            ),
+            (
+                "tombstones",
+                "entry is active but retains a tombstone",
+                "tombstone-stale",
+            ),
+            (
+                "tombstone-acknowledgements",
+                "device acknowledgement failed causal validation",
+                "tombstone-acknowledgement",
+            ),
+            (
+                "purge-receipts",
+                "purged entry still has a tombstone",
+                "purge-record",
+            ),
+            (
+                "stale-heads",
+                "device head references a missing commit",
+                "device-reference",
+            ),
+            (
+                "stale-heads",
+                "device was last seen at 2026-01-01",
+                "inactive-device",
+            ),
+            (
+                "future-category-with-user-data",
+                "secret@example.test",
+                "unknown",
+            ),
+        ];
+
+        for (category, description, expected) in samples {
+            let issue = MdbxHealthIssue {
+                severity: MdbxHealthIssueSeverity::Error,
+                category: category.to_string(),
+                description: description.to_string(),
+            };
+            assert_eq!(safe_vault_health_issue_kind(&issue), expected);
+            let encoded = serde_json::to_string(&vault_health_projection(false, &[issue])).unwrap();
+            assert!(encoded.contains(expected));
+            assert!(!encoded.contains(description));
         }
     }
 

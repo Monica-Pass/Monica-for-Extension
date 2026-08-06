@@ -75,6 +75,8 @@ Provider reconciliation groups up to 50 Object mutations into one bounded user-l
 
 Commit history is exposed read-only in pages of at most 50 records. Commit diffs use the core's 500-Object bound. The Host returns titles, deletion state, changed-field names and a `payloadChanged` boolean, but deliberately removes decrypted payload previews before crossing into the manager page. Oversized results fail before the 900 KiB Native Messaging frame boundary.
 
+Vault health checks expose aggregate severity, allowlisted categories and semantic issue-kind enums only. The Host may inspect a Core description to classify pending verification, authentication failure, Tombstone variants or inactive devices, but the description itself and any embedded paths or identifiers never cross Native Messaging. Unknown/future checks collapse to one generic issue kind.
+
 Unresolved conflicts are exposed in pages of at most 50 records. Summary responses omit base/local/incoming Commit IDs and payload previews. Resolution supports explicit local-wins or incoming-wins only. Random operation IDs are persisted in alternating bounded receipt files; reuse with another conflict or choice fails, completed retries are idempotent, and an incomplete receipt after the conflict disappears returns an unknown-outcome error instead of applying another winner.
 
 Synchronization state uses two alternating durable slots. A portable `.mdbx` file initializes a device; normal multi-device operation exchanges authenticated bundle v8 segments, state deltas and encrypted external Blobs. Export checkpoints advance only after immutable publication, and remote stream cursors advance only after atomic apply and Blob completion.

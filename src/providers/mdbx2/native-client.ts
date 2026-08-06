@@ -22,6 +22,7 @@ import {
   MDBX2_MAX_SNAPSHOT_STRUCTURE_PAGE_SIZE,
   MDBX2_MAX_SUMMARY_PAGE_SIZE,
   MDBX2_MAX_VAULT_DIAGNOSTIC_CATEGORIES,
+  MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS,
   MDBX2_MAX_VAULT_DIAGNOSTICS_RESULT_BYTES,
   MDBX2_MAX_VAULT_TIGA_BROWSER_LIMITATIONS,
   MDBX2_MAX_VAULT_TIGA_RESULT_BYTES,
@@ -30,6 +31,7 @@ import {
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_SEGMENT_PAGE_SIZE,
   MDBX2_VAULT_DIAGNOSTIC_CATEGORIES,
+  MDBX2_VAULT_HEALTH_ISSUE_KINDS,
   Mdbx2NativeHostError,
   mdbx2NativeConnectionError,
   parseMdbx2NativeResponse,
@@ -88,6 +90,7 @@ import {
   type Mdbx2VaultCredential,
   type Mdbx2VaultDiagnosticsReport,
   type Mdbx2VaultHealthCategory,
+  type Mdbx2VaultHealthIssueKind,
   type Mdbx2VaultHealthSeverity,
   type Mdbx2VaultInspection,
   type Mdbx2VaultRuntimeStatus,
@@ -1293,7 +1296,7 @@ function vaultDiagnosticsReportValue(value: Record<string, unknown>): Mdbx2Vault
     throw incompatibleResult("Native Host MDBX2 诊断检查时间无效。");
   }
   const health = exactObjectResult(value.health, [
-    "healthy", "issueCount", "infoCount", "warningCount", "errorCount", "criticalCount", "categories"
+    "healthy", "issueCount", "infoCount", "warningCount", "errorCount", "criticalCount", "categories", "issueKinds"
   ], "Native Host MDBX2 健康摘要无效。");
   const issueCount = safeInteger(health.issueCount, "健康问题数量");
   const infoCount = safeInteger(health.infoCount, "健康提示数量");
@@ -1323,6 +1326,22 @@ function vaultDiagnosticsReportValue(value: Record<string, unknown>): Mdbx2Vault
   if (categories.reduce((sum, row) => sum + row.count, 0) !== issueCount) {
     throw incompatibleResult("Native Host MDBX2 健康类别合计无效。");
   }
+  if (!Array.isArray(health.issueKinds) || health.issueKinds.length > MDBX2_MAX_VAULT_HEALTH_ISSUE_KINDS) {
+    throw incompatibleResult("Native Host MDBX2 健康原因数量无效。");
+  }
+  const seenIssueKinds = new Set<Mdbx2VaultHealthIssueKind>();
+  const issueKinds = health.issueKinds.map((candidate) => {
+    const row = exactObjectResult(candidate, ["kind", "count", "highestSeverity"], "Native Host MDBX2 健康原因无效。");
+    const kind = vaultHealthIssueKind(row.kind);
+    if (seenIssueKinds.has(kind)) throw incompatibleResult("Native Host MDBX2 健康原因重复。");
+    seenIssueKinds.add(kind);
+    const count = safeInteger(row.count, "健康原因数量");
+    if (count < 1) throw incompatibleResult("Native Host MDBX2 健康原因数量无效。");
+    return { kind, count, highestSeverity: vaultHealthSeverity(row.highestSeverity) };
+  });
+  if (issueKinds.reduce((sum, row) => sum + row.count, 0) !== issueCount) {
+    throw incompatibleResult("Native Host MDBX2 健康原因合计无效。");
+  }
   const highestCountSeverity = criticalCount ? "critical" : errorCount ? "error" : warningCount ? "warning" : "info";
   const highestCategorySeverity = categories.reduce(
     (highest, row) => Math.max(highest, vaultHealthSeverityRank(row.highestSeverity)),
@@ -1330,6 +1349,13 @@ function vaultDiagnosticsReportValue(value: Record<string, unknown>): Mdbx2Vault
   );
   if (issueCount && highestCategorySeverity !== vaultHealthSeverityRank(highestCountSeverity)) {
     throw incompatibleResult("Native Host MDBX2 健康类别严重级别不一致。");
+  }
+  const highestIssueKindSeverity = issueKinds.reduce(
+    (highest, row) => Math.max(highest, vaultHealthSeverityRank(row.highestSeverity)),
+    0
+  );
+  if (issueCount && highestIssueKindSeverity !== vaultHealthSeverityRank(highestCountSeverity)) {
+    throw incompatibleResult("Native Host MDBX2 健康原因严重级别不一致。");
   }
   const diagnostics = exactObjectResult(value.diagnostics, [
     "commitCount", "tombstoneCount", "branchCount", "deviceCount", "snapshotCount", "unresolvedConflictCount",
@@ -1349,7 +1375,7 @@ function vaultDiagnosticsReportValue(value: Record<string, unknown>): Mdbx2Vault
     fileSizeBytes: safeInteger(value.fileSizeBytes, "MDBX2 本机文件大小"),
     formatVersion: MDBX2_FORMAT_VERSION,
     schemaVersion: safeInteger(value.schemaVersion, "Schema 版本"),
-    health: { healthy, issueCount, infoCount, warningCount, errorCount, criticalCount, categories },
+    health: { healthy, issueCount, infoCount, warningCount, errorCount, criticalCount, categories, issueKinds },
     diagnostics: {
       commitCount: count("commitCount"), tombstoneCount: count("tombstoneCount"), branchCount: count("branchCount"), deviceCount: count("deviceCount"),
       snapshotCount: count("snapshotCount"), unresolvedConflictCount: count("unresolvedConflictCount"), projectCount, folderCount,
@@ -1523,6 +1549,13 @@ function vaultHealthCategory(value: unknown): Mdbx2VaultHealthCategory {
     throw incompatibleResult("Native Host MDBX2 健康类别无效。");
   }
   return value as Mdbx2VaultHealthCategory;
+}
+
+function vaultHealthIssueKind(value: unknown): Mdbx2VaultHealthIssueKind {
+  if (typeof value !== "string" || !MDBX2_VAULT_HEALTH_ISSUE_KINDS.includes(value as Mdbx2VaultHealthIssueKind)) {
+    throw incompatibleResult("Native Host MDBX2 健康原因无效。");
+  }
+  return value as Mdbx2VaultHealthIssueKind;
 }
 
 function vaultHealthSeverity(value: unknown): Mdbx2VaultHealthSeverity {
