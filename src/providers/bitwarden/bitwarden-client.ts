@@ -39,12 +39,22 @@ export type BitwardenLoginResult =
 export interface BitwardenClientLimits {
   maxAuthResponseBytes: number;
   maxVaultResponseBytes: number;
+  maxAttachmentInfoResponseBytes: number;
 }
 
 export const DEFAULT_BITWARDEN_CLIENT_LIMITS: Readonly<BitwardenClientLimits> = Object.freeze({
   maxAuthResponseBytes: 2 * 1024 * 1024,
-  maxVaultResponseBytes: 64 * 1024 * 1024
+  maxVaultResponseBytes: 64 * 1024 * 1024,
+  maxAttachmentInfoResponseBytes: 64 * 1024
 });
+
+export interface BitwardenAttachmentDownloadInfo {
+  id?: string;
+  url: string;
+  fileName?: string;
+  size?: string;
+  key?: string;
+}
 
 export interface BitwardenLoginInput {
   vaultUrl: string;
@@ -206,6 +216,36 @@ export class BitwardenClient {
     return this.authorizedJson(session, `/ciphers/${encodeURIComponent(cipherId)}/restore`, { method: "PUT", headers: jsonHeaders(), signal }, "恢复 Bitwarden 项目失败");
   }
 
+  async attachmentDownloadInfo(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    attachmentId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; info: BitwardenAttachmentDownloadInfo }> {
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const body = await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/attachment/${encodeURIComponent(attachmentId)}`, {
+      method: "GET",
+      headers: authorizedHeaders(active.accessToken),
+      signal
+    }, "获取 Bitwarden 附件下载地址", true, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxAttachmentInfoResponseBytes, "Bitwarden 附件下载信息", requestSignal);
+      if (!response.ok) throw bitwardenHttpError("获取 Bitwarden 附件下载地址失败", response, payload);
+      return payload;
+    });
+    const url = stringValue(body, "Url", "url");
+    if (!url) throw new Error("Bitwarden 附件下载响应缺少签名地址。");
+    return {
+      session: active,
+      info: {
+        id: optionalStringValue(body, "Id", "id"),
+        url,
+        fileName: optionalStringValue(body, "FileName", "fileName"),
+        size: optionalScalarText(body, "Size", "size"),
+        key: optionalStringValue(body, "Key", "key")
+      }
+    };
+  }
+
   private async authorizedJson(
     session: BitwardenSessionConfig,
     path: string,
@@ -328,6 +368,19 @@ function isLoopbackHost(hostname: string): boolean {
 function stringValue(body: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) if (typeof body[key] === "string") return body[key] as string;
   return "";
+}
+
+function optionalStringValue(body: Record<string, unknown>, ...keys: string[]): string | undefined {
+  return stringValue(body, ...keys) || undefined;
+}
+
+function optionalScalarText(body: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = body[key];
+    if (typeof value === "string" && value) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
 }
 
 function numberValue(body: Record<string, unknown>, ...keys: string[]): number {

@@ -100,8 +100,12 @@ export async function decryptBitwardenString(value: string | null | undefined, k
 
 export async function decryptBitwardenSymmetricKey(value: string, wrappingKey: BitwardenSymmetricKey): Promise<BitwardenSymmetricKey> {
   const bytes = await decryptBitwardenBytes(value, wrappingKey);
-  if (bytes.length !== 64) throw new Error(`Bitwarden 对称密钥长度无效：${bytes.length}`);
-  return { encKey: bytes.slice(0, 32), macKey: bytes.slice(32) };
+  try {
+    if (bytes.length !== 64) throw new Error(`Bitwarden 对称密钥长度无效：${bytes.length}`);
+    return { encKey: bytes.slice(0, 32), macKey: bytes.slice(32) };
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 export async function decryptBitwardenRsaBytes(value: string, privateKeyPkcs8: Uint8Array): Promise<Uint8Array> {
