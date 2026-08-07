@@ -1,7 +1,7 @@
-import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
+import type { LoginItem, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
-import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCustomFieldOccurrences, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
@@ -85,17 +85,19 @@ export class BitwardenProvider implements ProviderAdapter {
         merged.push(...remotes);
         continue;
       }
+      const customFieldMigration = prepareBitwardenCustomFieldMigration(locals, remotes, account.id);
+      const workingLocals = customFieldMigration.locals;
       const raw = rawByCipherId.get(cipherId);
       if (!raw) {
-        for (const local of locals.filter((item) => itemChanged(item, account.id))) {
+        for (const local of workingLocals.filter((item) => itemChanged(item, account.id))) {
           conflicts.push({ itemId: local.id, reason: "此项目已在 Bitwarden 删除，但浏览器中也有未同步修改。", local });
         }
-        merged.push(...locals.filter((item) => itemChanged(item, account.id)));
+        merged.push(...workingLocals.filter((item) => itemChanged(item, account.id)));
         continue;
       }
-      const changes = locals.filter((item) => itemChanged(item, account.id));
+      const changes = workingLocals.filter((item) => itemChanged(item, account.id) || customFieldMigration.forcedItemIds.has(item.id));
       if (!changes.length) {
-        merged.push(...rebaseRemoteItems(remotes, locals));
+        merged.push(...rebaseRemoteItems(remotes, workingLocals));
         continue;
       }
       const concurrent = changes.flatMap((local) => {
@@ -105,7 +107,7 @@ export class BitwardenProvider implements ProviderAdapter {
       });
       if (concurrent.length) {
         for (const entry of concurrent) conflicts.push({ itemId: entry.local.id, reason: "浏览器和 Bitwarden 在上次同步后都修改了此项目。", local: entry.local, remote: entry.remote });
-        merged.push(...locals, ...remotes.filter((remote) => !locals.some((local) => Boolean(findEquivalent(local, [remote])))));
+        merged.push(...workingLocals, ...remotes.filter((remote) => !workingLocals.some((local) => Boolean(findEquivalent(local, [remote])))));
         continue;
       }
       try {
@@ -131,10 +133,10 @@ export class BitwardenProvider implements ProviderAdapter {
         session = updated.session;
         const decoded = await decodeBitwardenCipher(updated.payload, account.id, ownerKey);
         if (!decoded.items.length) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
-        merged.push(...rebaseRemoteItems(decoded.items, locals));
+        merged.push(...rebaseRemoteItems(decoded.items, workingLocals));
       } catch (error) {
         for (const local of changes) conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote: findEquivalent(local, remotes) });
-        merged.push(...locals);
+        merged.push(...workingLocals);
       }
     }
 
@@ -239,8 +241,31 @@ function withCreatedReference(local: VaultItem, created: VaultItem, providerId: 
   return {
     ...local,
     updatedAt: created.updatedAt,
+    ...(local.kind === "login" && created.kind === "login"
+      ? { bitwardenCustomFieldsVersion: created.bitwardenCustomFieldsVersion }
+      : {}),
     providerRefs: [...local.providerRefs.filter((candidate) => candidate.providerId !== providerId), reference]
   } as VaultItem;
+}
+
+function prepareBitwardenCustomFieldMigration(
+  locals: VaultItem[],
+  remotes: VaultItem[],
+  providerId: string
+): { locals: VaultItem[]; forcedItemIds: Set<string> } {
+  const local = locals.find((item): item is LoginItem => item.kind === "login");
+  const remote = remotes.find((item): item is LoginItem => item.kind === "login");
+  const forcedItemIds = new Set<string>();
+  if (!local || !remote || local.bitwardenCustomFieldsVersion === 1) return { locals, forcedItemIds };
+  if (providerReference(local, providerId)?.revision !== remote.updatedAt) return { locals, forcedItemIds };
+
+  const migration = mergeBitwardenCustomFieldOccurrences(remote.customFields, local.customFields);
+  const migrated: LoginItem = { ...local, customFields: migration.fields };
+  if (migration.needsUpload) forcedItemIds.add(local.id);
+  return {
+    locals: locals.map((item) => item.id === local.id ? migrated : item),
+    forcedItemIds
+  };
 }
 
 function readSession(account: ProviderAccount): BitwardenSessionConfig {
@@ -330,9 +355,14 @@ function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[]): VaultItem
 }
 
 function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {
-  const { providerRefs: _leftRefs, updatedAt: _leftUpdated, deletedAt: _leftDeleted, ...leftPayload } = left;
-  const { providerRefs: _rightRefs, updatedAt: _rightUpdated, deletedAt: _rightDeleted, ...rightPayload } = right;
-  return JSON.stringify(leftPayload) === JSON.stringify(rightPayload);
+  return JSON.stringify(comparableVaultPayload(left)) === JSON.stringify(comparableVaultPayload(right));
+}
+
+function comparableVaultPayload(item: VaultItem): Record<string, unknown> {
+  const { providerRefs: _refs, updatedAt: _updated, deletedAt: _deleted, ...payload } = item;
+  if (payload.kind !== "login") return payload;
+  const { bitwardenCustomFieldsVersion: _version, ...comparable } = payload;
+  return comparable;
 }
 
 function cipherOwnerKey(

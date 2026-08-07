@@ -58,7 +58,8 @@ describe("Bitwarden Cipher codec", () => {
         { uri: "https://github.com/login", matchType: "exact" },
         { uri: "^https://github\\.com/session", matchType: "regex" }
       ],
-      customFields: [{ name: "Recovery", value: "code", protected: true }]
+      customFields: [{ name: "Recovery", value: "code", protected: true }],
+      bitwardenCustomFieldsVersion: 1
     });
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
@@ -220,7 +221,7 @@ describe("Bitwarden Cipher codec", () => {
     expect(encoded.futureField).toEqual({ nested: [1, 2, 3], flag: false });
   });
 
-  it("unions local and remote custom fields so server-only fields survive a local edit", async () => {
+  it("preserves unmatched exact remote occurrences before the adapter is initialized", async () => {
     const remoteFields = [
       { Type: 0, Name: await encryptBitwardenString("Shared", KEY), Value: await encryptBitwardenString("remote-value", KEY) },
       { Type: 1, Name: await encryptBitwardenString("ServerOnly", KEY), Value: await encryptBitwardenString("hidden", KEY) },
@@ -234,11 +235,127 @@ describe("Bitwarden Cipher codec", () => {
 
     const encoded = await encodeBitwardenCipher(item, KEY, { Fields: remoteFields });
     const fields = encoded.fields as Array<Record<string, unknown>>;
-    expect(fields).toHaveLength(4);
-    expect(fields.slice(0, 2)).toEqual([remoteFields[1], remoteFields[2]]);
-    const names = await Promise.all(fields.slice(2).map((field) => decryptBitwardenString(field.name as string, KEY)));
+    expect(fields).toHaveLength(5);
+    expect(fields.slice(0, 3)).toEqual(remoteFields);
+    const names = await Promise.all(fields.slice(3).map((field) => decryptBitwardenString(field.name as string, KEY)));
     expect(names).toEqual(["Shared", "LocalOnly"]);
-    await expect(decryptBitwardenString(fields[2].value as string, KEY)).resolves.toBe("local-value");
+    await expect(decryptBitwardenString(fields[3].value as string, KEY)).resolves.toBe("local-value");
+  });
+
+  it("maps Android password system fields without exposing reserved or unsupported fields as user fields", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const raw = {
+      Id: "android-system-fields",
+      Type: 1,
+      Name: await enc("Android fields"),
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: { Username: null, Password: null, Uris: [] },
+      Fields: [
+        { Type: 0, Name: await enc("monica_app_package"), Value: await enc("com.example.app") },
+        { Type: 0, Name: await enc("monica_email"), Value: await enc("joy@example.com") },
+        { Type: 0, Name: await enc("monica_passkey_bindings"), Value: await enc('[{"credentialId":"bound"}]') },
+        { Type: 0, Name: await enc("monica_login_type"), Value: await enc("SSH_KEY") },
+        { Type: 0, Name: await enc("Visible"), Value: await enc("text") },
+        { Type: 1, Name: await enc("Secret"), Value: await enc("hidden") },
+        { Type: 2, Name: await enc("Boolean"), Value: await enc("true") },
+        { Type: 0, Name: await enc("Linked"), Value: await enc("linked"), LinkedId: 100 },
+        { Type: 0, Name: null, Value: await enc("unnamed") },
+        { Type: 99, Name: await enc("Future"), Value: await enc("future") }
+      ]
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+
+    expect(decoded.items[0]).toMatchObject({
+      kind: "login",
+      appPackageName: "com.example.app",
+      email: "joy@example.com",
+      passkeyBindings: '[{"credentialId":"bound"}]',
+      loginType: "SSH_KEY",
+      bitwardenCustomFieldsVersion: 1,
+      customFields: [
+        { name: "Visible", value: "text", protected: false },
+        { name: "Secret", value: "hidden", protected: true }
+      ]
+    });
+  });
+
+  it("replaces generated Android system fields while retaining unrelated raw field types", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const oldPackage = { Type: 0, Name: await enc("monica_app_package"), Value: await enc("com.old.app") };
+    const oldEmail = { Type: 0, Name: await enc("monica_email"), Value: await enc("old@example.com") };
+    const boolean = { Type: 2, Name: await enc("Boolean"), Value: await enc("true"), Future: "keep" };
+    const item: LoginItem = {
+      id: "system-write",
+      kind: "login",
+      title: "System write",
+      username: "",
+      password: "",
+      uris: [],
+      customFields: [],
+      bitwardenCustomFieldsVersion: 1,
+      appPackageName: "com.new.app",
+      email: "new@example.com",
+      favorite: false,
+      notes: "",
+      createdAt: REVISION,
+      updatedAt: REVISION,
+      providerRefs: []
+    };
+
+    const encoded = await encodeBitwardenCipher(item, KEY, { Fields: [oldPackage, oldEmail, boolean] });
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+
+    expect(fields[0]).toEqual(boolean);
+    const generated = fields.slice(1);
+    const names = await Promise.all(generated.map((field) => decryptBitwardenString(field.name as string, KEY)));
+    const values = await Promise.all(generated.map((field) => decryptBitwardenString(field.value as string, KEY)));
+    expect(names).toEqual(["monica_app_package", "appPackageName", "monica_email", "email"]);
+    expect(values).toEqual(["com.new.app", "com.new.app", "new@example.com", "new@example.com"]);
+  });
+
+  it("lets an initialized local list delete and rename exact field occurrences while preserving unsupported raw entries", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const remoteFields = [
+      { Type: 0, Name: await enc("Duplicate"), Value: await enc("same") },
+      { Type: 0, Name: await enc("Duplicate"), Value: await enc("same") },
+      { Type: 1, Name: await enc("DeleteMe"), Value: await enc("old") },
+      { Type: 2, Name: await enc("Collision"), Value: await enc("true"), FutureBooleanMetadata: "keep" },
+      { Type: 0, Name: await enc("Linked"), Value: await enc("linked"), LinkedId: 42 },
+      { Type: 0, Name: null, Value: await enc("unnamed"), Unknown: { nested: true } },
+      { Type: 99, Name: await enc("Future"), Value: await enc("future"), Future: [1, 2, 3] }
+    ];
+    const item: LoginItem = {
+      id: "initialized-fields",
+      kind: "login",
+      title: "Fields",
+      username: "user",
+      password: "pass",
+      uris: [],
+      customFields: [
+        { name: "Duplicate", value: "same", protected: false },
+        { name: "Collision", value: "local text", protected: false },
+        { name: "Renamed", value: "old", protected: true }
+      ],
+      bitwardenCustomFieldsVersion: 1,
+      favorite: false,
+      notes: "",
+      createdAt: REVISION,
+      updatedAt: REVISION,
+      providerRefs: []
+    };
+
+    const encoded = await encodeBitwardenCipher(item, KEY, { Fields: remoteFields });
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+
+    expect(fields.slice(0, 4)).toEqual(remoteFields.slice(3));
+    const localFields = fields.slice(4);
+    const names = await Promise.all(localFields.map((field) => decryptBitwardenString(field.name as string, KEY)));
+    const values = await Promise.all(localFields.map((field) => decryptBitwardenString(field.value as string, KEY)));
+    expect(names).toEqual(["Duplicate", "Collision", "Renamed"]);
+    expect(values).toEqual(["same", "local text", "old"]);
+    expect(localFields.map((field) => field.type)).toEqual([0, 0, 1]);
   });
 
   it("keeps an Android Steam Guard steam:// Totp payload usable and byte-identical on write-back", async () => {

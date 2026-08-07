@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../core/model";
 import { bytesToBase64 } from "../../security/encoding";
-import { encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { BitwardenProvider } from "./bitwarden-provider";
 
 const KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32) };
@@ -34,6 +34,121 @@ describe("Bitwarden provider", () => {
     expect(second.conflicts).toEqual([]);
     expect(second.items[0]).toMatchObject({ password: "browser-secret", updatedAt: "2026-07-15T03:05:00.000Z" });
     expect(putCount).toBe(1);
+  });
+
+  it("initializes matching legacy custom fields without an unnecessary upload", async () => {
+    const remoteField = { Type: 0, Name: await encryptBitwardenString("Existing", KEY), Value: await encryptBitwardenString("value", KEY) };
+    const remote = { ...(await loginCipher("remote-secret", OLD_REVISION)), Fields: [remoteField] };
+    let putCount = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") putCount += 1;
+      return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+    }) as unknown as typeof fetch;
+    const cached: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: ["https://example.com"],
+      customFields: [{ name: "Existing", value: "value", protected: false }],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [cached] });
+
+    expect(putCount).toBe(0);
+    expect(result.conflicts).toEqual([]);
+    expect(result.items[0]).toMatchObject({
+      id: cached.id,
+      bitwardenCustomFieldsVersion: 1,
+      customFields: cached.customFields
+    });
+  });
+
+  it("merges exact legacy occurrences once and then allows initialized field deletion", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    let remote: Record<string, unknown> = {
+      ...(await loginCipher("remote-secret", OLD_REVISION)),
+      Fields: [
+        { Type: 0, Name: await enc("Remote"), Value: await enc("remote") },
+        { Type: 0, Name: await enc("Duplicate"), Value: await enc("same") },
+        { Type: 0, Name: await enc("Duplicate"), Value: await enc("same") },
+        { Type: 2, Name: await enc("Boolean"), Value: await enc("true"), Future: "preserve" }
+      ]
+    };
+    const writes: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (init?.method === "PUT") {
+        const request = JSON.parse(String(init.body)) as Record<string, unknown>;
+        writes.push(request);
+        remote = {
+          ...request,
+          Id: "cipher-1",
+          RevisionDate: writes.length === 1 ? "2026-07-15T03:02:00.000Z" : "2026-07-15T03:04:00.000Z",
+          CreationDate: OLD_REVISION
+        };
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const cached: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: ["https://example.com"],
+      customFields: [
+        { name: "Remote", value: "remote", protected: false },
+        { name: "Duplicate", value: "same", protected: false },
+        { name: "Duplicate", value: "same", protected: false },
+        { name: "Duplicate", value: "same", protected: false },
+        { name: "LocalOnly", value: "local", protected: true }
+      ],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+
+    const migrated = await provider.sync(account(), { now: "2026-07-15T03:03:00.000Z", localItems: [cached] });
+    const migratedLogin = migrated.items[0] as LoginItem;
+    expect(migrated.conflicts).toEqual([]);
+    expect(writes).toHaveLength(1);
+    expect(migratedLogin.bitwardenCustomFieldsVersion).toBe(1);
+    expect(migratedLogin.customFields).toEqual(cached.customFields);
+    await expect(decryptedRequestFields(writes[0])).resolves.toEqual([
+      ["Boolean", "true", 2, undefined],
+      ["Remote", "remote", 0, null],
+      ["Duplicate", "same", 0, null],
+      ["Duplicate", "same", 0, null],
+      ["Duplicate", "same", 0, null],
+      ["LocalOnly", "local", 1, null]
+    ]);
+
+    const deleted: LoginItem = {
+      ...migratedLogin,
+      customFields: migratedLogin.customFields.filter((field) => field.name !== "Remote" && field.name !== "LocalOnly"),
+      updatedAt: "2026-07-15T03:03:30.000Z"
+    };
+    const afterDelete = await provider.sync(account(), { now: "2026-07-15T03:05:00.000Z", localItems: [deleted] });
+
+    expect(afterDelete.conflicts).toEqual([]);
+    expect(writes).toHaveLength(2);
+    await expect(decryptedRequestFields(writes[1])).resolves.toEqual([
+      ["Boolean", "true", 2, undefined],
+      ["Duplicate", "same", 0, null],
+      ["Duplicate", "same", 0, null],
+      ["Duplicate", "same", 0, null]
+    ]);
   });
 
   it("imports and updates an organization-shared login Cipher", async () => {
@@ -574,6 +689,21 @@ async function fidoCredential(credentialId: string, counter: number): Promise<Re
     Discoverable: await enc("true"),
     CreationDate: await enc(OLD_REVISION)
   };
+}
+
+async function decryptedRequestFields(request: Record<string, unknown>): Promise<Array<[string, string, number, unknown]>> {
+  const fields = Array.isArray(request.fields) ? request.fields as Array<Record<string, unknown>> : [];
+  return Promise.all(fields.map(async (field) => {
+    const name = field.name ?? field.Name;
+    const value = field.value ?? field.Value;
+    const type = field.type ?? field.Type;
+    return [
+      typeof name === "string" ? await decryptBitwardenString(name, KEY) : "",
+      typeof value === "string" ? await decryptBitwardenString(value, KEY) : "",
+      typeof type === "number" ? type : -1,
+      "linkedId" in field ? field.linkedId : field.LinkedId
+    ] as [string, string, number, unknown];
+  }));
 }
 
 function localPasskey(credentialId: string): PasskeyItem {

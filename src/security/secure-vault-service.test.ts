@@ -47,6 +47,25 @@ describe("encrypted vault", () => {
     expect((await service.unlock("a strong master password")).items[0]).toMatchObject({ kind: "login", username, password });
   });
 
+  it("keeps the Bitwarden custom-field adapter marker inside the encrypted vault", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    const login: LoginItem = {
+      ...createLoginItem({ title: "Bitwarden", password: "secret", uris: ["example.com"] }),
+      bitwardenCustomFieldsVersion: 1,
+      providerRefs: [{ providerId: "bitwarden-1", remoteId: "cipher-1", revision: "2026-08-07T00:00:00.000Z" }]
+    };
+
+    await service.setup("bitwarden marker password", [login]);
+
+    expect(JSON.stringify(storage.envelope)).not.toContain("bitwardenCustomFieldsVersion");
+    await service.lock();
+    expect((await service.unlock("bitwarden marker password")).items[0]).toMatchObject({
+      id: login.id,
+      bitwardenCustomFieldsVersion: 1
+    });
+  });
+
   it("requires an active session for CRUD and automatically expires it", async () => {
     let now = 1_700_000_000_000;
     const storage = new MemoryVaultStorage();

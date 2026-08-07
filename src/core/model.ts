@@ -84,6 +84,8 @@ export interface LoginItem extends VaultItemBase {
   /** Canonical extension link; Android boundPasswordId is resolved to this on import. */
   boundTotpItemId?: string;
   customFields: SecureCustomField[];
+  /** Encrypted local marker: this Bitwarden Cipher completed the Android-compatible field adapter. */
+  bitwardenCustomFieldsVersion?: 1;
   loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE";
   ssoProvider?: string;
   ssoRefEntryId?: number;
