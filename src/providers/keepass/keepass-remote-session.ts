@@ -7,6 +7,7 @@ import {
   KeePassWebDavError,
   normalizeKeePassRemotePath,
   type KeePassWebDavConfig,
+  type KeePassWebDavErrorCode,
   type KeePassWebDavFileStat,
   type KeePassWebDavSnapshot,
   type KeePassWebDavWriteResult
@@ -87,6 +88,79 @@ export class KeePassRemoteRebaseSessionError extends KeePassRemoteSessionError {
     this.name = "KeePassRemoteRebaseSessionError";
   }
 }
+
+export type KeePassRemoteManagerErrorCode =
+  | KeePassRemoteSessionErrorCode
+  | KeePassWebDavErrorCode
+  | "record-invalid"
+  | "revision-stale"
+  | "operation-reused"
+  | "cancelled"
+  | "timeout"
+  | "network"
+  | "rate-limited"
+  | "server"
+  | "authentication"
+  | "permission"
+  | "not-found"
+  | "conflict"
+  | "client"
+  | "unknown";
+
+export interface KeePassRemoteManagerError {
+  code: KeePassRemoteManagerErrorCode;
+  retryable: boolean;
+  at: string;
+}
+
+export interface KeePassRemoteManagerStatus {
+  providerId: string;
+  sourceMode: "webdav";
+  sessionState: "unlocked" | "restorable" | "reconnect-required";
+  workingCopyState: "ready" | "missing";
+  publicationState: "clean" | "local-changes" | "pending-confirmation";
+  remoteBaselineState: "available" | "missing";
+  revision?: number;
+  updatedAt?: string;
+  lastError?: KeePassRemoteManagerError;
+}
+
+export interface KeePassRemoteFailureInfo {
+  code: KeePassRemoteManagerErrorCode;
+  retryable: boolean;
+}
+
+const KEEPASS_REMOTE_MANAGER_ERROR_CODES = new Set<KeePassRemoteManagerErrorCode>([
+  "remote-provider-invalid",
+  "remote-working-copy-missing",
+  "remote-credential-missing",
+  "remote-key-file-invalid",
+  "remote-operation-reused",
+  "remote-cache-key-missing",
+  "remote-receipt-invalid",
+  "remote-rebase-conflict",
+  "remote-path-invalid",
+  "remote-file-missing",
+  "remote-metadata-invalid",
+  "remote-etag-required",
+  "remote-download-too-large",
+  "remote-upload-too-large",
+  "remote-write-verification-failed",
+  "record-invalid",
+  "revision-stale",
+  "operation-reused",
+  "cancelled",
+  "timeout",
+  "network",
+  "rate-limited",
+  "server",
+  "authentication",
+  "permission",
+  "not-found",
+  "conflict",
+  "client",
+  "unknown"
+]);
 
 export interface KeePassRemoteFileClient {
   testConnection(signal?: AbortSignal): Promise<void>;
@@ -185,6 +259,41 @@ export class KeePassRemoteSessionService {
       keyFile?.fill(0);
       record.baseBytes.fill(0);
       record.workingBytes.fill(0);
+    }
+  }
+
+  async managerStatus(account: ProviderAccount): Promise<KeePassRemoteManagerStatus> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") throw invalidProvider();
+    const [record, hasReceipts] = await Promise.all([
+      this.storage.read(account.id),
+      this.storage.hasReceipts(account.id)
+    ]);
+    try {
+      const workingCopyState = record ? "ready" : "missing";
+      const hasStoredCredential = typeof account.config.databasePassword === "string" || Boolean(optionalStringConfig(account, "keyFile"));
+      const sessionState = this.provider.isUnlocked(account.id)
+        ? "unlocked"
+        : record && hasStoredCredential
+          ? "restorable"
+          : "reconnect-required";
+      const publicationState = hasReceipts
+        ? "pending-confirmation"
+        : record && record.workingSha256 !== record.baseSha256
+          ? "local-changes"
+          : "clean";
+      return {
+        providerId: account.id,
+        sourceMode: "webdav",
+        sessionState,
+        workingCopyState,
+        publicationState,
+        remoteBaselineState: record?.baseEtag ? "available" : "missing",
+        ...(record ? { revision: record.revision, updatedAt: record.updatedAt } : {}),
+        ...managerErrorFromAccount(account)
+      };
+    } finally {
+      record?.baseBytes.fill(0);
+      record?.workingBytes.fill(0);
     }
   }
 
@@ -583,4 +692,26 @@ function canonicalize(value: unknown): unknown {
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
   return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export function keePassRemoteFailureInfo(error: unknown): KeePassRemoteFailureInfo {
+  if (error instanceof ProviderTransportError) return { code: error.code, retryable: error.retryable };
+  if (error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError) {
+    const code = error.code as KeePassRemoteManagerErrorCode;
+    return { code: KEEPASS_REMOTE_MANAGER_ERROR_CODES.has(code) ? code : "unknown", retryable: false };
+  }
+  return { code: "unknown", retryable: false };
+}
+
+function managerErrorFromAccount(account: ProviderAccount): { lastError?: KeePassRemoteManagerError } {
+  const code = optionalStringConfig(account, "remoteLastErrorCode") as KeePassRemoteManagerErrorCode | undefined;
+  const at = optionalStringConfig(account, "remoteLastErrorAt");
+  if (!code || !KEEPASS_REMOTE_MANAGER_ERROR_CODES.has(code) || !at || !Number.isFinite(Date.parse(at))) return {};
+  return {
+    lastError: {
+      code,
+      retryable: account.config.remoteLastErrorRetryable === true,
+      at
+    }
+  };
 }

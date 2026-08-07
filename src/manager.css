@@ -615,6 +615,81 @@
   gap: 8px;
 }
 
+.keepass-source-segments {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.keepass-remote-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: var(--app-shape-card);
+  overflow: hidden;
+}
+
+.keepass-remote-facts > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+}
+
+.keepass-remote-facts > span + span {
+  border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+}
+
+.keepass-remote-facts strong,
+.keepass-remote-facts small {
+  overflow-wrap: anywhere;
+}
+
+.keepass-remote-facts small {
+  color: var(--app-muted);
+}
+
+.keepass-remote-error {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--md-sys-color-error, #ba1a1a);
+  border-radius: var(--app-shape-card);
+  padding: 12px;
+  color: var(--md-sys-color-on-error-container, #410002);
+  background: var(--md-sys-color-error-container, #ffdad6);
+}
+
+.keepass-remote-error > m3e-icon,
+.keepass-dialog-notice > m3e-icon {
+  --m3e-icon-size: 20px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.keepass-remote-error > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.keepass-remote-error p {
+  color: inherit;
+  line-height: 1.5;
+}
+
+.keepass-dialog-notice {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--app-shape-card);
+  padding: 8px 12px;
+  color: var(--md-sys-color-on-tertiary-container, var(--app-text));
+  background: var(--md-sys-color-tertiary-container, var(--app-selected));
+}
+
 .mdbx2-card-facts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -839,6 +914,27 @@
     grid-template-columns: 1fr;
   }
 
+  .keepass-remote-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .keepass-remote-facts > span:nth-child(3) {
+    border-left: 0;
+  }
+
+  .keepass-remote-facts > span:nth-child(n + 3) {
+    border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  }
+
+  .keepass-remote-error {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .keepass-remote-error m3e-button {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
   .mdbx2-card-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -892,6 +988,13 @@
   .editor-dialog {
     max-height: 92dvh;
     border-radius: var(--app-shape-dialog) var(--app-shape-dialog) 0 0;
+  }
+
+  .keepass-provider-dialog {
+    width: calc(100% - 16px);
+    max-height: calc(100dvh - 16px);
+    margin: 8px;
+    border-radius: var(--app-shape-dialog);
   }
 }
 .totp-code-cell {

@@ -769,7 +769,8 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
           databaseCredentialStored: "databasePassword" in provider.config,
           keyFileConfigured: Boolean(stringConfig(provider, "keyFile")),
           workingCopyAvailable: Number.isSafeInteger(provider.config.workingCopyRevision) && Number(provider.config.workingCopyRevision) > 0,
-          remoteEtagAvailable: Boolean(stringConfig(provider, "remoteEtag"))
+          remoteEtagAvailable: Boolean(stringConfig(provider, "remoteEtag")),
+          ...publicKeePassRemoteFailure(provider)
         } : sourceMode === "local-file" ? { sourceMode: "local-file" } : {})
       }
     };
@@ -805,6 +806,26 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
 
 function stringConfig(provider: ProviderAccount, key: string): string {
   return typeof provider.config[key] === "string" ? provider.config[key] as string : "";
+}
+
+const PUBLIC_KEEPASS_REMOTE_ERROR_CODES = new Set([
+  "remote-provider-invalid", "remote-working-copy-missing", "remote-credential-missing", "remote-key-file-invalid",
+  "remote-operation-reused", "remote-cache-key-missing", "remote-receipt-invalid", "remote-rebase-conflict",
+  "remote-path-invalid", "remote-file-missing", "remote-metadata-invalid", "remote-etag-required",
+  "remote-download-too-large", "remote-upload-too-large", "remote-write-verification-failed",
+  "record-invalid", "revision-stale", "operation-reused", "cancelled", "timeout", "network", "rate-limited",
+  "server", "authentication", "permission", "not-found", "conflict", "client", "unknown"
+]);
+
+function publicKeePassRemoteFailure(provider: ProviderAccount): Record<string, unknown> {
+  const code = stringConfig(provider, "remoteLastErrorCode");
+  const at = stringConfig(provider, "remoteLastErrorAt");
+  if (!PUBLIC_KEEPASS_REMOTE_ERROR_CODES.has(code) || !Number.isFinite(Date.parse(at))) return {};
+  return {
+    remoteLastErrorCode: code,
+    remoteLastErrorRetryable: provider.config.remoteLastErrorRetryable === true,
+    remoteLastErrorAt: at
+  };
 }
 
 function queueProviderMutations(state: VaultState, item: VaultItem, operation: PendingMutation["operation"], now: string): void {

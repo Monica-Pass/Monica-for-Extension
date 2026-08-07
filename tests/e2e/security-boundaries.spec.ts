@@ -7,9 +7,9 @@ interface RuntimeResponse<T = unknown> {
   error?: string;
 }
 
-async function launchExtension(testInfo: TestInfo, profileName: string): Promise<{ context: BrowserContext; manager: Page }> {
+async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserContext; manager: Page }> {
   const extensionPath = path.resolve("dist");
-  const context = await chromium.launchPersistentContext(testInfo.outputPath(profileName), {
+  const context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {
     channel: "chromium",
     headless: true,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
@@ -61,7 +61,7 @@ async function fillLogin(manager: Page, itemId: string, tabId: number): Promise<
 test("MDBX2 bootstrap and synchronization commands are restricted to the manager page", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "mdbx2-manager-policy-profile");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     const extensionId = new URL(launched.manager.url()).host;
     const popup = await context.newPage();
@@ -182,6 +182,7 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
         }
       },
       { type: "KEEPASS_REMOTE_RESTORE", providerId: "keepass-provider" },
+      { type: "KEEPASS_REMOTE_STATUS", providerId: "keepass-provider" },
       { type: "KEEPASS_EXPORT_FILE", providerId: "keepass-provider" }
     ];
     for (const request of attachmentRequests) {
@@ -232,7 +233,7 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
 test("non-loopback HTTP login submissions are rejected without retaining a password", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "insecure-save-profile");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     await context.route("http://insecure-save.example.test/**", (route) => route.fulfill({
       contentType: "text/html; charset=utf-8",
@@ -264,7 +265,7 @@ test("non-loopback HTTP login submissions are rejected without retaining a passw
 test("login filling is rejected for a non-loopback HTTP target", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "insecure-fill-profile");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     const pageUrl = "http://insecure-fill.example.test/login";
     await context.route("http://insecure-fill.example.test/**", (route) => route.fulfill({
@@ -291,7 +292,7 @@ test("login filling is rejected for a non-loopback HTTP target", async ({}, test
 test("login filling is rejected when the target tab is not active", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "inactive-fill-profile");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     const pageUrl = "https://inactive-fill.example.test/login";
     await context.route("https://inactive-fill.example.test/**", (route) => route.fulfill({
@@ -321,7 +322,7 @@ test("login filling is rejected when the target tab is not active", async ({}, t
 test("login filling is rejected after the reviewed document navigates", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "stale-document-fill-profile");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     const pageUrl = "https://stale-document.example.test/login";
     await context.route("https://stale-document.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password">' }));
@@ -346,7 +347,7 @@ test("login filling is rejected after the reviewed document navigates", async ({
 test("a top-page match is not reused for a cross-origin iframe", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
-    const launched = await launchExtension(testInfo, "iframe-boundary");
+    const launched = await launchExtension(testInfo);
     context = launched.context;
     const topUrl = "https://top-login.example.test/";
     await context.route("https://top-login.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: '<iframe src="https://untrusted-frame.attacker.test/login"></iframe>' }));

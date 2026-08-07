@@ -140,7 +140,10 @@ describe("encrypted vault", () => {
         databasePassword: "remote-database-secret",
         keyFile: "remote-key-file-secret",
         workingCopyRevision: 2,
-        remoteEtag: '"etag-2"'
+        remoteEtag: '"etag-2"',
+        remoteLastErrorCode: "timeout",
+        remoteLastErrorRetryable: true,
+        remoteLastErrorAt: "2026-08-07T10:00:00.000Z"
       }
     });
     expect(remoteKeePass.config).toEqual({
@@ -154,7 +157,10 @@ describe("encrypted vault", () => {
       databaseCredentialStored: true,
       keyFileConfigured: true,
       workingCopyAvailable: true,
-      remoteEtagAvailable: true
+      remoteEtagAvailable: true,
+      remoteLastErrorCode: "timeout",
+      remoteLastErrorRetryable: true,
+      remoteLastErrorAt: "2026-08-07T10:00:00.000Z"
     });
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/remote-webdav-secret|remote-database-secret|remote-key-file-secret|etag-2/);
 

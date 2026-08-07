@@ -24,15 +24,17 @@ import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, 
 import { normalizeImportedVaultItem } from "./manager/import-items";
 import { parseCsvToVaultItems } from "./manager/csv-import";
 import { passkeyAvailability, passkeyAvailabilityLabel } from "./passkey/source-policy";
+import { presentKeePassRemoteError, type KeePassRemoteErrorPresentation } from "./providers/keepass/keepass-remote-status";
 import type { Mdbx2HostStatus, Mdbx2VaultRuntimeStatus } from "./providers/mdbx2/native-contract";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
-import { vaultClient } from "./runtime/client";
-import type { KeePassSessionSummary, Mdbx2ManagerSyncStatus } from "./runtime/messages";
+import { ExtensionRuntimeError, vaultClient } from "./runtime/client";
+import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyncStatus } from "./runtime/messages";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
 type Section = "overview" | VaultManagerSection | "steam" | "generator" | "providers" | "settings";
 type LoginType = NonNullable<LoginItem["loginType"]>;
+type KeePassSourceMode = "local-file" | "webdav";
 
 interface LoginForm {
   name: string;
@@ -55,6 +57,21 @@ interface LoginForm {
   wifi: WifiMetadata;
   sshKeyDataRaw: string;
   sshKey: SshKeyMetadata;
+}
+
+interface KeePassFormState {
+  sourceMode: KeePassSourceMode;
+  name: string;
+  password: string;
+  currentFileName: string;
+  baseUrl: string;
+  username: string;
+  webDavPassword: string;
+  remotePath: string;
+  webDavPasswordConfigured: boolean;
+  databaseCredentialStored: boolean;
+  keyFileConfigured: boolean;
+  isDefaultSaveTarget: boolean;
 }
 
 const vaultItems = ref<VaultItem[]>([]);
@@ -90,9 +107,10 @@ const bitwardenError = ref("");
 const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
 const keePassDialogOpen = ref(false);
-const keePassBusy = ref<"" | "open" | "export" | "lock">("");
+const keePassBusy = ref<"" | "test" | "open" | "export" | "lock" | "restore">("");
 const activeKeePassProviderId = ref("");
 const keePassError = ref("");
+const keePassDialogNotice = ref("");
 const editingKeePassId = ref<string | undefined>();
 const keePassDatabaseFile = ref<File | null>(null);
 const keePassKeyFile = ref<File | null>(null);
@@ -100,6 +118,8 @@ const keePassFileInput = ref<HTMLInputElement | null>(null);
 const keePassKeyFileInput = ref<HTMLInputElement | null>(null);
 const revealKeePassPassword = ref(false);
 const keePassSessions = ref<Record<string, KeePassSessionSummary>>({});
+const keePassRemoteStatuses = ref<Record<string, KeePassRemoteManagerStatus>>({});
+const keePassCardErrors = ref<Record<string, { message: string; code?: string }>>({});
 const keePassGroupsProvider = ref<ProviderAccount | undefined>();
 const mdbx2DialogOpen = ref(false);
 const mdbx2BatchTransferDialogOpen = ref(false);
@@ -138,7 +158,20 @@ const MIN_BACKUP_PASSWORD_LENGTH = MIN_MASTER_PASSWORD_LENGTH;
 const form = reactive<LoginForm>(emptyLoginForm());
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
 const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
-const keePassForm = reactive({ name: "KeePass", password: "", currentFileName: "", isDefaultSaveTarget: false });
+const keePassForm = reactive<KeePassFormState>({
+  sourceMode: "local-file",
+  name: "KeePass",
+  password: "",
+  currentFileName: "",
+  baseUrl: "",
+  username: "",
+  webDavPassword: "",
+  remotePath: "",
+  webDavPasswordConfigured: false,
+  databaseCredentialStored: false,
+  keyFileConfigured: false,
+  isDefaultSaveTarget: false
+});
 
 useThemePreferences();
 
@@ -163,6 +196,7 @@ const filteredSectionItems = computed(() => {
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
 const keePassProviders = computed(() => providers.value.filter((provider) => provider.kind === "keepass"));
+const editingKeePassProvider = computed(() => providers.value.find((provider) => provider.id === editingKeePassId.value && provider.kind === "keepass"));
 const mdbx2Providers = computed(() => providers.value.filter((provider) => provider.kind === "mdbx2"));
 const editingMdbx2Provider = computed(() => providers.value.find((provider) => provider.id === editingMdbx2Id.value && provider.kind === "mdbx2"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
@@ -180,8 +214,10 @@ const keePassProtectionPreview = computed(() => {
   if (keePassKeyFile.value && keePassForm.password) return "密码 + 密钥文件";
   if (keePassKeyFile.value) return "仅密钥文件";
   if (keePassForm.password) return "仅密码";
+  if (keePassForm.sourceMode === "webdav" && editingKeePassProvider.value) return keePassProtectionLabel(editingKeePassProvider.value);
   return "空密码";
 });
+const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePass" : "连接 KeePass");
 
 onMounted(initialize);
 
@@ -316,7 +352,9 @@ async function authenticate(action: () => Promise<VaultItem[]>) {
 }
 
 async function lockVault() {
-  if (Object.values(keePassSessions.value).some((session) => session.dirty) && !window.confirm("KeePass 数据库还有未导出的修改。现在锁定会丢失这些内存中的 KDBX 改动，仍要继续吗？")) return;
+  const hasLocalKeePassChanges = Object.entries(keePassSessions.value).some(([providerId, session]) =>
+    session.dirty && providers.value.find((provider) => provider.id === providerId)?.config.sourceMode !== "webdav");
+  if (hasLocalKeePassChanges && !window.confirm("KeePass 数据库还有未导出的修改。现在锁定会丢失这些内存中的 KDBX 改动，仍要继续吗？")) return;
   await vaultClient.lock();
   vaultItems.value = [];
   lifecycle.value = "locked";
@@ -334,6 +372,8 @@ async function lockVault() {
   closeKeePassGroups();
   closeKeePassDialog();
   keePassSessions.value = {};
+  keePassRemoteStatuses.value = {};
+  keePassCardErrors.value = {};
   mdbx2RuntimeStatuses.value = {};
   mdbx2SyncStatuses.value = {};
 }
@@ -355,14 +395,30 @@ async function refreshProviders() {
 }
 
 async function refreshKeePassSessions(accounts = providers.value) {
-  const sessions = await Promise.all(accounts.filter((provider) => provider.kind === "keepass").map(async (provider) => {
+  const entries = await Promise.all(accounts.filter((provider) => provider.kind === "keepass").map(async (provider) => {
+    if (provider.config.sourceMode === "webdav") {
+      try {
+        const remote = await vaultClient.keePassRemoteStatus(provider.id);
+        const session = remote.sessionState === "unlocked" ? await vaultClient.keePassStatus(provider.id) : undefined;
+        return { providerId: provider.id, remote, session };
+      } catch (error) {
+        return { providerId: provider.id, error };
+      }
+    }
     try {
-      return [provider.id, await vaultClient.keePassStatus(provider.id)] as const;
-    } catch {
-      return [provider.id, undefined] as const;
+      return { providerId: provider.id, session: await vaultClient.keePassStatus(provider.id) };
+    } catch (error) {
+      return { providerId: provider.id, error };
     }
   }));
-  keePassSessions.value = Object.fromEntries(sessions.filter((entry): entry is readonly [string, KeePassSessionSummary] => Boolean(entry[1])));
+  keePassSessions.value = Object.fromEntries(entries.flatMap((entry) => entry.session ? [[entry.providerId, entry.session]] : []));
+  keePassRemoteStatuses.value = Object.fromEntries(entries.flatMap((entry) => entry.remote ? [[entry.providerId, entry.remote]] : []));
+  const nextErrors = { ...keePassCardErrors.value };
+  for (const entry of entries) {
+    if (entry.error) nextErrors[entry.providerId] = { message: errorMessage(entry.error), code: errorCode(entry.error) };
+    else delete nextErrors[entry.providerId];
+  }
+  keePassCardErrors.value = nextErrors;
 }
 
 async function refreshMdbx2Statuses(accounts = providers.value) {
@@ -842,6 +898,19 @@ async function syncProvider(provider: ProviderAccount) {
     let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
     try {
       result = await vaultClient.syncProvider(provider.id);
+      if (provider.kind === "keepass") {
+        const nextErrors = { ...keePassCardErrors.value };
+        delete nextErrors[provider.id];
+        keePassCardErrors.value = nextErrors;
+      }
+    } catch (error) {
+      if (provider.kind === "keepass") {
+        keePassCardErrors.value = {
+          ...keePassCardErrors.value,
+          [provider.id]: { message: errorMessage(error), code: errorCode(error) }
+        };
+      }
+      throw error;
     } finally {
       await refreshProviders();
     }
@@ -880,9 +949,12 @@ async function exportProviderDiagnostics() {
 
 async function removeProvider(provider: ProviderAccount) {
   const remoteName = { bitwarden: "Bitwarden 密码库", mdbx2: "MDBX2 保险库", "mdbx-legacy": "旧 MDBX1 数据库", keepass: "KeePass 数据库" }[provider.kind as string] || "WebDAV 文件";
-  const unsavedWarning = provider.kind === "keepass" && keePassSessionFor(provider.id)?.dirty
-    ? "此数据库还有未导出的内存修改，移除后这些修改会丢失。"
-    : "";
+  const remoteKeePassStatus = provider.kind === "keepass" ? keePassRemoteStatusFor(provider.id) : undefined;
+  const unsavedWarning = provider.kind === "keepass" && isRemoteKeePass(provider) && remoteKeePassStatus && remoteKeePassStatus.publicationState !== "clean"
+    ? "此数据库的本机工作副本还有待上传或待确认修改，移除后这些本机修改会丢失。"
+    : provider.kind === "keepass" && keePassSessionFor(provider.id)?.dirty
+      ? "此数据库还有未导出的内存修改，移除后这些修改会丢失。"
+      : "";
   if (!window.confirm(`${unsavedWarning ? `${unsavedWarning}\n\n` : ""}确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 ${remoteName} 不会被删除。`)) return;
   await runWebDavAction("remove", async () => {
     await vaultClient.removeProvider(provider.id);
@@ -897,6 +969,12 @@ async function removeProvider(provider: ProviderAccount) {
       const next = { ...keePassSessions.value };
       delete next[provider.id];
       keePassSessions.value = next;
+      const nextRemote = { ...keePassRemoteStatuses.value };
+      delete nextRemote[provider.id];
+      keePassRemoteStatuses.value = nextRemote;
+      const nextErrors = { ...keePassCardErrors.value };
+      delete nextErrors[provider.id];
+      keePassCardErrors.value = nextErrors;
     }
     if (provider.kind === "mdbx2") {
       const nextRuntime = { ...mdbx2RuntimeStatuses.value };
@@ -924,16 +1002,26 @@ async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Prom
 
 function openKeePassDialog(provider?: ProviderAccount) {
   editingKeePassId.value = provider?.id;
+  const sourceMode: KeePassSourceMode = provider?.config.sourceMode === "webdav" ? "webdav" : "local-file";
   Object.assign(keePassForm, {
+    sourceMode,
     name: provider?.name || "KeePass",
     password: "",
     currentFileName: typeof provider?.config.fileName === "string" ? provider.config.fileName : "",
+    baseUrl: sourceMode === "webdav" && typeof provider?.config.webDavBaseUrl === "string" ? provider.config.webDavBaseUrl : "",
+    username: sourceMode === "webdav" && typeof provider?.config.webDavUsername === "string" ? provider.config.webDavUsername : "",
+    webDavPassword: "",
+    remotePath: sourceMode === "webdav" && typeof provider?.config.remotePath === "string" ? provider.config.remotePath : "",
+    webDavPasswordConfigured: provider?.config.webDavPasswordConfigured === true,
+    databaseCredentialStored: provider?.config.databaseCredentialStored === true,
+    keyFileConfigured: provider?.config.keyFileConfigured === true,
     isDefaultSaveTarget: provider?.isDefaultSaveTarget || false
   });
   keePassDatabaseFile.value = null;
   keePassKeyFile.value = null;
   revealKeePassPassword.value = false;
   keePassError.value = "";
+  keePassDialogNotice.value = "";
   if (keePassFileInput.value) keePassFileInput.value.value = "";
   if (keePassKeyFileInput.value) keePassKeyFileInput.value.value = "";
   keePassDialogOpen.value = true;
@@ -944,10 +1032,12 @@ function closeKeePassDialog() {
   keePassDialogOpen.value = false;
   editingKeePassId.value = undefined;
   keePassForm.password = "";
+  keePassForm.webDavPassword = "";
   keePassDatabaseFile.value = null;
   keePassKeyFile.value = null;
   revealKeePassPassword.value = false;
   keePassError.value = "";
+  keePassDialogNotice.value = "";
   if (keePassFileInput.value) keePassFileInput.value.value = "";
   if (keePassKeyFileInput.value) keePassKeyFileInput.value.value = "";
 }
@@ -980,6 +1070,10 @@ function selectKeePassKeyFile(event: Event) {
 }
 
 async function connectKeePass() {
+  if (keePassForm.sourceMode === "webdav") {
+    await connectKeePassWebDav();
+    return;
+  }
   const databaseFile = keePassDatabaseFile.value;
   if (!databaseFile) return void (keePassError.value = "请选择要打开的 .kdbx 数据库文件。每次浏览器后台重启后都需要重新选择。");
   if (!databaseFile.name.toLocaleLowerCase().endsWith(".kdbx")) return void (keePassError.value = "KeePass 数据库文件必须使用 .kdbx 扩展名。");
@@ -1015,19 +1109,123 @@ async function connectKeePass() {
   }
 }
 
+async function testKeePassWebDav() {
+  const error = validateKeePassRemoteForm();
+  if (error) return void (keePassError.value = error);
+  keePassBusy.value = "test";
+  keePassError.value = "";
+  keePassDialogNotice.value = "";
+  try {
+    const result = await vaultClient.testKeePassWebDav({
+      providerId: editingKeePassId.value,
+      baseUrl: keePassForm.baseUrl,
+      username: keePassForm.username,
+      webDavPassword: keePassForm.webDavPassword,
+      remotePath: keePassForm.remotePath
+    });
+    keePassDialogNotice.value = result.file
+      ? "连接成功，远端文件可读取。"
+      : "连接成功，但远端位置没有可读取的 KDBX 文件。";
+  } catch (error) {
+    keePassError.value = errorMessage(error);
+  } finally {
+    keePassBusy.value = "";
+  }
+}
+
+async function connectKeePassWebDav() {
+  const validationError = validateKeePassRemoteForm();
+  if (validationError) return void (keePassError.value = validationError);
+  const currentStatus = editingKeePassId.value ? keePassRemoteStatusFor(editingKeePassId.value) : undefined;
+  if (editingKeePassId.value && currentStatus && currentStatus.publicationState !== "clean" &&
+    !window.confirm("当前本机工作副本存在待上传或待确认修改。重新连接会以远端文件建立新的工作副本，仍要继续吗？")) return;
+  keePassBusy.value = "open";
+  activeKeePassProviderId.value = editingKeePassId.value || "new";
+  keePassError.value = "";
+  keePassDialogNotice.value = "";
+  try {
+    const keyFile = keePassKeyFile.value ? await fileAsBase64(keePassKeyFile.value) : undefined;
+    const opened = await vaultClient.openKeePassWebDav({
+      providerId: editingKeePassId.value,
+      name: keePassForm.name,
+      baseUrl: keePassForm.baseUrl,
+      username: keePassForm.username,
+      webDavPassword: keePassForm.webDavPassword,
+      remotePath: keePassForm.remotePath,
+      databasePassword: keePassForm.password,
+      keyFile,
+      isDefaultSaveTarget: keePassForm.isDefaultSaveTarget
+    });
+    keePassSessions.value = { ...keePassSessions.value, [opened.account.id]: opened.session };
+    delete keePassCardErrors.value[opened.account.id];
+    await refreshProviders();
+    keePassBusy.value = "";
+    activeKeePassProviderId.value = "";
+    closeKeePassDialog();
+    showNotice(`已连接 ${opened.session.databaseName}；加密工作副本可在浏览器后台重启后恢复。`);
+  } catch (error) {
+    keePassError.value = errorMessage(error);
+  } finally {
+    keePassBusy.value = "";
+    activeKeePassProviderId.value = "";
+  }
+}
+
+function validateKeePassRemoteForm(): string | undefined {
+  if (!keePassForm.baseUrl.trim()) return "请填写 WebDAV 地址。";
+  if (!keePassForm.remotePath.trim()) return "请填写远端 .kdbx 位置。";
+  if (!keePassForm.remotePath.trim().toLocaleLowerCase().endsWith(".kdbx")) return "远端 KeePass 文件必须使用 .kdbx 扩展名。";
+  return undefined;
+}
+
 function keePassSessionFor(providerId: string): KeePassSessionSummary | undefined {
   return keePassSessions.value[providerId];
 }
 
+function keePassRemoteStatusFor(providerId: string): KeePassRemoteManagerStatus | undefined {
+  return keePassRemoteStatuses.value[providerId];
+}
+
+function isRemoteKeePass(provider: ProviderAccount): boolean {
+  return provider.config.sourceMode === "webdav";
+}
+
+function keePassRemoteErrorPresentationFor(provider: ProviderAccount): KeePassRemoteErrorPresentation | undefined {
+  if (!isRemoteKeePass(provider)) return undefined;
+  const statusError = keePassRemoteStatusFor(provider.id)?.lastError;
+  if (statusError) return presentKeePassRemoteError(statusError);
+  const local = keePassCardErrors.value[provider.id];
+  if (!local) return undefined;
+  return presentKeePassRemoteError({
+    code: (local.code || "unknown") as NonNullable<KeePassRemoteManagerStatus["lastError"]>["code"],
+    retryable: false,
+    at: new Date().toISOString()
+  });
+}
+
 function keePassStateLabel(provider: ProviderAccount): string {
-  if (provider.lastError || conflictsFor(provider.id).length) return "需要处理";
+  if (provider.lastError || conflictsFor(provider.id).length || keePassRemoteErrorPresentationFor(provider)) return "需要处理";
+  if (isRemoteKeePass(provider)) {
+    const status = keePassRemoteStatusFor(provider.id);
+    if (!status) return "正在检查";
+    if (status.publicationState === "pending-confirmation") return "结果待确认";
+    if (status.workingCopyState === "missing" || status.sessionState === "reconnect-required") return "需要重新连接";
+    if (status.sessionState === "restorable") return "可恢复";
+    if (status.publicationState === "local-changes") return "待上传";
+    return "已解锁";
+  }
   const session = keePassSessionFor(provider.id);
   if (!session) return "已锁定";
   return session.dirty ? "待导出" : "已解锁";
 }
 
 function keePassStateClass(provider: ProviderAccount): string {
-  if (provider.lastError || conflictsFor(provider.id).length || keePassSessionFor(provider.id)?.dirty) return "state-attention";
+  if (provider.lastError || conflictsFor(provider.id).length || keePassRemoteErrorPresentationFor(provider) || keePassSessionFor(provider.id)?.dirty) return "state-attention";
+  if (isRemoteKeePass(provider)) {
+    const status = keePassRemoteStatusFor(provider.id);
+    if (!status || status.publicationState !== "clean") return "state-attention";
+    return status.sessionState === "unlocked" ? "state-healthy" : "state-local-only";
+  }
   return keePassSessionFor(provider.id) ? "state-healthy" : "state-local-only";
 }
 
@@ -1047,7 +1245,9 @@ async function exportKeePass(provider: ProviderAccount) {
     const exported = await vaultClient.exportKeePassFile(provider.id);
     downloadBase64File(exported.fileName, exported.file, "application/octet-stream");
     await refreshKeePassSessions();
-    showNotice("KDBX 已导出。请确认下载完成后手动覆盖原文件；浏览器不会直接改写你选择的文件。");
+    showNotice(isRemoteKeePass(provider)
+      ? "KDBX 加密副本已导出；WebDAV 发布状态保持不变。"
+      : "KDBX 已导出。请确认下载完成后手动覆盖原文件；浏览器不会直接改写所选文件。");
   } catch (error) {
     showNotice(errorMessage(error));
   } finally {
@@ -1058,7 +1258,7 @@ async function exportKeePass(provider: ProviderAccount) {
 
 async function lockKeePass(provider: ProviderAccount) {
   const session = keePassSessionFor(provider.id);
-  if (session?.dirty && !window.confirm("此 KeePass 数据库还有未导出的修改。锁定后这些内存修改会丢失，仍要继续吗？")) return;
+  if (!isRemoteKeePass(provider) && session?.dirty && !window.confirm("此 KeePass 数据库还有未导出的修改。锁定后这些内存修改会丢失，仍要继续吗？")) return;
   keePassBusy.value = "lock";
   activeKeePassProviderId.value = provider.id;
   try {
@@ -1066,14 +1266,48 @@ async function lockKeePass(provider: ProviderAccount) {
     const next = { ...keePassSessions.value };
     delete next[provider.id];
     keePassSessions.value = next;
+    if (isRemoteKeePass(provider)) await refreshKeePassSessions();
     if (keePassHistoryProviders.value.some((candidate) => candidate.id === provider.id)) closeKeePassHistory();
-    showNotice(`${provider.name} 已锁定；密码、密钥文件和解锁后的数据库对象均已从后台会话中清除。`);
+    showNotice(isRemoteKeePass(provider)
+      ? `${provider.name} 已锁定；解锁对象已清除，加密工作副本仍可恢复。`
+      : `${provider.name} 已锁定；密码、密钥文件和解锁后的数据库对象均已从后台会话中清除。`);
   } catch (error) {
     showNotice(errorMessage(error));
   } finally {
     keePassBusy.value = "";
     activeKeePassProviderId.value = "";
   }
+}
+
+async function restoreKeePassRemoteSession(provider: ProviderAccount) {
+  keePassBusy.value = "restore";
+  activeKeePassProviderId.value = provider.id;
+  const nextErrors = { ...keePassCardErrors.value };
+  delete nextErrors[provider.id];
+  keePassCardErrors.value = nextErrors;
+  try {
+    const session = await vaultClient.restoreKeePassRemote(provider.id);
+    keePassSessions.value = { ...keePassSessions.value, [provider.id]: session };
+    await refreshProviders();
+    showNotice(`${provider.name} 已从本机加密工作副本恢复，无需重新下载 WebDAV 文件。`);
+  } catch (error) {
+    keePassCardErrors.value = {
+      ...keePassCardErrors.value,
+      [provider.id]: { message: errorMessage(error), code: errorCode(error) }
+    };
+  } finally {
+    keePassBusy.value = "";
+    activeKeePassProviderId.value = "";
+  }
+}
+
+async function handleKeePassRecoveryAction(provider: ProviderAccount, presentation: KeePassRemoteErrorPresentation | undefined) {
+  if (!presentation) return;
+  if (presentation.action === "reconnect") {
+    openKeePassDialog(provider);
+    return;
+  }
+  if (presentation.action === "retry") await syncProvider(provider);
 }
 
 function fileAsBase64(file: File): Promise<string> {
@@ -1355,6 +1589,10 @@ function showNotice(message: string) {
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "操作失败，请重试。";
 }
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof ExtensionRuntimeError ? error.code : undefined;
+}
 </script>
 
 <template>
@@ -1468,7 +1706,7 @@ function errorMessage(error: unknown) {
           <div class="provider-connect-grid" aria-label="添加密码源">
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openMdbx2Dialog()"><span class="connect-icon"><m3e-icon name="database"></m3e-icon></span><span><strong>连接 MDBX2 保险库</strong><small>打开本机文件或从 WebDAV 增量加入</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="newWebDav"><span class="connect-icon"><m3e-icon name="folder_copy"></m3e-icon></span><span><strong>连接 Monica Android WebDAV</strong><small>读取并无损写回 Monica_Backups 快照</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
-            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openKeePassDialog()"><span class="connect-icon"><m3e-icon name="key"></m3e-icon></span><span><strong>打开 KeePass 文件</strong><small>支持密码、密钥文件或两者组合</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
+            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openKeePassDialog()"><span class="connect-icon"><m3e-icon name="key"></m3e-icon></span><span><strong>连接 KeePass</strong><small>打开本地 KDBX 或连接 WebDAV 文件</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
             <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openBitwarden()"><span class="connect-icon"><m3e-icon name="shield"></m3e-icon></span><span><strong>连接 Bitwarden</strong><small>官方 US/EU 或标准自托管服务</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
           </div>
 
@@ -1507,24 +1745,53 @@ function errorMessage(error: unknown) {
               <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : '尚未同步；首次同步会导入最新 Android 快照。' }}</p>
               <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="编辑 WebDAV" @click="editWebDav(provider)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 WebDAV" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
             </div></m3e-card>
-            <m3e-card v-for="provider in keePassProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
-              <div class="source-title"><span class="source-icon"><m3e-icon name="key"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.fileName || '请选择 .kdbx 文件') }}</p></div></div>
-              <span class="state" :class="keePassStateClass(provider)">{{ keePassStateLabel(provider) }}</span>
-              <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+            <m3e-card v-for="provider in keePassProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack" :aria-busy="activeKeePassProviderId === provider.id && Boolean(keePassBusy)">
+              <div class="source-title"><span class="source-icon"><m3e-icon name="key"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(isRemoteKeePass(provider) ? provider.config.remotePath || 'WebDAV KDBX' : provider.config.fileName || '请选择 .kdbx 文件') }}</p></div></div>
+              <span class="state" :class="keePassStateClass(provider)" aria-live="polite">{{ keePassStateLabel(provider) }}</span>
+
+              <template v-if="isRemoteKeePass(provider)">
+                <div class="keepass-remote-facts" aria-label="KeePass WebDAV 状态摘要" aria-live="polite">
+                  <span><strong>{{ keePassRemoteStatusFor(provider.id)?.sessionState === 'unlocked' ? '已解锁' : keePassRemoteStatusFor(provider.id)?.sessionState === 'restorable' ? '可恢复' : '需重新连接' }}</strong><small>本机会话</small></span>
+                  <span><strong>{{ keePassRemoteStatusFor(provider.id)?.workingCopyState === 'ready' ? '工作副本可用' : '工作副本缺失' }}</strong><small>本机加密副本</small></span>
+                  <span><strong>{{ keePassRemoteStatusFor(provider.id)?.remoteBaselineState === 'available' ? '远端基线可用' : '远端基线缺失' }}</strong><small>ETag 条件写入</small></span>
+                  <span><strong>{{ keePassRemoteStatusFor(provider.id)?.publicationState === 'pending-confirmation' ? '结果待确认' : keePassRemoteStatusFor(provider.id)?.publicationState === 'local-changes' ? '本机有修改' : '同步完成' }}</strong><small>发布状态</small></span>
+                </div>
+                <div v-if="keePassRemoteErrorPresentationFor(provider)" class="keepass-remote-error" role="alert">
+                  <m3e-icon :name="keePassRemoteErrorPresentationFor(provider)?.icon || 'error'"></m3e-icon>
+                  <div><strong>{{ keePassRemoteErrorPresentationFor(provider)?.title }}</strong><p>{{ keePassRemoteErrorPresentationFor(provider)?.message }}</p></div>
+                  <m3e-button v-if="keePassRemoteErrorPresentationFor(provider)?.action !== 'none'" variant="tonal" :disabled="Boolean(webDavBusy) || Boolean(keePassBusy)" @click="handleKeePassRecoveryAction(provider, keePassRemoteErrorPresentationFor(provider))">{{ keePassRemoteErrorPresentationFor(provider)?.actionLabel }}</m3e-button>
+                </div>
+                <div v-if="keePassRemoteStatusFor(provider.id)?.publicationState === 'pending-confirmation'" class="provider-dirty-warning" role="status"><m3e-icon name="pending_actions"></m3e-icon><div><strong>上次结果待确认</strong><p>检测到加密持久操作记录。本机工作副本仍保留，恢复会话或再次同步会复用原操作语义。</p></div></div>
+                <div v-else-if="keePassRemoteStatusFor(provider.id)?.publicationState === 'local-changes'" class="provider-dirty-warning" role="status"><m3e-icon name="cloud_upload"></m3e-icon><div><strong>本机工作副本有待上传修改</strong><p>修改已经加密保存，浏览器后台重启不会丢失；同步后其他设备才能读取。</p></div></div>
+                <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : keePassRemoteStatusFor(provider.id)?.updatedAt ? `本机副本更新：${new Date(String(keePassRemoteStatusFor(provider.id)?.updatedAt)).toLocaleString()}` : '尚未完成首次同步。' }}</p>
+              </template>
+              <p v-else-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+
               <div class="provider-session-summary" :class="{ locked: !keePassSessionFor(provider.id) }">
                 <template v-if="keePassSessionFor(provider.id)">
                   <span><strong>{{ keePassSessionFor(provider.id)?.itemCount }}</strong><small>项目</small></span>
                   <span><strong>KDBX {{ keePassSessionFor(provider.id)?.versionMajor }}</strong><small>{{ keePassSessionFor(provider.id)?.cipherName || '现有加密算法' }}</small></span>
                   <span><strong>{{ keePassProtectionLabel(provider) }}</strong><small>解锁保护</small></span>
                 </template>
-                <p v-else><m3e-icon name="lock"></m3e-icon><span>密码和密钥文件不会保存；浏览器后台重启后需要重新选择文件并解锁。</span></p>
+                <p v-else-if="isRemoteKeePass(provider)"><m3e-icon name="encrypted"></m3e-icon><span>{{ keePassRemoteStatusFor(provider.id)?.sessionState === 'restorable' ? '本机加密工作副本可恢复，无需重新下载远端文件。' : '请重新连接 WebDAV 文件并验证数据库凭据。' }}</span></p>
+                <p v-else><m3e-icon name="lock"></m3e-icon><span>本地文件会话已锁定；需要重新选择文件并解锁。</span></p>
               </div>
               <ul v-if="keePassSessionFor(provider.id)?.warnings.length" class="provider-warning-list" aria-label="KeePass 兼容性提示"><li v-for="warning in keePassSessionFor(provider.id)?.warnings" :key="warning">{{ warning }}</li></ul>
               <p v-if="keePassSessionFor(provider.id)?.skipped.length" class="supporting">有 {{ keePassSessionFor(provider.id)?.skipped.length }} 个本版本无法解析的条目，已保留在 KDBX 中且不会被改写。</p>
-              <div v-if="keePassSessionFor(provider.id)?.dirty" class="provider-dirty-warning" role="status"><m3e-icon name="save"></m3e-icon><div><strong>有尚未导出的 KDBX 修改</strong><p>修改只在内存中。请立即导出并手动覆盖原文件；锁库、关闭浏览器或后台重启都会丢失未导出的文件改动。</p></div></div>
+              <div v-if="!isRemoteKeePass(provider) && keePassSessionFor(provider.id)?.dirty" class="provider-dirty-warning" role="status"><m3e-icon name="save"></m3e-icon><div><strong>有尚未导出的 KDBX 修改</strong><p>修改只在内存中。请立即导出并手动覆盖原文件；锁库、关闭浏览器或后台重启都会丢失未导出的文件改动。</p></div></div>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 KDBX 版本' : '接受文件删除' }}</m3e-button></div></div>
-              <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>浏览器不能直接覆盖原文件，也不能直接连接 OneDrive 或 Google Drive。Twofish KDBX 请先在 Monica Android 或 KeePassXC 中转换为 AES-256。</span></p>
-              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="!keePassSessionFor(provider.id) || Boolean(keePassBusy) || Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" variant="tonal" :disabled="Boolean(keePassBusy)" @click="openKeePassGroups(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理分组</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" :variant="keePassSessionFor(provider.id)?.dirty ? 'filled' : 'text'" :disabled="Boolean(keePassBusy)" @click="exportKeePass(provider)"><m3e-icon slot="icon" name="download"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'export' ? '导出中…' : '导出 KDBX' }}</m3e-button><m3e-button v-if="keePassSessionFor(provider.id)" variant="text" :disabled="Boolean(keePassBusy)" @click="lockKeePass(provider)"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'lock' ? '锁定中…' : '锁定' }}</m3e-button><m3e-icon-button aria-label="重新选择并解锁 KeePass" @click="openKeePassDialog(provider)"><m3e-icon name="folder_open"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 KeePass" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
+              <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>{{ isRemoteKeePass(provider) ? 'WebDAV 使用本机加密工作副本和精确 ETag 条件写入；并发修改会重组或明确停止，远端文件不会按最后修改时间静默覆盖。' : '本地文件由浏览器内存编辑，完成后需要导出覆盖原 KDBX。Twofish KDBX 请先在 Monica Android 或 KeePassXC 中转换为 AES-256。' }}</span></p>
+              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
+              <div class="source-actions">
+                <m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
+                <m3e-button v-else-if="isRemoteKeePass(provider) && keePassRemoteStatusFor(provider.id)?.sessionState === 'restorable'" variant="filled" :disabled="Boolean(keePassBusy) || Boolean(webDavBusy)" @click="restoreKeePassRemoteSession(provider)"><m3e-icon slot="icon" name="restore"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'restore' ? '恢复中…' : '恢复本机会话' }}</m3e-button>
+                <m3e-button v-else variant="tonal" :disabled="!keePassSessionFor(provider.id) || Boolean(keePassBusy) || Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button>
+                <m3e-button v-if="keePassSessionFor(provider.id)" variant="tonal" :disabled="Boolean(keePassBusy)" @click="openKeePassGroups(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理分组</m3e-button>
+                <m3e-button v-if="keePassSessionFor(provider.id)" :variant="!isRemoteKeePass(provider) && keePassSessionFor(provider.id)?.dirty ? 'filled' : 'text'" :disabled="Boolean(keePassBusy)" @click="exportKeePass(provider)"><m3e-icon slot="icon" name="download"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'export' ? '导出中…' : isRemoteKeePass(provider) ? '导出备份副本' : '导出 KDBX' }}</m3e-button>
+                <m3e-button v-if="keePassSessionFor(provider.id)" variant="text" :disabled="Boolean(keePassBusy)" @click="lockKeePass(provider)"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'lock' ? '锁定中…' : '锁定' }}</m3e-button>
+                <m3e-icon-button aria-label="管理 KeePass" @click="openKeePassDialog(provider)"><m3e-icon name="settings"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button aria-label="移除 KeePass" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+              </div>
             </div></m3e-card>
             <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
               <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
@@ -1635,19 +1902,31 @@ function errorMessage(error: unknown) {
       </form>
     </section></div>
 
-    <div v-if="keePassDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeKeePassDialog"><section class="editor-dialog provider-dialog" role="dialog" aria-modal="true" aria-labelledby="keepass-dialog-title"><header><div><h2 id="keepass-dialog-title">{{ editingKeePassId ? '重新解锁 KeePass' : '打开 KeePass 文件' }}</h2><p>密码和密钥文件只用于本次后台会话，不会保存到插件密码库。</p></div><m3e-icon-button aria-label="关闭 KeePass 设置" :disabled="keePassBusy === 'open'" @click="closeKeePassDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
+    <div v-if="keePassDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeKeePassDialog"><section class="editor-dialog provider-dialog keepass-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="keepass-dialog-title"><header><div><h2 id="keepass-dialog-title">{{ keePassDialogTitle }}</h2><p>{{ keePassForm.sourceMode === 'webdav' ? 'WebDAV 与 KDBX 凭据会加密保存在 Monica 密码库中，本机工作副本仅保存 KDBX 密文。' : '本地文件密码和密钥文件仅用于当前后台会话。' }}</p></div><m3e-icon-button aria-label="关闭 KeePass 设置" :disabled="keePassBusy === 'open'" @click="closeKeePassDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
       <form class="provider-form" @submit.prevent="connectKeePass">
+        <fieldset class="login-type-picker keepass-source-picker field-wide"><legend>来源</legend><div class="login-type-segments keepass-source-segments"><label><input v-model="keePassForm.sourceMode" type="radio" value="local-file" @change="keePassError = ''; keePassDialogNotice = ''" /><span>本地文件</span></label><label><input v-model="keePassForm.sourceMode" type="radio" value="webdav" @change="keePassError = ''; keePassDialogNotice = ''" /><span>WebDAV 文件</span></label></div></fieldset>
         <label class="field"><span>显示名称</span><input v-model="keePassForm.name" autofocus autocomplete="off" placeholder="KeePass" /></label>
-        <div class="field"><span>当前保护方式</span><div class="protection-preview" aria-live="polite"><m3e-icon :name="keePassKeyFile ? 'key' : 'password'"></m3e-icon><strong>{{ keePassProtectionPreview }}</strong></div><small>密码允许留空；数据库必须与所选密码和密钥文件组合匹配。</small></div>
-        <div class="field field-wide"><span>KeePass 数据库文件 *</span><label class="file-action provider-file-action"><m3e-icon name="folder_open"></m3e-icon><span>{{ keePassDatabaseFile?.name || (keePassForm.currentFileName ? '重新选择 ' + keePassForm.currentFileName : '选择 .kdbx 文件') }}</span><input ref="keePassFileInput" type="file" accept=".kdbx,application/octet-stream" aria-label="KeePass 数据库文件" @change="selectKeePassDatabase" /></label><small>浏览器不会保存文件内容或可写句柄；Service Worker 重启后必须重新选择。</small></div>
-        <div class="field field-wide"><span>密钥文件（可选）</span><label class="file-action provider-file-action secondary"><m3e-icon name="key"></m3e-icon><span>{{ keePassKeyFile?.name || '选择 .key / .keyx / XML / 二进制密钥文件' }}</span><input ref="keePassKeyFileInput" type="file" aria-label="KeePass 密钥文件" @change="selectKeePassKeyFile" /></label><small>兼容 KeePass XML v1/v2、32 字节二进制、64 位十六进制文本及任意文件哈希模式。</small></div>
-        <label class="field field-wide"><span>数据库密码（可留空）</span><div class="password-field"><input v-model="keePassForm.password" :type="revealKeePassPassword ? 'text' : 'password'" autocomplete="current-password" /><button type="button" @click="revealKeePassPassword = !revealKeePassPassword">{{ revealKeePassPassword ? '隐藏' : '显示' }}</button></div><small>不限制长度；仅密钥文件或数据库本身使用空密码时可留空。</small></label>
+        <div class="field"><span>当前保护方式</span><div class="protection-preview" aria-live="polite"><m3e-icon :name="keePassKeyFile || keePassForm.keyFileConfigured ? 'key' : 'password'"></m3e-icon><strong>{{ keePassProtectionPreview }}</strong></div><small>密码允许留空；数据库必须与密码和密钥文件组合匹配。</small></div>
+
+        <template v-if="keePassForm.sourceMode === 'local-file'">
+          <div class="field field-wide"><span>KeePass 数据库文件 *</span><label class="file-action provider-file-action"><m3e-icon name="folder_open"></m3e-icon><span>{{ keePassDatabaseFile?.name || (keePassForm.currentFileName ? '重新选择 ' + keePassForm.currentFileName : '选择 .kdbx 文件') }}</span><input ref="keePassFileInput" type="file" accept=".kdbx,application/octet-stream" aria-label="KeePass 数据库文件" @change="selectKeePassDatabase" /></label><small>浏览器不会保存文件内容或可写句柄；后台重启后需要重新选择。</small></div>
+        </template>
+        <template v-else>
+          <label class="field"><span>WebDAV 地址</span><input v-model="keePassForm.baseUrl" autocomplete="off" placeholder="https://dav.example.com/files" /></label>
+          <label class="field"><span>用户名</span><input v-model="keePassForm.username" autocomplete="username" /></label>
+          <label class="field"><span>WebDAV 密码</span><input v-model="keePassForm.webDavPassword" type="password" autocomplete="current-password" :placeholder="keePassForm.webDavPasswordConfigured ? '已加密保存；留空保持不变' : ''" /></label>
+          <label class="field"><span>远端 .kdbx 位置</span><input v-model="keePassForm.remotePath" autocomplete="off" placeholder="vaults/main.kdbx" /></label>
+        </template>
+
+        <div class="field field-wide"><span>密钥文件（可选）</span><label class="file-action provider-file-action secondary"><m3e-icon name="key"></m3e-icon><span>{{ keePassKeyFile?.name || (keePassForm.sourceMode === 'webdav' && keePassForm.keyFileConfigured ? '已加密保存；选择新文件可替换' : '选择 .key / .keyx / XML / 二进制密钥文件') }}</span><input ref="keePassKeyFileInput" type="file" aria-label="密钥文件（可选）" @change="selectKeePassKeyFile" /></label><small>兼容 KeePass XML v1/v2、32 字节二进制、64 位十六进制文本及任意文件哈希模式。</small></div>
+        <label class="field field-wide"><span>数据库密码（可留空）</span><div class="password-field"><input v-model="keePassForm.password" :type="revealKeePassPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="keePassForm.sourceMode === 'webdav' && keePassForm.databaseCredentialStored ? '已加密保存；留空保持不变' : ''" /><button type="button" @click="revealKeePassPassword = !revealKeePassPassword">{{ revealKeePassPassword ? '隐藏' : '显示' }}</button></div><small>长度不受限制；编辑远端来源时留空沿用现有加密凭据。</small></label>
         <label class="favorite-row field-wide"><input v-model="keePassForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
         <div class="provider-boundaries field-wide" aria-label="KeePass 浏览器能力边界">
-          <div class="boundary-row"><m3e-icon name="info"></m3e-icon><span>浏览器只在内存编辑，需导出覆盖原 KDBX；OneDrive / Google Drive 文件请先下载；Twofish 需先转换为 AES-256。</span></div>
+          <div class="boundary-row"><m3e-icon name="info"></m3e-icon><span>{{ keePassForm.sourceMode === 'webdav' ? '远端写入使用精确 ETag；字段或结构冲突会停止覆盖，并保留本机加密工作副本。' : '本地文件只在内存编辑，需要导出覆盖原 KDBX；Twofish 需先转换为 AES-256。' }}</span></div>
         </div>
+        <p v-if="keePassDialogNotice" class="keepass-dialog-notice field-wide" role="status" aria-live="polite"><m3e-icon name="check_circle"></m3e-icon><span>{{ keePassDialogNotice }}</span></p>
         <p v-if="keePassError" class="form-error field-wide" role="alert">{{ keePassError }}</p>
-        <footer class="provider-actions field-wide"><m3e-button variant="text" type="button" :disabled="keePassBusy === 'open'" @click="closeKeePassDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(keePassBusy)">{{ keePassBusy === 'open' ? '正在验证并解锁…' : editingKeePassId ? '重新选择并解锁' : '解锁并连接' }}</m3e-button></footer>
+        <footer class="provider-actions field-wide"><m3e-button variant="text" type="button" :disabled="keePassBusy === 'open'" @click="closeKeePassDialog">取消</m3e-button><m3e-button v-if="keePassForm.sourceMode === 'webdav'" variant="tonal" type="button" :disabled="Boolean(keePassBusy)" @click="testKeePassWebDav">{{ keePassBusy === 'test' ? '测试中…' : '测试连接' }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(keePassBusy)">{{ keePassBusy === 'open' ? '正在验证并解锁…' : keePassForm.sourceMode === 'webdav' ? editingKeePassId ? '保存并重新连接' : '连接并解锁' : editingKeePassId ? '重新选择并解锁' : '解锁并连接' }}</m3e-button></footer>
       </form>
     </section></div>
 

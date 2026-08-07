@@ -181,10 +181,10 @@ test("KeePass UI unlocks with an empty password and key file, exposes dirty stat
     });
 
     await launched.manager.getByRole("button", { name: "密码源" }).click();
-    await launched.manager.getByRole("button", { name: "打开 KeePass 文件" }).click();
-    const dialog = launched.manager.getByRole("dialog", { name: "打开 KeePass 文件" });
+    await launched.manager.getByRole("button", { name: "连接 KeePass" }).click();
+    const dialog = launched.manager.getByRole("dialog", { name: "连接 KeePass" });
     await dialog.getByLabel("KeePass 数据库文件").setInputFiles({ name: "key-file-fixture.kdbx", mimeType: "application/octet-stream", buffer: Buffer.from(database) });
-    await dialog.getByLabel("KeePass 密钥文件").setInputFiles({ name: "fixture.key", mimeType: "application/octet-stream", buffer: Buffer.from(keyFile) });
+    await dialog.getByLabel("密钥文件（可选）").setInputFiles({ name: "fixture.key", mimeType: "application/octet-stream", buffer: Buffer.from(keyFile) });
     await expect(dialog.getByText("仅密钥文件", { exact: true })).toBeVisible();
     await dialog.getByLabel("显示名称").fill("KeePass Key File");
     await dialog.getByRole("button", { name: "解锁并连接" }).click();

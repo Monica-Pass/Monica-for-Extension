@@ -134,6 +134,113 @@ describe("KeePass remote session service", () => {
     expect(remote.testConnection).toHaveBeenCalledOnce();
   });
 
+  it("reports a manager-safe remote lifecycle without exposing KDBX or WebDAV metadata", async () => {
+    const bytes = await buildKeePassFixture({
+      password: "database password",
+      entries: [{ title: "Private status login", protectedFields: { Password: "private status secret" } }]
+    });
+    const records = new Map<string, KeePassRemoteWorkingCopyRecord>();
+    const provider = new KeePassProvider();
+    const service = new KeePassRemoteSessionService(
+      provider,
+      new MemoryKeePassWorkingCopyStorage(records),
+      () => client(bytes)
+    );
+    const opened = await service.open(account(), {
+      baseUrl: "http://127.0.0.1:8787/dav/demo",
+      username: "private-status-user",
+      webDavPassword: "private-status-webdav-password",
+      remotePath: "vaults/private-status.kdbx",
+      databasePassword: "database password"
+    });
+    const remoteAccount = {
+      ...account(),
+      config: {
+        ...opened.accountConfig,
+        remoteLastErrorCode: "timeout",
+        remoteLastErrorRetryable: true,
+        remoteLastErrorAt: "2026-08-07T10:00:00.000Z"
+      }
+    };
+
+    await expect(service.managerStatus(remoteAccount)).resolves.toEqual({
+      providerId: remoteAccount.id,
+      sourceMode: "webdav",
+      sessionState: "unlocked",
+      workingCopyState: "ready",
+      publicationState: "clean",
+      remoteBaselineState: "available",
+      revision: 1,
+      updatedAt: expect.any(String),
+      lastError: {
+        code: "timeout",
+        retryable: true,
+        at: "2026-08-07T10:00:00.000Z"
+      }
+    });
+
+    provider.lockAccount(remoteAccount.id);
+    const restorable = await service.managerStatus(remoteAccount);
+    expect(restorable.sessionState).toBe("restorable");
+    const serialized = JSON.stringify(restorable);
+    for (const secret of [
+      "private-status-user",
+      "private-status-webdav-password",
+      "database password",
+      "private status secret",
+      "etag-1",
+      "a".repeat(64)
+    ]) expect(serialized).not.toContain(secret);
+  });
+
+  it("distinguishes a missing remote working copy and a durable result awaiting confirmation", async () => {
+    const missingService = new KeePassRemoteSessionService(new KeePassProvider(), new MemoryKeePassWorkingCopyStorage());
+    await expect(missingService.managerStatus({
+      ...account(),
+      config: { sourceMode: "webdav", databasePassword: "database password" }
+    })).resolves.toEqual({
+      providerId: "keepass-remote",
+      sourceMode: "webdav",
+      sessionState: "reconnect-required",
+      workingCopyState: "missing",
+      publicationState: "clean",
+      remoteBaselineState: "missing"
+    });
+
+    const record: KeePassRemoteWorkingCopyRecord = {
+      providerId: "keepass-remote",
+      baseBytes: new Uint8Array([1]),
+      workingBytes: new Uint8Array([2]),
+      baseEtag: '"private-etag"',
+      baseSha256: "a".repeat(64),
+      workingSha256: "b".repeat(64),
+      updatedAt: "2026-08-07T10:10:00.000Z",
+      revision: 7
+    };
+    const storage = {
+      read: vi.fn(async () => ({ ...record, baseBytes: record.baseBytes.slice(), workingBytes: record.workingBytes.slice() })),
+      readReceipt: vi.fn(),
+      hasReceipts: vi.fn(async () => true),
+      save: vi.fn(),
+      deleteReceipt: vi.fn(),
+      delete: vi.fn()
+    };
+    const pendingService = new KeePassRemoteSessionService(new KeePassProvider(), storage);
+    await expect(pendingService.managerStatus({
+      ...account(),
+      config: { sourceMode: "webdav", databasePassword: "database password" }
+    })).resolves.toEqual({
+      providerId: "keepass-remote",
+      sourceMode: "webdav",
+      sessionState: "restorable",
+      workingCopyState: "ready",
+      publicationState: "pending-confirmation",
+      remoteBaselineState: "available",
+      revision: 7,
+      updatedAt: "2026-08-07T10:10:00.000Z"
+    });
+  });
+
   it("atomically persists a dirty KDBX snapshot and durable operation receipt", async () => {
     const bytes = await buildKeePassFixture({ password: "database password" });
     const records = new Map<string, KeePassRemoteWorkingCopyRecord>();

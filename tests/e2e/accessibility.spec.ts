@@ -107,8 +107,8 @@ test("auth and unlocked manager have no serious axe violations", async ({}, test
     await expect(launched.page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toBeVisible();
     await expectA11y(launched.page, "WebDAV dialog");
     await launched.page.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
-    await launched.page.getByRole("button", { name: "打开 KeePass 文件" }).click();
-    await expect(launched.page.getByRole("dialog", { name: "打开 KeePass 文件" })).toBeVisible();
+    await launched.page.getByRole("button", { name: "连接 KeePass" }).click();
+    await expect(launched.page.getByRole("dialog", { name: "连接 KeePass" })).toBeVisible();
     await expectA11y(launched.page, "KeePass dialog");
   } finally {
     await closeContext(context, profileDir);

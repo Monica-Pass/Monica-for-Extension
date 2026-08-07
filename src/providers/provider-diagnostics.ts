@@ -11,6 +11,7 @@ export interface ProviderDiagnosticDetails {
   conflicts?: number;
   warnings?: number;
   message?: string;
+  retryable?: boolean;
 }
 
 const SENSITIVE_KEY = /(?:pass(?:word)?|token|secret|key|authorization|cookie|credential|session|email|user(?:name)?|url|endpoint|host|account|providerId)/i;
@@ -39,7 +40,7 @@ export function createProviderDiagnostic(
     outcome: details.outcome || (transport?.code === "cancelled" ? "cancelled" : error ? "failure" : "success"),
     code: details.code || transport?.code || (error ? "unknown" : "ok"),
     status: transport?.status,
-    retryable: transport?.retryable || false,
+    retryable: details.retryable ?? transport?.retryable ?? false,
     attempts: transport?.attempts || 1,
     retryAfterMs: transport?.retryAfterMs,
     durationMs: details.durationMs,

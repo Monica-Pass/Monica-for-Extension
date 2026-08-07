@@ -3,7 +3,7 @@ import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, Provider
 import type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture } from "../providers/mdbx2/native-contract";
 import type { Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus } from "../providers/mdbx2/mdbx2-batch-transfer-coordinator";
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
-import type { KeePassRemoteProbeResult, KeePassWebDavOpenInput } from "../providers/keepass/keepass-remote-session";
+import type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult, KeePassWebDavOpenInput } from "../providers/keepass/keepass-remote-session";
 import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
 import type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
@@ -189,7 +189,9 @@ export interface KeePassOpenInput {
   isDefaultSaveTarget?: boolean;
 }
 
-export interface KeePassWebDavTestInput extends Pick<KeePassWebDavOpenInput, "baseUrl" | "username" | "webDavPassword" | "remotePath"> {}
+export interface KeePassWebDavTestInput extends Pick<KeePassWebDavOpenInput, "baseUrl" | "username" | "webDavPassword" | "remotePath"> {
+  providerId?: string;
+}
 
 export interface KeePassRemoteOpenInput extends KeePassWebDavOpenInput {
   providerId?: string;
@@ -323,6 +325,7 @@ export type ExtensionRequest =
   | { type: "KEEPASS_WEBDAV_TEST"; input: KeePassWebDavTestInput }
   | { type: "KEEPASS_WEBDAV_OPEN"; input: KeePassRemoteOpenInput }
   | { type: "KEEPASS_REMOTE_RESTORE"; providerId: string }
+  | { type: "KEEPASS_REMOTE_STATUS"; providerId: string }
   | { type: "KEEPASS_STATUS"; providerId: string }
   | { type: "KEEPASS_GROUP_LIST"; providerId: string; includeRecycleBin?: boolean; pageSize?: number; cursor?: string }
   | { type: "KEEPASS_GROUP_CREATE"; providerId: string; operationId: string; name: string; parentGroupId?: string }
@@ -351,5 +354,5 @@ export type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2Co
 export type { Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus };
 export type { KeePassGroupMutationResult, KeePassGroupPage };
 export type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult };
-export type { KeePassRemoteProbeResult };
+export type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

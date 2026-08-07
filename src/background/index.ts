@@ -20,7 +20,7 @@ import { KeePassDurableSyncCoordinator } from "../providers/keepass/keepass-dura
 import { KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG } from "../providers/keepass/keepass-receipt-crypto";
 import { KeePassGroupError, type KeePassGroupMutationResult } from "../providers/keepass/keepass-groups";
 import { KeePassHistoryError, type KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
-import { keePassMutationIntentSha256, KeePassRemoteSessionError, KeePassRemoteSessionService } from "../providers/keepass/keepass-remote-session";
+import { keePassMutationIntentSha256, keePassRemoteFailureInfo, KeePassRemoteSessionError, KeePassRemoteSessionService, type KeePassRemoteFailureInfo } from "../providers/keepass/keepass-remote-session";
 import { KeePassWebDavError } from "../providers/keepass/keepass-webdav-client";
 import {
   IndexedDbKeePassWorkingCopyStorage,
@@ -1061,6 +1061,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "KEEPASS_WEBDAV_TEST": {
       assertManagerPage(sender);
       const input = { ...request.input };
+      const existing = input.providerId ? await service.getProvider(input.providerId) : undefined;
+      if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      if (!input.webDavPassword && existing?.config.sourceMode === "webdav" && typeof existing.config.webDavPassword === "string") {
+        input.webDavPassword = existing.config.webDavPassword;
+      }
       request.input.webDavPassword = "";
       try {
         return await keePassRemoteSessions.probe(input);
@@ -1073,6 +1078,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
       const input = { ...request.input };
+      if (existing?.config.sourceMode === "webdav") {
+        if (!input.webDavPassword && typeof existing.config.webDavPassword === "string") input.webDavPassword = existing.config.webDavPassword;
+        if (!input.databasePassword && typeof existing.config.databasePassword === "string") input.databasePassword = existing.config.databasePassword;
+        if (input.keyFile === undefined && typeof existing.config.keyFile === "string") input.keyFile = existing.config.keyFile;
+      }
       request.input.webDavPassword = "";
       request.input.databasePassword = "";
       request.input.keyFile = undefined;
@@ -1130,6 +1140,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const account = await requireKeePassAccountRecord(request.providerId);
       return ensureKeePassSession(account, true);
+    }
+    case "KEEPASS_REMOTE_STATUS": {
+      assertManagerPage(sender);
+      const account = await requireKeePassAccountRecord(request.providerId);
+      return keePassRemoteSessions.managerStatus(account);
     }
     case "KEEPASS_OPEN": {
       assertManagerPage(sender);
@@ -1352,19 +1367,34 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           durationMs: Date.now() - startedAt,
           message: result.conflicts.length ? `发现 ${result.conflicts.length} 个同步冲突。` : "同步完成。"
         }));
+        if (account.kind === "keepass" && account.config.sourceMode === "webdav") {
+          await persistKeePassRemoteFailure(account.id, undefined);
+        }
         return { warnings: result.warnings, conflicts: result.conflicts.length };
       } catch (error) {
         if (account.kind === "keepass" && account.config.sourceMode === "webdav") {
           keePassProvider.lockAccount(account.id);
           clearKeePassPendingPersistence(account.id);
         }
-        const diagnostic = createProviderDiagnostic(account.id, account.kind, error, new Date().toISOString(), { operation: "sync", durationMs: Date.now() - startedAt });
+        const remoteFailure = account.kind === "keepass" && account.config.sourceMode === "webdav"
+          ? keePassRemoteFailureInfo(error)
+          : undefined;
+        const diagnostic = createProviderDiagnostic(account.id, account.kind, error, new Date().toISOString(), {
+          operation: "sync",
+          durationMs: Date.now() - startedAt,
+          code: remoteFailure?.code,
+          retryable: remoteFailure?.retryable
+        });
         if (diagnostic.outcome !== "cancelled") {
           await service.markProviderSyncFailure(account.id, diagnostic.message);
-          const latest = await service.getProvider(account.id);
-          if (latest) await service.upsertProvider({ ...latest, lastError: diagnostic.message });
+          if (remoteFailure) await persistKeePassRemoteFailure(account.id, remoteFailure, diagnostic.message);
+          else {
+            const latest = await service.getProvider(account.id);
+            if (latest) await service.upsertProvider({ ...latest, lastError: diagnostic.message });
+          }
         }
         await recordProviderDiagnosticIfUnlocked(diagnostic);
+        if (remoteFailure && remoteFailure.code !== "unknown") throw error;
         throw new Error(diagnostic.message);
       } finally {
         activeProviderSyncs.delete(account.id);
@@ -2463,6 +2493,21 @@ function sameKeePassAccountConfig(left: Record<string, unknown>, right: Record<s
     .filter(([, entry]) => entry !== undefined)
     .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)));
   return normalize(left) === normalize(right);
+}
+
+async function persistKeePassRemoteFailure(providerId: string, failure?: KeePassRemoteFailureInfo, message?: string): Promise<void> {
+  const latest = await service.getProvider(providerId);
+  if (!latest || latest.kind !== "keepass" || latest.config.sourceMode !== "webdav") return;
+  const config = { ...latest.config };
+  delete config.remoteLastErrorCode;
+  delete config.remoteLastErrorRetryable;
+  delete config.remoteLastErrorAt;
+  if (failure) {
+    config.remoteLastErrorCode = failure.code;
+    config.remoteLastErrorRetryable = failure.retryable;
+    config.remoteLastErrorAt = new Date().toISOString();
+  }
+  await service.upsertProvider({ ...latest, config, lastError: message });
 }
 
 async function requireKeePassHistoryTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {

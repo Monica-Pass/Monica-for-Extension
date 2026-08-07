@@ -51,8 +51,8 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
 
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
-    await page.getByRole("button", { name: "打开 KeePass 文件" }).click();
-    const sourceDialog = page.getByRole("dialog", { name: "打开 KeePass 文件" });
+    await page.getByRole("button", { name: "连接 KeePass" }).click();
+    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
     await sourceDialog.getByLabel("显示名称").fill("KeePass Group Source");
     await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
       name: "group-fixture.kdbx",
