@@ -9,7 +9,20 @@ import {
   type KeePassWebDavSnapshot
 } from "./keepass-webdav-client";
 import { KeePassProvider, type KeePassSessionSummary } from "./keepass-provider";
-import type { KeePassWorkingCopyStorage } from "./keepass-working-copy-store";
+import {
+  KeePassWorkingCopyStoreError,
+  type KeePassDurableMutationKind,
+  type KeePassDurableMutationReceipt,
+  type KeePassWorkingCopyStorage
+} from "./keepass-working-copy-store";
+import {
+  KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG,
+  KeePassReceiptCryptoError,
+  createKeePassCacheEncryptionKey,
+  hasKeePassCacheEncryptionKey,
+  openKeePassDurableReceipt,
+  sealKeePassDurableReceipt
+} from "./keepass-receipt-crypto";
 
 export const KEEPASS_KEY_FILE_MAX_BYTES = 8 * 1024 * 1024;
 const KEEPASS_KEY_FILE_MAX_BASE64_LENGTH = Math.ceil(KEEPASS_KEY_FILE_MAX_BYTES / 3) * 4 + 8;
@@ -33,11 +46,20 @@ export interface KeePassRemoteSessionResult {
   accountConfig: Record<string, unknown>;
 }
 
+export interface KeePassRemotePersistenceResult {
+  revision: number;
+  workingSha256: string;
+  accountConfig: Record<string, unknown>;
+}
+
 export type KeePassRemoteSessionErrorCode =
   | "remote-provider-invalid"
   | "remote-working-copy-missing"
   | "remote-credential-missing"
-  | "remote-key-file-invalid";
+  | "remote-key-file-invalid"
+  | "remote-operation-reused"
+  | "remote-cache-key-missing"
+  | "remote-receipt-invalid";
 
 export class KeePassRemoteSessionError extends Error {
   constructor(readonly code: KeePassRemoteSessionErrorCode, message: string) {
@@ -55,6 +77,8 @@ export interface KeePassRemoteFileClient {
 export type KeePassRemoteFileClientFactory = (config: KeePassWebDavConfig) => KeePassRemoteFileClient;
 
 export class KeePassRemoteSessionService {
+  private readonly persistenceQueues = new Map<string, Promise<void>>();
+
   constructor(
     private readonly provider: KeePassProvider,
     private readonly storage: KeePassWorkingCopyStorage,
@@ -131,15 +155,7 @@ export class KeePassRemoteSessionService {
       });
       return {
         session,
-        accountConfig: {
-          ...account.config,
-          sourceMode: "webdav",
-          workingCopyRevision: record.revision,
-          remoteEtag: record.baseEtag,
-          remoteLastModified: record.baseLastModified,
-          remoteSha256: record.baseSha256,
-          workingSha256: record.workingSha256
-        }
+        accountConfig: await this.accountConfigForRecord(account, record)
       };
     } finally {
       keyFile?.fill(0);
@@ -148,10 +164,152 @@ export class KeePassRemoteSessionService {
     }
   }
 
+  async readDurableReceipt(
+    account: ProviderAccount,
+    operationId: string,
+    kind: KeePassDurableMutationKind,
+    intentSha256: string
+  ): Promise<KeePassDurableMutationReceipt | undefined> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    const envelope = await this.storage.readReceipt(account.id, operationId);
+    if (!envelope) return undefined;
+    const receipt = await this.openReceipt(account, envelope);
+    if (receipt.kind !== kind || receipt.intentSha256 !== intentSha256) {
+      throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 操作标识已经用于其他持久操作。");
+    }
+    return receipt;
+  }
+
+  async readAnyDurableReceipt(account: ProviderAccount, operationId: string): Promise<KeePassDurableMutationReceipt | undefined> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    const envelope = await this.storage.readReceipt(account.id, operationId);
+    return envelope ? this.openReceipt(account, envelope) : undefined;
+  }
+
+  async deleteDurableReceipt(account: ProviderAccount, operationId: string): Promise<void> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return;
+    await this.storage.deleteReceipt(account.id, operationId);
+  }
+
+  async reconcileAccountConfig(account: ProviderAccount): Promise<Record<string, unknown>> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") throw invalidProvider();
+    const record = await this.storage.read(account.id);
+    if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+    try {
+      return await this.accountConfigForRecord(account, record);
+    } finally {
+      record.baseBytes.fill(0);
+      record.workingBytes.fill(0);
+    }
+  }
+
+  async persistWorkingCopy(
+    account: ProviderAccount,
+    receipt?: KeePassDurableMutationReceipt
+  ): Promise<KeePassRemotePersistenceResult | undefined> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    if (receipt && receipt.providerId !== account.id) {
+      throw new KeePassRemoteSessionError("remote-provider-invalid", "KeePass 持久操作与密码源不一致。");
+    }
+    return this.runPersistenceExclusive(account.id, async () => {
+      const record = await this.storage.read(account.id);
+      if (!record) {
+        throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+      }
+      let bytes: Uint8Array | undefined;
+      try {
+        bytes = await this.provider.snapshotFile(account.id);
+        const workingSha256 = await sha256Hex(bytes);
+        const encryptedReceipt = receipt ? await sealKeePassDurableReceipt(account, receipt) : undefined;
+        const saved = await this.storage.save({
+          providerId: account.id,
+          baseBytes: record.baseBytes,
+          workingBytes: bytes,
+          baseEtag: record.baseEtag,
+          baseLastModified: record.baseLastModified,
+          baseSha256: record.baseSha256,
+          workingSha256,
+          updatedAt: new Date().toISOString()
+        }, record.revision, encryptedReceipt);
+        return {
+          revision: saved.revision,
+          workingSha256,
+          accountConfig: await this.accountConfigForRecord(account, saved)
+        };
+      } catch (cause) {
+        if (cause instanceof KeePassWorkingCopyStoreError && cause.code === "operation-reused") {
+          throw new KeePassRemoteSessionError("remote-operation-reused", cause.message);
+        }
+        if (cause instanceof KeePassReceiptCryptoError) throw this.receiptError(cause);
+        throw cause;
+      } finally {
+        bytes?.fill(0);
+        record.baseBytes.fill(0);
+        record.workingBytes.fill(0);
+      }
+    });
+  }
+
   async remove(providerId: string): Promise<void> {
     this.provider.lockAccount(providerId);
     await this.storage.delete(providerId);
   }
+
+  private async runPersistenceExclusive<T>(providerId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.persistenceQueues.get(providerId) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.persistenceQueues.set(providerId, queued);
+    await previous;
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.persistenceQueues.get(providerId) === queued) this.persistenceQueues.delete(providerId);
+    }
+  }
+
+  private async accountConfigForRecord(account: ProviderAccount, record: { revision: number; baseEtag?: string; baseLastModified?: string; baseSha256: string; workingSha256: string }): Promise<Record<string, unknown>> {
+    let cacheEncryptionKey = hasKeePassCacheEncryptionKey(account)
+      ? String(account.config[KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG])
+      : undefined;
+    if (!cacheEncryptionKey) {
+      if (await this.storage.hasReceipts(account.id)) {
+        throw new KeePassRemoteSessionError("remote-cache-key-missing", "KeePass 本机缓存加密密钥缺失，无法安全读取已有持久操作。");
+      }
+      cacheEncryptionKey = createKeePassCacheEncryptionKey();
+    }
+    return {
+      ...account.config,
+      sourceMode: "webdav",
+      [KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]: cacheEncryptionKey,
+      workingCopyRevision: record.revision,
+      remoteEtag: record.baseEtag,
+      remoteLastModified: record.baseLastModified,
+      remoteSha256: record.baseSha256,
+      workingSha256: record.workingSha256
+    };
+  }
+
+  private async openReceipt(account: ProviderAccount, envelope: Awaited<ReturnType<KeePassWorkingCopyStorage["readReceipt"]>> & {}): Promise<KeePassDurableMutationReceipt> {
+    try {
+      return await openKeePassDurableReceipt(account, envelope);
+    } catch (cause) {
+      if (cause instanceof KeePassReceiptCryptoError) throw this.receiptError(cause);
+      throw cause;
+    }
+  }
+
+  private receiptError(cause: KeePassReceiptCryptoError): KeePassRemoteSessionError {
+    return cause.code === "cache-key-missing"
+      ? new KeePassRemoteSessionError("remote-cache-key-missing", cause.message)
+      : new KeePassRemoteSessionError("remote-receipt-invalid", cause.message);
+  }
+}
+
+export async function keePassMutationIntentSha256(value: unknown): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(JSON.stringify(canonicalize(value))));
 }
 
 function normalizeRemoteConfig(input: Pick<KeePassWebDavOpenInput, "baseUrl" | "username" | "webDavPassword" | "remotePath">): KeePassWebDavConfig {
@@ -185,6 +343,9 @@ function remoteAccountConfig(
     remotePath: remote.remotePath,
     databasePassword,
     ...(keyFile ? { keyFile: bytesToBase64(keyFile) } : {}),
+    [KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]: hasKeePassCacheEncryptionKey(account)
+      ? account.config[KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]
+      : createKeePassCacheEncryptionKey(),
     workingCopyRevision: revision,
     remoteEtag: snapshot.etag,
     remoteLastModified: snapshot.lastModified,
@@ -217,4 +378,18 @@ function optionalStringConfig(account: ProviderAccount, key: string): string | u
 
 function invalidProvider(): KeePassRemoteSessionError {
   return new KeePassRemoteSessionError("remote-provider-invalid", "所选密码源不是远端 KeePass 数据库。");
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => [key, canonicalize(entry)]));
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
 }

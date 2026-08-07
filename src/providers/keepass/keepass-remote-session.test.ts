@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "../../core/model";
 import { buildKeePassFixture } from "./keepass-fixture";
 import { KeePassProvider } from "./keepass-provider";
-import { KeePassRemoteSessionService, type KeePassRemoteFileClient } from "./keepass-remote-session";
-import { MemoryKeePassWorkingCopyStorage, type KeePassRemoteWorkingCopyRecord } from "./keepass-working-copy-store";
+import { keePassMutationIntentSha256, KeePassRemoteSessionService, type KeePassRemoteFileClient } from "./keepass-remote-session";
+import {
+  type KeePassDurableMutationReceipt,
+  type KeePassEncryptedMutationReceipt,
+  MemoryKeePassWorkingCopyStorage,
+  type KeePassRemoteWorkingCopyRecord
+} from "./keepass-working-copy-store";
 
 describe("KeePass remote session service", () => {
   it("opens WebDAV KDBX and restores it through a new provider instance", async () => {
@@ -88,7 +93,10 @@ describe("KeePass remote session service", () => {
     const provider = new KeePassProvider();
     const service = new KeePassRemoteSessionService(provider, {
       read: vi.fn(async () => { throw new Error("IndexedDB unavailable"); }),
+      readReceipt: vi.fn(),
+      hasReceipts: vi.fn(),
       save: vi.fn(),
+      deleteReceipt: vi.fn(),
       delete: vi.fn()
     }, () => client(bytes));
 
@@ -124,6 +132,56 @@ describe("KeePass remote session service", () => {
       remotePath: "vaults/main.kdbx"
     })).resolves.toMatchObject({ reachable: true, file: { etag: '"etag-1"' } });
     expect(remote.testConnection).toHaveBeenCalledOnce();
+  });
+
+  it("atomically persists a dirty KDBX snapshot and durable operation receipt", async () => {
+    const bytes = await buildKeePassFixture({ password: "database password" });
+    const records = new Map<string, KeePassRemoteWorkingCopyRecord>();
+    const receipts = new Map<string, KeePassEncryptedMutationReceipt>();
+    const storage = new MemoryKeePassWorkingCopyStorage(records, receipts);
+    const provider = new KeePassProvider();
+    const service = new KeePassRemoteSessionService(provider, storage, () => client(bytes));
+    const opened = await service.open(account(), {
+      baseUrl: "http://127.0.0.1:8787/dav/demo",
+      username: "demo",
+      webDavPassword: "webdav secret",
+      remotePath: "vaults/main.kdbx",
+      databasePassword: "database password"
+    });
+    const remoteAccount = { ...account(), config: opened.accountConfig };
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const group = provider.createGroup(remoteAccount, operationId, "Persisted Group");
+    const intentSha256 = await keePassMutationIntentSha256({ kind: "group-create", name: "Persisted Group" });
+    const receipt: KeePassDurableMutationReceipt = {
+      providerId: remoteAccount.id,
+      operationId,
+      kind: "group-create",
+      intentSha256,
+      completedAt: "2026-08-07T06:00:00.000Z",
+      result: {
+        type: "group",
+        changed: group.changed,
+        groupUuid: provider.groupUuidForHandle(remoteAccount.id, group.group.groupId)
+      }
+    };
+
+    const persisted = await service.persistWorkingCopy(remoteAccount, receipt);
+    expect(persisted).toMatchObject({ revision: 2, accountConfig: { workingCopyRevision: 2 } });
+    expect(provider.summarize(remoteAccount.id).dirty).toBe(true);
+    const encrypted = await storage.readReceipt(remoteAccount.id, operationId);
+    expect(encrypted).toMatchObject({ version: 1, providerId: remoteAccount.id, operationId, cipher: "AES-256-GCM" });
+    expect(JSON.stringify(encrypted)).not.toContain("group-uuid");
+    const record = await storage.read(remoteAccount.id);
+    expect(record?.workingSha256).not.toBe(record?.baseSha256);
+
+    provider.lock();
+    const nextProvider = new KeePassProvider();
+    const nextService = new KeePassRemoteSessionService(nextProvider, new MemoryKeePassWorkingCopyStorage(records, receipts));
+    await nextService.restore({ ...remoteAccount, config: persisted!.accountConfig });
+    const durable = await nextService.readDurableReceipt(remoteAccount, operationId, "group-create", intentSha256);
+    expect(durable).toEqual(receipt);
+    expect(nextProvider.groupResultFromUuid(remoteAccount, receipt.result.type === "group" ? receipt.result.groupUuid : "", true).group.name).toBe("Persisted Group");
+    await expect(nextService.readDurableReceipt(remoteAccount, operationId, "group-create", "f".repeat(64))).rejects.toMatchObject({ code: "remote-operation-reused" });
   });
 });
 

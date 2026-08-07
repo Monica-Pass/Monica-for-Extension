@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type KeePassEncryptedMutationReceipt,
   KeePassWorkingCopyStoreError,
   MemoryKeePassWorkingCopyStorage,
   type KeePassRemoteWorkingCopyRecord
@@ -39,6 +40,29 @@ describe("KeePass remote working-copy storage", () => {
     await expect(storage.save({ ...fixture(), baseSha256: "invalid" }, 0)).rejects.toMatchObject({ code: "record-invalid" });
     await expect(storage.save({ ...fixture(), providerId: "contains space" }, 0)).rejects.toMatchObject({ code: "record-invalid" });
   });
+
+  it("stores a bounded durable receipt with the working copy and rejects changed intent", async () => {
+    const records = new Map<string, KeePassRemoteWorkingCopyRecord>();
+    const receipts = new Map<string, KeePassEncryptedMutationReceipt>();
+    const first = new MemoryKeePassWorkingCopyStorage(records, receipts);
+    const durable = receipt();
+    await first.save(fixture(), 0, durable);
+
+    const second = new MemoryKeePassWorkingCopyStorage(records, receipts);
+    await expect(second.readReceipt(durable.providerId, durable.operationId)).resolves.toEqual(durable);
+    await second.save({ ...fixture(), workingBytes: new Uint8Array([7]) }, 1, durable);
+    await expect(second.save({ ...fixture(), workingBytes: new Uint8Array([8]) }, 2, {
+      ...durable,
+      intentTag: "c".repeat(64)
+    })).rejects.toMatchObject({ code: "operation-reused" });
+
+    await expect(second.hasReceipts(durable.providerId)).resolves.toBe(true);
+    await second.deleteReceipt(durable.providerId, durable.operationId);
+    await expect(second.hasReceipts(durable.providerId)).resolves.toBe(false);
+    await second.save({ ...fixture(), workingBytes: new Uint8Array([9]) }, 2, durable);
+    await second.delete(durable.providerId);
+    await expect(second.readReceipt(durable.providerId, durable.operationId)).resolves.toBeUndefined();
+  });
 });
 
 function fixture() {
@@ -51,5 +75,18 @@ function fixture() {
     baseSha256: "a".repeat(64),
     workingSha256: "b".repeat(64),
     updatedAt: "2026-08-07T04:00:00.000Z"
+  };
+}
+
+function receipt(): KeePassEncryptedMutationReceipt {
+  return {
+    version: 1,
+    providerId: "keepass-remote-1",
+    operationId: "11111111-1111-4111-8111-111111111111",
+    intentTag: "d".repeat(64),
+    completedAt: "2026-08-07T06:00:00.000Z",
+    cipher: "AES-256-GCM",
+    iv: "AAAAAAAAAAAAAAAA",
+    ciphertext: "AAAAAAAAAAAAAAAAAAAAAA=="
   };
 }

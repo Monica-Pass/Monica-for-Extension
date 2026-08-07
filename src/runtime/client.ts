@@ -133,7 +133,7 @@ export const vaultClient = {
   sendProviderAttachmentChunk: (providerId: string, transferId: string, offset: number, bytes: Uint8Array) => send<ProviderAttachmentUploadChunkResult>({ type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId, transferId, offset, dataBase64: bytesToBase64(bytes) }),
   finishProviderAttachmentUpload: (providerId: string, itemId: string, transferId: string) => send<ProviderAttachmentMutationResult>({ type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId }),
   abortProviderAttachmentUpload: (providerId: string, transferId: string) => send<boolean>({ type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId, transferId }),
-  deleteProviderAttachment: (providerId: string, itemId: string, attachmentId: string) => send<ProviderAttachmentMutationResult>({ type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, confirmed: true }),
+  deleteProviderAttachment: (providerId: string, itemId: string, attachmentId: string, operationId = crypto.randomUUID()) => send<ProviderAttachmentMutationResult>({ type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, operationId, confirmed: true }),
   openKeePass: (input: KeePassOpenInput) => send<{ account: ProviderAccount; session: KeePassSessionSummary }>({ type: "KEEPASS_OPEN", input }),
   testKeePassWebDav: (input: KeePassWebDavTestInput) => send<KeePassRemoteProbeResult>({ type: "KEEPASS_WEBDAV_TEST", input }),
   openKeePassWebDav: (input: KeePassRemoteOpenInput) => send<{ account: ProviderAccount; session: KeePassSessionSummary }>({ type: "KEEPASS_WEBDAV_OPEN", input }),

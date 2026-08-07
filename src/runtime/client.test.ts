@@ -239,6 +239,7 @@ describe("extension runtime client", () => {
     const attachmentId = "11111111-1111-4111-8111-111111111111";
     const transferId = "22222222-2222-4222-8222-222222222222";
     const readHandle = "33333333-3333-4333-8333-333333333333";
+    const operationId = "44444444-4444-4444-8444-444444444444";
 
     await vaultClient.listProviderAttachments(providerId, itemId, { pageSize: 20, cursor: "next" });
     await vaultClient.beginProviderAttachmentRead(providerId, itemId, attachmentId);
@@ -248,7 +249,7 @@ describe("extension runtime client", () => {
     await vaultClient.sendProviderAttachmentChunk(providerId, transferId, 0, new Uint8Array([1, 2]));
     await vaultClient.finishProviderAttachmentUpload(providerId, itemId, transferId);
     await vaultClient.abortProviderAttachmentUpload(providerId, transferId);
-    await vaultClient.deleteProviderAttachment(providerId, itemId, attachmentId);
+    await vaultClient.deleteProviderAttachment(providerId, itemId, attachmentId, operationId);
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
       { type: "PROVIDER_ATTACHMENT_LIST", providerId, itemId, pageSize: 20, cursor: "next" },
@@ -259,7 +260,7 @@ describe("extension runtime client", () => {
       { type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId, transferId, offset: 0, dataBase64: "AQI=" },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId, transferId },
-      { type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, confirmed: true }
+      { type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, operationId, confirmed: true }
     ]);
   });
 

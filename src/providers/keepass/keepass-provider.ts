@@ -1,6 +1,6 @@
 import * as kdbxweb from "kdbxweb";
-import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
-import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
+import type { PendingMutation, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
+import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
 import {
   KEEPASS_ATTACHMENT_MAX_BYTES,
@@ -34,6 +34,8 @@ import {
   type KeePassHistoryPage,
   type KeePassHistoryRestoreResult
 } from "./keepass-history";
+
+const KEEPASS_PENDING_SYNC_LIMIT = 100;
 
 /**
  * What the settings UI is allowed to see. The open `Kdbx`, the master credential and the entry fields
@@ -176,9 +178,15 @@ export class KeePassProvider implements ProviderAdapter {
    */
   async exportFile(providerId: string): Promise<Uint8Array> {
     const session = this.requireSession(providerId);
-    const bytes = new Uint8Array(await session.database.save());
+    const bytes = await this.snapshotFile(providerId);
     session.dirty = false;
     return bytes;
+  }
+
+  /** Saves the current encrypted KDBX without changing whether remote or local edits are pending. */
+  async snapshotFile(providerId: string): Promise<Uint8Array> {
+    const session = this.requireSession(providerId);
+    return new Uint8Array(await session.database.save());
   }
 
   listGroups(
@@ -254,6 +262,17 @@ export class KeePassProvider implements ProviderAdapter {
       group: restoreKeePassGroup(session.database, groupUuid, targetParentUuid),
       changed: true
     }));
+  }
+
+  groupUuidForHandle(providerId: string, groupId: string): string {
+    return this.requireGroupHandle(providerId, groupId).groupUuid;
+  }
+
+  groupResultFromUuid(account: ProviderAccount, groupUuid: string, changed: boolean): KeePassGroupMutationResult {
+    const session = this.requireKeePassAccountSession(account);
+    const record = listKeePassGroupRecords(session.database, true).find((candidate) => candidate.uuid === groupUuid);
+    if (!record) throw new KeePassGroupError("keepass-group-result-missing", "KeePass 持久操作完成后无法读取目标分组。");
+    return { changed, group: this.groupSummary(account.id, session, record) };
   }
 
   listEntryHistory(
@@ -377,6 +396,17 @@ export class KeePassProvider implements ProviderAdapter {
     return true;
   }
 
+  attachmentEntryUuid(account: ProviderAccount, item: VaultItem): string {
+    return this.requireAttachmentEntry(account, item).entryUuid;
+  }
+
+  attachmentResultFromName(account: ProviderAccount, item: VaultItem, fileName: string, changed: boolean): { changed: boolean; attachment: ProviderAttachmentSummary } {
+    const { entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    const binary = entry.binaries.get(fileName);
+    if (!binary) throw new ProviderAttachmentError("attachment-not-found", "持久化的 KeePass 附件已经不存在，请刷新附件列表。");
+    return { changed, attachment: this.attachmentSummary(account.id, entryUuid, fileName, binary) };
+  }
+
   assertAttachmentTarget(account: ProviderAccount, item: VaultItem): void {
     this.requireAttachmentEntry(account, item);
   }
@@ -407,13 +437,26 @@ export class KeePassProvider implements ProviderAdapter {
     const session = this.requireSession(account.id);
     const scoped = context.localItems.filter((item) => referenceOf(item, account.id));
     const unrelated = context.localItems.filter((item) => !referenceOf(item, account.id));
+    const pendingByItemId = context.pendingMutations === undefined
+      ? undefined
+      : boundedPendingMutations(context.pendingMutations, account.id);
+    const acknowledgedByItemId = boundedAcknowledgedMutations(context.acknowledgedMutations || []);
 
     const localByUuid = new Map<string, VaultItem>();
     const creations: VaultItem[] = [];
+    const deferredCreations: VaultItem[] = [];
     for (const item of scoped) {
+      const acknowledged = acknowledgedByItemId.get(item.id);
+      if (acknowledged) {
+        localByUuid.set(acknowledged.remoteId, item);
+        continue;
+      }
       const remoteId = referenceOf(item, account.id)?.remoteId;
       if (remoteId) localByUuid.set(remoteId, item);
-      else if (!item.deletedAt) creations.push(item);
+      else if (!item.deletedAt) {
+        if (pendingByItemId && !pendingByItemId.has(item.id)) deferredCreations.push(item);
+        else creations.push(item);
+      }
     }
     const remoteByUuid = new Map(session.entries.items.map((item) => [remoteIdOf(item, account.id), item]));
 
@@ -425,8 +468,23 @@ export class KeePassProvider implements ProviderAdapter {
     for (const [entryUuid, local] of localByUuid) {
       const reference = referenceOf(local, account.id)!;
       const remote = remoteByUuid.get(entryUuid);
+      const acknowledged = acknowledgedByItemId.get(local.id);
+      if (acknowledged) {
+        if (acknowledged.remoteId !== entryUuid) throw new Error("KeePass 持久同步回执与条目标识不一致。");
+        if (acknowledged.operation === "delete") {
+          if (remote && !remote.deletedAt) throw new Error("KeePass 持久同步记录为已删除，但 KDBX 条目仍然处于活动状态。");
+          continue;
+        }
+        if (!remote) throw new Error("KeePass 持久同步记录缺少已提交的 KDBX 条目。");
+        continue;
+      }
       /** No stored fingerprint means no baseline, so the safe move is always to take the file's copy. */
       const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
+
+      if (pendingByItemId && !pendingByItemId.has(local.id) && (localChanged || local.deletedAt)) {
+        keepLocal.set(entryUuid, local);
+        continue;
+      }
 
       if (!remote) {
         if (local.deletedAt) continue;
@@ -472,7 +530,7 @@ export class KeePassProvider implements ProviderAdapter {
     this.reread(session, account.id);
 
     const warnings = [...session.summary.warnings];
-    const items = [...unrelated];
+    const items = [...unrelated, ...deferredCreations];
     const emitted = new Set<string>();
     for (const remote of session.entries.items) {
       const entryUuid = remoteIdOf(remote, account.id);
@@ -487,7 +545,9 @@ export class KeePassProvider implements ProviderAdapter {
       warnings.push(`有 ${session.entries.skipped.length} 个条目本版本无法解析，已原样保留、不会被改写。`);
     }
     if (session.dirty) {
-      warnings.push("KeePass 数据库的改动仅存在于内存中，请导出文件并覆盖原文件后再在 Monica Android 或 KeePassXC 中打开。");
+      warnings.push(account.config.sourceMode === "webdav"
+        ? "KeePass 数据库的改动已保存到本机工作副本，上传 WebDAV 后其他设备才能读取。"
+        : "KeePass 数据库的改动仅存在于内存中，请导出文件并覆盖原文件后再在 Monica Android 或 KeePassXC 中打开。");
     }
 
     return {
@@ -733,6 +793,32 @@ async function skippedSourceRecords(session: KeePassSession, providerId: string)
 function databaseIdOf(account: ProviderAccount): number {
   const value = Number(account.config.databaseId);
   return Number.isFinite(value) ? value : 0;
+}
+
+function boundedPendingMutations(input: PendingMutation[], providerId: string): Map<string, PendingMutation> {
+  if (!Array.isArray(input) || input.length > KEEPASS_PENDING_SYNC_LIMIT) throw new Error("KeePass 单批项目同步超过 100 条上限。");
+  const result = new Map<string, PendingMutation>();
+  for (const mutation of input) {
+    if (!mutation || mutation.providerId !== providerId || !mutation.id || !mutation.itemId || result.has(mutation.itemId)) {
+      throw new Error("KeePass 项目同步批次包含无效或重复操作。");
+    }
+    result.set(mutation.itemId, mutation);
+  }
+  return result;
+}
+
+function boundedAcknowledgedMutations(input: ProviderAcknowledgedMutation[]): Map<string, ProviderAcknowledgedMutation> {
+  if (!Array.isArray(input) || input.length > KEEPASS_PENDING_SYNC_LIMIT) throw new Error("KeePass 持久同步回执超过 100 条上限。");
+  const result = new Map<string, ProviderAcknowledgedMutation>();
+  const mutationIds = new Set<string>();
+  for (const mutation of input) {
+    if (!mutation || !mutation.mutationId || !mutation.itemId || !mutation.remoteId || result.has(mutation.itemId) || mutationIds.has(mutation.mutationId)) {
+      throw new Error("KeePass 持久同步回执包含无效或重复操作。");
+    }
+    mutationIds.add(mutation.mutationId);
+    result.set(mutation.itemId, mutation);
+  }
+  return result;
 }
 
 function referenceOf(item: VaultItem, providerId: string): ProviderReference | undefined {

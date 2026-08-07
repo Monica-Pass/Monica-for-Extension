@@ -53,6 +53,7 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const dialogRoot = ref<HTMLElement | null>(null);
 let activeRead: { providerId: string; readHandle: string } | undefined;
 let listGeneration = 0;
+const deleteOperationIds = new Map<string, string>();
 
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
 const interactionLocked = computed(() => listBusy.value || uploadBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
@@ -63,6 +64,7 @@ const providerDescription = computed(() => selectedProvider.value?.kind === "mdb
 );
 
 watch(selectedProviderId, () => {
+  deleteOperationIds.clear();
   pendingDelete.value = undefined;
   error.value = "";
   status.value = "";
@@ -70,6 +72,7 @@ watch(selectedProviderId, () => {
 }, { immediate: true });
 
 onBeforeUnmount(() => {
+  deleteOperationIds.clear();
   if (activeRead) void vaultClient.releaseProviderAttachmentRead(activeRead.providerId, activeRead.readHandle).catch(() => undefined);
   if (pendingUpload.value?.transferId) void vaultClient.abortProviderAttachmentUpload(pendingUpload.value.providerId, pendingUpload.value.transferId).catch(() => undefined);
 });
@@ -246,11 +249,16 @@ async function requestDelete(attachment: ProviderAttachmentSummary) {
 async function confirmDelete() {
   const attachment = pendingDelete.value;
   if (!attachment) return;
+  const providerId = selectedProviderId.value;
+  const operationKey = `${providerId}\n${props.item.id}\n${attachment.attachmentId}`;
   deletingAttachmentId.value = attachment.attachmentId;
   error.value = "";
   let deleted = false;
   try {
-    await vaultClient.deleteProviderAttachment(selectedProviderId.value, props.item.id, attachment.attachmentId);
+    const operationId = deleteOperationIds.get(operationKey) || crypto.randomUUID();
+    deleteOperationIds.set(operationKey, operationId);
+    await vaultClient.deleteProviderAttachment(providerId, props.item.id, attachment.attachmentId, operationId);
+    deleteOperationIds.delete(operationKey);
     pendingDelete.value = undefined;
     status.value = `${attachment.fileName} 已删除。`;
     emit("notice", `${attachment.fileName} 已删除。`);
@@ -270,6 +278,7 @@ async function confirmDelete() {
 async function closeDialog() {
   if (interactionLocked.value) return;
   await discardPendingUpload();
+  deleteOperationIds.clear();
   emit("close");
 }
 

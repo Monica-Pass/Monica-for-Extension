@@ -131,6 +131,22 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await originalRow.getByRole("button", { name: "下载 original.bin" }).click();
     expect(await downloadBytes(await replacedDownload)).toEqual(Buffer.from([9, 8, 7, 6, 5]));
 
+    await page.evaluate(() => {
+      const runtime = chrome.runtime as unknown as { sendMessage: (...args: any[]) => Promise<any> };
+      const originalSendMessage = runtime.sendMessage.bind(chrome.runtime);
+      const operationIds: string[] = [];
+      (globalThis as unknown as { __monicaAttachmentDeleteOperationIds: string[] }).__monicaAttachmentDeleteOperationIds = operationIds;
+      runtime.sendMessage = async (...args: any[]) => {
+        const request = args[0] as { type?: string; operationId?: string } | undefined;
+        const response = await originalSendMessage(...args);
+        if (request?.type === "PROVIDER_ATTACHMENT_DELETE") {
+          operationIds.push(request.operationId || "");
+          if (operationIds.length === 1) return { ok: false, error: "模拟附件删除响应中断" };
+        }
+        return response;
+      };
+    });
+
     const newRow = dialog.locator(".provider-attachment-row").filter({ hasText: "new.bin" });
     await newRow.getByRole("button", { name: "删除 new.bin" }).click();
     const confirmDelete = newRow.getByRole("button", { name: "确认删除" });
@@ -138,7 +154,17 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await expect(confirmDelete).toBeVisible();
     await expectMinimumTarget(confirmDelete);
     await confirmDelete.click();
+    await expect(dialog.getByRole("alert")).toContainText("模拟附件删除响应中断");
+    await expect(newRow).toBeVisible();
+    await expect(confirmDelete).toBeVisible();
+    await confirmDelete.click();
     await expect(dialog.getByText("new.bin", { exact: true })).toHaveCount(0);
+    const deleteOperationIds = await page.evaluate(() =>
+      (globalThis as unknown as { __monicaAttachmentDeleteOperationIds: string[] }).__monicaAttachmentDeleteOperationIds
+    );
+    expect(deleteOperationIds).toHaveLength(2);
+    expect(deleteOperationIds[0]).toMatch(/^[a-f0-9-]{36}$/);
+    expect(deleteOperationIds[1]).toBe(deleteOperationIds[0]);
     await expect(dialog.getByText("original.bin", { exact: true })).toBeVisible();
     await expect(dialog.locator('m3e-icon-button[aria-label="刷新附件列表"]')).toBeFocused();
     await expectNoHorizontalOverflow(dialog);

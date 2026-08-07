@@ -1,9 +1,20 @@
-import type { ProviderAccount, ProviderConflictInput, ProviderKind, ProviderSourceRecord, VaultItem } from "./model";
+import type { PendingMutation, ProviderAccount, ProviderConflictInput, ProviderKind, ProviderSourceRecord, VaultItem } from "./model";
+
+export interface ProviderAcknowledgedMutation {
+  mutationId: string;
+  itemId: string;
+  operation: PendingMutation["operation"];
+  remoteId: string;
+}
 
 export interface ProviderSyncContext {
   signal?: AbortSignal;
   now: string;
   localItems: VaultItem[];
+  /** Optional bounded mutation batch. Providers that support durable replay must not write other local changes. */
+  pendingMutations?: PendingMutation[];
+  /** Provider writes already committed before a previous Service Worker stopped. */
+  acknowledgedMutations?: ProviderAcknowledgedMutation[];
 }
 
 export interface ProviderSyncResult {

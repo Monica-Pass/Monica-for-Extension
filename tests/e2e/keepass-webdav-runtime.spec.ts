@@ -1,6 +1,9 @@
 import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
+import * as kdbxweb from "kdbxweb";
 import path from "node:path";
-import { buildKeePassFixture } from "../../src/providers/keepass/keepass-fixture";
+import { buildKeePassFixture, keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
+
+const kdbxRuntime = ((kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb);
 
 const VAULT_PASSWORD = "keepass remote runtime vault password";
 const DATABASE_PASSWORD = "keepass remote runtime database password";
@@ -158,6 +161,134 @@ test("remote KeePass restores from Chromium IndexedDB after a new Service Worker
   }
 });
 
+test("remote KeePass group, attachment and history acknowledgements replay after Service Worker restart", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const fixture = await buildDurabilityFixture();
+    const launched = await launchExtension(testInfo);
+    context = launched.context;
+    let downloadCount = 0;
+    await context.route(`${REMOTE_ORIGIN}/**`, async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (request.method() === "PROPFIND" && url.pathname === REMOTE_PATH) {
+        await route.fulfill({ status: 207, contentType: "application/xml; charset=utf-8", body: webDavStat(url.toString(), fixture.length) });
+        return;
+      }
+      if (request.method() === "GET" && url.pathname === REMOTE_PATH) {
+        downloadCount += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/octet-stream",
+          headers: { ETag: '"runtime-etag-1"', "Content-Length": String(fixture.length) },
+          body: Buffer.from(fixture)
+        });
+        return;
+      }
+      await route.fulfill({ status: 500, body: `Unexpected ${request.method()} ${url.pathname}` });
+    });
+
+    const opened = await openRemoteKeePass(launched.manager, "Remote Durable KeePass");
+    const providerId = opened.data!.account.id;
+    const firstSync = await send(launched.manager, { type: "PROVIDER_SYNC", providerId });
+    expect(firstSync, firstSync.error).toMatchObject({ ok: true });
+    const items = await send<Array<{ id: string; title: string }>>(launched.manager, { type: "VAULT_LIST_ITEMS" });
+    const item = items.data?.find((candidate) => candidate.title === "Remote durable login");
+    expect(item).toBeTruthy();
+
+    const groupOperationId = "11111111-1111-4111-8111-111111111111";
+    const createGroupRequest = { type: "KEEPASS_GROUP_CREATE", providerId, operationId: groupOperationId, name: "Durable Private Group" };
+    const createdGroup = await send(launched.manager, createGroupRequest);
+    expect(createdGroup, createdGroup.error).toMatchObject({ ok: true, data: { changed: true, group: { name: "Durable Private Group" } } });
+    await restartWorker(context, launched.manager, launched.extensionId);
+    const replayedGroup = await send(launched.manager, createGroupRequest);
+    expect(replayedGroup, replayedGroup.error).toMatchObject({ ok: true, data: { changed: true, group: { name: "Durable Private Group" } } });
+    const groups = await send<{ items: Array<{ name: string }> }>(launched.manager, { type: "KEEPASS_GROUP_LIST", providerId, includeRecycleBin: true, pageSize: 50 });
+    expect(groups, groups.error).toMatchObject({ ok: true });
+    expect(groups.data?.items.filter((candidate) => candidate.name === "Durable Private Group")).toHaveLength(1);
+
+    const attachmentBytes = Buffer.from("private durable attachment payload", "utf8");
+    const upload = await send<{ transferId: string }>(launched.manager, {
+      type: "PROVIDER_ATTACHMENT_UPLOAD_BEGIN",
+      providerId,
+      itemId: item!.id,
+      fileName: "private-durable-proof.txt",
+      mediaType: "text/plain",
+      sizeBytes: attachmentBytes.length,
+      operationId: "22222222-2222-4222-8222-222222222222",
+      attachmentId: "33333333-3333-4333-8333-333333333333"
+    });
+    expect(upload, upload.error).toMatchObject({ ok: true });
+    const transferId = upload.data!.transferId;
+    expect(await send(launched.manager, {
+      type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK",
+      providerId,
+      transferId,
+      offset: 0,
+      dataBase64: attachmentBytes.toString("base64")
+    })).toMatchObject({ ok: true });
+    const finishRequest = { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId: item!.id, transferId };
+    const finished = await send(launched.manager, finishRequest);
+    expect(finished, finished.error).toMatchObject({ ok: true, data: { changed: true, attachment: { fileName: "private-durable-proof.txt" } } });
+    await restartWorker(context, launched.manager, launched.extensionId);
+    const replayedFinish = await send(launched.manager, finishRequest);
+    expect(replayedFinish, replayedFinish.error).toMatchObject({ ok: true, data: { changed: true, attachment: { fileName: "private-durable-proof.txt" } } });
+    const attachments = await send<{ items: Array<{ fileName: string }> }>(launched.manager, { type: "PROVIDER_ATTACHMENT_LIST", providerId, itemId: item!.id, pageSize: 50 });
+    expect(attachments, attachments.error).toMatchObject({ ok: true });
+    expect(attachments.data?.items.filter((candidate) => candidate.fileName === "private-durable-proof.txt")).toHaveLength(1);
+
+    const historyBefore = await send<{ items: Array<{ historyId: string }> }>(launched.manager, { type: "KEEPASS_HISTORY_LIST", providerId, itemId: item!.id, pageSize: 50 });
+    expect(historyBefore, historyBefore.error).toMatchObject({ ok: true });
+    expect(historyBefore.data?.items.length).toBeGreaterThan(0);
+    const restoreRequest = {
+      type: "KEEPASS_HISTORY_RESTORE",
+      providerId,
+      itemId: item!.id,
+      operationId: "44444444-4444-4444-8444-444444444444",
+      historyId: historyBefore.data!.items[0].historyId,
+      confirmed: true
+    };
+    const restored = await send(launched.manager, restoreRequest);
+    expect(restored, restored.error).toMatchObject({ ok: true, data: { changed: true } });
+    const expectedHistoryCount = (restored.data as { historyCount: number }).historyCount;
+    await restartWorker(context, launched.manager, launched.extensionId);
+    const replayedRestore = await send(launched.manager, restoreRequest);
+    expect(replayedRestore, replayedRestore.error).toMatchObject({ ok: true, data: { changed: true, historyCount: expectedHistoryCount } });
+    const historyAfter = await send<{ items: Array<{ historyId: string }> }>(launched.manager, { type: "KEEPASS_HISTORY_LIST", providerId, itemId: item!.id, pageSize: 50 });
+    expect(historyAfter, historyAfter.error).toMatchObject({ ok: true });
+    expect(historyAfter.data?.items).toHaveLength(expectedHistoryCount);
+
+    const rawReceipts = await launched.manager.evaluate(async () => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("monica-extension-keepass-working-copies");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        return await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+          const transaction = database.transaction("operation-receipts", "readonly");
+          const request = transaction.objectStore("operation-receipts").getAll();
+          request.onsuccess = () => resolve(request.result as Array<Record<string, unknown>>);
+          request.onerror = () => reject(request.error);
+        });
+      } finally {
+        database.close();
+      }
+    });
+    expect(rawReceipts.length).toBeGreaterThanOrEqual(3);
+    for (const record of rawReceipts) {
+      expect(Object.keys(record).sort()).toEqual(["cipher", "ciphertext", "completedAt", "intentTag", "iv", "key", "operationId", "providerId", "version"].sort());
+    }
+    const raw = JSON.stringify(rawReceipts);
+    for (const secret of ["Durable Private Group", "private-durable-proof.txt", "private durable attachment payload", "old-runtime-user", "remote-runtime-secret"]) {
+      expect(raw).not.toContain(secret);
+    }
+    expect(downloadCount).toBe(1);
+  } finally {
+    await context?.close();
+  }
+});
+
 async function terminateExtensionServiceWorker(context: BrowserContext, manager: Page, extensionId: string): Promise<void> {
   const session = await context.newCDPSession(manager);
   try {
@@ -169,6 +300,14 @@ async function terminateExtensionServiceWorker(context: BrowserContext, manager:
   } finally {
     await session.detach();
   }
+}
+
+async function restartWorker(context: BrowserContext, manager: Page, extensionId: string): Promise<void> {
+  await terminateExtensionServiceWorker(context, manager, extensionId);
+  await expect.poll(
+    () => extensionServiceWorkerTargetId(context, manager, extensionId),
+    { message: "The extension Service Worker should stop before durable replay" }
+  ).toBeUndefined();
 }
 
 async function extensionServiceWorkerTargetId(context: BrowserContext, manager: Page, extensionId: string): Promise<string | undefined> {
@@ -201,4 +340,44 @@ function assertSecretsAbsent(value: unknown): void {
   for (const secret of [DATABASE_PASSWORD, WEBDAV_PASSWORD, '"runtime-etag-1"', "remote-runtime-secret"]) {
     expect(serialized).not.toContain(secret);
   }
+}
+
+async function openRemoteKeePass(manager: Page, name: string): Promise<RuntimeResponse<KeePassOpenResult>> {
+  const opened = await send<KeePassOpenResult>(manager, {
+    type: "KEEPASS_WEBDAV_OPEN",
+    input: {
+      name,
+      baseUrl: `${REMOTE_ORIGIN}/root`,
+      username: "remote-runtime-user",
+      webDavPassword: WEBDAV_PASSWORD,
+      remotePath: "vaults/main.kdbx",
+      databasePassword: DATABASE_PASSWORD,
+      isDefaultSaveTarget: false
+    }
+  });
+  expect(opened, opened.error).toMatchObject({ ok: true });
+  return opened;
+}
+
+async function send<T = unknown>(manager: Page, request: Record<string, unknown>): Promise<RuntimeResponse<T>> {
+  return manager.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as Promise<RuntimeResponse<T>>;
+}
+
+async function buildDurabilityFixture(): Promise<Uint8Array> {
+  const base = await buildKeePassFixture({
+    password: DATABASE_PASSWORD,
+    name: "Remote Durable Fixture",
+    entries: [{
+      title: "Remote durable login",
+      fields: { UserName: "current-runtime-user", URL: "https://durable.example.test" },
+      protectedFields: { Password: "remote-runtime-secret" }
+    }]
+  });
+  const database = await kdbxRuntime.Kdbx.load(base.slice().buffer, keePassCredentials(DATABASE_PASSWORD));
+  const entry = database.getDefaultGroup().entries[0];
+  entry.fields.set("UserName", "old-runtime-user");
+  entry.pushHistory();
+  entry.fields.set("UserName", "current-runtime-user");
+  entry.times.lastModTime = new Date("2026-08-07T05:00:00.000Z");
+  return new Uint8Array(await database.save());
 }

@@ -318,7 +318,7 @@ export type ExtensionRequest =
   | { type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK"; providerId: string; transferId: string; offset: number; dataBase64: string }
   | { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH"; providerId: string; itemId: string; transferId: string }
   | { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT"; providerId: string; transferId: string }
-  | { type: "PROVIDER_ATTACHMENT_DELETE"; providerId: string; itemId: string; attachmentId: string; confirmed: boolean }
+  | { type: "PROVIDER_ATTACHMENT_DELETE"; providerId: string; itemId: string; attachmentId: string; operationId: string; confirmed: boolean }
   | { type: "KEEPASS_OPEN"; input: KeePassOpenInput }
   | { type: "KEEPASS_WEBDAV_TEST"; input: KeePassWebDavTestInput }
   | { type: "KEEPASS_WEBDAV_OPEN"; input: KeePassRemoteOpenInput }

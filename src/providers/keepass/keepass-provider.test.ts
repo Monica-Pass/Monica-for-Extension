@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as kdbxweb from "kdbxweb";
-import type { LoginItem, ProviderAccount, VaultItem } from "../../core/model";
+import type { LoginItem, PendingMutation, ProviderAccount, VaultItem } from "../../core/model";
 import { buildKeePassFixture, keePassCredentials, type KeePassFixtureEntry } from "./keepass-fixture";
 import { KeePassProvider } from "./keepass-provider";
 import { keePassFieldText } from "./keepass-login-codec";
@@ -332,6 +332,88 @@ describe("KeePassProvider", () => {
     expect(keePassFieldText(reopened.getDefaultGroup().entries[0].fields.get("UserName"))).toBe("grace");
   });
 
+  it("defers local writes outside the bounded pending-mutation batch", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider);
+    const item = (await sync(provider, target, [])).items[0] as LoginItem;
+    const edited = { ...item, username: "deferred" };
+
+    const result = await provider.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [edited],
+      pendingMutations: []
+    });
+
+    expect(result.conflicts).toHaveLength(0);
+    expect((result.items[0] as LoginItem).username).toBe("deferred");
+    const reopened = await reopen(provider, target);
+    expect(keePassFieldText(reopened.getDefaultGroup().entries[0].fields.get("UserName"))).toBe("alice");
+  });
+
+  it("replays a durably acknowledged update without a false conflict or second KDBX history write", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider);
+    const item = (await sync(provider, target, [])).items[0] as LoginItem;
+    const edited = { ...item, username: "durable" };
+    const pending = mutation(item.id, "update");
+    const first = await provider.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [edited],
+      pendingMutations: [pending]
+    });
+    const committed = first.items.find((candidate) => candidate.id === item.id)!;
+    const remoteId = committed.providerRefs.find((reference) => reference.providerId === target.id)?.remoteId;
+    expect(remoteId).toBeTruthy();
+    const bytes = await provider.snapshotFile(target.id);
+
+    const restarted = new KeePassProvider();
+    await restarted.unlock(target, bytes, { password: PASSWORD, sourceMode: "webdav", dirty: true });
+    const recovered = await restarted.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [edited],
+      pendingMutations: [],
+      acknowledgedMutations: [{ mutationId: pending.id, itemId: item.id, operation: "update", remoteId: remoteId! }]
+    });
+
+    expect(recovered.conflicts).toHaveLength(0);
+    expect((recovered.items[0] as LoginItem).username).toBe("durable");
+    const reopened = kdbxweb.Kdbx.load(await restarted.snapshotFile(target.id).then((value) => value.slice().buffer), keePassCredentials(PASSWORD));
+    await expect(reopened).resolves.toBeDefined();
+    expect((await reopened).getDefaultGroup().entries[0].history).toHaveLength(1);
+  });
+
+  it("replays a durably acknowledged creation with the original browser item identity", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider);
+    const existing = (await sync(provider, target, [])).items[0];
+    const created = newLogin();
+    const pending = mutation(created.id, "create");
+    const first = await provider.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [existing, created],
+      pendingMutations: [pending]
+    });
+    const committed = first.items.find((candidate) => candidate.id === created.id)!;
+    const remoteId = committed.providerRefs.find((reference) => reference.providerId === target.id)?.remoteId;
+    expect(remoteId).toBeTruthy();
+    const bytes = await provider.snapshotFile(target.id);
+
+    const restarted = new KeePassProvider();
+    await restarted.unlock(target, bytes, { password: PASSWORD, sourceMode: "webdav", dirty: true });
+    const recovered = await restarted.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [existing, created],
+      pendingMutations: [],
+      acknowledgedMutations: [{ mutationId: pending.id, itemId: created.id, operation: "create", remoteId: remoteId! }]
+    });
+
+    expect(recovered.conflicts).toHaveLength(0);
+    expect(recovered.items.find((candidate) => candidate.id === created.id)?.providerRefs)
+      .toContainEqual(expect.objectContaining({ providerId: target.id, remoteId }));
+    const reopened = await kdbxweb.Kdbx.load((await restarted.snapshotFile(target.id)).slice().buffer, keePassCredentials(PASSWORD));
+    expect(reopened.getDefaultGroup().entries).toHaveLength(2);
+  });
+
   it("leaves items belonging to another provider untouched", async () => {
     const provider = new KeePassProvider();
     const { target } = await unlock(provider);
@@ -346,4 +428,15 @@ describe("KeePassProvider", () => {
 function binaryBytes(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): Uint8Array {
   const value = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(binary) ? binary.value : binary;
   return value instanceof kdbxweb.ProtectedValue ? value.getBinary() : new Uint8Array(value);
+}
+
+function mutation(itemId: string, operation: PendingMutation["operation"]): PendingMutation {
+  return {
+    id: crypto.randomUUID(),
+    providerId: "kp-a",
+    itemId,
+    operation,
+    createdAt: "2026-07-26T12:00:00.000Z",
+    attempts: 0
+  };
 }

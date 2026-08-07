@@ -1,8 +1,8 @@
 import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
-import { ProviderRegistry } from "../core/provider";
-import { KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError } from "../providers/attachments/attachment-contract";
+import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
+import { KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError, type ProviderAttachmentMutationResult } from "../providers/attachments/attachment-contract";
 import { paginateProviderAttachments } from "../providers/attachments/attachment-pagination";
 import { ProviderAttachmentUploadStore } from "../providers/attachments/attachment-upload-store";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
@@ -16,11 +16,19 @@ import { Mdbx2TransferAttachmentService } from "../providers/mdbx2/mdbx2-transfe
 import { Mdbx2SyncCoordinator, type Mdbx2CloudSyncInput, type Mdbx2WebDavSyncConfig } from "../providers/mdbx2/mdbx2-sync-coordinator";
 import { normalizeMdbx2RemotePath } from "../providers/mdbx2/mdbx2-sync-paths";
 import { KeePassProvider, type KeePassSessionSummary } from "../providers/keepass/keepass-provider";
-import { KeePassGroupError } from "../providers/keepass/keepass-groups";
-import { KeePassHistoryError } from "../providers/keepass/keepass-history";
-import { KeePassRemoteSessionError, KeePassRemoteSessionService } from "../providers/keepass/keepass-remote-session";
+import { KeePassDurableSyncCoordinator } from "../providers/keepass/keepass-durable-sync";
+import { KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG } from "../providers/keepass/keepass-receipt-crypto";
+import { KeePassGroupError, type KeePassGroupMutationResult } from "../providers/keepass/keepass-groups";
+import { KeePassHistoryError, type KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
+import { keePassMutationIntentSha256, KeePassRemoteSessionError, KeePassRemoteSessionService } from "../providers/keepass/keepass-remote-session";
 import { KeePassWebDavError } from "../providers/keepass/keepass-webdav-client";
-import { IndexedDbKeePassWorkingCopyStorage, KeePassWorkingCopyStoreError } from "../providers/keepass/keepass-working-copy-store";
+import {
+  IndexedDbKeePassWorkingCopyStorage,
+  KeePassWorkingCopyStoreError,
+  type KeePassDurableMutationKind,
+  type KeePassDurableMutationReceipt,
+  type KeePassDurableMutationResult
+} from "../providers/keepass/keepass-working-copy-store";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
@@ -54,6 +62,12 @@ const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
 const keePassWorkingCopies = new IndexedDbKeePassWorkingCopyStorage();
 const keePassRemoteSessions = new KeePassRemoteSessionService(keePassProvider, keePassWorkingCopies);
+const keePassDurableSync = new KeePassDurableSyncCoordinator(
+  keePassProvider,
+  keePassRemoteSessions,
+  service,
+  (account, config) => applyKeePassRemoteAccountConfig(account, config)
+);
 const mdbx2TransferAttachmentService = new Mdbx2TransferAttachmentService(
   mdbx2NativeClient,
   keePassProvider,
@@ -75,6 +89,15 @@ const PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH = Math.ceil(PROVIDER_ATTACHMEN
 const USERNAME_CONTEXT_TTL_MS = 2 * 60_000;
 const PASSKEY_COMPLETION_TTL_MS = 2 * 60_000;
 const activeProviderSyncs = new Map<string, AbortController>();
+const keePassMutationQueues = new Map<string, Promise<void>>();
+const keePassPendingPersistence = new Map<string, {
+  providerId: string;
+  kind: KeePassDurableMutationKind;
+  intentSha256: string;
+  completedAt: string;
+  result: unknown;
+  durableResult: KeePassDurableMutationResult;
+}>();
 const MDBX2_BATCH_TRANSFER_STATUS_TTL_MS = 10 * 60_000;
 const mdbx2BatchTransferStatuses = new Map<string, Mdbx2BatchTransferStatus>();
 
@@ -175,6 +198,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") mdbx2NativeClient.close();
       if (status !== "unlocked") mdbx2Provider.lock();
       if (status !== "unlocked") keePassProvider.lock();
+      if (status !== "unlocked") clearKeePassPendingPersistence();
       if (status !== "unlocked") mdbx2BatchTransferStatuses.clear();
     });
   }
@@ -224,6 +248,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       mdbx2NativeClient.close();
       mdbx2Provider.lock();
       keePassProvider.lock();
+      clearKeePassPendingPersistence();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
@@ -955,26 +980,35 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
       if (account.kind === "keepass") {
-        const intent = providerAttachmentUploads.intent(request.transferId);
-        if (intent && (intent.providerId !== account.id || intent.itemId !== item.id || intent.providerKind !== "keepass")) {
-          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
-        }
-        const committed = providerAttachmentUploads.committedResult(request.transferId);
-        if (committed) return committed;
-        const upload = await providerAttachmentUploads.complete(request.transferId);
-        if (upload.intent.providerId !== account.id || upload.intent.itemId !== item.id || upload.intent.providerKind !== "keepass") {
-          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
-        }
-        const attachment = await keePassProvider.addAttachment(
+        return executeKeePassDurableMutation({
           account,
-          item,
-          upload.intent.fileName,
-          upload.bytes,
-          upload.intent.replaceExisting
-        );
-        const result = { changed: true, attachment };
-        providerAttachmentUploads.markCommitted(request.transferId, result);
-        return result;
+          operationId: request.transferId,
+          kind: "attachment-upload",
+          intent: { itemId: request.itemId, transferId: request.transferId },
+          replay: (result) => replayKeePassAttachmentResult(account, item, result),
+          mutate: async () => {
+            const intent = providerAttachmentUploads.intent(request.transferId);
+            if (intent && (intent.providerId !== account.id || intent.itemId !== item.id || intent.providerKind !== "keepass")) {
+              throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
+            }
+            const committed = providerAttachmentUploads.committedResult(request.transferId);
+            if (committed) return { result: committed, durableResult: durableKeePassAttachmentResult(account, item, committed) };
+            const upload = await providerAttachmentUploads.complete(request.transferId);
+            if (upload.intent.providerId !== account.id || upload.intent.itemId !== item.id || upload.intent.providerKind !== "keepass") {
+              throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传目标与当前项目不一致。");
+            }
+            const attachment = await keePassProvider.addAttachment(
+              account,
+              item,
+              upload.intent.fileName,
+              upload.bytes,
+              upload.intent.replaceExisting
+            );
+            const result = { changed: true, attachment };
+            providerAttachmentUploads.markCommitted(request.transferId, result);
+            return { result, durableResult: durableKeePassAttachmentResult(account, item, result) };
+          }
+        });
       }
       if (account.kind === "mdbx2") {
         requireMdbx2AttachmentTarget(account, item);
@@ -1001,7 +1035,22 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       if (request.confirmed !== true) throw new ProviderAttachmentError("attachment-delete-confirmation-required", "删除附件需要明确确认。");
       const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
-      if (account.kind === "keepass") return { changed: keePassProvider.deleteAttachment(account, item, request.attachmentId) };
+      if (account.kind === "keepass") {
+        return executeKeePassDurableMutation({
+          account,
+          operationId: request.operationId,
+          kind: "attachment-delete",
+          intent: { itemId: request.itemId, attachmentId: request.attachmentId },
+          replay: (result) => {
+            if (result.type !== "attachment-delete") throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 持久附件删除回执类型无效。");
+            return { changed: result.changed };
+          },
+          mutate: () => {
+            const result = { changed: keePassProvider.deleteAttachment(account, item, request.attachmentId) };
+            return { result, durableResult: { type: "attachment-delete", changed: result.changed } };
+          }
+        });
+      }
       if (account.kind === "mdbx2") {
         const target = requireMdbx2AttachmentTarget(account, item);
         const result = await mdbx2NativeClient.deleteAttachment(target.vaultHandle, crypto.randomUUID(), request.attachmentId);
@@ -1036,7 +1085,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         config: {
           databaseId: Number.isSafeInteger(Number(existing?.config.databaseId)) && Number(existing?.config.databaseId) > 0
             ? Number(existing?.config.databaseId)
-            : Date.now()
+            : Date.now(),
+          ...(typeof existing?.config[KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG] === "string"
+            ? { [KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]: existing.config[KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG] }
+            : {})
         },
         lastSyncAt: existing?.lastSyncAt,
         lastError: undefined
@@ -1142,28 +1194,78 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "KEEPASS_GROUP_CREATE": {
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
-      return keePassProvider.createGroup(account, request.operationId, request.name, request.parentGroupId);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "group-create",
+        intent: { name: request.name, parentGroupId: request.parentGroupId },
+        replay: (result) => replayKeePassGroupResult(account, result),
+        mutate: () => {
+          const result = keePassProvider.createGroup(account, request.operationId, request.name, request.parentGroupId);
+          return { result, durableResult: durableKeePassGroupResult(account, result) };
+        }
+      });
     }
     case "KEEPASS_GROUP_RENAME": {
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
-      return keePassProvider.renameGroup(account, request.operationId, request.groupId, request.name);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "group-rename",
+        intent: { groupId: request.groupId, name: request.name },
+        replay: (result) => replayKeePassGroupResult(account, result),
+        mutate: () => {
+          const result = keePassProvider.renameGroup(account, request.operationId, request.groupId, request.name);
+          return { result, durableResult: durableKeePassGroupResult(account, result) };
+        }
+      });
     }
     case "KEEPASS_GROUP_MOVE": {
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
-      return keePassProvider.moveGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "group-move",
+        intent: { groupId: request.groupId, targetParentGroupId: request.targetParentGroupId },
+        replay: (result) => replayKeePassGroupResult(account, result),
+        mutate: () => {
+          const result = keePassProvider.moveGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+          return { result, durableResult: durableKeePassGroupResult(account, result) };
+        }
+      });
     }
     case "KEEPASS_GROUP_DELETE": {
       assertManagerPage(sender);
       if (request.confirmed !== true) throw new KeePassGroupError("keepass-group-delete-confirmation-required", "删除 KeePass 分组需要明确确认。");
       const account = await requireKeePassAccount(request.providerId);
-      return keePassProvider.deleteGroup(account, request.operationId, request.groupId);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "group-delete",
+        intent: { groupId: request.groupId },
+        replay: (result) => replayKeePassGroupResult(account, result),
+        mutate: () => {
+          const result = keePassProvider.deleteGroup(account, request.operationId, request.groupId);
+          return { result, durableResult: durableKeePassGroupResult(account, result) };
+        }
+      });
     }
     case "KEEPASS_GROUP_RESTORE": {
       assertManagerPage(sender);
       const account = await requireKeePassAccount(request.providerId);
-      return keePassProvider.restoreGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "group-restore",
+        intent: { groupId: request.groupId, targetParentGroupId: request.targetParentGroupId },
+        replay: (result) => replayKeePassGroupResult(account, result),
+        mutate: () => {
+          const result = keePassProvider.restoreGroup(account, request.operationId, request.groupId, request.targetParentGroupId);
+          return { result, durableResult: durableKeePassGroupResult(account, result) };
+        }
+      });
     }
     case "KEEPASS_HISTORY_LIST": {
       assertManagerPage(sender);
@@ -1186,7 +1288,17 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         throw new KeePassHistoryError("keepass-history-restore-confirmation-required", "恢复 KeePass 历史版本需要明确确认。");
       }
       const { account, item } = await requireKeePassHistoryTarget(request.providerId, request.itemId);
-      return keePassProvider.restoreEntryHistory(account, item, request.operationId, request.historyId);
+      return executeKeePassDurableMutation({
+        account,
+        operationId: request.operationId,
+        kind: "history-restore",
+        intent: { itemId: request.itemId, historyId: request.historyId },
+        replay: replayKeePassHistoryResult,
+        mutate: () => {
+          const result = keePassProvider.restoreEntryHistory(account, item, request.operationId, request.historyId);
+          return { result, durableResult: durableKeePassHistoryResult(result) };
+        }
+      });
     }
     case "KEEPASS_EXPORT_FILE": {
       assertManagerPage(sender);
@@ -1196,8 +1308,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "KEEPASS_LOCK":
       assertManagerPage(sender);
-      if (request.providerId) keePassProvider.lockAccount(request.providerId);
-      else keePassProvider.lock();
+      if (request.providerId) {
+        keePassProvider.lockAccount(request.providerId);
+        clearKeePassPendingPersistence(request.providerId);
+      } else {
+        keePassProvider.lock();
+        clearKeePassPendingPersistence();
+      }
       return undefined;
     case "PROVIDER_SYNC": {
       assertExtensionPage(sender);
@@ -1212,11 +1329,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       activeProviderSyncs.set(account.id, controller);
       const startedAt = Date.now();
       try {
-        // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
-        // concurrent local edit against. Both must be the same read of the vault.
-        const snapshot = (await service.readState()).items;
-        const result = await providers.get(account.kind).sync(account, { signal: controller.signal, now: new Date().toISOString(), localItems: structuredClone(snapshot) });
-        await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
+        let result: ProviderSyncResult;
+        if (account.kind === "keepass") {
+          result = await synchronizeKeePassProvider(account, controller.signal);
+        } else {
+          // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
+          // concurrent local edit against. Both must be the same read of the vault.
+          const snapshot = (await service.readState()).items;
+          result = await providers.get(account.kind).sync(account, {
+            signal: controller.signal,
+            now: new Date().toISOString(),
+            localItems: structuredClone(snapshot)
+          });
+          await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
+        }
         await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
           operation: "sync",
           outcome: result.conflicts.length ? "conflict" : "success",
@@ -1228,6 +1354,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         }));
         return { warnings: result.warnings, conflicts: result.conflicts.length };
       } catch (error) {
+        if (account.kind === "keepass" && account.config.sourceMode === "webdav") {
+          keePassProvider.lockAccount(account.id);
+          clearKeePassPendingPersistence(account.id);
+        }
         const diagnostic = createProviderDiagnostic(account.id, account.kind, error, new Date().toISOString(), { operation: "sync", durationMs: Date.now() - startedAt });
         if (diagnostic.outcome !== "cancelled") {
           await service.markProviderSyncFailure(account.id, diagnostic.message);
@@ -1256,6 +1386,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
       mdbx2Provider.lockAccount(request.providerId);
       keePassProvider.lockAccount(request.providerId);
+      clearKeePassPendingPersistence(request.providerId);
       await keePassWorkingCopies.delete(request.providerId).catch(() => undefined);
       return service.removeProvider(request.providerId);
   }
@@ -2158,6 +2289,138 @@ async function requireKeePassAccount(providerId: string): Promise<ProviderAccoun
   return account;
 }
 
+async function executeKeePassDurableMutation<T>(input: {
+  account: ProviderAccount;
+  operationId: string;
+  kind: KeePassDurableMutationKind;
+  intent: unknown;
+  replay: (result: KeePassDurableMutationResult) => T | Promise<T>;
+  mutate: () => { result: T; durableResult: KeePassDurableMutationResult } | Promise<{ result: T; durableResult: KeePassDurableMutationResult }>;
+}): Promise<T> {
+  if (input.account.kind !== "keepass" || input.account.config.sourceMode !== "webdav") {
+    return (await input.mutate()).result;
+  }
+  return runKeePassMutationExclusive(input.account.id, async () => {
+    const account = await reconcileKeePassRemoteAccount(input.account);
+    const intentSha256 = await keePassMutationIntentSha256(input.intent);
+    const durable = await keePassRemoteSessions.readDurableReceipt(account, input.operationId, input.kind, intentSha256);
+    if (durable) return input.replay(durable.result);
+
+    const key = `${account.id}\u0000${input.operationId}`;
+    let pending = keePassPendingPersistence.get(key);
+    if (pending && (pending.providerId !== account.id || pending.kind !== input.kind || pending.intentSha256 !== intentSha256)) {
+      throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 操作标识已经用于其他持久操作。");
+    }
+    if (!pending) {
+      const mutation = await input.mutate();
+      if (keePassPendingPersistence.size >= 256) keePassPendingPersistence.delete(keePassPendingPersistence.keys().next().value!);
+      pending = {
+        providerId: account.id,
+        kind: input.kind,
+        intentSha256,
+        completedAt: new Date().toISOString(),
+        result: structuredClone(mutation.result),
+        durableResult: structuredClone(mutation.durableResult)
+      };
+      keePassPendingPersistence.set(key, pending);
+    }
+
+    const receipt: KeePassDurableMutationReceipt = {
+      providerId: account.id,
+      operationId: input.operationId,
+      kind: input.kind,
+      intentSha256,
+      completedAt: pending.completedAt,
+      result: pending.durableResult
+    };
+    const persisted = await keePassRemoteSessions.persistWorkingCopy(account, receipt);
+    if (persisted) await applyKeePassRemoteAccountConfig(account, persisted.accountConfig);
+    keePassPendingPersistence.delete(key);
+    return structuredClone(pending.result) as T;
+  });
+}
+
+async function runKeePassMutationExclusive<T>(providerId: string, task: () => Promise<T>): Promise<T> {
+  const previous = keePassMutationQueues.get(providerId) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  keePassMutationQueues.set(providerId, queued);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (keePassMutationQueues.get(providerId) === queued) keePassMutationQueues.delete(providerId);
+  }
+}
+
+function clearKeePassPendingPersistence(providerId?: string): void {
+  if (!providerId) {
+    keePassPendingPersistence.clear();
+    keePassMutationQueues.clear();
+    return;
+  }
+  for (const [key, pending] of keePassPendingPersistence) if (pending.providerId === providerId) keePassPendingPersistence.delete(key);
+  keePassMutationQueues.delete(providerId);
+}
+
+function durableKeePassGroupResult(account: ProviderAccount, result: KeePassGroupMutationResult): KeePassDurableMutationResult {
+  return {
+    type: "group",
+    changed: result.changed,
+    groupUuid: keePassProvider.groupUuidForHandle(account.id, result.group.groupId)
+  };
+}
+
+function replayKeePassGroupResult(account: ProviderAccount, result: KeePassDurableMutationResult): KeePassGroupMutationResult {
+  if (result.type !== "group") throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 持久分组回执类型无效。");
+  return keePassProvider.groupResultFromUuid(account, result.groupUuid, result.changed);
+}
+
+function durableKeePassHistoryResult(result: KeePassHistoryRestoreResult): KeePassDurableMutationResult {
+  return { type: "history", changed: result.changed, historyCount: result.historyCount, modifiedAt: result.modifiedAt };
+}
+
+function replayKeePassHistoryResult(result: KeePassDurableMutationResult): KeePassHistoryRestoreResult {
+  if (result.type !== "history" || result.changed !== true) {
+    throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 持久历史回执类型无效。");
+  }
+  return { changed: true, historyCount: result.historyCount, modifiedAt: result.modifiedAt };
+}
+
+function durableKeePassAttachmentResult(account: ProviderAccount, item: VaultItem, result: ProviderAttachmentMutationResult): KeePassDurableMutationResult {
+  if (!result.attachment) throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 附件操作缺少持久结果。");
+  return {
+    type: "attachment",
+    changed: result.changed,
+    entryUuid: keePassProvider.attachmentEntryUuid(account, item),
+    fileName: result.attachment.fileName
+  };
+}
+
+function replayKeePassAttachmentResult(account: ProviderAccount, item: VaultItem, result: KeePassDurableMutationResult): ProviderAttachmentMutationResult {
+  if (result.type !== "attachment") throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 持久附件回执类型无效。");
+  return keePassProvider.attachmentResultFromName(account, item, result.fileName, result.changed);
+}
+
+async function synchronizeKeePassProvider(account: ProviderAccount, signal: AbortSignal): Promise<ProviderSyncResult> {
+  return runKeePassMutationExclusive(account.id, async () => {
+    if (account.config.sourceMode === "webdav") {
+      return keePassDurableSync.synchronize(await reconcileKeePassRemoteAccount(account), signal);
+    }
+    signal.throwIfAborted();
+    const snapshot = (await service.readState()).items;
+    const result = await keePassProvider.sync(account, {
+      signal,
+      now: new Date().toISOString(),
+      localItems: structuredClone(snapshot)
+    });
+    await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
+    return result;
+  });
+}
+
 async function requireKeePassAccountRecord(providerId: string): Promise<ProviderAccount> {
   const account = await service.getProvider(providerId);
   if (!account || account.kind !== "keepass") {
@@ -2169,12 +2432,37 @@ async function requireKeePassAccountRecord(providerId: string): Promise<Provider
 async function ensureKeePassSession(account: ProviderAccount, required: true): Promise<KeePassSessionSummary>;
 async function ensureKeePassSession(account: ProviderAccount, required: false): Promise<KeePassSessionSummary | undefined>;
 async function ensureKeePassSession(account: ProviderAccount, required: boolean): Promise<KeePassSessionSummary | undefined> {
-  if (keePassProvider.isUnlocked(account.id)) return keePassProvider.summarize(account.id);
+  if (keePassProvider.isUnlocked(account.id)) {
+    if (account.config.sourceMode === "webdav") await reconcileKeePassRemoteAccount(account);
+    return keePassProvider.summarize(account.id);
+  }
   if (account.config.sourceMode === "webdav") {
-    return (await keePassRemoteSessions.restore(account)).session;
+    const restored = await keePassRemoteSessions.restore(account);
+    await applyKeePassRemoteAccountConfig(account, restored.accountConfig);
+    return restored.session;
   }
   if (required) throw new KeePassRemoteSessionError("remote-working-copy-missing", "此 KeePass 本地文件会话尚未解锁，请重新选择 .kdbx 文件。");
   return undefined;
+}
+
+async function reconcileKeePassRemoteAccount(account: ProviderAccount): Promise<ProviderAccount> {
+  if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return account;
+  return applyKeePassRemoteAccountConfig(account, await keePassRemoteSessions.reconcileAccountConfig(account));
+}
+
+async function applyKeePassRemoteAccountConfig(account: ProviderAccount, config: Record<string, unknown>): Promise<ProviderAccount> {
+  if (sameKeePassAccountConfig(account.config, config)) return account;
+  const updated = { ...account, config };
+  await service.upsertProvider(updated);
+  account.config = config;
+  return updated;
+}
+
+function sameKeePassAccountConfig(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  const normalize = (value: Record<string, unknown>) => JSON.stringify(Object.entries(value)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)));
+  return normalize(left) === normalize(right);
 }
 
 async function requireKeePassHistoryTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {
