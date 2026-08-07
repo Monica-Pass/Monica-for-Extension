@@ -22,6 +22,7 @@
     "test:mdbx2-host": "cargo test --locked --manifest-path native/mdbx2-host/Cargo.toml",
     "build:mdbx2-host:debug": "cargo build --locked --manifest-path native/mdbx2-host/Cargo.toml",
     "test:mdbx2-android-interop": "npm run build:mdbx2-host:debug && vitest run --config vitest.android-interop.config.ts",
+    "test:keepass-interop": "vitest run --config vitest.keepass-interop.config.ts",
     "lint:mdbx2-host": "cargo clippy --locked --manifest-path native/mdbx2-host/Cargo.toml --all-targets -- -D warnings",
     "test:security": "vitest run src/security src/runtime/sender-policy.test.ts src/passkey/request-policy.test.ts src/passkey/webauthn-core.test.ts src/content/wallet-dom.test.ts && npm run build && node scripts/security-audit.mjs",
     "test:e2e": "npm run build && playwright test",

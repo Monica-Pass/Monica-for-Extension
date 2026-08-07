@@ -1,0 +1,14 @@
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.afterEvaluate {
+            def sourceDirectory = System.getenv('MONICA_KEEPASS_INTEROP_SOURCE_DIR')
+            if (sourceDirectory == null || sourceDirectory.trim().isEmpty()) {
+                throw new GradleException('MONICA_KEEPASS_INTEROP_SOURCE_DIR is required')
+            }
+            project.android.sourceSets.test.java.srcDir(sourceDirectory)
+            project.tasks.matching { task -> task.name == 'testDebugUnitTest' }.configureEach { task ->
+                task.outputs.upToDateWhen { false }
+            }
+        }
+    }
+}

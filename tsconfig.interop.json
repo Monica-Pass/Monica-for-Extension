@@ -8,6 +8,7 @@
   },
   "include": [
     "tests/interop/**/*.ts",
-    "vitest.android-interop.config.ts"
+    "vitest.android-interop.config.ts",
+    "vitest.keepass-interop.config.ts"
   ]
 }

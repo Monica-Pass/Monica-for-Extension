@@ -23,3 +23,15 @@ Android UniFFI vault
 It verifies MDBX2-only opening, the Android remote object names, Basic authentication, WebDAV Multi-Status parsing, `If-None-Match: *`, immutable-byte preservation, Host restart recovery, Object payloads, attachment plaintext and encrypted Blob transfer in both directions.
 
 Set `MONICA_MDBX2_INTEROP_KEEP=1` to retain temporary evidence under `.tmp/mdbx2-android-interop`. Set `MONICA_MDBX2_INTEROP_AVD` to select another installed AVD. By default the runner starts a dedicated read-only emulator and leaves other connected devices untouched; set `MONICA_MDBX2_INTEROP_SERIAL` to authorize a specific connected device. `MONICA_MDBX2_INTEROP_ADB_SERVER_PORT` can select an existing isolated ADB service or a fixed free port; services created by the runner are closed during cleanup.
+
+## KeePass Android and browser interoperability acceptance
+
+Run from the extension repository:
+
+```powershell
+npm run test:keepass-interop
+```
+
+The runner injects one JVM unit-test source directory into the sibling Android `:app` project without changing Android files. Android Kotpass creates KDBX 4 fixtures using AES-256, ChaCha20, and Twofish. The extension opens and edits the AES-256 and ChaCha20 fixtures, preserves native fields and metadata, exports them, and Android Kotpass reads the exported files again. The Twofish fixture must fail before decryption with the controlled conversion guidance.
+
+The Android repository revision and complete `git status --porcelain=v1 -uall` value are checked before and after the run. Set `MONICA_ANDROID_REPOSITORY` to select another read-only Android checkout. Set `MONICA_KEEPASS_INTEROP_KEEP=1` to retain encrypted fixture evidence under `.tmp/keepass-android-interop`.

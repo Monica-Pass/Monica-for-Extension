@@ -1,107 +1,88 @@
 # Monica Extension 交接文档
 
-> 更新时间：2026-08-01 +08:00
-> 本轮开始基线：`5449ef3`
+> 更新时间：2026-08-07 +08:00
+>
+> 扩展基线：`main == origin/main == 144b575`，其后的 KeePass Android 互操作验收正在最终发布阶段
+>
 > 仓库：`C:\Users\joyins\Desktop\Monica-all\monica-extension`
 
-## 当前范围
+## 权威来源与约束
 
-MDBX 已按用户要求暂停。后续会话应保持现有 MDBX 代码原样，停止新增或扩展 MDBX 实现、管理界面和测试，也不要把 MDBX 真机兼容验证列为当前阻塞项。暂停并不代表已有 MDBX 实现通过了 Android 真机双向往返验证。
+Monica Android 当前基线为 `924324ad11ff77703c29407790c5b713fe2a69f9`，MDBX Core 基线为 `974c517465e7b6cac0947d2d59875aa4211fa16b`。Android 与 MDBX Core 工作区只读，现有未提交内容归用户所有，扩展开发期间禁止修改、清理、暂存或提交这些仓库。
 
-当前工作集中在浏览器适用部分：KeePass、Bitwarden、WebDAV、自动填充、保存提示、钱包填充、验证码、Steam 与 Passkey。
+扩展仅使用 `main`，功能组完成验证后提交并推送，不建立额外分支或拉取请求。MDBX1 与 MDBX1-DRAFT永久拒绝，浏览器端从 MDBX2 开始支持。
 
-Android 仓库保持只读。不得修改、重置、清理或提交 Android 工作区。
-
-## 阶段状态
-
-本轮第 6 阶段的有效范围已经完成：KeePass M3E 管理界面、Bitwarden 能力提示、Popup 窄视口修正、Passkey 同步身份修正和相关浏览器测试均已实现。
-
-最终任务状态以本机下列 Taskmaster 文件为准。`.codex-tasks` 已被 Git 忽略，但仍是续作时的状态依据。
+任务状态以以下 Taskmaster 文件为准：
 
 ```text
-.codex-tasks/20260726-mdbx-keepass-bitwarden/SUBTASKS.csv
-.codex-tasks/20260726-mdbx-keepass-bitwarden/PROGRESS.md
-.codex-tasks/20260726-mdbx-keepass-bitwarden/tasks/06-ui-docs/TODO.csv
-.codex-tasks/20260726-mdbx-keepass-bitwarden/tasks/06-ui-docs/PROGRESS.md
+.codex-tasks/20260802-mdbx2-keepass-bitwarden-parity/SUBTASKS.csv
+.codex-tasks/20260802-mdbx2-keepass-bitwarden-parity/PROGRESS.md
+.codex-tasks/20260802-mdbx2-keepass-bitwarden-parity/tasks/03-keepass/TODO.csv
 ```
 
-## 本轮实现
+## 当前状态
 
-### KeePass 管理界面
+| 功能组 | 状态 | 当前证据 |
+|---|---|---|
+| MDBX2 | 浏览器适用功能完成 | Native Host、本地 vault、Android WebDAV 增量对象、Blob、Commit、Tombstone、冲突、健康修复和真实 Android 往返通过 |
+| KeePass | 17/18 | Android Kotpass AES 与 ChaCha20 双向 KDBX 验收通过；等待最终干净发布、提交和推送 |
+| Bitwarden | 待实施 | 现有实现需要依据 Android 当前工作区与 Bitwarden 服务端契约重新审查 |
+| Windows Hello | 待实施 | 需要在 Provider 功能完成后增加操作系统身份验证边界和密码恢复机制 |
+| 共享安全与发布 | 待实施 | 依赖 KeePass、Bitwarden、Windows Hello 完成 |
 
-管理页现已支持以下操作：
+## MDBX2
 
-1. 选择 `.kdbx` 数据库。
-2. 选择可选密钥文件。
-3. 使用空密码、仅密码、仅密钥文件或密码与密钥文件组合解锁。
-4. 显示 KDBX 版本、加密算法、项目数量、跳过条目、警告与保护方式。
-5. 同步导入及写回内存数据库。
-6. 显示尚未导出的 `dirty` 状态。
-7. 导出 KDBX、锁定、重新选择和移除密码源。
-8. 在丢弃尚未导出的修改前要求二次确认。
-
-界面如实显示浏览器能力范围：浏览器无法覆盖原文件，导出后需要手动替换；OneDrive 和 Google Drive 文件需要先下载；Twofish KDBX 需要先在 Monica Android 或 KeePassXC 中转换为 AES-256。
-
-KeePass 密码、密钥文件和解锁后的数据库对象仅存在于后台会话。公开 Provider 配置只包含文件名和经过白名单验证的保护方式。
-
-### Bitwarden Passkey 同步
-
-Bitwarden 服务端响应会重新绑定到已有 Monica 项目 ID。同一 FIDO2 凭据在创建、使用计数更新、再次同步和仅删除子凭据的过程中保持同一 Monica ID，避免重复项目和错误并发冲突。
-
-本地专属的 Passkey 字段继续保留，服务端修订号和私钥相关同步数据采用远端响应。删除 Passkey 子凭据不会删除父登录 Cipher。
-
-### Popup 与 M3E 界面
-
-Popup 在标准扩展窗口中保持 390px 宽，在 375px 等窄视口中按可用宽度收缩。管理页与 Popup 均无渐变；KeePass 对话框采用固定头部、可滚动内容和固定操作栏，移动端改为单列。
-
-Bitwarden 页面明确标注当前支持登录、卡片、身份、笔记、TOTP 与 Passkey；Sends 和附件下载继续使用 Bitwarden 官网或 Monica Android。
-
-## 验证记录
-
-本轮工作树上的验证结果：
+扩展采用 Native Messaging 方案。Native Host 保存不透明的本地 MDBX2 工作副本，扩展负责 WebDAV 网络访问；远端格式保持 Android 当前结构：
 
 ```text
-npm run check
-64 个 Vitest 文件，659 项测试通过
-npm run test:security
-6 个文件，57 项安全测试通过
-Playwright
-48 项端到端测试通过
-npm audit --omit=dev --audit-level=high
-0 个漏洞
-npm run verify:supply-chain
-通过
+<vault>.mdbx
+<vault>.mdbx.sync/streams/<device>/<generation>/segments/...
+<vault>.mdbx.sync/blobs/...
 ```
 
-首次 `npm run release:check` 已完成供应链、生产依赖审计、类型检查、659 项单元测试、安全检查和 48 项 Playwright 测试。最终打包步骤因可信发布脚本要求工作树先提交而停止：
+初始 `.mdbx` 仅作为可移植启动文件，日常多设备同步使用不可变认证 segment 与加密 Blob，避免按最后修改时间覆盖整个数据库。Host 明确报告 `supportsMdbx1: false`，MDBX1 在打开前被拒绝。
+
+真实验收已经完成 Android UniFFI → WebDAV → 浏览器 Native Host → Android → 重启 Host 的双向交换，并验证启动文件和已有不可变对象保持字节一致。详细架构见 [MDBX2_EXTENSION_ARCHITECTURE.md](./MDBX2_EXTENSION_ARCHITECTURE.md)。
+
+## KeePass
+
+当前实现包含本地文件与 WebDAV KDBX、空密码和密钥文件组合、KDBX3/KDBX4、AES-256 与 ChaCha20、登录与验证码字段、Monica 和 KeePassDX Passkey 字段、未知字段、分组、历史、附件、回收站、持久化操作回执、ETag 三方合并及 KeePass 与 MDBX2 附件复制和移动。
+
+Android 互操作验收由当前 Android Kotpass 生成真实 KDBX4：
 
 ```text
-Refusing to create a trusted release from a dirty tracked worktree.
+Android Kotpass 创建 KDBX
+  -> 扩展预检并解锁
+  -> 扩展读取项目、历史和附件
+  -> 扩展修改共有登录字段并导出
+  -> Android Kotpass 重新读取并验证原生结构
 ```
 
-提交候选创建后，已从干净工作树重新执行完整 `npm run release:check`。供应链、生产依赖审计、类型检查、659 项单元测试、57 项安全测试、48 项 Playwright 测试、发布包生成和发布包可重复性校验全部通过。
+AES-256 与 ChaCha20 已通过。验收覆盖保护字段、OTP 参数、未知插件字段、数据库/分组/条目 CustomData、时间、历史、附件与二进制池、嵌套分组、未来未知类型以及 Monica 与 KeePassDX Passkey 字段。Android 仓库测试前后状态保持一致。
 
-## 数据兼容边界
+Twofish 由 Android 生成真实样本后，在扩展外层 KDBX 头部检查阶段以 `cipher-unsupported` 拒绝，并显示转换为 AES-256 的处理方式。`kdbxweb` 当前没有经过审计的 Twofish 实现，因此不能把失败伪装成密码错误。详细记录见 [KEEPASS_ANDROID_INTEROPERABILITY.md](./KEEPASS_ANDROID_INTEROPERABILITY.md)。
 
-真实 Android 客户端与真实 KDBX 文件的双向往返仍需人工验证。完成前只能声明自动化的结构保留和浏览器往返测试通过，不能声明已经实现 Android 完整无损兼容。
+## Bitwarden
 
-未知字段、未来字段、附件和无法解释的条目继续按原有 Provider 规则保留。Popup 与内容脚本只能获取候选摘要或用户明确选择后的单项字段，无法读取整库、原始数据库、来源信封或私钥。
+下一功能组需要重新审查 Android 当前工作区。Android 现有未提交内容包含 `BitwardenSyncService.kt`、`CipherSyncProcessor.kt`、`BitwardenPasswordCustomFieldAdapter.kt` 与 `BitwardenPasswordCustomFieldSyncState.kt`，这些文件只读但属于当前规范来源。
 
-## 后续非 MDBX 项目
+验收范围包括身份验证与令牌刷新、个人库和组织库、文件夹与集合、登录、笔记、卡片、身份、附件、Passkey、回收站、空库保护、冲突与增量同步。Bitwarden 服务端契约在 Android 注释与实际接口不一致时优先。
 
-本轮提交完成后，可继续处理以下项目：
+## Windows Hello
 
-1. `provider-transport.ts` 的超时作用域回归。
-2. YAOTP 导出二维码时包含 PIN 的问题。
-3. `src/passkey/source-policy.ts` 的不可达分支。
-4. mOTP 与 Yandex 行为变更记录。
-5. Bitwarden 附件下载、Sends、组织库与真实服务端验证。
-6. 真实 Android 与 KDBX 双向往返验证。
+Windows Hello 需要作为本机解锁能力释放前的身份验证边界，取消、超时、不可用硬件和 Native Host 异常均应保持锁定。系统验证不能替代静态数据加密，主密码恢复方式必须持续可用。
 
-MDBX 保持暂停，除非用户以后明确恢复该部分。
+适合当前 MV3 架构的实现是由受固定版本和安装清单保护的 Native Host 调用 Windows WebAuthn 或系统凭据接口，返回一次性、短时、绑定当前 vault 会话的成功证明。Popup、内容脚本和普通网页不能调用该能力，也不能获得操作系统密钥材料。
 
-## 提交规则
+## 安全与界面约束
 
-仅使用 `main`，直接提交并推送。禁止建立额外分支和拉取请求。提交信息不得包含 AI 署名、`Co-Authored-By` 或生成工具尾注。
+KDBX、MDBX2 数据库、附件明文、Provider 凭据、来源记录、同步 bundle、Blob 和 Passkey 私钥仅存在于后台或 Native Host 授权范围。Popup 与内容脚本只能获得候选摘要以及用户明确选择后的最少字段。
 
-M3E 界面继续使用 8px 卡片圆角、16px 对话框、20px 或 24px 图标和至少 44px 交互区域，保持干净紧凑并禁止渐变。
+M3E 页面禁止渐变，卡片和输入框使用 8px 圆角，对话框使用 16px 圆角，图标使用 20px 或 24px，交互区域至少 44px。管理页、Popup、对话框需要覆盖明暗主题、375px、200% 字体、减少动画和无横向溢出。
+
+## 下一步
+
+1. 完成 KeePass 第 18 项：运行完整 Windows 发布门禁，从干净提交生成并重复验证扩展与 Native Host 包，然后推送 `main`。
+2. 审查 Android 当前 Bitwarden 修改和扩展现有实现，更新功能矩阵并实施缺失能力。
+3. 完成 Bitwarden 后实施 Windows Hello 解锁验证。
+4. 执行共享安全、M3E、迁移、MV3 生命周期和可重复发布检查。
