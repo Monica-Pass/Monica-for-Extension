@@ -32,17 +32,19 @@ describe("encrypted vault", () => {
     const storage = new MemoryVaultStorage();
     const sessions = new MemoryVaultSessionStore();
     const service = new SecureVaultService(storage, sessions);
-    const login = createLoginItem({ title: "Example", username: "joy", password: "super-secret-value", uris: ["example.com"] });
+    const username = "plaintext-username-sentinel-joyins-20260807";
+    const password = "plaintext-password-sentinel-super-secret-value-20260807";
+    const login = createLoginItem({ title: "Example", username, password, uris: ["example.com"] });
     await service.setup("a strong master password", [login]);
     expect(storage.envelope?.kdf).toMatchObject({ name: "ARGON2ID", memoryKiB: 64 * 1024, iterations: 3, parallelism: 1 });
 
     const serializedEnvelope = JSON.stringify(storage.envelope);
-    expect(serializedEnvelope).not.toContain("super-secret-value");
-    expect(serializedEnvelope).not.toContain("joy");
+    expect(serializedEnvelope).not.toContain(password);
+    expect(serializedEnvelope).not.toContain(username);
 
     await service.lock();
     await expect(service.unlock("wrong password")).rejects.toBeInstanceOf(VaultUnlockError);
-    expect((await service.unlock("a strong master password")).items[0]).toMatchObject({ kind: "login", password: "super-secret-value" });
+    expect((await service.unlock("a strong master password")).items[0]).toMatchObject({ kind: "login", username, password });
   });
 
   it("requires an active session for CRUD and automatically expires it", async () => {
