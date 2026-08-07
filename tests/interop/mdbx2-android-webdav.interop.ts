@@ -19,6 +19,7 @@ import {
   type Mdbx2RemoteSegmentDescriptor
 } from "../../src/providers/mdbx2/mdbx2-sync-paths";
 import {
+  acquireAndroidInteropPrerequisites,
   buildInjectedAndroidTest,
   clearAndroidFixture,
   ensureAndroidEnvironment,
@@ -101,10 +102,10 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
     let firstClient: Mdbx2NativeClient | undefined;
     let secondClient: Mdbx2NativeClient | undefined;
     try {
-      const [apk, environment] = await Promise.all([
-        buildInjectedAndroidTest(extensionRoot, androidRepository),
-        ensureAndroidEnvironment(androidRepository)
-      ]);
+      const { apk, environment } = await acquireAndroidInteropPrerequisites(
+        () => buildInjectedAndroidTest(extensionRoot, androidRepository),
+        () => ensureAndroidEnvironment(androidRepository)
+      );
       androidEnvironment = environment;
       await installAndroidFixture(environment, apk);
       await clearAndroidFixture(environment);

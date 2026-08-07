@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { connect as connectNet, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Mdbx2NativePort, Mdbx2NativeRuntime } from "../../src/providers/mdbx2/native-client";
@@ -101,9 +102,42 @@ export function sha256Hex(bytes: Uint8Array): string {
 
 export interface AndroidEnvironment {
   adb: string;
+  adbServerPort: number;
   emulator: string;
   serial: string;
+  startedAdbServer: boolean;
   startedEmulator: boolean;
+}
+
+export interface AndroidInteropPrerequisites {
+  apk: string;
+  environment: AndroidEnvironment;
+}
+
+export async function acquireAndroidInteropPrerequisites(
+  buildFixture: () => Promise<string>,
+  startEnvironment: () => Promise<AndroidEnvironment>,
+  stopEnvironment: (environment: AndroidEnvironment) => Promise<void> = stopAndroidEnvironment
+): Promise<AndroidInteropPrerequisites> {
+  const environmentPromise = Promise.resolve().then(startEnvironment);
+  const fixturePromise = Promise.resolve().then(buildFixture);
+  try {
+    const [apk, environment] = await Promise.all([fixturePromise, environmentPromise]);
+    return { apk, environment };
+  } catch (setupError) {
+    const environment = await environmentPromise.catch(() => undefined);
+    if (environment) {
+      try {
+        await stopEnvironment(environment);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [setupError, cleanupError],
+          "Android MDBX2 interoperability setup and environment cleanup both failed."
+        );
+      }
+    }
+    throw setupError;
+  }
 }
 
 export async function buildInjectedAndroidTest(extensionRoot: string, androidRepository: string): Promise<string> {
@@ -146,69 +180,114 @@ export async function ensureAndroidEnvironment(androidRepository: string): Promi
     : primaryEmulator;
   const emulator = existsSync(primaryEmulator) ? primaryEmulator : fallbackEmulator;
   if (!existsSync(adb) || !existsSync(emulator)) throw new Error("Android adb or emulator executable is unavailable.");
-  await runText(adb, ["start-server"], { timeoutMs: 30_000 });
-  const existing = await connectedDevices(adb);
-  const requestedSerial = process.env.MONICA_MDBX2_INTEROP_SERIAL?.trim();
-  if (requestedSerial) {
-    if (!existing.includes(requestedSerial)) throw new Error(`Requested Android device is unavailable: ${requestedSerial}`);
-    await waitForBoot(adb, requestedSerial);
-    return { adb, emulator, serial: requestedSerial, startedEmulator: false };
-  }
-
-  const avd = process.env.MONICA_MDBX2_INTEROP_AVD || "Pixel_Fold_API_35";
-  const availableAvds = (await runText(emulator, ["-list-avds"], { timeoutMs: 30_000 })).split(/\r?\n/).filter(Boolean);
-  if (!availableAvds.includes(avd)) throw new Error(`Android AVD ${avd} is unavailable.`);
-  const configuredPort = process.env.MONICA_MDBX2_INTEROP_EMULATOR_PORT?.trim();
-  const port = configuredPort || [5580, 5582, 5584, 5586, 5588]
-    .map(String)
-    .find((candidate) => !existing.includes(`emulator-${candidate}`));
-  const portNumber = Number(port);
-  if (!port || !Number.isInteger(portNumber) || portNumber < 5554 || portNumber > 5682 || portNumber % 2 !== 0) {
-    throw new Error("No reviewed Android emulator port is available.");
-  }
-  const serial = `emulator-${port}`;
-  const child = spawn(emulator, [
-    "-avd", avd,
-    "-port", port,
-    "-read-only",
-    "-no-window",
-    "-no-audio",
-    "-no-boot-anim",
-    "-no-snapshot-load",
-    "-no-snapshot-save",
-    "-gpu", "swiftshader_indirect"
-  ], {
-    detached: true,
-    windowsHide: true,
-    stdio: "ignore"
-  });
-  child.unref();
+  const configuredAdbServerPort = process.env.MONICA_MDBX2_INTEROP_ADB_SERVER_PORT?.trim();
+  const adbServerPort = configuredAdbServerPort
+    ? parseTcpPort(configuredAdbServerPort, "Android ADB server port")
+    : await allocateLoopbackPort();
+  const startedAdbServer = !await isLoopbackPortListening(adbServerPort);
+  let serial: string | undefined;
+  let startedEmulator = false;
   try {
-    await waitForDevice(adb, serial);
-    await waitForBoot(adb, serial);
+    await runText(adb, ["start-server"], adbOptions(adbServerPort, { timeoutMs: 30_000 }));
+    const existing = await connectedDevices(adb, adbServerPort);
+    const requestedSerial = process.env.MONICA_MDBX2_INTEROP_SERIAL?.trim();
+    if (requestedSerial) {
+      if (!existing.includes(requestedSerial)) throw new Error(`Requested Android device is unavailable: ${requestedSerial}`);
+      await waitForBoot(adb, adbServerPort, requestedSerial);
+      return { adb, adbServerPort, emulator, serial: requestedSerial, startedAdbServer, startedEmulator: false };
+    }
+
+    const avd = process.env.MONICA_MDBX2_INTEROP_AVD || "Pixel_Fold_API_35";
+    const availableAvds = (await runText(emulator, ["-list-avds"], { timeoutMs: 30_000 })).split(/\r?\n/).filter(Boolean);
+    if (!availableAvds.includes(avd)) throw new Error(`Android AVD ${avd} is unavailable.`);
+    const configuredPort = process.env.MONICA_MDBX2_INTEROP_EMULATOR_PORT?.trim();
+    const port = configuredPort || [5580, 5582, 5584, 5586, 5588]
+      .map(String)
+      .find((candidate) => !existing.includes(`emulator-${candidate}`));
+    const portNumber = Number(port);
+    if (!port || !Number.isInteger(portNumber) || portNumber < 5554 || portNumber > 5682 || portNumber % 2 !== 0) {
+      throw new Error("No reviewed Android emulator port is available.");
+    }
+    serial = `emulator-${port}`;
+    const child = spawn(emulator, [
+      "-avd", avd,
+      "-port", port,
+      "-read-only",
+      "-no-window",
+      "-no-audio",
+      "-no-boot-anim",
+      "-no-snapshot-load",
+      "-no-snapshot-save",
+      "-gpu", "swiftshader_indirect"
+    ], {
+      detached: true,
+      env: adbProcessEnvironment(adbServerPort),
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    startedEmulator = true;
+    await waitForDevice(adb, adbServerPort, serial);
+    await waitForBoot(adb, adbServerPort, serial);
+    return { adb, adbServerPort, emulator, serial, startedAdbServer, startedEmulator };
   } catch (error) {
-    await runCommand(adb, ["-s", serial, "emu", "kill"], { timeoutMs: 30_000 }).catch(() => undefined);
+    if (startedEmulator && serial) {
+      await runCommand(adb, ["-s", serial, "emu", "kill"], adbOptions(adbServerPort, { timeoutMs: 30_000 })).catch(() => undefined);
+    }
+    if (startedAdbServer) {
+      await runCommand(adb, ["kill-server"], adbOptions(adbServerPort, { timeoutMs: 30_000 })).catch(() => undefined);
+    }
     throw error;
   }
-  return { adb, emulator, serial, startedEmulator: true };
 }
 
-export async function stopAndroidEnvironment(environment: AndroidEnvironment): Promise<void> {
-  if (!environment.startedEmulator) return;
-  await runCommand(environment.adb, ["-s", environment.serial, "emu", "kill"], { timeoutMs: 30_000 }).catch(() => undefined);
+export async function stopAndroidEnvironment(
+  environment: AndroidEnvironment,
+  commandRunner: typeof runCommand = runCommand
+): Promise<void> {
+  if (environment.startedEmulator) {
+    await commandRunner(
+      environment.adb,
+      ["-s", environment.serial, "emu", "kill"],
+      adbOptions(environment.adbServerPort, { timeoutMs: 30_000 })
+    ).catch(() => undefined);
+  }
+  if (environment.startedAdbServer) {
+    await commandRunner(
+      environment.adb,
+      ["kill-server"],
+      adbOptions(environment.adbServerPort, { timeoutMs: 30_000 })
+    ).catch(() => undefined);
+  }
 }
 
 export async function installAndroidFixture(environment: AndroidEnvironment, apk: string): Promise<void> {
-  await runCommand(environment.adb, ["-s", environment.serial, "install", "-r", "-t", apk], { timeoutMs: 180_000 });
+  await runAndroidAdbCommand(environment, ["-s", environment.serial, "install", "-r", "-t", apk], { timeoutMs: 180_000 });
 }
 
-export async function clearAndroidFixture(environment: AndroidEnvironment): Promise<void> {
-  await runCommand(environment.adb, ["-s", environment.serial, "shell", "pm", "clear", FIXTURE_PACKAGE], { timeoutMs: 30_000 });
+export async function clearAndroidFixture(
+  environment: AndroidEnvironment,
+  commandRunner: typeof runAndroidAdbCommand = runAndroidAdbCommand,
+  pause: (milliseconds: number) => Promise<void> = delay
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await commandRunner(
+        environment,
+        ["-s", environment.serial, "shell", "pm", "clear", FIXTURE_PACKAGE],
+        { timeoutMs: 30_000 }
+      );
+      return;
+    } catch (error) {
+      if (attempt === 2 || !isTransientAndroidPackageManagerFailure(error)) throw error;
+      await pause(1_500);
+    }
+  }
 }
 
 export async function runAndroidFixtureMethod(environment: AndroidEnvironment, method: string): Promise<string> {
   const testName = `takagi.ru.monica.mdbx.engine.Mdbx2ExtensionInteropTest#${method}`;
-  const output = await runText(environment.adb, [
+  const output = await runAndroidAdbText(environment, [
     "-s", environment.serial,
     "shell", "am", "instrument", "-w", "-r",
     "-e", "class", testName,
@@ -226,7 +305,7 @@ export async function pullAndroidFixtureFile(
   localPath: string
 ): Promise<void> {
   const remotePath = safeFixturePath(relativePath);
-  const result = await runCommand(environment.adb, [
+  const result = await runAndroidAdbCommand(environment, [
     "-s", environment.serial,
     "exec-out", "run-as", FIXTURE_PACKAGE, "cat", remotePath
   ], { timeoutMs: 120_000 });
@@ -240,7 +319,7 @@ export async function pullAndroidFixtureTree(
   localRoot: string
 ): Promise<void> {
   const remoteRoot = safeFixturePath(relativeRoot);
-  const output = await runText(environment.adb, [
+  const output = await runAndroidAdbText(environment, [
     "-s", environment.serial,
     "shell", "run-as", FIXTURE_PACKAGE, "find", remoteRoot, "-type", "f"
   ], { timeoutMs: 60_000 });
@@ -259,7 +338,7 @@ export async function pushAndroidFixtureFile(
   bytes: Uint8Array
 ): Promise<void> {
   const remotePath = safeFixturePath(relativePath);
-  const packageRoot = (await runText(environment.adb, [
+  const packageRoot = (await runAndroidAdbText(environment, [
     "-s", environment.serial,
     "shell", "run-as", FIXTURE_PACKAGE, "pwd"
   ], { timeoutMs: 30_000 })).replace(/\\/g, "/").replace(/\/$/, "");
@@ -271,17 +350,17 @@ export async function pushAndroidFixtureFile(
   const staging = `/data/local/tmp/monica-mdbx2-${randomUUID()}.bin`;
   try {
     await writeFile(localFile, bytes);
-    await runCommand(environment.adb, ["-s", environment.serial, "push", localFile, staging], { timeoutMs: 120_000 });
-    await runCommand(environment.adb, [
+    await runAndroidAdbCommand(environment, ["-s", environment.serial, "push", localFile, staging], { timeoutMs: 120_000 });
+    await runAndroidAdbCommand(environment, [
       "-s", environment.serial,
       "shell", "run-as", FIXTURE_PACKAGE, "mkdir", "-p", parent
     ], { timeoutMs: 30_000 });
-    await runCommand(environment.adb, [
+    await runAndroidAdbCommand(environment, [
       "-s", environment.serial,
       "shell", "run-as", FIXTURE_PACKAGE, "cp", staging, target
     ], { timeoutMs: 120_000 });
   } finally {
-    await runCommand(environment.adb, ["-s", environment.serial, "shell", "rm", "-f", staging], { timeoutMs: 30_000 }).catch(() => undefined);
+    await runAndroidAdbCommand(environment, ["-s", environment.serial, "shell", "rm", "-f", staging], { timeoutMs: 30_000 }).catch(() => undefined);
     await rm(localRoot, { recursive: true, force: true });
   }
 }
@@ -313,8 +392,78 @@ function requireBinaryFile(path: string): Uint8Array {
   return readFileSync(path);
 }
 
-async function connectedDevices(adb: string): Promise<string[]> {
-  const output = await runText(adb, ["devices"], { timeoutMs: 30_000 });
+function adbProcessEnvironment(serverPort: number): NodeJS.ProcessEnv {
+  return { ...process.env, ANDROID_ADB_SERVER_PORT: String(serverPort) };
+}
+
+function adbOptions(serverPort: number, options: CommandOptions = {}): CommandOptions {
+  return {
+    ...options,
+    env: { ...process.env, ...options.env, ANDROID_ADB_SERVER_PORT: String(serverPort) }
+  };
+}
+
+async function runAndroidAdbCommand(
+  environment: AndroidEnvironment,
+  args: string[],
+  options: CommandOptions = {}
+): Promise<CommandResult> {
+  return await runCommand(environment.adb, args, adbOptions(environment.adbServerPort, options));
+}
+
+async function runAndroidAdbText(
+  environment: AndroidEnvironment,
+  args: string[],
+  options: CommandOptions = {}
+): Promise<string> {
+  return await runText(environment.adb, args, adbOptions(environment.adbServerPort, options));
+}
+
+function parseTcpPort(value: string, label: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535) throw new Error(`${label} is invalid.`);
+  return port;
+}
+
+function isTransientAndroidPackageManagerFailure(error: unknown): boolean {
+  return error instanceof Error && /Broken pipe|device offline|device still authorizing|connection reset|closed/i.test(error.message);
+}
+
+async function allocateLoopbackPort(): Promise<number> {
+  const server = createNetServer();
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolvePromise());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    throw new Error("Unable to allocate a dedicated Android ADB server port.");
+  }
+  const port = address.port;
+  await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
+  return port;
+}
+
+async function isLoopbackPortListening(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolvePromise) => {
+    const socket = connectNet({ host: "127.0.0.1", port });
+    let settled = false;
+    const finish = (listening: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      resolvePromise(listening);
+    };
+    const timeout = setTimeout(() => finish(false), 500);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function connectedDevices(adb: string, adbServerPort: number): Promise<string[]> {
+  const output = await runText(adb, ["devices"], adbOptions(adbServerPort, { timeoutMs: 30_000 }));
   return output.split(/\r?\n/)
     .slice(1)
     .map((line) => line.trim().split(/\s+/))
@@ -322,22 +471,30 @@ async function connectedDevices(adb: string): Promise<string[]> {
     .map((parts) => parts[0]);
 }
 
-async function waitForDevice(adb: string, serial: string): Promise<void> {
+async function waitForDevice(adb: string, adbServerPort: number, serial: string): Promise<void> {
   const deadline = Date.now() + 4 * 60_000;
   while (Date.now() < deadline) {
-    const devices = await connectedDevices(adb).catch((): string[] => []);
+    const devices = await connectedDevices(adb, adbServerPort).catch((): string[] => []);
     if (devices.includes(serial)) return;
     await delay(2_000);
   }
   throw new Error(`Android emulator ${serial} did not connect.`);
 }
 
-async function waitForBoot(adb: string, serial: string): Promise<void> {
+async function waitForBoot(adb: string, adbServerPort: number, serial: string): Promise<void> {
   const deadline = Date.now() + 8 * 60_000;
   while (Date.now() < deadline) {
-    const booted = await runText(adb, ["-s", serial, "shell", "getprop", "sys.boot_completed"], { timeoutMs: 15_000 }).catch(() => "");
+    const booted = await runText(
+      adb,
+      ["-s", serial, "shell", "getprop", "sys.boot_completed"],
+      adbOptions(adbServerPort, { timeoutMs: 15_000 })
+    ).catch(() => "");
     if (booted.trim() === "1") {
-      await runCommand(adb, ["-s", serial, "shell", "input", "keyevent", "82"], { timeoutMs: 15_000 }).catch(() => undefined);
+      await runCommand(
+        adb,
+        ["-s", serial, "shell", "input", "keyevent", "82"],
+        adbOptions(adbServerPort, { timeoutMs: 15_000 })
+      ).catch(() => undefined);
       return;
     }
     await delay(2_000);
