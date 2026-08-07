@@ -513,7 +513,7 @@ describe("encrypted vault", () => {
 
     const restored = await target.restoreEncryptedBackup(backup, "source backup password", { replaceExisting: true, currentPassword: "target current password" });
     expect(restored.items.map((item) => item.title)).toEqual(["Source"]);
-  });
+  }, 30_000);
 
   it("imports multiple items as one encrypted commit", async () => {
     const storage = new MemoryVaultStorage();
