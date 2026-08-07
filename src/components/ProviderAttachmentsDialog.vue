@@ -7,8 +7,9 @@ import {
   PROVIDER_ATTACHMENT_CHUNK_BYTES,
   type ProviderAttachmentSummary
 } from "../providers/attachments/attachment-contract";
+import type { ProviderAttachmentTransferMode } from "../providers/attachments/attachment-transfer";
 import { base64ToBytes } from "../security/encoding";
-import { vaultClient } from "../runtime/client";
+import { ExtensionRuntimeError, vaultClient } from "../runtime/client";
 
 interface PendingUpload {
   providerId: string;
@@ -23,6 +24,14 @@ interface PendingUpload {
 
 interface PendingFileSelection {
   attachment?: ProviderAttachmentSummary;
+}
+
+interface PendingTransfer {
+  attachment: ProviderAttachmentSummary;
+  targetProviderId: string;
+  mode: ProviderAttachmentTransferMode;
+  operationId: string;
+  attempted: boolean;
 }
 
 const props = defineProps<{
@@ -45,7 +54,9 @@ const deletingAttachmentId = ref("");
 const pendingDelete = ref<ProviderAttachmentSummary | undefined>();
 const pendingUpload = ref<PendingUpload | undefined>();
 const pendingFileSelection = ref<PendingFileSelection | undefined>();
+const pendingTransfer = ref<PendingTransfer | undefined>();
 const uploadBusy = ref(false);
+const transferBusy = ref(false);
 const uploadProgress = ref(0);
 const error = ref("");
 const status = ref("");
@@ -56,16 +67,20 @@ let listGeneration = 0;
 const deleteOperationIds = new Map<string, string>();
 
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
-const interactionLocked = computed(() => listBusy.value || uploadBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
-const providerLimit = computed(() => selectedProvider.value?.kind === "mdbx2" ? MDBX2_ATTACHMENT_MAX_BYTES : KEEPASS_ATTACHMENT_MAX_BYTES);
-const providerDescription = computed(() => selectedProvider.value?.kind === "mdbx2"
-  ? "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。"
-  : "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。"
-);
+const transferTargets = computed(() => props.providers.filter((provider) => provider.id !== selectedProviderId.value));
+const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
+const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
+const providerLimit = computed(() => attachmentLimit(selectedProvider.value));
+const providerDescription = computed(() => {
+  if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
+  if (selectedProvider.value?.config.sourceMode === "webdav") return "KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。";
+  return "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。";
+});
 
 watch(selectedProviderId, () => {
   deleteOperationIds.clear();
   pendingDelete.value = undefined;
+  pendingTransfer.value = undefined;
   error.value = "";
   status.value = "";
   void discardPendingUpload().finally(() => loadAttachments(true));
@@ -167,7 +182,7 @@ async function runPendingUpload() {
       offset = chunk.nextOffset;
       uploadProgress.value = percentage(offset, upload.file.size);
     }
-    await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId);
+    await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId, upload.operationId);
     await vaultClient.abortProviderAttachmentUpload(upload.providerId, begun.transferId).catch(() => false);
     const completedLabel = upload.replaceExisting ? `${upload.fileName} 的内容已替换。` : `${upload.fileName} 已添加。`;
     pendingUpload.value = undefined;
@@ -275,10 +290,74 @@ async function confirmDelete() {
   }
 }
 
+async function requestTransfer(attachment: ProviderAttachmentSummary) {
+  if (interactionLocked.value || !transferTargets.value.length) return;
+  pendingDelete.value = undefined;
+  pendingTransfer.value = {
+    attachment,
+    targetProviderId: transferTargets.value[0].id,
+    mode: "copy",
+    operationId: crypto.randomUUID(),
+    attempted: false
+  };
+  error.value = "";
+  status.value = "";
+  await nextTick();
+  dialogRoot.value?.querySelector<HTMLElement>("[data-confirm-transfer]")?.focus();
+}
+
+function cancelTransfer() {
+  if (transferBusy.value) return;
+  pendingTransfer.value = undefined;
+  error.value = "";
+}
+
+async function confirmTransfer() {
+  const transfer = pendingTransfer.value;
+  const sourceProvider = selectedProvider.value;
+  const targetProvider = pendingTransferTarget.value;
+  if (!transfer || !sourceProvider || !targetProvider) return;
+  if (transfer.attachment.sizeBytes > attachmentLimit(targetProvider)) {
+    error.value = `目标密码源单个附件上限为 ${formatBytes(attachmentLimit(targetProvider))}。`;
+    return;
+  }
+  transferBusy.value = true;
+  transfer.attempted = true;
+  error.value = "";
+  status.value = transfer.mode === "move"
+    ? `正在把 ${transfer.attachment.fileName} 移动到 ${targetProvider.name}；来源会在目标逐字节验证后删除。`
+    : `正在把 ${transfer.attachment.fileName} 复制到 ${targetProvider.name}。`;
+  try {
+    const result = await vaultClient.transferProviderAttachment({
+      operationId: transfer.operationId,
+      sourceProviderId: sourceProvider.id,
+      sourceItemId: props.item.id,
+      sourceAttachmentId: transfer.attachment.attachmentId,
+      targetProviderId: targetProvider.id,
+      targetItemId: props.item.id,
+      mode: transfer.mode,
+      confirmedMove: transfer.mode === "move"
+    });
+    const message = result.mode === "move"
+      ? `${transfer.attachment.fileName} 已完整写入 ${targetProvider.name} 并从 ${sourceProvider.name} 删除。`
+      : `${transfer.attachment.fileName} 已完整复制到 ${targetProvider.name}。`;
+    pendingTransfer.value = undefined;
+    status.value = message;
+    emit("notice", message);
+    await loadAttachments(true);
+  } catch (cause) {
+    error.value = transferErrorMessage(cause);
+    status.value = "";
+  } finally {
+    transferBusy.value = false;
+  }
+}
+
 async function closeDialog() {
   if (interactionLocked.value) return;
   await discardPendingUpload();
   deleteOperationIds.clear();
+  pendingTransfer.value = undefined;
   emit("close");
 }
 
@@ -298,8 +377,27 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
+function attachmentLimit(provider: ProviderAccount | undefined): number {
+  return provider?.kind === "mdbx2" ? MDBX2_ATTACHMENT_MAX_BYTES : KEEPASS_ATTACHMENT_MAX_BYTES;
+}
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function transferErrorMessage(cause: unknown): string {
+  const message = errorMessage(cause);
+  const code = cause instanceof ExtensionRuntimeError ? cause.code : undefined;
+  if (code === "attachment-name-conflict" || code === "attachment-size-invalid" || code === "attachment-transfer-size-invalid") {
+    return `${message} 取消本次操作后可选择其他目标；来源附件保持不变。`;
+  }
+  if (code === "attachment-transfer-verification-failed" || code === "attachment-transfer-target-mismatch") {
+    return `${message} 请检查目标密码源后重新开始；来源附件保持不变。`;
+  }
+  if (code === "attachment-transfer-source-delete-failed" || code === "attachment-transfer-source-delete-unconfirmed") {
+    return `${message} 可保留当前操作标识重试来源删除；目标副本会继续保留。`;
+  }
+  return `${message} 可使用同一操作标识重试；来源附件不会被提前删除。`;
 }
 </script>
 
@@ -364,8 +462,20 @@ function errorMessage(cause: unknown): string {
               <span class="attachment-row-actions">
                 <m3e-icon-button :aria-label="`下载 ${attachment.fileName}`" :disabled="interactionLocked" @click="downloadAttachment(attachment)"><m3e-icon :name="downloadingAttachmentId === attachment.attachmentId ? 'progress_activity' : 'download'"></m3e-icon></m3e-icon-button>
                 <m3e-icon-button :aria-label="`替换 ${attachment.fileName} 的内容`" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="transferTargets.length" :aria-label="`复制或移动 ${attachment.fileName} 到其他密码源`" :disabled="interactionLocked" @click="requestTransfer(attachment)"><m3e-icon name="drive_file_move"></m3e-icon></m3e-icon-button>
                 <m3e-icon-button class="attachment-delete-button" :aria-label="`删除 ${attachment.fileName}`" :disabled="interactionLocked" @click="requestDelete(attachment)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
               </span>
+            </div>
+            <div v-if="pendingTransfer?.attachment.attachmentId === attachment.attachmentId" class="attachment-transfer-panel">
+              <m3e-icon name="drive_file_move"></m3e-icon>
+              <div class="attachment-transfer-content">
+                <div><strong>跨密码源传输</strong><small>文件名和字节保持不变；同名目标不会被静默替换。</small></div>
+                <label class="attachment-transfer-target"><span>目标密码源</span><select v-model="pendingTransfer.targetProviderId" :aria-label="`目标密码源 · ${attachment.fileName}`" :disabled="transferBusy || pendingTransfer.attempted"><option v-for="provider in transferTargets" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
+                <fieldset class="attachment-transfer-mode" :disabled="transferBusy || pendingTransfer.attempted"><legend>操作</legend><label><input v-model="pendingTransfer.mode" type="radio" value="copy" /><span>复制</span></label><label><input v-model="pendingTransfer.mode" type="radio" value="move" /><span>移动</span></label></fieldset>
+                <p><m3e-icon :name="pendingTransfer.mode === 'move' ? 'verified_user' : 'content_copy'"></m3e-icon><span>{{ pendingTransfer.mode === 'move' ? '目标写入并重新读取校验成功后才删除来源；删除失败时保留两个副本。' : '来源保持不变；目标写入后会重新读取并逐字节校验。' }}</span></p>
+                <small v-if="pendingTransferTarget">目标上限 {{ formatBytes(attachmentLimit(pendingTransferTarget)) }} · 原始字节仅在后台传输</small>
+              </div>
+              <span class="attachment-transfer-actions"><m3e-button variant="text" type="button" :disabled="transferBusy" @click="cancelTransfer">取消</m3e-button><m3e-button data-confirm-transfer variant="tonal" type="button" :disabled="transferBusy" @click="confirmTransfer">{{ transferBusy ? '传输中…' : pendingTransfer.attempted ? '重试传输' : pendingTransfer.mode === 'move' ? '确认移动' : '确认复制' }}</m3e-button></span>
             </div>
             <div v-if="pendingDelete?.attachmentId === attachment.attachmentId" class="attachment-delete-confirmation">
               <m3e-icon name="warning"></m3e-icon>
@@ -466,6 +576,7 @@ function errorMessage(cause: unknown): string {
 .attachment-provider-summary span,
 .attachment-copy,
 .attachment-upload-panel > div,
+.attachment-transfer-content,
 .attachment-delete-confirmation > span:nth-child(2),
 .attachment-list-heading > div {
   min-width: 0;
@@ -476,6 +587,7 @@ function errorMessage(cause: unknown): string {
 .attachment-provider-summary small,
 .attachment-copy small,
 .attachment-upload-panel small,
+.attachment-transfer-panel small,
 .attachment-delete-confirmation small,
 .attachment-list-heading small {
   color: var(--md-sys-color-on-surface-variant, var(--app-muted));
@@ -623,6 +735,104 @@ function errorMessage(cause: unknown): string {
   color: var(--md-sys-color-error, #ba1a1a);
 }
 
+.attachment-transfer-panel {
+  border-top: 1px solid var(--md-sys-color-primary, var(--app-primary));
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 16px;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.attachment-transfer-panel > m3e-icon {
+  --m3e-icon-size: 20px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.attachment-transfer-content {
+  display: grid;
+  gap: 10px;
+}
+
+.attachment-transfer-content > div {
+  display: grid;
+  gap: 2px;
+}
+
+.attachment-transfer-target {
+  display: grid;
+  gap: 6px;
+}
+
+.attachment-transfer-target select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
+  border-radius: 8px;
+  padding: 0 12px;
+  font: inherit;
+  color: var(--app-text);
+  background: var(--app-surface);
+}
+
+.attachment-transfer-target select:disabled,
+.attachment-transfer-mode:disabled {
+  opacity: 0.72;
+}
+
+.attachment-transfer-mode {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachment-transfer-mode legend {
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+.attachment-transfer-mode label {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--app-surface);
+}
+
+.attachment-transfer-content > p {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.attachment-transfer-content > p m3e-icon {
+  --m3e-icon-size: 20px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.attachment-transfer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .attachment-delete-confirmation {
   border-top: 1px solid var(--md-sys-color-error, #ba1a1a);
   display: grid;
@@ -705,12 +915,14 @@ function errorMessage(cause: unknown): string {
 
   .attachment-upload-panel,
   .attachment-row-main,
+  .attachment-transfer-panel,
   .attachment-delete-confirmation {
     grid-template-columns: 40px minmax(0, 1fr);
   }
 
   .attachment-progress-value,
   .attachment-row-actions,
+  .attachment-transfer-actions,
   .attachment-confirm-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
@@ -730,6 +942,7 @@ function errorMessage(cause: unknown): string {
 
   .attachment-list-heading,
   .attachment-row-main,
+  .attachment-transfer-panel,
   .attachment-delete-confirmation {
     padding-inline: 12px;
   }

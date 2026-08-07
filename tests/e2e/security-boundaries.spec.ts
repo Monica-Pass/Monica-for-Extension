@@ -151,6 +151,7 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId: "keepass-provider", itemId: "item-1", transferId: "11111111-1111-4111-8111-111111111111" },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId: "keepass-provider", transferId: "11111111-1111-4111-8111-111111111111" },
       { type: "PROVIDER_ATTACHMENT_DELETE", providerId: "keepass-provider", itemId: "item-1", attachmentId: "11111111-1111-4111-8111-111111111111", operationId: "44444444-4444-4444-8444-444444444444", confirmed: true },
+      { type: "PROVIDER_ATTACHMENT_TRANSFER", operationId: "55555555-5555-4555-8555-555555555555", sourceProviderId: "keepass-provider", sourceItemId: "item-1", sourceAttachmentId: "11111111-1111-4111-8111-111111111111", targetProviderId: "mdbx-provider", targetItemId: "item-1", mode: "copy", confirmedMove: false },
       { type: "KEEPASS_GROUP_LIST", providerId: "keepass-provider", includeRecycleBin: true, pageSize: 50 },
       { type: "KEEPASS_GROUP_CREATE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "Work" },
       { type: "KEEPASS_GROUP_RENAME", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", groupId: "22222222-2222-4222-8222-222222222222", name: "Archive" },

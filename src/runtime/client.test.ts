@@ -247,9 +247,19 @@ describe("extension runtime client", () => {
     await vaultClient.releaseProviderAttachmentRead(providerId, readHandle);
     await vaultClient.beginProviderAttachmentUpload(providerId, itemId, { fileName: "a.txt", mediaType: "text/plain", sizeBytes: 2, sha256: "a".repeat(64), replaceExisting: true });
     await vaultClient.sendProviderAttachmentChunk(providerId, transferId, 0, new Uint8Array([1, 2]));
-    await vaultClient.finishProviderAttachmentUpload(providerId, itemId, transferId);
+    await vaultClient.finishProviderAttachmentUpload(providerId, itemId, transferId, operationId);
     await vaultClient.abortProviderAttachmentUpload(providerId, transferId);
     await vaultClient.deleteProviderAttachment(providerId, itemId, attachmentId, operationId);
+    await vaultClient.transferProviderAttachment({
+      operationId,
+      sourceProviderId: providerId,
+      sourceItemId: itemId,
+      sourceAttachmentId: attachmentId,
+      targetProviderId: "mdbx2-2",
+      targetItemId: itemId,
+      mode: "move",
+      confirmedMove: true
+    });
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
       { type: "PROVIDER_ATTACHMENT_LIST", providerId, itemId, pageSize: 20, cursor: "next" },
@@ -258,9 +268,10 @@ describe("extension runtime client", () => {
       { type: "PROVIDER_ATTACHMENT_READ_RELEASE", providerId, readHandle },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_BEGIN", providerId, itemId, fileName: "a.txt", mediaType: "text/plain", sizeBytes: 2, sha256: "a".repeat(64), replaceExisting: true },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId, transferId, offset: 0, dataBase64: "AQI=" },
-      { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId },
+      { type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId, operationId },
       { type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId, transferId },
-      { type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, operationId, confirmed: true }
+      { type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, operationId, confirmed: true },
+      { type: "PROVIDER_ATTACHMENT_TRANSFER", operationId, sourceProviderId: providerId, sourceItemId: itemId, sourceAttachmentId: attachmentId, targetProviderId: "mdbx2-2", targetItemId: itemId, mode: "move", confirmedMove: true }
     ]);
   });
 

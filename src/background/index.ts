@@ -2,8 +2,20 @@ import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, t
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
-import { KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError, type ProviderAttachmentMutationResult } from "../providers/attachments/attachment-contract";
+import {
+  KEEPASS_ATTACHMENT_MAX_BYTES,
+  PROVIDER_ATTACHMENT_CHUNK_BYTES,
+  PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS,
+  PROVIDER_ATTACHMENT_UPLOAD_TTL_MS,
+  ProviderAttachmentError,
+  type ProviderAttachmentMutationResult,
+  type ProviderAttachmentReadBeginResult,
+  type ProviderAttachmentReadChunk,
+  type ProviderAttachmentUploadBeginResult,
+  type ProviderAttachmentUploadChunkResult
+} from "../providers/attachments/attachment-contract";
 import { paginateProviderAttachments } from "../providers/attachments/attachment-pagination";
+import { ProviderAttachmentTransferCoordinator, type ProviderAttachmentTransferBackend } from "../providers/attachments/attachment-transfer";
 import { ProviderAttachmentUploadStore } from "../providers/attachments/attachment-upload-store";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
@@ -81,6 +93,7 @@ const mdbx2BatchTransferCoordinator = new Mdbx2BatchTransferCoordinator(
   mdbx2TransferAttachmentService
 );
 const providerAttachmentUploads = new ProviderAttachmentUploadStore();
+const providerAttachmentTransfers = new ProviderAttachmentTransferCoordinator();
 const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
 const CAPTURE_TTL_MS = 60_000;
@@ -838,6 +851,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
       return mdbx2NativeClient.resolveConflict(vaultHandle, request.operationId, request.conflictId, request.choice);
     }
+    case "PROVIDER_ATTACHMENT_TRANSFER": {
+      assertManagerPage(sender);
+      return providerAttachmentTransfers.execute(request, providerAttachmentTransferBackend(sender));
+    }
     case "PROVIDER_ATTACHMENT_LIST": {
       assertManagerPage(sender);
       const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
@@ -886,16 +903,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const { item } = await requireAttachmentTarget(route.providerId, route.itemId);
         const result = keePassProvider.readAttachment(account, item, route.attachmentId, request.offset, request.maxBytes);
         route.expiresAt = Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS;
-        return {
-          readHandle: request.readHandle,
-          attachmentId: result.attachment.attachmentId,
-          fileName: result.attachment.fileName,
-          sizeBytes: result.attachment.sizeBytes,
-          offset: result.offset,
-          nextOffset: result.nextOffset,
-          dataBase64: bytesToBase64(result.bytes),
-          eof: result.eof
-        };
+        try {
+          return {
+            readHandle: request.readHandle,
+            attachmentId: result.attachment.attachmentId,
+            fileName: result.attachment.fileName,
+            sizeBytes: result.attachment.sizeBytes,
+            offset: result.offset,
+            nextOffset: result.nextOffset,
+            dataBase64: bytesToBase64(result.bytes),
+            eof: result.eof
+          };
+        } finally {
+          result.bytes.fill(0);
+        }
       }
       if (account.kind === "mdbx2") {
         const result = await mdbx2NativeClient.readAttachmentChunk(request.readHandle, request.offset, request.maxBytes);
@@ -966,26 +987,38 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const account = await service.getProvider(request.providerId);
       if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
       const bytes = base64ToBytes(request.dataBase64);
-      if (account.kind === "keepass") {
-        const intent = providerAttachmentUploads.intent(request.transferId);
-        if (intent && (intent.providerId !== account.id || intent.providerKind !== "keepass")) {
-          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+      try {
+        if (account.kind === "keepass") {
+          const intent = providerAttachmentUploads.intent(request.transferId);
+          if (intent && (intent.providerId !== account.id || intent.providerKind !== "keepass")) {
+            throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+          }
+          return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
         }
-        return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
+        if (account.kind === "mdbx2") return await mdbx2NativeClient.sendAttachmentUploadChunk(request.transferId, request.offset, bytes);
+        throw unsupportedAttachmentProvider(account.kind);
+      } finally {
+        bytes.fill(0);
       }
-      if (account.kind === "mdbx2") return mdbx2NativeClient.sendAttachmentUploadChunk(request.transferId, request.offset, bytes);
-      throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_FINISH": {
       assertManagerPage(sender);
       const { account, item } = await requireAttachmentTarget(request.providerId, request.itemId);
       if (account.kind === "keepass") {
+        const durableOperationId = request.operationId || request.transferId;
+        const durableIntent = request.operationId
+          ? { itemId: request.itemId, operationId: request.operationId }
+          : { itemId: request.itemId, transferId: request.transferId };
         return executeKeePassDurableMutation({
           account,
-          operationId: request.transferId,
+          operationId: durableOperationId,
           kind: "attachment-upload",
-          intent: { itemId: request.itemId, transferId: request.transferId },
-          replay: (result) => replayKeePassAttachmentResult(account, item, result),
+          intent: durableIntent,
+          replay: (result) => {
+            const replayed = replayKeePassAttachmentResult(account, item, result);
+            if (providerAttachmentUploads.has(request.transferId)) providerAttachmentUploads.markCommitted(request.transferId, replayed);
+            return replayed;
+          },
           mutate: async () => {
             const intent = providerAttachmentUploads.intent(request.transferId);
             if (intent && (intent.providerId !== account.id || intent.itemId !== item.id || intent.providerKind !== "keepass")) {
@@ -1053,7 +1086,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
       if (account.kind === "mdbx2") {
         const target = requireMdbx2AttachmentTarget(account, item);
-        const result = await mdbx2NativeClient.deleteAttachment(target.vaultHandle, crypto.randomUUID(), request.attachmentId);
+        const result = await mdbx2NativeClient.deleteAttachment(target.vaultHandle, request.operationId, request.attachmentId);
         return { changed: result.changed, attachment: providerAttachmentSummaryFromMdbx2(result.attachment) };
       }
       throw unsupportedAttachmentProvider(account.kind);
@@ -2269,6 +2302,19 @@ function managerSyncStatus(status: Mdbx2SyncStateStatus | undefined, configured:
 
 function stringAccountConfig(account: ProviderAccount, key: string): string {
   return typeof account.config[key] === "string" ? account.config[key] as string : "";
+}
+
+function providerAttachmentTransferBackend(sender: chrome.runtime.MessageSender): ProviderAttachmentTransferBackend {
+  return {
+    beginRead: async (providerId, itemId, attachmentId) => await handleRequest({ type: "PROVIDER_ATTACHMENT_READ_BEGIN", providerId, itemId, attachmentId }, sender) as ProviderAttachmentReadBeginResult,
+    readChunk: async (providerId, readHandle, offset, maxBytes) => await handleRequest({ type: "PROVIDER_ATTACHMENT_READ_CHUNK", providerId, readHandle, offset, maxBytes }, sender) as ProviderAttachmentReadChunk,
+    releaseRead: async (providerId, readHandle) => await handleRequest({ type: "PROVIDER_ATTACHMENT_READ_RELEASE", providerId, readHandle }, sender) as boolean,
+    beginUpload: async (providerId, itemId, input) => await handleRequest({ type: "PROVIDER_ATTACHMENT_UPLOAD_BEGIN", providerId, itemId, ...input }, sender) as ProviderAttachmentUploadBeginResult,
+    uploadChunk: async (providerId, transferId, offset, bytes) => await handleRequest({ type: "PROVIDER_ATTACHMENT_UPLOAD_CHUNK", providerId, transferId, offset, dataBase64: bytesToBase64(bytes) }, sender) as ProviderAttachmentUploadChunkResult,
+    finishUpload: async (providerId, itemId, transferId, operationId) => await handleRequest({ type: "PROVIDER_ATTACHMENT_UPLOAD_FINISH", providerId, itemId, transferId, operationId }, sender) as ProviderAttachmentMutationResult,
+    abortUpload: async (providerId, transferId) => await handleRequest({ type: "PROVIDER_ATTACHMENT_UPLOAD_ABORT", providerId, transferId }, sender) as boolean,
+    deleteAttachment: async (providerId, itemId, attachmentId, operationId) => await handleRequest({ type: "PROVIDER_ATTACHMENT_DELETE", providerId, itemId, attachmentId, operationId, confirmed: true }, sender) as ProviderAttachmentMutationResult
+  };
 }
 
 async function requireAttachmentTarget(providerId: string, itemId: string): Promise<{ account: ProviderAccount; item: VaultItem }> {
