@@ -1,18 +1,24 @@
 import type { ProviderAccount } from "../../core/model";
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
+import { ProviderTransportError } from "../provider-transport";
 import { normalizeServerUrl } from "../webdav/webdav-client";
 import {
   KeePassWebDavClient,
+  KeePassWebDavError,
   normalizeKeePassRemotePath,
   type KeePassWebDavConfig,
   type KeePassWebDavFileStat,
-  type KeePassWebDavSnapshot
+  type KeePassWebDavSnapshot,
+  type KeePassWebDavWriteResult
 } from "./keepass-webdav-client";
 import { KeePassProvider, type KeePassSessionSummary } from "./keepass-provider";
+import { openKeePassVault } from "./keepass-vault";
+import { KeePassRemoteRebaseConflictError, rebaseKeePassDatabase, type KeePassRebaseConflict } from "./keepass-remote-rebase";
 import {
   KeePassWorkingCopyStoreError,
   type KeePassDurableMutationKind,
   type KeePassDurableMutationReceipt,
+  type KeePassRemoteWorkingCopyRecord,
   type KeePassWorkingCopyStorage
 } from "./keepass-working-copy-store";
 import {
@@ -52,6 +58,12 @@ export interface KeePassRemotePersistenceResult {
   accountConfig: Record<string, unknown>;
 }
 
+export type KeePassRemotePublishStatus = "unchanged" | "remote-refreshed" | "uploaded" | "rebased";
+
+export interface KeePassRemotePublishResult extends KeePassRemotePersistenceResult {
+  status: KeePassRemotePublishStatus;
+}
+
 export type KeePassRemoteSessionErrorCode =
   | "remote-provider-invalid"
   | "remote-working-copy-missing"
@@ -59,7 +71,8 @@ export type KeePassRemoteSessionErrorCode =
   | "remote-key-file-invalid"
   | "remote-operation-reused"
   | "remote-cache-key-missing"
-  | "remote-receipt-invalid";
+  | "remote-receipt-invalid"
+  | "remote-rebase-conflict";
 
 export class KeePassRemoteSessionError extends Error {
   constructor(readonly code: KeePassRemoteSessionErrorCode, message: string) {
@@ -68,10 +81,18 @@ export class KeePassRemoteSessionError extends Error {
   }
 }
 
+export class KeePassRemoteRebaseSessionError extends KeePassRemoteSessionError {
+  constructor(readonly conflicts: readonly KeePassRebaseConflict[]) {
+    super("remote-rebase-conflict", "KeePass 远端文件与本机修改存在字段或结构冲突，请处理后重试。");
+    this.name = "KeePassRemoteRebaseSessionError";
+  }
+}
+
 export interface KeePassRemoteFileClient {
   testConnection(signal?: AbortSignal): Promise<void>;
   stat(signal?: AbortSignal): Promise<KeePassWebDavFileStat | undefined>;
   read(signal?: AbortSignal): Promise<KeePassWebDavSnapshot>;
+  write(bytes: Uint8Array, expectedEtag: string | null, signal?: AbortSignal): Promise<KeePassWebDavWriteResult>;
 }
 
 export type KeePassRemoteFileClientFactory = (config: KeePassWebDavConfig) => KeePassRemoteFileClient;
@@ -118,9 +139,12 @@ export class KeePassRemoteSessionService {
         workingSha256: snapshot.sha256,
         updatedAt: new Date().toISOString()
       }, existing?.revision || 0);
+      const accountConfig = remoteAccountConfig(account, remote, input.databasePassword, keyFile, snapshot, record.revision);
+      record.baseBytes.fill(0);
+      record.workingBytes.fill(0);
       return {
         session,
-        accountConfig: remoteAccountConfig(account, remote, input.databasePassword, keyFile, snapshot, record.revision)
+        accountConfig
       };
     } catch (cause) {
       this.provider.lockAccount(account.id);
@@ -231,11 +255,15 @@ export class KeePassRemoteSessionService {
           workingSha256,
           updatedAt: new Date().toISOString()
         }, record.revision, encryptedReceipt);
-        return {
+        const accountConfig = await this.accountConfigForRecord(account, saved);
+        const result = {
           revision: saved.revision,
           workingSha256,
-          accountConfig: await this.accountConfigForRecord(account, saved)
+          accountConfig
         };
+        saved.baseBytes.fill(0);
+        saved.workingBytes.fill(0);
+        return result;
       } catch (cause) {
         if (cause instanceof KeePassWorkingCopyStoreError && cause.code === "operation-reused") {
           throw new KeePassRemoteSessionError("remote-operation-reused", cause.message);
@@ -244,6 +272,103 @@ export class KeePassRemoteSessionService {
         throw cause;
       } finally {
         bytes?.fill(0);
+        record.baseBytes.fill(0);
+        record.workingBytes.fill(0);
+      }
+    });
+  }
+
+  /**
+   * Publishes the encrypted working copy with an atomic WebDAV ETag precondition. A changed remote
+   * file is rebased from the stored base KDBX; only independent fields/categories are applied. The
+   * working copy is replaced with the verified remote bytes before the provider session is reloaded.
+   */
+  async publishWorkingCopy(account: ProviderAccount, signal?: AbortSignal): Promise<KeePassRemotePublishResult | undefined> {
+    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    return this.runPersistenceExclusive(account.id, async () => {
+      const record = await this.storage.read(account.id);
+      if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+      let keyFile: Uint8Array | undefined;
+      let remoteSnapshot: KeePassWebDavSnapshot | undefined;
+      let outputBytes: Uint8Array | undefined;
+      let writeResult: KeePassWebDavWriteResult | undefined;
+      try {
+        keyFile = decodeKeyFile(optionalStringConfig(account, "keyFile"));
+        const password = stringConfig(account, "databasePassword");
+        const client = this.clientFactory(remoteConfigFromAccount(account));
+        const remoteStat = await client.stat(signal);
+        if (!remoteStat) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 文件不存在。");
+
+        if (record.workingSha256 === record.baseSha256) {
+          const sameRemote = Boolean(record.baseEtag && remoteStat.etag && record.baseEtag === remoteStat.etag &&
+            (record.baseLastModified === undefined || remoteStat.lastModified === undefined || record.baseLastModified === remoteStat.lastModified));
+          if (sameRemote) {
+            return {
+              status: "unchanged",
+              revision: record.revision,
+              workingSha256: record.workingSha256,
+              accountConfig: await this.accountConfigForRecord(account, record)
+            };
+          }
+          remoteSnapshot = await client.read(signal);
+          const refreshed = await this.replaceWorkingCopyWithRemote(account, record, remoteSnapshot, password, keyFile);
+          return {
+            status: "remote-refreshed",
+            ...refreshed
+          };
+        }
+
+        const configuredEtag = typeof account.config.remoteEtag === "string" ? account.config.remoteEtag : undefined;
+        const expectedEtag = record.baseEtag || configuredEtag;
+        if (!expectedEtag) throw new KeePassWebDavError("remote-etag-required", "KeePass 远端基线缺少 ETag，已拒绝覆盖写入。");
+        let status: KeePassRemotePublishStatus = "uploaded";
+        try {
+          writeResult = await client.write(record.workingBytes, expectedEtag, signal);
+        } catch (cause) {
+          if (!(cause instanceof ProviderTransportError) || cause.code !== "conflict") throw cause;
+          remoteSnapshot = await client.read(signal);
+          const baseVault = await openRemoteVault(record.baseBytes, password, keyFile, account);
+          const workingVault = await openRemoteVault(record.workingBytes, password, keyFile, account);
+          const remoteVault = await openRemoteVault(remoteSnapshot.bytes, password, keyFile, account);
+          try {
+            rebaseKeePassDatabase(baseVault.database, workingVault.database, remoteVault.database);
+          } catch (rebaseCause) {
+            if (rebaseCause instanceof KeePassRemoteRebaseConflictError) {
+              throw new KeePassRemoteRebaseSessionError(rebaseCause.conflicts);
+            }
+            throw rebaseCause;
+          }
+          outputBytes = new Uint8Array(await remoteVault.database.save());
+          writeResult = await client.write(outputBytes, remoteSnapshot.etag || expectedEtag, signal);
+          status = "rebased";
+        }
+
+        const saved = await this.storage.save({
+          providerId: account.id,
+          baseBytes: writeResult.bytes,
+          workingBytes: writeResult.bytes,
+          baseEtag: writeResult.etag,
+          baseLastModified: writeResult.lastModified,
+          baseSha256: writeResult.sha256,
+          workingSha256: writeResult.sha256,
+          updatedAt: new Date().toISOString()
+        }, record.revision);
+        await this.unlockWithBytes(account, writeResult.bytes, password, keyFile, false);
+        const accountConfig = await this.accountConfigForRecord(account, saved);
+        const result = {
+          status,
+          revision: saved.revision,
+          workingSha256: saved.workingSha256,
+          accountConfig
+        };
+        saved.baseBytes.fill(0);
+        saved.workingBytes.fill(0);
+        return result;
+      } finally {
+        keyFile?.fill(0);
+        remoteSnapshot?.bytes.fill(0);
+        outputBytes?.fill(0);
+        writeResult?.bytes.fill(0);
         record.baseBytes.fill(0);
         record.workingBytes.fill(0);
       }
@@ -268,6 +393,47 @@ export class KeePassRemoteSessionService {
       release();
       if (this.persistenceQueues.get(providerId) === queued) this.persistenceQueues.delete(providerId);
     }
+  }
+
+  private async replaceWorkingCopyWithRemote(
+    account: ProviderAccount,
+    record: KeePassRemoteWorkingCopyRecord,
+    snapshot: KeePassWebDavSnapshot,
+    password: string,
+    keyFile: Uint8Array | undefined
+  ): Promise<KeePassRemotePersistenceResult> {
+    const saved = await this.storage.save({
+      providerId: account.id,
+      baseBytes: snapshot.bytes,
+      workingBytes: snapshot.bytes,
+      baseEtag: snapshot.etag,
+      baseLastModified: snapshot.lastModified,
+      baseSha256: snapshot.sha256,
+      workingSha256: snapshot.sha256,
+      updatedAt: new Date().toISOString()
+    }, record.revision);
+    await this.unlockWithBytes(account, snapshot.bytes, password, keyFile, false);
+    const accountConfig = await this.accountConfigForRecord(account, saved);
+    const result = { revision: saved.revision, workingSha256: saved.workingSha256, accountConfig };
+    saved.baseBytes.fill(0);
+    saved.workingBytes.fill(0);
+    return result;
+  }
+
+  private async unlockWithBytes(
+    account: ProviderAccount,
+    bytes: Uint8Array,
+    password: string,
+    keyFile: Uint8Array | undefined,
+    dirty: boolean
+  ): Promise<void> {
+    await this.provider.unlock(account, bytes, {
+      password,
+      keyFile,
+      sourceName: stringConfig(account, "fileName") || "remote.kdbx",
+      sourceMode: "webdav",
+      dirty
+    });
   }
 
   private async accountConfigForRecord(account: ProviderAccount, record: { revision: number; baseEtag?: string; baseLastModified?: string; baseSha256: string; workingSha256: string }): Promise<Record<string, unknown>> {
@@ -319,6 +485,31 @@ function normalizeRemoteConfig(input: Pick<KeePassWebDavOpenInput, "baseUrl" | "
     password: input.webDavPassword,
     remotePath: normalizeKeePassRemotePath(input.remotePath)
   };
+}
+
+function remoteConfigFromAccount(account: ProviderAccount): KeePassWebDavConfig {
+  return normalizeRemoteConfig({
+    baseUrl: stringConfig(account, "webDavBaseUrl"),
+    username: stringConfig(account, "webDavUsername"),
+    webDavPassword: stringConfig(account, "webDavPassword"),
+    remotePath: stringConfig(account, "remotePath")
+  });
+}
+
+async function openRemoteVault(
+  bytes: Uint8Array,
+  password: string,
+  keyFile: Uint8Array | undefined,
+  account: ProviderAccount
+): Promise<Awaited<ReturnType<typeof openKeePassVault>>> {
+  const databaseId = Number(account.config.databaseId);
+  return openKeePassVault(bytes, {
+    password,
+    keyFile,
+    sourceName: stringConfig(account, "fileName") || "remote.kdbx",
+    databaseId: Number.isSafeInteger(databaseId) && databaseId > 0 ? databaseId : 1,
+    providerId: account.id
+  });
 }
 
 function remoteAccountConfig(

@@ -561,6 +561,32 @@ export class KeePassProvider implements ProviderAdapter {
     };
   }
 
+  /** Re-reads the current provider session after a remote three-way rebase without replaying edits. */
+  async refreshFromSession(account: ProviderAccount, identityItems: VaultItem[], now: string): Promise<ProviderSyncResult> {
+    const session = this.requireSession(account.id);
+    const localByUuid = new Map<string, VaultItem>();
+    for (const item of identityItems) {
+      const remoteId = referenceOf(item, account.id)?.remoteId;
+      if (remoteId) localByUuid.set(remoteId, item);
+    }
+    const unrelated = identityItems.filter((item) => !referenceOf(item, account.id));
+    const items = [...unrelated];
+    for (const remote of session.entries.items) {
+      const remoteId = remoteIdOf(remote, account.id);
+      const local = localByUuid.get(remoteId);
+      if (!remote.deletedAt) items.push(finalize(remote, local, account.id));
+    }
+    const warnings = [...session.summary.warnings];
+    if (session.entries.skipped.length) warnings.push(`有 ${session.entries.skipped.length} 个条目本版本无法解析，已原样保留、不会被改写。`);
+    return {
+      items,
+      accountPatch: { lastSyncAt: now, lastError: undefined },
+      conflicts: [],
+      warnings,
+      sourceRecords: await skippedSourceRecords(session, account.id)
+    };
+  }
+
   async create(account: ProviderAccount, item: VaultItem): Promise<VaultItem> {
     const session = this.requireSession(account.id);
     const { entry } = createKeePassEntry(session.database, item, item.keepassGroupPath);

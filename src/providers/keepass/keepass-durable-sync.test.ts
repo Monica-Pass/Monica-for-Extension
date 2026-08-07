@@ -50,11 +50,11 @@ describe("KeePass durable item synchronization", () => {
 
       await expect(coordinator.synchronize(environment.account)).rejects.toThrow("simulated encrypted-vault write failure");
       expect(await environment.storage.readReceipt(environment.account.id, KEEPASS_ITEM_SYNC_RECEIPT_ID)).toBeDefined();
-      expect((await environment.storage.read(environment.account.id))?.revision).toBe(2);
+      expect((await environment.storage.read(environment.account.id))?.revision).toBe(3);
 
       environment.provider.lockAccount(environment.account.id);
       const restartedProvider = new KeePassProvider();
-      const restartedSessions = new KeePassRemoteSessionService(restartedProvider, environment.storage);
+      const restartedSessions = new KeePassRemoteSessionService(restartedProvider, environment.storage, () => remoteClient(environment.remoteBytes));
       const restored = await restartedSessions.restore(environment.account);
       environment.account = { ...environment.account, config: restored.accountConfig };
       const restartedCoordinator = new KeePassDurableSyncCoordinator(
@@ -155,6 +155,7 @@ interface RemoteFixtureEnvironment {
   sessions: KeePassRemoteSessionService;
   storage: MemoryKeePassWorkingCopyStorage;
   account: ProviderAccount;
+  remoteBytes: Uint8Array;
 }
 
 async function openRemoteFixture(entries: KeePassFixtureEntry[]): Promise<RemoteFixtureEnvironment> {
@@ -172,7 +173,7 @@ async function openRemoteFixture(entries: KeePassFixtureEntry[]): Promise<Remote
     remotePath: "vaults/durable-sync.kdbx",
     databasePassword: PASSWORD
   });
-  return { provider, sessions, storage, account: { ...base, config: opened.accountConfig } };
+  return { provider, sessions, storage, account: { ...base, config: opened.accountConfig }, remoteBytes: bytes };
 }
 
 function accountWriter(environment: RemoteFixtureEnvironment) {
@@ -289,6 +290,17 @@ function remoteClient(bytes: Uint8Array): KeePassRemoteFileClient {
         sizeBytes: bytes.length,
         bytes: bytes.slice(),
         sha256: "a".repeat(64)
+      };
+    },
+    async write(inputBytes: Uint8Array) {
+      return {
+        url: "http://127.0.0.1:8787/dav/durable-sync/vaults/durable-sync.kdbx",
+        fileName: "durable-sync.kdbx",
+        etag: "\"fixture-etag\"",
+        sizeBytes: inputBytes.length,
+        bytes: inputBytes.slice(),
+        sha256: "a".repeat(64),
+        alreadyApplied: false
       };
     }
   };

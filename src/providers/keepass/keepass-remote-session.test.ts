@@ -212,6 +212,15 @@ function client(bytes: Uint8Array): KeePassRemoteFileClient {
       sizeBytes: bytes.length,
       bytes: bytes.slice(),
       sha256: "a".repeat(64)
+    })),
+    write: vi.fn(async () => ({
+      url: "http://127.0.0.1:8787/dav/demo/vaults/main.kdbx",
+      fileName: "main.kdbx",
+      etag: '"etag-1"',
+      sizeBytes: bytes.length,
+      bytes: bytes.slice(),
+      sha256: "a".repeat(64),
+      alreadyApplied: false
     }))
   };
 }

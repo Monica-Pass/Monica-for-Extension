@@ -1,5 +1,5 @@
 import type { PendingMutation, ProviderAccount, ProviderConflictInput, ProviderSourceRecord, VaultItem, VaultState } from "../../core/model";
-import type { ProviderAcknowledgedMutation, ProviderSyncResult } from "../../core/provider";
+import type { ProviderSyncResult } from "../../core/provider";
 import { KeePassProvider } from "./keepass-provider";
 import { keePassMutationIntentSha256, KeePassRemoteSessionError, KeePassRemoteSessionService } from "./keepass-remote-session";
 import type { KeePassDurableMutationReceipt } from "./keepass-working-copy-store";
@@ -42,7 +42,7 @@ export class KeePassDurableSyncCoordinator {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     const pending = allPending.slice(0, KEEPASS_ITEM_SYNC_BATCH_LIMIT);
     const now = new Date().toISOString();
-    const result = await this.provider.sync(account, {
+    let result = await this.provider.sync(account, {
       signal,
       now,
       localItems: structuredClone(snapshot),
@@ -53,6 +53,13 @@ export class KeePassDurableSyncCoordinator {
     if (journal) {
       const persisted = await this.remoteSessions.persistWorkingCopy(account, journal);
       if (persisted) await this.writeAccountConfig(account, persisted.accountConfig);
+    }
+    const published = await this.remoteSessions.publishWorkingCopy(account, signal);
+    if (published) {
+      await this.writeAccountConfig(account, published.accountConfig);
+      if (published.status === "rebased" || published.status === "remote-refreshed") {
+        result = await this.provider.refreshFromSession(account, result.items, now);
+      }
     }
     await this.vault.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
     if (journal) await this.remoteSessions.deleteDurableReceipt(account, KEEPASS_ITEM_SYNC_RECEIPT_ID);
@@ -70,27 +77,12 @@ export class KeePassDurableSyncCoordinator {
     }
     signal?.throwIfAborted();
     const state = await this.vault.readState();
-    const snapshot = restoreSyncSnapshot(state.items, receipt.result.snapshotItems);
-    const acknowledged: ProviderAcknowledgedMutation[] = receipt.result.mutations
-      .filter((mutation) => mutation.committed)
-      .map((mutation) => ({
-        mutationId: mutation.mutationId,
-        itemId: mutation.itemId,
-        operation: mutation.operation,
-        remoteId: mutation.remoteId!
-      }));
-    const recovered = await this.provider.sync(account, {
-      signal,
-      now: receipt.result.syncedAt,
-      localItems: structuredClone(snapshot),
-      pendingMutations: [],
-      acknowledgedMutations: acknowledged
-    });
-    recovered.conflicts = structuredClone(receipt.result.conflicts);
-    recovered.accountPatch = recovered.conflicts.length
-      ? { lastError: `发现 ${recovered.conflicts.length} 个 KeePass 同步冲突。` }
-      : { lastSyncAt: receipt.result.syncedAt, lastError: undefined };
-    await this.vault.applyProviderSync(account.id, recovered.items, recovered.accountPatch, recovered.conflicts, recovered.sourceRecords, snapshot);
+    const published = await this.remoteSessions.publishWorkingCopy(account, signal);
+    if (!published) throw new KeePassRemoteSessionError("remote-working-copy-missing", "KeePass 远端工作副本无法发布。");
+    await this.writeAccountConfig(account, published.accountConfig);
+    const identities = acknowledgedIdentityItems(receipt.result.snapshotItems, receipt.result.mutations, account.id);
+    const refreshed = await this.provider.refreshFromSession(account, identities, receipt.result.syncedAt);
+    await this.vault.applyProviderSync(account.id, refreshed.items, refreshed.accountPatch, receipt.result.conflicts, refreshed.sourceRecords, state.items);
     await this.remoteSessions.deleteDurableReceipt(account, KEEPASS_ITEM_SYNC_RECEIPT_ID);
   }
 }
@@ -156,10 +148,21 @@ async function createItemSyncReceipt(
   };
 }
 
-function restoreSyncSnapshot(current: VaultItem[], stored: VaultItem[]): VaultItem[] {
-  const storedById = new Map(stored.map((item) => [item.id, structuredClone(item)]));
-  const restored = current.map((item) => storedById.get(item.id) || item);
-  const currentIds = new Set(current.map((item) => item.id));
-  for (const item of stored) if (!currentIds.has(item.id)) restored.push(structuredClone(item));
-  return restored;
+function acknowledgedIdentityItems(
+  snapshotItems: VaultItem[],
+  mutations: Array<{ itemId: string; operation: "create" | "update" | "delete"; remoteId?: string }>,
+  providerId: string
+): VaultItem[] {
+  const mutationByItem = new Map(mutations.map((mutation) => [mutation.itemId, mutation]));
+  return snapshotItems.map((item) => {
+    const mutation = mutationByItem.get(item.id);
+    if (!mutation?.remoteId) return item;
+    return {
+      ...item,
+      providerRefs: [
+        ...item.providerRefs.filter((reference) => reference.providerId !== providerId),
+        { providerId, remoteId: mutation.remoteId }
+      ]
+    };
+  });
 }
