@@ -175,6 +175,126 @@ describe("Bitwarden auth client", () => {
   });
 });
 
+describe("Bitwarden attachment write client", () => {
+  it("prepares an attachment with the current Cipher revision and parses official upload modes", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer access-secret");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        key: "2.wrapped",
+        fileName: "2.encrypted-name",
+        fileSize: 97,
+        lastKnownRevisionDate: "2026-08-08T00:00:00.000Z"
+      });
+      return json({
+        attachmentId: "attachment-1",
+        fileUploadType: 0,
+        url: "",
+        cipherResponse: { id: "cipher-1", revisionDate: "2026-08-08T00:00:01.000Z" }
+      });
+    }) as unknown as typeof fetch;
+    const client = new BitwardenClient(fetcher, fastTransport());
+
+    await expect(client.prepareAttachmentUpload(activeSession(), "cipher-1", {
+      key: "2.wrapped",
+      fileName: "2.encrypted-name",
+      fileSize: 97,
+      lastKnownRevisionDate: "2026-08-08T00:00:00.000Z"
+    })).resolves.toMatchObject({
+      upload: {
+        attachmentId: "attachment-1",
+        fileUploadType: 0,
+        cipherResponse: { id: "cipher-1" }
+      }
+    });
+
+    const unknown = new BitwardenClient(vi.fn().mockResolvedValue(json({
+      attachmentId: "attachment-2",
+      fileUploadType: 7
+    })) as unknown as typeof fetch, fastTransport());
+    await expect(unknown.prepareAttachmentUpload(activeSession(), "cipher-1", {
+      key: "2.wrapped",
+      fileName: "2.encrypted-name",
+      fileSize: 97,
+      lastKnownRevisionDate: "2026-08-08T00:00:00.000Z"
+    })).rejects.toThrow("上传模式");
+
+    const vaultwarden = new BitwardenClient(vi.fn().mockResolvedValue(json({
+      fileUploadType: 0,
+      cipherResponse: {
+        id: "cipher-1",
+        revisionDate: "2026-08-08T00:00:01.000Z",
+        attachments: [{ id: "attachment-fallback", fileName: "2.encrypted-name", key: "2.wrapped", size: "97" }]
+      }
+    })) as unknown as typeof fetch, fastTransport());
+    await expect(vaultwarden.prepareAttachmentUpload(activeSession(), "cipher-1", {
+      key: "2.wrapped",
+      fileName: "2.encrypted-name",
+      fileSize: 97,
+      lastKnownRevisionDate: "2026-08-08T00:00:00.000Z"
+    })).resolves.toMatchObject({ upload: { attachmentId: "attachment-fallback", fileUploadType: 0 } });
+  });
+
+  it("uploads Direct mode with only the data part and the encrypted filename", async () => {
+    const encrypted = Uint8Array.from({ length: 64 }, (_, index) => index);
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://self.example.com/api/ciphers/cipher-1/attachment/attachment-1");
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer access-secret");
+      const form = init?.body as FormData;
+      expect([...form.keys()]).toEqual(["data"]);
+      const data = form.get("data");
+      expect(data).toBeInstanceOf(Blob);
+      expect((data as File).name).toBe("2.encrypted-name");
+      expect(new Uint8Array(await (data as Blob).arrayBuffer())).toEqual(encrypted);
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await expect(new BitwardenClient(fetcher, fastTransport()).uploadAttachmentDirect(
+      activeSession(),
+      "cipher-1",
+      "attachment-1",
+      "2.encrypted-name",
+      encrypted
+    )).resolves.toMatchObject({ accessToken: "access-secret" });
+  });
+
+  it("isolates Azure signed URLs from Bearer credentials and requires HTTP 201", async () => {
+    const signed = "https://objects.example.test/blob?sv=2026-01-01&se=2099-01-01T00%3A00%3A00Z&sig=opaque";
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBeNull();
+      expect(headers.get("x-ms-blob-type")).toBe("BlockBlob");
+      expect(headers.get("Content-Type")).toBe("application/octet-stream");
+      expect(init).toMatchObject({ method: "PUT", credentials: "omit", redirect: "error", referrerPolicy: "no-referrer" });
+      return new Response(null, { status: 201 });
+    }) as unknown as typeof fetch;
+    const encrypted = new Uint8Array(64).fill(1);
+    await expect(new BitwardenClient(fetcher, fastTransport()).uploadAttachmentAzure(signed, encrypted)).resolves.toBeUndefined();
+
+    const wrongStatus = new BitwardenClient(vi.fn().mockResolvedValue(new Response(null, { status: 200 })) as unknown as typeof fetch, fastTransport());
+    await expect(wrongStatus.uploadAttachmentAzure(signed, encrypted)).rejects.toMatchObject({ status: 200 });
+
+    const unused = vi.fn() as unknown as typeof fetch;
+    await expect(new BitwardenClient(unused).uploadAttachmentAzure("http://objects.example.test/blob", encrypted)).rejects.toThrow("HTTPS");
+    expect(unused).not.toHaveBeenCalled();
+  });
+
+  it("renews Azure URLs and treats 404 attachment deletion as complete", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/renew")) return json({ url: "https://objects.example.test/renewed?sig=opaque" });
+      if (url.endsWith("/attachment-1")) return json({ message: "already gone" }, 404);
+      throw new Error(`Unexpected URL ${url}`);
+    }) as unknown as typeof fetch;
+    const client = new BitwardenClient(fetcher, fastTransport());
+
+    await expect(client.renewAttachmentUploadUrl(activeSession(), "cipher-1", "attachment-1"))
+      .resolves.toMatchObject({ url: "https://objects.example.test/renewed?sig=opaque" });
+    await expect(client.deleteAttachment(activeSession(), "cipher-1", "attachment-1"))
+      .resolves.toMatchObject({ deleted: true });
+  });
+});
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -193,4 +313,8 @@ function activeSession() {
     vaultKeyEnc: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     vaultKeyMac: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   };
+}
+
+function fastTransport() {
+  return { baseDelayMs: 0, jitterRatio: 0, timeoutMs: 2_000 };
 }

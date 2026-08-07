@@ -56,6 +56,23 @@ export interface BitwardenAttachmentDownloadInfo {
   key?: string;
 }
 
+export type BitwardenFileUploadType = 0 | 1;
+
+export interface BitwardenAttachmentUploadRequest {
+  key: string;
+  fileName: string;
+  fileSize: number;
+  lastKnownRevisionDate: string;
+}
+
+export interface BitwardenAttachmentUploadInfo {
+  attachmentId: string;
+  fileUploadType: BitwardenFileUploadType;
+  url?: string;
+  cipherResponse?: Record<string, unknown>;
+  cipherMiniResponse?: Record<string, unknown>;
+}
+
 export interface BitwardenLoginInput {
   vaultUrl: string;
   email: string;
@@ -68,6 +85,10 @@ export interface BitwardenLoginInput {
 
 const CLIENT_VERSION = "2026.7.0";
 const DEVICE_TYPE = "2";
+const MAX_ATTACHMENT_CIPHERTEXT_BYTES = 100 * 1024 * 1024 + 64;
+const MAX_ATTACHMENT_METADATA_TEXT = 1024 * 1024;
+const MAX_PATH_ID_BYTES = 4096;
+const MAX_ATTACHMENTS_IN_UPLOAD_RESPONSE = 512;
 
 export class BitwardenClient {
   constructor(
@@ -246,6 +267,139 @@ export class BitwardenClient {
     };
   }
 
+  async prepareAttachmentUpload(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    input: BitwardenAttachmentUploadRequest,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; upload: BitwardenAttachmentUploadInfo }> {
+    assertPathId(cipherId, "Cipher");
+    validateAttachmentUploadRequest(input);
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const body = await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/attachment/v2`, {
+      method: "POST",
+      headers: mergeHeaders(jsonHeaders(), authorizedHeaders(active.accessToken)),
+      body: JSON.stringify(input),
+      signal
+    }, "创建 Bitwarden 附件上传", false, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxAttachmentInfoResponseBytes, "Bitwarden 附件上传响应", requestSignal);
+      if (!response.ok) throw bitwardenHttpError("创建 Bitwarden 附件上传失败", response, payload);
+      return payload;
+    });
+    const cipherResponse = recordValue(body, "CipherResponse", "cipherResponse");
+    const cipherMiniResponse = recordValue(body, "CipherMiniResponse", "cipherMiniResponse");
+    const attachmentId = resolveAttachmentUploadId(body, input, cipherResponse, cipherMiniResponse);
+    assertPathId(attachmentId, "附件");
+    const rawUploadType = scalarInteger(body, "FileUploadType", "fileUploadType");
+    if (rawUploadType !== 0 && rawUploadType !== 1) throw new Error("Bitwarden 返回了未知的附件上传模式。");
+    const url = optionalStringValue(body, "Url", "url");
+    if (rawUploadType === 1 && !url) throw new Error("Bitwarden Azure 附件上传响应缺少签名地址。");
+    if (url) validateAttachmentSignedUrl(url);
+    return {
+      session: active,
+      upload: {
+        attachmentId,
+        fileUploadType: rawUploadType,
+        url,
+        cipherResponse,
+        cipherMiniResponse
+      }
+    };
+  }
+
+  async uploadAttachmentDirect(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    attachmentId: string,
+    encryptedFileName: string,
+    encryptedBytes: Uint8Array,
+    signal?: AbortSignal
+  ): Promise<BitwardenSessionConfig> {
+    assertPathId(cipherId, "Cipher");
+    assertPathId(attachmentId, "附件");
+    assertEncryptedAttachmentText(encryptedFileName, "加密文件名");
+    assertEncryptedAttachmentBytes(encryptedBytes);
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const form = new FormData();
+    form.append("data", new Blob([encryptedBytes as BlobPart], { type: "application/octet-stream" }), encryptedFileName);
+    await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/attachment/${encodeURIComponent(attachmentId)}`, {
+      method: "POST",
+      headers: authorizedHeaders(active.accessToken),
+      body: form,
+      signal
+    }, "上传 Bitwarden Direct 附件", false, async (response) => {
+      if (!response.ok) throw bitwardenHttpError("上传 Bitwarden Direct 附件失败", response);
+    });
+    return active;
+  }
+
+  async uploadAttachmentAzure(signedUrl: string, encryptedBytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+    const url = validateAttachmentSignedUrl(signedUrl);
+    assertEncryptedAttachmentBytes(encryptedBytes);
+    const headers = new Headers({
+      "Content-Type": "application/octet-stream",
+      "x-ms-blob-type": "BlockBlob",
+      "x-ms-date": new Date().toUTCString()
+    });
+    const serviceVersion = new URL(url).searchParams.get("sv");
+    if (serviceVersion) headers.set("x-ms-version", serviceVersion);
+    await this.request(url, {
+      method: "PUT",
+      headers,
+      body: new Blob([encryptedBytes as BlobPart], { type: "application/octet-stream" }),
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal
+    }, "上传 Bitwarden Azure 附件", true, async (response) => {
+      if (response.status !== 201) throw providerHttpError("上传 Bitwarden Azure 附件失败", response);
+    });
+  }
+
+  async renewAttachmentUploadUrl(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    attachmentId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; url: string }> {
+    assertPathId(cipherId, "Cipher");
+    assertPathId(attachmentId, "附件");
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const body = await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/attachment/${encodeURIComponent(attachmentId)}/renew`, {
+      method: "GET",
+      headers: authorizedHeaders(active.accessToken),
+      signal
+    }, "续签 Bitwarden 附件上传地址", true, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxAttachmentInfoResponseBytes, "Bitwarden 附件续签响应", requestSignal);
+      if (!response.ok) throw bitwardenHttpError("续签 Bitwarden 附件上传地址失败", response, payload);
+      return payload;
+    });
+    const url = stringValue(body, "Url", "url");
+    if (!url) throw new Error("Bitwarden 附件续签响应缺少签名地址。");
+    return { session: active, url: validateAttachmentSignedUrl(url) };
+  }
+
+  async deleteAttachment(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    attachmentId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; deleted: true }> {
+    assertPathId(cipherId, "Cipher");
+    assertPathId(attachmentId, "附件");
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    await this.request(`${active.apiUrl}/ciphers/${encodeURIComponent(cipherId)}/attachment/${encodeURIComponent(attachmentId)}`, {
+      method: "DELETE",
+      headers: authorizedHeaders(active.accessToken),
+      signal
+    }, "删除 Bitwarden 附件", true, async (response) => {
+      if (response.status === 200 || response.status === 204 || response.status === 404) return;
+      throw bitwardenHttpError("删除 Bitwarden 附件失败", response);
+    });
+    return { session: active, deleted: true };
+  }
+
   private async authorizedJson(
     session: BitwardenSessionConfig,
     path: string,
@@ -370,6 +524,12 @@ function stringValue(body: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+function mergeHeaders(...sources: Headers[]): Headers {
+  const output = new Headers();
+  for (const source of sources) for (const [name, value] of source) output.set(name, value);
+  return output;
+}
+
 function optionalStringValue(body: Record<string, unknown>, ...keys: string[]): string | undefined {
   return stringValue(body, ...keys) || undefined;
 }
@@ -402,6 +562,93 @@ function recordValue(body: Record<string, unknown>, ...keys: string[]): Record<s
 function arrayValue(body: Record<string, unknown>, ...keys: string[]): unknown[] {
   for (const key of keys) if (Array.isArray(body[key])) return body[key] as unknown[];
   return [];
+}
+
+function scalarInteger(body: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = body[key];
+    if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+    if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  }
+  return Number.NaN;
+}
+
+function validateAttachmentUploadRequest(input: BitwardenAttachmentUploadRequest): void {
+  assertEncryptedAttachmentText(input.key, "附件密钥");
+  assertEncryptedAttachmentText(input.fileName, "加密文件名");
+  if (!Number.isSafeInteger(input.fileSize) || input.fileSize < 1 || input.fileSize > MAX_ATTACHMENT_CIPHERTEXT_BYTES) {
+    throw new Error("Bitwarden 附件密文大小无效。");
+  }
+  if (
+    typeof input.lastKnownRevisionDate !== "string"
+    || !input.lastKnownRevisionDate
+    || input.lastKnownRevisionDate.length > 256
+    || /[\u0000-\u001f\u007f]/.test(input.lastKnownRevisionDate)
+  ) throw new Error("Bitwarden Cipher 修订时间无效。");
+}
+
+function resolveAttachmentUploadId(
+  body: Record<string, unknown>,
+  request: BitwardenAttachmentUploadRequest,
+  cipherResponse?: Record<string, unknown>,
+  cipherMiniResponse?: Record<string, unknown>
+): string {
+  const direct = optionalStringValue(body, "AttachmentId", "attachmentId");
+  if (direct) return direct;
+  const matches: string[] = [];
+  for (const cipher of [cipherResponse, cipherMiniResponse]) {
+    if (!cipher) continue;
+    const attachments = arrayValue(cipher, "Attachments", "attachments");
+    if (attachments.length > MAX_ATTACHMENTS_IN_UPLOAD_RESPONSE) throw new Error("Bitwarden 附件上传响应包含过多附件元数据。");
+    for (const value of attachments) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const attachment = value as Record<string, unknown>;
+      const size = optionalScalarText(attachment, "Size", "size");
+      if (
+        optionalStringValue(attachment, "FileName", "fileName") === request.fileName
+        && optionalStringValue(attachment, "Key", "key") === request.key
+        && size !== undefined
+        && Number(size) === request.fileSize
+      ) {
+        const id = optionalStringValue(attachment, "Id", "id");
+        if (id) matches.push(id);
+      }
+    }
+  }
+  const unique = [...new Set(matches)];
+  if (unique.length !== 1) throw new Error(unique.length ? "Bitwarden 附件上传响应的附件 ID 不唯一。" : "Bitwarden 附件上传响应缺少附件 ID。");
+  return unique[0];
+}
+
+function assertEncryptedAttachmentText(value: string, label: string): void {
+  if (typeof value !== "string" || !value || value.length > MAX_ATTACHMENT_METADATA_TEXT || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error(`Bitwarden ${label}无效。`);
+  }
+}
+
+function assertEncryptedAttachmentBytes(value: Uint8Array): void {
+  if (!(value instanceof Uint8Array) || value.length < 64 || value.length > MAX_ATTACHMENT_CIPHERTEXT_BYTES) {
+    throw new Error("Bitwarden 附件密文字节无效。");
+  }
+}
+
+function assertPathId(value: string, label: string): void {
+  const byteLength = typeof value === "string" ? new TextEncoder().encode(value).byteLength : 0;
+  if (!value || byteLength > MAX_PATH_ID_BYTES || /[\u0000-\u001f\u007f]/.test(value)) throw new Error(`Bitwarden ${label} ID 无效。`);
+}
+
+function validateAttachmentSignedUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("Bitwarden 附件签名地址无效。");
+  }
+  if (parsed.username || parsed.password || parsed.hash) throw new Error("Bitwarden 附件签名地址包含不允许的凭据或片段。");
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopbackHost(parsed.hostname))) {
+    throw new Error("Bitwarden 附件签名地址必须使用 HTTPS。");
+  }
+  return parsed.toString();
 }
 
 function base64Url(value: string): string {
