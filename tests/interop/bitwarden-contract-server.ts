@@ -1,4 +1,4 @@
-import type { LoginItem, PasskeyItem } from "../../src/core/model";
+import type { CardItem, LoginItem, PasskeyItem } from "../../src/core/model";
 import { createLoginItem } from "../../src/core/model";
 import { bytesToBase64 } from "../../src/security/encoding";
 import {
@@ -41,6 +41,7 @@ export interface BitwardenContractEvidence {
   stats: BitwardenContractStats;
   signedRequestsCarriedAuthorization: boolean;
   finalCipherCount: number;
+  secureItemAttachmentVerified?: boolean;
 }
 
 interface AttachmentMetadata {
@@ -51,6 +52,7 @@ interface AttachmentMetadata {
 }
 
 const PERSONAL_CIPHER_ID = "cipher-personal";
+const PERSONAL_CARD_CIPHER_ID = "cipher-personal-card";
 const ORGANIZATION_CIPHER_ID = "cipher-organization";
 const ORGANIZATION_ID = "organization-1";
 const OLD_COLLECTION_ID = "collection-old";
@@ -63,6 +65,7 @@ export class RecordedBitwardenContractServer {
   readonly vaultUrl: string;
   readonly providerId: string;
   readonly personalCipherId = PERSONAL_CIPHER_ID;
+  readonly personalCardCipherId = PERSONAL_CARD_CIPHER_ID;
   readonly organizationCipherId = ORGANIZATION_CIPHER_ID;
   readonly organizationId = ORGANIZATION_ID;
   readonly oldCollectionId = OLD_COLLECTION_ID;
@@ -265,6 +268,30 @@ export class RecordedBitwardenContractServer {
     }];
     personal.FutureServerField = { keep: true, profile: this.profile };
     this.ciphers.set(PERSONAL_CIPHER_ID, canonicalCipher(personal));
+
+    const personalCard: CardItem = {
+      id: "fixture-personal-card",
+      kind: "card",
+      title: "Personal Contract Card",
+      favorite: false,
+      notes: "personal card fixture",
+      createdAt: BITWARDEN_INTEROP_INITIAL_REVISION,
+      updatedAt: BITWARDEN_INTEROP_INITIAL_REVISION,
+      providerRefs: [],
+      cardholderName: "Personal Card Holder",
+      number: "4111111111111111",
+      expiryMonth: "12",
+      expiryYear: "2030",
+      securityCode: "123",
+      cardType: "CREDIT",
+      customFields: []
+    };
+    const personalCardCipher = await encodeBitwardenCipher(personalCard, this.vaultKey);
+    personalCardCipher.id = PERSONAL_CARD_CIPHER_ID;
+    personalCardCipher.revisionDate = BITWARDEN_INTEROP_INITIAL_REVISION;
+    personalCardCipher.creationDate = BITWARDEN_INTEROP_INITIAL_REVISION;
+    personalCardCipher.FutureCardField = { keep: true, profile: this.profile };
+    this.ciphers.set(PERSONAL_CARD_CIPHER_ID, canonicalCipher(personalCardCipher));
 
     const organizationLogin: LoginItem = {
       ...createLoginItem({

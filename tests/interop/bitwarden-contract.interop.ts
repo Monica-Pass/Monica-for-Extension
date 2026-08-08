@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../src/core/model";
+import type { CardItem, LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../src/core/model";
 import { createLoginItem } from "../../src/core/model";
 import type { ProviderSyncResult } from "../../src/core/provider";
 import { MemoryBitwardenAttachmentMutationStore } from "../../src/providers/bitwarden/bitwarden-attachment-mutation-store";
@@ -56,9 +56,17 @@ describe("Bitwarden official and Vaultwarden server-contract interoperability", 
       const personalLogin = requireLogin(imported.items, "Personal Contract Login");
       const organizationLogin = requireLogin(imported.items, "Organization Contract Login");
       const passkey = requirePasskey(imported.items, "recorded-passkey-credential");
+      const personalCard = requireCard(imported.items, "Personal Contract Card");
       expect(personalLogin).toMatchObject({ username: "personal-user", password: "personal-server-secret" });
       expect(organizationLogin).toMatchObject({ username: "organization-user", password: "organization-server-secret" });
       expect(passkey).toMatchObject({ signCount: 4, sourceMode: "bitwarden", privateKeyPkcs8: "recorded-pkcs8-material" });
+      expect(personalCard).toMatchObject({
+        number: "4111111111111111",
+        cardholderName: "Personal Card Holder",
+        expiryMonth: "12",
+        expiryYear: "2030",
+        securityCode: "123"
+      });
       expect(organizationLogin.providerRefs[0]).toMatchObject({ remoteCollectionIds: [server.oldCollectionId] });
 
       const createdLocal: LoginItem = {
@@ -168,6 +176,38 @@ describe("Bitwarden official and Vaultwarden server-contract interoperability", 
       expect(server.attachmentCount()).toBe(0);
       expect(server.stats.deleteAttachment).toBe(1);
 
+      const cardAttachmentBytes = new TextEncoder().encode(`secure-item-card-attachment-${profile}-中文`);
+      const cardUploaded = await attachmentService.upload({
+        providerId: server.providerId,
+        itemId: personalCard.id,
+        session: deleted.session,
+        rawCipher: server.cipher(server.personalCardCipherId),
+        operationId: operationId(profile, 3),
+        fileName: `${profile}-card-evidence.jpg`,
+        bytes: cardAttachmentBytes.slice(),
+        sha256: await bitwardenAttachmentSha256(cardAttachmentBytes)
+      });
+      expect(cardUploaded.attachment).toMatchObject({
+        providerKind: "bitwarden",
+        fileName: `${profile}-card-evidence.jpg`,
+        sizeBytes: cardAttachmentBytes.length
+      });
+      expect(server.attachmentCount(server.personalCardCipherId)).toBe(1);
+      const cardDeleted = await attachmentService.delete({
+        providerId: server.providerId,
+        itemId: personalCard.id,
+        session: cardUploaded.session,
+        rawCipher: cardUploaded.rawCipher,
+        operationId: operationId(profile, 4),
+        attachmentId: cardUploaded.attachment!.attachmentId
+      });
+      expect(cardDeleted.changed).toBe(true);
+      expect(server.attachmentCount(server.personalCardCipherId)).toBe(0);
+      expect(server.stats.prepareAttachment).toBe(2);
+      expect(server.stats.uploadAttachment).toBe(2);
+      expect(server.stats.downloadAttachment).toBeGreaterThanOrEqual(2);
+      expect(server.stats.deleteAttachment).toBe(2);
+
       const baseline = await provider.sync(account, {
         now: "2026-08-08T08:05:00.000Z",
         localItems: updated.items
@@ -196,7 +236,7 @@ describe("Bitwarden official and Vaultwarden server-contract interoperability", 
       expect(server.stats.login).toBe(1);
       expect(server.stats.moveCollections).toBe(1);
 
-      evidence.push(server.evidence());
+      evidence.push({ ...server.evidence(), secureItemAttachmentVerified: true });
     } finally {
       server.dispose();
     }
@@ -239,6 +279,12 @@ function requirePasskey(items: VaultItem[], credentialId: string): PasskeyItem {
   return item;
 }
 
+function requireCard(items: VaultItem[], title: string): CardItem {
+  const item = items.find((candidate): candidate is CardItem => candidate.kind === "card" && candidate.title === title);
+  if (!item) throw new Error(`Bitwarden contract card is missing: ${title}`);
+  return item;
+}
+
 function revisionOf(raw: Record<string, unknown>): string {
   const value = raw.revisionDate ?? raw.RevisionDate;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new Error("Bitwarden contract revision is missing.");
@@ -263,11 +309,19 @@ function deterministicRandom(initialSeed: number): (length: number) => Uint8Arra
   };
 }
 
-function operationId(profile: BitwardenContractProfile, sequence: 1 | 2): string {
+function operationId(profile: BitwardenContractProfile, sequence: 1 | 2 | 3 | 4): string {
   if (profile === "official") return sequence === 1
     ? "11111111-1111-4111-8111-111111111111"
-    : "22222222-2222-4222-8222-222222222222";
+    : sequence === 2
+      ? "22222222-2222-4222-8222-222222222222"
+      : sequence === 3
+        ? "55555555-5555-4555-8555-555555555555"
+        : "66666666-6666-4666-8666-666666666666";
   return sequence === 1
     ? "33333333-3333-4333-8333-333333333333"
-    : "44444444-4444-4444-8444-444444444444";
+    : sequence === 2
+      ? "44444444-4444-4444-8444-444444444444"
+      : sequence === 3
+        ? "77777777-7777-4777-8777-777777777777"
+        : "88888888-8888-4888-8888-888888888888";
 }
