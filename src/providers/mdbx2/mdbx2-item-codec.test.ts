@@ -1,11 +1,29 @@
 import { describe, expect, it } from "vitest";
-import type { CardItem, LoginItem, PasskeyItem, TotpItem } from "../../core/model";
+import type { CardItem, LoginItem, PasskeyItem, TotpItem, VaultItem } from "../../core/model";
 import type { Mdbx2ObjectRecord } from "./native-contract";
-import { decodeMdbx2Object, encodeMdbx2Object } from "./mdbx2-item-codec";
+import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
 
 const META = { headCommitId: "commit-1", updatedAt: "2026-08-02T00:00:00Z" };
 
 describe("MDBX2 Android item codec", () => {
+  it("uses the current Android logical ID prefixes for every shared item kind", () => {
+    const cases: Array<[VaultItem["kind"], string]> = [
+      ["login", "password"],
+      ["secure-note", "note"],
+      ["totp", "totp"],
+      ["card", "card"],
+      ["identity", "document-ref"],
+      ["billing-address", "billing-address"],
+      ["payment-account", "payment-account"]
+    ];
+    for (const [kind, prefix] of cases) {
+      const local = stubItem(kind, "local-item");
+      expect(mdbx2LogicalObjectId(local), kind).toBe(`${prefix}:local-item`);
+      expect(mdbx2LogicalObjectId({ ...local, replicaGroupId: `${prefix}:android-id` }), kind).toBe(`${prefix}:android-id`);
+      expect(mdbx2LogicalObjectId({ ...local, replicaGroupId: "wrong:android-id" }), kind).toBe(`${prefix}:local-item`);
+    }
+  });
+
   it("decodes Android login payloads and preserves unknown fields on write", () => {
     const record: Mdbx2ObjectRecord = {
       objectId: "11111111-1111-4111-8111-111111111111",
@@ -163,3 +181,16 @@ describe("MDBX2 Android item codec", () => {
     expect(decoded.unsupportedReason).toContain("future.secret/v9");
   });
 });
+
+function stubItem(kind: VaultItem["kind"], id: string): VaultItem {
+  return {
+    id,
+    kind,
+    title: kind,
+    favorite: false,
+    notes: "",
+    createdAt: "2026-08-09T00:00:00.000Z",
+    updatedAt: "2026-08-09T00:00:00.000Z",
+    providerRefs: []
+  } as unknown as VaultItem;
+}

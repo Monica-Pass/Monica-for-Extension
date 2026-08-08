@@ -39,8 +39,13 @@ const PASSWORD = "mdbx2-android-extension-interop-password";
 const BROWSER_LOGICAL_ID = "password:browser-interop";
 const BROWSER_ATTACHMENT_ID = "33333333-3333-4333-8333-333333333333";
 const BROWSER_ATTACHMENT_NAME = "browser-fixture.bin";
+const BROWSER_CARD_LOGICAL_ID = "card:browser-interop";
+const BROWSER_CARD_ATTACHMENT_ID = "55555555-5555-4555-8555-555555555555";
+const BROWSER_CARD_ATTACHMENT_NAME = "browser-card-photo.bin";
 const BROWSER_ATTACHMENT_SIZE = 710_000;
+const BROWSER_CARD_ATTACHMENT_SIZE = 715_000;
 const ANDROID_ATTACHMENT_SIZE = 700_000;
+const ANDROID_CARD_ATTACHMENT_SIZE = 705_000;
 const ANDROID_RETURN_ATTACHMENT_SIZE = 720_000;
 
 interface SegmentManifest {
@@ -69,6 +74,11 @@ interface AndroidExportManifest {
   androidAttachmentId: string;
   androidAttachmentName: string;
   androidAttachmentPlaintextSha256: string;
+  androidCardEntryId: string;
+  androidCardLogicalObjectId: string;
+  androidCardAttachmentId: string;
+  androidCardAttachmentName: string;
+  androidCardAttachmentPlaintextSha256: string;
   segments: SegmentManifest[];
   blobs: BlobManifest[];
 }
@@ -177,6 +187,30 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
       expect(sha256Hex(androidAttachmentContent)).toBe(initialManifest.androidAttachmentPlaintextSha256);
       expect(androidAttachmentContent).toEqual(androidAttachmentBytes());
 
+      const androidCardRecord = await findRecord(firstClient, opened.vaultHandle, initialManifest.androidCardLogicalObjectId);
+      expect(androidCardRecord.record).toMatchObject({
+        objectId: initialManifest.androidCardEntryId,
+        objectTypeId: "card"
+      });
+      const androidCardPayload = JSON.parse(androidCardRecord.record.payloadJson) as { monica_entry_id: string; item_data: string };
+      expect(androidCardPayload.monica_entry_id).toBe(initialManifest.androidCardLogicalObjectId);
+      expect(JSON.parse(androidCardPayload.item_data)).toMatchObject({
+        cardholderName: "Android Card Holder",
+        cardNumber: "4111111111111111"
+      });
+      const androidCardAttachment = await findAttachment(
+        firstClient,
+        opened.vaultHandle,
+        androidCardRecord.record.collectionId,
+        androidCardRecord.record.objectId,
+        initialManifest.androidCardAttachmentId
+      );
+      expect(androidCardAttachment.fileName).toBe(initialManifest.androidCardAttachmentName);
+      const androidCardAttachmentContent = await readAttachment(firstClient, opened.vaultHandle, androidCardAttachment.attachmentId);
+      expect(androidCardAttachmentContent.length).toBe(ANDROID_CARD_ATTACHMENT_SIZE);
+      expect(sha256Hex(androidCardAttachmentContent)).toBe(initialManifest.androidCardAttachmentPlaintextSha256);
+      expect(androidCardAttachmentContent).toEqual(androidCardAttachmentBytes());
+
       const browserWrite = await firstClient.upsertObject(opened.vaultHandle, randomUUID(), {
         logicalObjectId: BROWSER_LOGICAL_ID,
         collectionId: androidRecord.record.collectionId,
@@ -211,6 +245,49 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
       expect(uploadedAttachment.attachment.attachmentId).toBe(BROWSER_ATTACHMENT_ID);
       expect(uploadedAttachment.attachment.storageMode).toBe("external-hash-ref");
 
+      const browserCardWrite = await firstClient.upsertObject(opened.vaultHandle, randomUUID(), {
+        logicalObjectId: BROWSER_CARD_LOGICAL_ID,
+        collectionId: androidRecord.record.collectionId,
+        objectTypeId: "card",
+        title: "Browser WebDAV Card",
+        payloadJson: JSON.stringify({
+          kind: "bank_card",
+          monica_entry_id: BROWSER_CARD_LOGICAL_ID,
+          item_data: JSON.stringify({
+            cardholderName: "Browser Card Holder",
+            cardNumber: "5555555555554444",
+            expiryMonth: "08",
+            expiryYear: "2031",
+            cvv: "321"
+          })
+        })
+      });
+      const browserCardAttachmentContent = browserCardAttachmentBytes();
+      const cardUpload = await firstClient.beginAttachmentUpload(opened.vaultHandle, {
+        operationId: randomUUID(),
+        attachmentId: BROWSER_CARD_ATTACHMENT_ID,
+        collectionId: browserCardWrite.collectionId,
+        objectId: browserCardWrite.objectId,
+        fileName: BROWSER_CARD_ATTACHMENT_NAME,
+        mediaType: "application/octet-stream",
+        mode: "create",
+        sizeBytes: browserCardAttachmentContent.length,
+        sha256: sha256Hex(browserCardAttachmentContent)
+      });
+      let cardUploadOffset = cardUpload.nextOffset;
+      while (cardUploadOffset < browserCardAttachmentContent.length) {
+        const chunk = browserCardAttachmentContent.slice(
+          cardUploadOffset,
+          Math.min(browserCardAttachmentContent.length, cardUploadOffset + cardUpload.maxChunkBytes)
+        );
+        cardUploadOffset = (await firstClient.sendAttachmentUploadChunk(cardUpload.transferId, cardUploadOffset, chunk)).nextOffset;
+      }
+      const uploadedCardAttachment = await firstClient.finishAttachmentUpload(cardUpload.transferId);
+      expect(uploadedCardAttachment.attachment).toMatchObject({
+        attachmentId: BROWSER_CARD_ATTACHMENT_ID,
+        storageMode: "external-hash-ref"
+      });
+
       const browserToRemote = await firstCoordinator.synchronize(syncInput);
       expect(browserToRemote.uploadedSegments).toBeGreaterThan(0);
       expect(browserToRemote.uploadedBlobs).toBeGreaterThan(0);
@@ -233,6 +310,12 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
         browserAttachmentId: BROWSER_ATTACHMENT_ID,
         browserAttachmentName: BROWSER_ATTACHMENT_NAME,
         browserAttachmentPlaintextSha256: sha256Hex(browserAttachmentContent),
+        browserCardCollectionId: browserCardWrite.collectionId,
+        browserCardObjectId: browserCardWrite.objectId,
+        browserCardLogicalObjectId: BROWSER_CARD_LOGICAL_ID,
+        browserCardAttachmentId: BROWSER_CARD_ATTACHMENT_ID,
+        browserCardAttachmentName: BROWSER_CARD_ATTACHMENT_NAME,
+        browserCardAttachmentPlaintextSha256: sha256Hex(browserCardAttachmentContent),
         segments: browserSegments
           .sort((left, right) => left.streamId.localeCompare(right.streamId) || left.sequence - right.sequence)
           .map((descriptor) => ({
@@ -314,10 +397,13 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
         "android webdav login",
         "browser webdav login",
         "android-fixture.bin",
+        "android-card-photo.bin",
         "browser-fixture.bin",
+        "browser-card-photo.bin",
         "android-return.bin",
         "android-interop.example",
-        "browser-interop.example"
+        "browser-interop.example",
+        "browser webdav card"
       ]) expect(remoteNames).not.toContain(forbidden);
 
       const evidence = {
@@ -327,6 +413,10 @@ describe("MDBX2 current Android and browser WebDAV interoperability", () => {
         browserSegments: browserSegments.length,
         androidBlobs: initialManifest.blobs.length + returnManifest.blobs.length,
         browserBlobs: browserBlobPaths.length,
+        secureItemAttachments: {
+          androidToBrowser: initialManifest.androidCardAttachmentId,
+          browserToAndroid: BROWSER_CARD_ATTACHMENT_ID
+        },
         remoteObjectCount: server.filePaths().length,
         bootstrapSha256: sha256Hex(bootstrapBefore)
       };
@@ -349,6 +439,8 @@ function validateAndroidExportManifest(manifest: AndroidExportManifest): void {
   expect(manifest.deviceId).toMatch(/^[a-f0-9-]{36}$/);
   expect(manifest.segments.length).toBeGreaterThan(0);
   expect(manifest.blobs.length).toBeGreaterThan(0);
+  expect(manifest.androidCardLogicalObjectId).toBe("card:android-interop");
+  expect(manifest.androidCardAttachmentPlaintextSha256).toBe(sha256Hex(androidCardAttachmentBytes()));
   for (const segment of manifest.segments) {
     const parsed = parseMdbx2RemoteSegmentPath(manifest.remotePath, segment.path);
     expect(parsed).toMatchObject({
@@ -439,6 +531,14 @@ function androidAttachmentBytes(): Uint8Array {
 
 function browserAttachmentBytes(): Uint8Array {
   return generatedBytes(BROWSER_ATTACHMENT_SIZE, 17, 3);
+}
+
+function androidCardAttachmentBytes(): Uint8Array {
+  return generatedBytes(ANDROID_CARD_ATTACHMENT_SIZE, 23, 5);
+}
+
+function browserCardAttachmentBytes(): Uint8Array {
+  return generatedBytes(BROWSER_CARD_ATTACHMENT_SIZE, 29, 9);
 }
 
 function androidReturnAttachmentBytes(): Uint8Array {

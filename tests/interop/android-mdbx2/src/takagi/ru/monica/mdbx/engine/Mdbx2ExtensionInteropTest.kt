@@ -46,6 +46,7 @@ class Mdbx2ExtensionInteropTest {
 
             val projectId = nameUuid("android-interop-project:${info.vaultId}")
             val entryId = nameUuid("monica-entry:${info.vaultId}:$ANDROID_LOGICAL_ID")
+            val cardEntryId = nameUuid("monica-entry:${info.vaultId}:$ANDROID_CARD_LOGICAL_ID")
             vault.executeWriteOperation(
                 operationId = UUID.randomUUID().toString(),
                 operationKind = "android-extension-interop-create",
@@ -63,6 +64,26 @@ class Mdbx2ExtensionInteropTest {
                             .put("username", "android-user")
                             .put("password_plain", "android-secret")
                             .toString()
+                    ),
+                    MdbxWriteCommand.CreateEntry(
+                        entryId = cardEntryId,
+                        projectId = projectId,
+                        entryType = "card",
+                        title = "Android WebDAV Card",
+                        payloadJson = JSONObject()
+                            .put("kind", "bank_card")
+                            .put("monica_entry_id", ANDROID_CARD_LOGICAL_ID)
+                            .put(
+                                "item_data",
+                                JSONObject()
+                                    .put("cardholderName", "Android Card Holder")
+                                    .put("cardNumber", "4111111111111111")
+                                    .put("expiryMonth", "12")
+                                    .put("expiryYear", "2030")
+                                    .put("cvv", "123")
+                                    .toString()
+                            )
+                            .toString()
                     )
                 )
             )
@@ -76,6 +97,18 @@ class Mdbx2ExtensionInteropTest {
                     mediaType = "application/octet-stream"
                 ),
                 content = androidAttachmentBytes(),
+                limits = defaultAttachmentContentLimits()
+            )
+            vault.createAttachmentWithExternalContent(
+                operationId = UUID.randomUUID().toString(),
+                request = MdbxAttachmentCreateRequest(
+                    attachmentId = ANDROID_CARD_ATTACHMENT_ID,
+                    projectId = projectId,
+                    entryId = cardEntryId,
+                    fileName = ANDROID_CARD_ATTACHMENT_NAME,
+                    mediaType = "application/octet-stream"
+                ),
+                content = androidCardAttachmentBytes(),
                 limits = defaultAttachmentContentLimits()
             )
 
@@ -95,6 +128,11 @@ class Mdbx2ExtensionInteropTest {
                 .put("androidAttachmentId", ANDROID_ATTACHMENT_ID)
                 .put("androidAttachmentName", ANDROID_ATTACHMENT_NAME)
                 .put("androidAttachmentPlaintextSha256", sha256Hex(androidAttachmentBytes()))
+                .put("androidCardEntryId", cardEntryId)
+                .put("androidCardLogicalObjectId", ANDROID_CARD_LOGICAL_ID)
+                .put("androidCardAttachmentId", ANDROID_CARD_ATTACHMENT_ID)
+                .put("androidCardAttachmentName", ANDROID_CARD_ATTACHMENT_NAME)
+                .put("androidCardAttachmentPlaintextSha256", sha256Hex(androidCardAttachmentBytes()))
                 .put("bootstrapCheckpoint", checkpointJson(bootstrapInfo.checkpoint))
                 .put("resultCheckpoint", checkpointJson(exported.resultCheckpoint))
                 .put("segments", exported.segments)
@@ -140,6 +178,27 @@ class Mdbx2ExtensionInteropTest {
             assertArrayEquals(
                 browserAttachmentBytes(),
                 vault.readAttachmentContent(browserAttachmentId, MAX_PLAINTEXT_BYTES)
+            )
+
+            val browserCardCollectionId = incomingManifest.getString("browserCardCollectionId")
+            val browserCardObjectId = incomingManifest.getString("browserCardObjectId")
+            val browserCardLogicalId = incomingManifest.getString("browserCardLogicalObjectId")
+            val browserCardEntry = vault.listEntries(browserCardCollectionId, "card")
+                .firstOrNull { it.entryId == browserCardObjectId }
+            assertNotNull(browserCardEntry)
+            val browserCardPayload = JSONObject(browserCardEntry!!.payloadJson)
+            assertEquals(browserCardLogicalId, browserCardPayload.getString("monica_entry_id"))
+            val browserCardData = JSONObject(browserCardPayload.getString("item_data"))
+            assertEquals("Browser Card Holder", browserCardData.getString("cardholderName"))
+            assertEquals("5555555555554444", browserCardData.getString("cardNumber"))
+            val browserCardAttachmentId = incomingManifest.getString("browserCardAttachmentId")
+            val browserCardAttachment = vault.getAttachment(browserCardAttachmentId)
+            assertNotNull(browserCardAttachment)
+            assertFalse(browserCardAttachment!!.deleted)
+            assertEquals(browserCardObjectId, browserCardAttachment.entryId)
+            assertArrayEquals(
+                browserCardAttachmentBytes(),
+                vault.readAttachmentContent(browserCardAttachmentId, MAX_PLAINTEXT_BYTES)
             )
 
             val knownBlobIds = availableBlobIds(vault)
@@ -404,6 +463,14 @@ class Mdbx2ExtensionInteropTest {
         ((index * 17 + 3) % 251).toByte()
     }
 
+    private fun androidCardAttachmentBytes(): ByteArray = ByteArray(ANDROID_CARD_ATTACHMENT_BYTES) { index ->
+        ((index * 23 + 5) % 251).toByte()
+    }
+
+    private fun browserCardAttachmentBytes(): ByteArray = ByteArray(BROWSER_CARD_ATTACHMENT_BYTES) { index ->
+        ((index * 29 + 9) % 251).toByte()
+    }
+
     private fun androidReturnAttachmentBytes(): ByteArray = ByteArray(ANDROID_RETURN_ATTACHMENT_BYTES) { index ->
         ((index * 19 + 11) % 251).toByte()
     }
@@ -423,11 +490,16 @@ class Mdbx2ExtensionInteropTest {
         const val ANDROID_LOGICAL_ID = "password:android-interop"
         const val ANDROID_ATTACHMENT_ID = "11111111-1111-4111-8111-111111111111"
         const val ANDROID_ATTACHMENT_NAME = "android-fixture.bin"
+        const val ANDROID_CARD_LOGICAL_ID = "card:android-interop"
+        const val ANDROID_CARD_ATTACHMENT_ID = "44444444-4444-4444-8444-444444444444"
+        const val ANDROID_CARD_ATTACHMENT_NAME = "android-card-photo.bin"
         const val ANDROID_RETURN_LOGICAL_ID = "password:android-return"
         const val ANDROID_RETURN_ATTACHMENT_ID = "22222222-2222-4222-8222-222222222222"
         const val ANDROID_RETURN_ATTACHMENT_NAME = "android-return.bin"
         const val ANDROID_ATTACHMENT_BYTES = 700_000
+        const val ANDROID_CARD_ATTACHMENT_BYTES = 705_000
         const val BROWSER_ATTACHMENT_BYTES = 710_000
+        const val BROWSER_CARD_ATTACHMENT_BYTES = 715_000
         const val ANDROID_RETURN_ATTACHMENT_BYTES = 720_000
         const val BLOB_CHUNK_BYTES = 256 * 1024
         const val MAX_SEGMENTS = 32
