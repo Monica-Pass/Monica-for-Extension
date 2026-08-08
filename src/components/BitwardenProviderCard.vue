@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { ProviderAccount, ProviderConflict, ProviderConflictResolution } from "../core/model";
+import type { ProviderAccount, ProviderConflictResolution, ProviderConflictSummary } from "../core/model";
 
 interface ProviderQueueStatus {
   providerId: string;
@@ -14,7 +14,7 @@ interface ProviderQueueStatus {
 const props = defineProps<{
   provider: ProviderAccount;
   queue?: ProviderQueueStatus;
-  conflicts: ProviderConflict[];
+  conflicts: ProviderConflictSummary[];
   activeSync: boolean;
   busy: boolean;
 }>();
@@ -23,7 +23,7 @@ const emit = defineEmits<{
   sync: [provider: ProviderAccount];
   cancel: [provider: ProviderAccount];
   emptyRemote: [provider: ProviderAccount];
-  resolveConflict: [conflict: ProviderConflict, resolution: ProviderConflictResolution];
+  resolveConflict: [conflict: ProviderConflictSummary, resolution: ProviderConflictResolution];
   folders: [provider: ProviderAccount];
   collections: [provider: ProviderAccount];
   relogin: [provider: ProviderAccount];
@@ -107,7 +107,7 @@ function queueDetail(): string {
   return "队列已清空";
 }
 
-function conflictSides(conflict: ProviderConflict): string {
+function conflictSides(conflict: ProviderConflictSummary): string {
   if (conflict.local && conflict.remote) return "浏览器版本与 Bitwarden 版本都存在";
   if (conflict.local) return "浏览器版本存在；远端已删除";
   if (conflict.remote) return "Bitwarden 版本存在；浏览器版本已删除";

@@ -17,11 +17,11 @@ import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
 import Mdbx2BatchTransferDialog from "./components/Mdbx2BatchTransferDialog.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
-import ProviderConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
+import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
-import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflict, type ProviderConflictResolution, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
+import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
 import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
@@ -79,9 +79,9 @@ interface KeePassFormState {
   isDefaultSaveTarget: boolean;
 }
 
-interface PendingProviderAction {
-  kind: "bitwarden-empty-remote" | "provider-conflict";
-  providerId: string;
+interface PendingConfirmationAction {
+  kind: "bitwarden-empty-remote" | "provider-conflict" | "provider-remove" | "windows-hello-enroll" | "windows-hello-revoke";
+  providerId?: string;
   conflictId?: string;
   resolution?: ProviderConflictResolution;
   title: string;
@@ -96,7 +96,7 @@ const archivedItems = ref<VaultItem[]>([]);
 const deletedItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; recovering?: number; maxAttempts: number; lastError?: string }>>([]);
-const providerConflicts = ref<ProviderConflict[]>([]);
+const providerConflicts = ref<ProviderConflictSummary[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
 const query = ref("");
@@ -127,9 +127,9 @@ const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
 const bitwardenFoldersProvider = ref<ProviderAccount | undefined>();
 const bitwardenCollectionsProvider = ref<ProviderAccount | undefined>();
-const providerActionDialog = ref<PendingProviderAction | null>(null);
-const providerActionBusy = ref(false);
-const providerActionError = ref("");
+const confirmationDialog = ref<PendingConfirmationAction | null>(null);
+const confirmationBusy = ref(false);
+const confirmationError = ref("");
 const keePassDialogOpen = ref(false);
 const keePassBusy = ref<"" | "test" | "open" | "export" | "lock" | "restore">("");
 const activeKeePassProviderId = ref("");
@@ -263,7 +263,7 @@ const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePa
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(providerActionDialog.value));
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -300,7 +300,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (!dialog) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    if (providerActionDialog.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    if (confirmationDialog.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (mdbx2BatchTransferDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
@@ -411,9 +411,9 @@ async function lockVault() {
   vaultEditorOpen.value = false;
   webDavDialogOpen.value = false;
   bitwardenDialogOpen.value = false;
-  providerActionDialog.value = null;
-  providerActionBusy.value = false;
-  providerActionError.value = "";
+  confirmationDialog.value = null;
+  confirmationBusy.value = false;
+  confirmationError.value = "";
   closeBitwardenFolders();
   closeBitwardenCollections();
   mdbx2DialogOpen.value = false;
@@ -462,8 +462,19 @@ async function unlockVaultWithWindowsHello() {
   }
 }
 
-async function enrollWindowsHello() {
-  if (!window.confirm("Windows 将弹出系统验证并创建 Monica 专用凭据。注册后设备密钥解锁会要求 Windows Hello，确定继续吗？")) return;
+function enrollWindowsHello() {
+  confirmationError.value = "";
+  confirmationDialog.value = {
+    kind: "windows-hello-enroll",
+    title: "注册 Windows Hello？",
+    message: "Windows 将显示系统验证界面，并为 Monica 创建专用平台凭据。",
+    context: "注册后，设备密钥解锁将要求 Windows Hello。私钥始终留在 Windows；取消、超时或失败不会改变当前解锁方式，主密码恢复路径继续保留。",
+    confirmLabel: "确认注册 Windows Hello",
+    tone: "attention"
+  };
+}
+
+async function applyWindowsHelloEnrollment() {
   windowsHelloBusy.value = "enroll";
   windowsHelloError.value = "";
   try {
@@ -472,13 +483,25 @@ async function enrollWindowsHello() {
     showNotice("Windows Hello 已注册；下次设备密钥解锁将要求系统验证。");
   } catch (error) {
     windowsHelloError.value = errorMessage(error);
+    throw error;
   } finally {
     windowsHelloBusy.value = "";
   }
 }
 
-async function revokeWindowsHello() {
-  if (!window.confirm("撤销后将恢复设备密钥的普通解锁方式。确定删除本机 Windows Hello 凭据吗？")) return;
+function revokeWindowsHello() {
+  confirmationError.value = "";
+  confirmationDialog.value = {
+    kind: "windows-hello-revoke",
+    title: "撤销本机 Windows Hello 绑定？",
+    message: "此操作会删除 Monica 在当前 Windows 用户下的平台凭据绑定。",
+    context: "加密密码库和设备密钥不会被删除。撤销后，设备密钥解锁不再要求 Windows Hello；主密码恢复路径保持不变。",
+    confirmLabel: "确认撤销本机绑定",
+    tone: "danger"
+  };
+}
+
+async function applyWindowsHelloRevocation() {
   windowsHelloBusy.value = "revoke";
   windowsHelloError.value = "";
   try {
@@ -487,6 +510,7 @@ async function revokeWindowsHello() {
     showNotice("Windows Hello 本机绑定已撤销。");
   } catch (error) {
     windowsHelloError.value = errorMessage(error);
+    throw error;
   } finally {
     windowsHelloBusy.value = "";
   }
@@ -579,8 +603,19 @@ function conflictsFor(providerId: string) {
   return providerConflicts.value.filter((conflict) => conflict.providerId === providerId);
 }
 
-function conflictTitle(conflict: ProviderConflict) {
+function conflictTitle(conflict: ProviderConflictSummary) {
   return conflict.local?.title || conflict.remote?.title || "密码源级冲突";
+}
+
+function webDavEndpointLabel(provider: ProviderAccount): string {
+  const raw = typeof provider.config.baseUrl === "string" ? provider.config.baseUrl.trim() : "";
+  if (!raw) return "WebDAV 服务器";
+  try {
+    const url = new URL(raw);
+    return url.host || "WebDAV 服务器";
+  } catch {
+    return "WebDAV 服务器地址已配置";
+  }
 }
 
 function navigate(section: Section) {
@@ -1085,8 +1120,8 @@ async function syncProvider(provider: ProviderAccount, allowEmptyRemote = false)
 
 function confirmBitwardenEmptyRemote(provider: ProviderAccount) {
   if (provider.kind !== "bitwarden") return;
-  providerActionError.value = "";
-  providerActionDialog.value = {
+  confirmationError.value = "";
+  confirmationDialog.value = {
     kind: "bitwarden-empty-remote",
     providerId: provider.id,
     title: "采用服务器空密码库？",
@@ -1102,62 +1137,76 @@ async function cancelProviderSync(provider: ProviderAccount) {
   if (result.cancelled) showNotice(`正在取消 ${provider.name} 同步…`);
 }
 
-async function resolveProviderConflict(conflict: ProviderConflict, resolution: ProviderConflictResolution) {
-  const action = resolution === "keep-local" ? "保留浏览器版本并在下次同步写回" : conflict.remote ? "采用远端版本并丢弃浏览器修改" : "接受远端删除";
+function resolveProviderConflict(conflict: ProviderConflictSummary, resolution: ProviderConflictResolution) {
   const provider = providers.value.find((candidate) => candidate.id === conflict.providerId);
-  if (provider?.kind === "bitwarden") {
-    const title = conflictTitle(conflict);
-    providerActionError.value = "";
-    providerActionDialog.value = {
-      kind: "provider-conflict",
-      providerId: conflict.providerId,
-      conflictId: conflict.id,
-      resolution,
-      title: resolution === "keep-local" ? "保留浏览器版本？" : conflict.remote ? "采用 Bitwarden 版本？" : "接受远端删除？",
-      message: resolution === "keep-local" ? "下次同步会把浏览器版本写回 Bitwarden。" : conflict.remote ? "此操作会丢弃当前浏览器修改，并采用 Bitwarden 版本。" : "此操作会接受服务器端删除结果。",
-      context: resolution === "keep-local" ? `“${title}”的 Bitwarden 版本将被替换；未知字段仍按现有保留规则处理。` : conflict.remote ? `“${title}”将使用 Bitwarden 版本；敏感字段不会在确认界面显示。` : `“${title}”将从当前活动列表移除，删除状态继续由加密墓碑记录。`,
-      confirmLabel: resolution === "keep-local" ? "确认保留浏览器版本" : conflict.remote ? "确认采用 Bitwarden 版本" : "确认接受远端删除",
-      tone: resolution === "keep-local" ? "attention" : "danger"
-    };
-    return;
-  }
-  if (!window.confirm(`确定${action}“${conflictTitle(conflict)}”吗？`)) return;
-  await applyProviderConflictResolution(conflict, resolution);
+  const title = conflictTitle(conflict);
+  const remoteLabel = providerConflictRemoteLabel(provider?.kind);
+  confirmationError.value = "";
+  confirmationDialog.value = {
+    kind: "provider-conflict",
+    providerId: conflict.providerId,
+    conflictId: conflict.id,
+    resolution,
+    title: resolution === "keep-local" ? "保留浏览器版本？" : conflict.remote ? `采用${remoteLabel}？` : "接受远端删除？",
+    message: resolution === "keep-local" ? `下次同步会把浏览器版本写回“${provider?.name || "远端密码源"}”。` : conflict.remote ? `此操作会丢弃当前浏览器修改，并采用${remoteLabel}。` : "此操作会接受服务器端删除结果。",
+    context: resolution === "keep-local" ? `“${title}”的${remoteLabel}将在下次同步时被浏览器版本替换；未知字段仍按当前密码源的保留规则处理。` : conflict.remote ? `“${title}”将使用${remoteLabel}；用户名、密码、备注和自定义字段不会进入确认界面。` : `“${title}”将从当前活动列表移除，删除状态继续由当前密码源的加密记录保存。`,
+    confirmLabel: resolution === "keep-local" ? "确认保留浏览器版本" : conflict.remote ? `确认采用${remoteLabel}` : "确认接受远端删除",
+    tone: resolution === "keep-local" ? "attention" : "danger"
+  };
 }
 
-async function applyProviderConflictResolution(conflict: ProviderConflict, resolution: ProviderConflictResolution) {
+function providerConflictRemoteLabel(kind: ProviderAccount["kind"] | undefined): string {
+  return ({
+    bitwarden: " Bitwarden 版本",
+    mdbx2: " MDBX2 版本",
+    "mdbx-legacy": "旧 MDBX1 版本",
+    keepass: " KDBX 版本",
+    "monica-webdav": " Android 版本",
+    local: "远端版本"
+  } as Record<ProviderAccount["kind"], string>)[kind || "local"];
+}
+
+async function applyProviderConflictResolution(conflict: ProviderConflictSummary, resolution: ProviderConflictResolution) {
   await vaultClient.resolveProviderConflict(conflict.id, resolution);
   await Promise.all([refreshItems(), refreshProviders()]);
   showNotice("同步冲突已原子解决。");
 }
 
-function closeProviderActionDialog() {
-  if (providerActionBusy.value) return;
-  providerActionDialog.value = null;
-  providerActionError.value = "";
+function closeConfirmationDialog() {
+  if (confirmationBusy.value) return;
+  confirmationDialog.value = null;
+  confirmationError.value = "";
 }
 
-async function submitProviderAction() {
-  const action = providerActionDialog.value;
-  if (!action || providerActionBusy.value) return;
-  providerActionBusy.value = true;
-  providerActionError.value = "";
+async function submitConfirmationAction() {
+  const action = confirmationDialog.value;
+  if (!action || confirmationBusy.value) return;
+  confirmationBusy.value = true;
+  confirmationError.value = "";
   try {
     if (action.kind === "bitwarden-empty-remote") {
       const provider = providers.value.find((candidate) => candidate.id === action.providerId && candidate.kind === "bitwarden");
       if (!provider) throw new Error("Bitwarden 密码源已不存在，请关闭对话框后刷新页面。");
       const completed = await syncProvider(provider, true);
       if (!completed) throw new Error(webDavError.value || "空库确认同步未完成，请检查网络后重试。");
-    } else {
+    } else if (action.kind === "provider-conflict") {
       const conflict = providerConflicts.value.find((candidate) => candidate.id === action.conflictId && candidate.providerId === action.providerId);
       if (!conflict || !action.resolution) throw new Error("此冲突已变化，请关闭对话框并刷新最新状态。");
       await applyProviderConflictResolution(conflict, action.resolution);
+    } else if (action.kind === "provider-remove") {
+      const provider = providers.value.find((candidate) => candidate.id === action.providerId);
+      if (!provider) throw new Error("密码源已不存在，请关闭对话框后刷新页面。");
+      await applyProviderRemoval(provider);
+    } else if (action.kind === "windows-hello-enroll") {
+      await applyWindowsHelloEnrollment();
+    } else {
+      await applyWindowsHelloRevocation();
     }
-    providerActionDialog.value = null;
+    confirmationDialog.value = null;
   } catch (error) {
-    providerActionError.value = errorMessage(error);
+    confirmationError.value = errorMessage(error);
   } finally {
-    providerActionBusy.value = false;
+    confirmationBusy.value = false;
   }
 }
 
@@ -1174,7 +1223,7 @@ async function exportProviderDiagnostics() {
   }
 }
 
-async function removeProvider(provider: ProviderAccount) {
+function removeProvider(provider: ProviderAccount) {
   const remoteName = { bitwarden: "Bitwarden 密码库", mdbx2: "MDBX2 保险库", "mdbx-legacy": "旧 MDBX1 数据库", keepass: "KeePass 数据库" }[provider.kind as string] || "WebDAV 文件";
   const remoteKeePassStatus = provider.kind === "keepass" ? keePassRemoteStatusFor(provider.id) : undefined;
   const unsavedWarning = provider.kind === "keepass" && isRemoteKeePass(provider) && remoteKeePassStatus && remoteKeePassStatus.publicationState !== "clean"
@@ -1182,8 +1231,20 @@ async function removeProvider(provider: ProviderAccount) {
     : provider.kind === "keepass" && keePassSessionFor(provider.id)?.dirty
       ? "此数据库还有未导出的内存修改，移除后这些修改会丢失。"
       : "";
-  if (!window.confirm(`${unsavedWarning ? `${unsavedWarning}\n\n` : ""}确定移除“${provider.name}”吗？插件中的该源缓存项目会移除，远端 ${remoteName} 不会被删除。`)) return;
-  await runWebDavAction("remove", async () => {
+  confirmationError.value = "";
+  confirmationDialog.value = {
+    kind: "provider-remove",
+    providerId: provider.id,
+    title: `移除“${provider.name}”？`,
+    message: "此操作只移除 Monica Extension 中的密码源连接和本地缓存。",
+    context: `${unsavedWarning ? `${unsavedWarning} ` : ""}远端 ${remoteName} 不会被删除。重新连接前，此密码源不再参与同步、保存目标选择或管理操作。`,
+    confirmLabel: "确认移除密码源",
+    tone: "danger"
+  };
+}
+
+async function applyProviderRemoval(provider: ProviderAccount) {
+  const completed = await runWebDavAction("remove", async () => {
     await vaultClient.removeProvider(provider.id);
     await Promise.all([refreshItems(), refreshProviders()]);
     if (editingWebDavId.value === provider.id) closeWebDavDialog();
@@ -1215,6 +1276,7 @@ async function removeProvider(provider: ProviderAccount) {
     }
     showNotice(`${provider.name} 已从插件中移除，远端数据未改动。`);
   });
+  if (!completed) throw new Error(webDavError.value || "密码源移除未完成，请重试。");
 }
 
 async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Promise<void>): Promise<boolean> {
@@ -1988,7 +2050,7 @@ function errorCode(error: unknown): string | undefined {
               </div>
             </div></m3e-card>
             <m3e-card v-for="provider in webDavProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
-              <div class="source-title"><span class="source-icon"><m3e-icon name="folder_copy"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.baseUrl || '') }}</p></div></div>
+              <div class="source-title"><span class="source-icon"><m3e-icon name="folder_copy"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ webDavEndpointLabel(provider) }}</p></div></div>
               <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
               <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
               <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
@@ -2272,17 +2334,17 @@ function errorCode(error: unknown): string | undefined {
       <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
     </form></section></div>
 
-    <ProviderConfirmationDialog
-      v-if="providerActionDialog"
-      :title="providerActionDialog.title"
-      :message="providerActionDialog.message"
-      :context="providerActionDialog.context"
-      :confirm-label="providerActionDialog.confirmLabel"
-      :tone="providerActionDialog.tone"
-      :busy="providerActionBusy"
-      :error="providerActionError"
-      @close="closeProviderActionDialog"
-      @confirm="submitProviderAction"
+    <M3eConfirmationDialog
+      v-if="confirmationDialog"
+      :title="confirmationDialog.title"
+      :message="confirmationDialog.message"
+      :context="confirmationDialog.context"
+      :confirm-label="confirmationDialog.confirmLabel"
+      :tone="confirmationDialog.tone"
+      :busy="confirmationBusy"
+      :error="confirmationError"
+      @close="closeConfirmationDialog"
+      @confirm="submitConfirmationAction"
     />
 
     <div v-if="exportBackupDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeExportBackupDialog"><section class="editor-dialog backup-password-dialog" role="dialog" aria-modal="true" aria-labelledby="export-backup-title"><header><div><h2 id="export-backup-title">导出加密整库备份</h2><p>设置独立备份密码；恢复时需要此密码，与当前主密码互不影响。</p></div><m3e-icon-button aria-label="关闭" @click="closeExportBackupDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitExportBackup">

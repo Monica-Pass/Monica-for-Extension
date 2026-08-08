@@ -341,6 +341,19 @@ export interface ProviderConflict extends ProviderConflictInput {
   detectedAt: string;
 }
 
+/**
+ * Manager-safe conflict projection. Resolution needs only the opaque conflict
+ * identifier; complete local and remote VaultItems stay inside the background.
+ */
+export interface ProviderConflictSummary {
+  id: string;
+  providerId: string;
+  reason: string;
+  local?: { title: string };
+  remote?: { title: string };
+  detectedAt: string;
+}
+
 export type ProviderConflictResolution = "keep-local" | "use-remote";
 
 export interface ProviderDiagnostic {

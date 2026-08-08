@@ -1,4 +1,4 @@
-import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type TotpItem, type VaultItem } from "../core/model";
+import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type ProviderConflict, type ProviderConflictSummary, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
@@ -488,10 +488,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "PASSKEY_DISMISS":
       return dismissPasskeyRequest(request.candidateId, sender);
     case "PROVIDER_LIST":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return service.listProviders();
     case "PROVIDER_QUEUE_STATUS": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const state = await service.readState();
       const providerIds = new Set([
         ...state.mutationQueue.map((item) => item.providerId),
@@ -512,16 +512,16 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       });
     }
     case "PROVIDER_CONFLICT_LIST":
-      assertExtensionPage(sender);
-      return service.listProviderConflicts(request.providerId);
+      assertManagerPage(sender);
+      return (await service.listProviderConflicts(request.providerId)).map(toProviderConflictSummary);
     case "PROVIDER_CONFLICT_RESOLVE":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return service.resolveProviderConflict(request.conflictId, request.resolution);
     case "PROVIDER_DIAGNOSTIC_EXPORT":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return service.exportProviderDiagnostics();
     case "WEBDAV_TEST": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
       const temporary: ProviderAccount = {
@@ -535,7 +535,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return providers.get("monica-webdav").testConnection(temporary);
     }
     case "WEBDAV_SAVE": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "monica-webdav") throw new Error("所选密码源不是 WebDAV。");
       const previousConfig = existing?.config || {};
@@ -558,7 +558,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.upsertProvider(account);
     }
     case "BITWARDEN_LOGIN": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
       const result = await bitwardenClient.login({
@@ -585,7 +585,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return { status: "authenticated", providerId: account.id };
     }
     case "BITWARDEN_SEND_EMAIL_CODE": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       return bitwardenClient.sendTwoFactorEmailCode({
         vaultUrl: request.vaultUrl,
@@ -1784,7 +1784,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
       return undefined;
     case "PROVIDER_SYNC": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       if (request.allowEmptyRemote === true) assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account) throw new Error("密码源不存在。");
@@ -1856,13 +1856,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       }
     }
     case "PROVIDER_SYNC_CANCEL": {
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       const controller = activeProviderSyncs.get(request.providerId);
       controller?.abort(new DOMException("用户取消同步", "AbortError"));
       return { cancelled: Boolean(controller) };
     }
     case "PROVIDER_REMOVE":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
       {
         const account = await service.getProvider(request.providerId);
@@ -3284,6 +3284,17 @@ function assertManagerPage(sender: chrome.runtime.MessageSender): void {
 
 function assertExtensionPage(sender: chrome.runtime.MessageSender): void {
   assertTrustedExtensionPage(sender, chrome.runtime.id, chrome.runtime.getURL(""));
+}
+
+function toProviderConflictSummary(conflict: ProviderConflict): ProviderConflictSummary {
+  return {
+    id: conflict.id,
+    providerId: conflict.providerId,
+    reason: redactProviderMessage(conflict.reason),
+    ...(conflict.local ? { local: { title: conflict.local.title } } : {}),
+    ...(conflict.remote ? { remote: { title: conflict.remote.title } } : {}),
+    detectedAt: conflict.detectedAt
+  };
 }
 
 function toMatchSummary(item: LoginItem): LoginMatchSummary {

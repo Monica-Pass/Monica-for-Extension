@@ -29,6 +29,11 @@ test("Windows Hello remains manager-only and exposes a truthful device-key recov
     const popupHello = await popup.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_HELLO_STATUS" })) as { ok: boolean; error?: string };
     expect(popupHello.ok).toBe(false);
     expect(popupHello.error).toContain("只允许 Monica 管理页调用");
+    for (const request of [{ type: "VAULT_HELLO_ENROLL" }, { type: "VAULT_HELLO_REVOKE", confirmed: true }]) {
+      const popupMutation = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as { ok: boolean; error?: string };
+      expect(popupMutation.ok).toBe(false);
+      expect(popupMutation.error).toContain("只允许 Monica 管理页调用");
+    }
 
     const lock = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }));
     expect(lock).toMatchObject({ ok: true });

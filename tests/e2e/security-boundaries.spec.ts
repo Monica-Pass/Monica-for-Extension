@@ -1,4 +1,4 @@
-import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
+import { chromium, expect, test, type BrowserContext, type CDPSession, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
 interface RuntimeResponse<T = unknown> {
@@ -58,8 +58,9 @@ async function fillLogin(manager: Page, itemId: string, tabId: number): Promise<
   });
 }
 
-test("MDBX2 bootstrap and synchronization commands are restricted to the manager page", async ({}, testInfo) => {
+test("privileged provider and MDBX2 commands are restricted to the manager page", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
+  let cdp: CDPSession | undefined;
   try {
     const launched = await launchExtension(testInfo);
     context = launched.context;
@@ -114,6 +115,32 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     })) as RuntimeResponse;
     expect(tigaResponse.ok).toBe(false);
     expect(tigaResponse.error).toContain("只允许 Monica 管理页调用");
+    const providerAdminRequests = [
+      { type: "PROVIDER_LIST" },
+      { type: "PROVIDER_QUEUE_STATUS" },
+      { type: "PROVIDER_CONFLICT_LIST", providerId: "manager-only-provider" },
+      { type: "PROVIDER_CONFLICT_RESOLVE", conflictId: "11111111-1111-4111-8111-111111111111", resolution: "use-remote" },
+      { type: "PROVIDER_DIAGNOSTIC_EXPORT" },
+      { type: "WEBDAV_TEST", config: { baseUrl: "https://dav.example.test/private", username: "private-user", password: "private-password" } },
+      { type: "WEBDAV_SAVE", name: "Private WebDAV", config: { baseUrl: "https://dav.example.test/private", username: "private-user", password: "private-password" }, isDefaultSaveTarget: false },
+      { type: "BITWARDEN_LOGIN", name: "Private Bitwarden", vaultUrl: "https://vault.example.test", email: "private@example.test", masterPassword: "private-master-password", isDefaultSaveTarget: false },
+      { type: "BITWARDEN_SEND_EMAIL_CODE", vaultUrl: "https://vault.example.test", email: "private@example.test", masterPassword: "private-master-password" },
+      { type: "PROVIDER_SYNC", providerId: "manager-only-provider" },
+      { type: "PROVIDER_SYNC_CANCEL", providerId: "manager-only-provider" },
+      { type: "PROVIDER_REMOVE", providerId: "manager-only-provider" }
+    ];
+    for (const request of providerAdminRequests) {
+      const providerAdminResponse = await popup.evaluate(async (message) => chrome.runtime.sendMessage(message), request) as RuntimeResponse;
+      expect(providerAdminResponse.ok).toBe(false);
+      expect(providerAdminResponse.error).toContain("只允许 Monica 管理页调用");
+    }
+    await context.route("https://provider-boundary.example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>Provider boundary</title>" }));
+    const webPage = await context.newPage();
+    await webPage.goto("https://provider-boundary.example.test/");
+    cdp = await context.newCDPSession(webPage);
+    const contentResponse = await sendFromExtensionContentWorld(cdp, { type: "PROVIDER_LIST" });
+    expect(contentResponse.ok).toBe(false);
+    expect(contentResponse.error).toContain("只允许 Monica 插件页面调用");
     const collectionRequests = [
       { type: "MDBX2_COLLECTION_LIST", providerId: "manager-only-provider", excludeRoot: true, pageSize: 50 },
       { type: "MDBX2_COLLECTION_CREATE", providerId: "manager-only-provider", operationId: "11111111-1111-4111-8111-111111111111", collectionId: "22222222-2222-4222-8222-222222222222", title: "Accounts" },
@@ -234,9 +261,39 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
     expect(conflictResolveResponse.ok).toBe(false);
     expect(conflictResolveResponse.error).toContain("只允许 Monica 管理页调用");
   } finally {
+    await cdp?.detach().catch(() => undefined);
     await context?.close();
   }
 });
+
+async function sendFromExtensionContentWorld(cdp: CDPSession, message: Record<string, unknown>): Promise<RuntimeResponse> {
+  const contexts: Array<{ id: number }> = [];
+  cdp.on("Runtime.executionContextCreated", (event) => contexts.push({ id: event.context.id }));
+  await cdp.send("Runtime.enable");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  for (const context of contexts) {
+    try {
+      const probe = await cdp.send("Runtime.evaluate", {
+        contextId: context.id,
+        expression: "typeof globalThis.chrome?.runtime?.sendMessage === 'function'",
+        returnByValue: true
+      });
+      if (probe.result.value !== true) continue;
+      const evaluated = await cdp.send("Runtime.evaluate", {
+        contextId: context.id,
+        expression: `globalThis.chrome.runtime.sendMessage(${JSON.stringify(message)})`,
+        awaitPromise: true,
+        returnByValue: true
+      });
+      if (evaluated.exceptionDetails) continue;
+      const value = evaluated.result.value as RuntimeResponse | undefined;
+      if (value && typeof value.ok === "boolean") return value;
+    } catch {
+      // Ignore page worlds and stale contexts; the extension isolated world is the target.
+    }
+  }
+  throw new Error("未找到可调用 chrome.runtime.sendMessage 的 Monica 内容脚本执行上下文。");
+}
 
 test("non-loopback HTTP login submissions are rejected without retaining a password", async ({}, testInfo) => {
   let context: BrowserContext | undefined;

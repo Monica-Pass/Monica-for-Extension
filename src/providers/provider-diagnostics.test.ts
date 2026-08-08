@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createProviderDiagnostic, redactProviderDiagnostic } from "./provider-diagnostics";
+import { createProviderDiagnostic, redactProviderDiagnostic, redactProviderMessage } from "./provider-diagnostics";
 import { ProviderTransportError } from "./provider-transport";
 
 describe("provider diagnostic redaction", () => {
@@ -50,5 +50,12 @@ describe("provider diagnostic redaction", () => {
       message: "Bitwarden 暂时限制请求。"
     });
     expect(JSON.stringify(diagnostic)).not.toContain("provider-id-must-not-export");
+  });
+
+  it("sanitizes provider conflict messages before they reach manager status UI", () => {
+    const safe = redactProviderMessage("sync failed for joy.private@example.com at https://joy:password@vault.private.example/api?token=query-secret password=hunter2");
+    for (const secret of ["joy.private", "password@", "vault.private.example", "query-secret", "hunter2"]) expect(safe).not.toContain(secret);
+    expect(safe).toContain("[REDACTED_URL]");
+    expect(safe).toContain("password=[REDACTED]");
   });
 });

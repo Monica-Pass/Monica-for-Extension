@@ -83,11 +83,20 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
     remoteEtag = '"remote-2"';
     expect(await sync(launched.manager, providerId)).toMatchObject({ ok: true, data: { conflicts: 1 } });
 
+    const conflictResponse = await launched.manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_CONFLICT_LIST", providerId }), providerId) as { ok: boolean; data?: Array<{ local?: Record<string, unknown>; remote?: Record<string, unknown> }>; error?: string };
+    expect(conflictResponse, conflictResponse.error).toMatchObject({ ok: true, data: [expect.objectContaining({ local: { title: "Conflict Account" }, remote: { title: "Conflict Account" } })] });
+    const conflictJson = JSON.stringify(conflictResponse.data);
+    for (const secret of ["local-conflict-secret", "remote-conflict-secret", "joy@example.com", "fixture", "private-user", "private-webdav-password", "private-backup-password"]) expect(conflictJson).not.toContain(secret);
+
     await launched.manager.getByRole("button", { name: "密码源" }).click();
     await expect(launched.manager.getByText("1 个冲突", { exact: true })).toBeVisible();
     await expect(launched.manager.getByText("敏感字段不在此处显示", { exact: false })).toBeVisible();
-    launched.manager.once("dialog", (dialog) => dialog.accept());
     await launched.manager.getByRole("button", { name: "采用 Android 版本" }).click();
+    const confirmation = launched.manager.getByRole("dialog", { name: "采用 Android 版本？" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).not.toContainText("local-conflict-secret");
+    await expect(confirmation).not.toContainText("remote-conflict-secret");
+    await confirmation.getByRole("button", { name: "确认采用 Android 版本" }).click();
     await expect(launched.manager.getByText("1 个冲突", { exact: true })).toHaveCount(0);
     expect(await listItems(launched.manager)).toEqual([expect.objectContaining({ password: "remote-conflict-secret" })]);
 
