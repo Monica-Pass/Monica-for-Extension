@@ -12,7 +12,8 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
     createdAt: date(raw.createdAt, now), updatedAt: date(raw.updatedAt, now), deletedAt: optionalDate(raw.deletedAt), archivedAt: optionalDate(raw.archivedAt), categoryId: optionalNumber(raw.categoryId), categoryName: optional(raw.categoryName), sortOrder: optionalNumber(raw.sortOrder), imagePaths: strings(raw.imagePaths), boundNoteId: optionalNumber(raw.boundNoteId), replicaGroupId: optional(raw.replicaGroupId), keepassDatabaseId: optionalNumber(raw.keepassDatabaseId), keepassGroupPath: optional(raw.keepassGroupPath), keepassEntryUuid: optional(raw.keepassEntryUuid), keepassGroupUuid: optional(raw.keepassGroupUuid), mdbxDatabaseId: optionalNumber(raw.mdbxDatabaseId), mdbxFolderId: optional(raw.mdbxFolderId), providerRefs: Array.isArray(raw.providerRefs) ? raw.providerRefs.flatMap((value) => {
       if (!value || typeof value !== "object") return [];
       const reference = value as Record<string, unknown>; const providerId = string(reference.providerId); if (!providerId) return [];
-      return [{ providerId, remoteId: optional(reference.remoteId), remoteFolderId: optional(reference.remoteFolderId), revision: optional(reference.revision), etag: optional(reference.etag) }];
+      const remoteCollectionIds = stringIds(reference.remoteCollectionIds);
+      return [{ providerId, remoteId: optional(reference.remoteId), remoteFolderId: optional(reference.remoteFolderId), ...(remoteCollectionIds !== undefined ? { remoteCollectionIds } : {}), revision: optional(reference.revision), etag: optional(reference.etag) }];
     }) : []
   };
   switch (kind) {
@@ -98,6 +99,7 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
 function string(value: unknown): string { return typeof value === "string" ? value : value == null ? "" : String(value); }
 function optional(value: unknown): string | undefined { return string(value).trim() || undefined; }
 function strings(value: unknown): string[] { return Array.isArray(value) ? value.map(string).filter(Boolean) : []; }
+function stringIds(value: unknown): string[] | undefined { const result = strings(value); return result.length ? result : Array.isArray(value) ? [] : undefined; }
 function number(value: unknown, fallback: number): number { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
 function optionalNumber(value: unknown): number | undefined { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : undefined; }
 function date(value: unknown, fallback: string): string { const parsed = Date.parse(string(value)); return Number.isNaN(parsed) ? fallback : new Date(parsed).toISOString(); }

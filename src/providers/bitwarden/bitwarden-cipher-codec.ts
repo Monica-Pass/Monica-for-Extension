@@ -38,7 +38,15 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
   const name = await decryptBitwardenString(stringValue(raw, "Name", "name"), key);
   const notes = await decryptBitwardenString(stringValue(raw, "Notes", "notes"), key);
   const favorite = booleanValue(raw, "Favorite", "favorite");
-  const reference: ProviderReference = { providerId, remoteId: cipherId, remoteFolderId: stringValue(raw, "FolderId", "folderId") || undefined, revision };
+  const organizationId = stringValue(raw, "OrganizationId", "organizationId");
+  const remoteCollectionIds = organizationId ? (stringArrayValue(raw, "CollectionIds", "collectionIds") || []) : undefined;
+  const reference: ProviderReference = {
+    providerId,
+    remoteId: cipherId,
+    remoteFolderId: stringValue(raw, "FolderId", "folderId") || undefined,
+    ...(remoteCollectionIds !== undefined ? { remoteCollectionIds } : {}),
+    revision
+  };
   const base = {
     id: `bitwarden:${providerId}:${cipherId}`,
     title: name || "未命名 Bitwarden 项目",
@@ -157,7 +165,10 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
   base.reprompt = numberValue(preserved, "Reprompt", "reprompt");
   base.key = value(preserved, "Key", "key") ?? null;
   base.organizationId = value(preserved, "OrganizationId", "organizationId") ?? null;
-  base.collectionIds = value(preserved, "CollectionIds", "collectionIds") ?? null;
+  const collectionReference = item.providerRefs.find((reference) => reference.remoteCollectionIds !== undefined);
+  base.collectionIds = collectionReference?.remoteCollectionIds !== undefined
+    ? collectionReference.remoteCollectionIds
+    : value(preserved, "CollectionIds", "collectionIds") ?? null;
   base.folderId = item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null;
   base.fields = value(preserved, "Fields", "fields") ?? null;
 
@@ -226,6 +237,63 @@ export function routeBitwardenCipherToFolder(raw: Record<string, unknown>, folde
   const payload = Object.fromEntries(Object.entries(raw).map(([name, entry]) => [lowerFirst(name), entry]));
   payload.folderId = folderId || null;
   return payload;
+}
+
+/**
+ * Replace only the top-level organization Collection routing list. The caller must have already
+ * checked organization ownership and permissions; this helper deliberately performs no decryption.
+ */
+export function routeBitwardenCipherToCollections(raw: Record<string, unknown>, collectionIds: string[]): Record<string, unknown> {
+  const payload = Object.fromEntries(Object.entries(raw).map(([name, entry]) => [lowerFirst(name), entry]));
+  payload.collectionIds = [...collectionIds];
+  return payload;
+}
+
+/**
+ * Merge a possibly reduced server Cipher response over the complete encrypted projection held by
+ * the caller. Unknown fields and nested encrypted values stay byte-for-byte intact.
+ */
+export function mergeBitwardenCipherProjection(
+  original: Record<string, unknown>,
+  response: Record<string, unknown>,
+  patch: { folderId?: string; collectionIds?: string[] } = {}
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...original, ...response };
+  const cipherId = stringValue(response, "Id", "id") || stringValue(original, "Id", "id");
+  const hasResponseRevision = Object.prototype.hasOwnProperty.call(response, "RevisionDate") || Object.prototype.hasOwnProperty.call(response, "revisionDate");
+  const revision = stringValue(response, "RevisionDate", "revisionDate");
+  const hasFolderPatch = Object.prototype.hasOwnProperty.call(patch, "folderId");
+  const hasCollectionPatch = Object.prototype.hasOwnProperty.call(patch, "collectionIds");
+  const hasResponseFolder = Object.prototype.hasOwnProperty.call(response, "FolderId") || Object.prototype.hasOwnProperty.call(response, "folderId");
+  const hasOriginalFolder = Object.prototype.hasOwnProperty.call(original, "FolderId") || Object.prototype.hasOwnProperty.call(original, "folderId");
+  const folderId = hasFolderPatch
+    ? patch.folderId
+    : (hasResponseFolder ? stringValue(response, "FolderId", "folderId") : stringValue(original, "FolderId", "folderId"));
+  const hasResponseCollections = Object.prototype.hasOwnProperty.call(response, "CollectionIds") || Object.prototype.hasOwnProperty.call(response, "collectionIds");
+  const hasOriginalCollections = Object.prototype.hasOwnProperty.call(original, "CollectionIds") || Object.prototype.hasOwnProperty.call(original, "collectionIds");
+  const collectionIds = hasCollectionPatch
+    ? [...(patch.collectionIds || [])]
+    : (hasResponseCollections ? stringArrayValue(response, "CollectionIds", "collectionIds") || [] : stringArrayValue(original, "CollectionIds", "collectionIds") || []);
+  merged.id = cipherId;
+  // A reduced mutation response must not inherit the old revision. Callers use
+  // the missing value to fail closed instead of treating a stale baseline as a
+  // freshly acknowledged server revision.
+  if (hasResponseRevision) merged.revisionDate = revision;
+  else delete merged.revisionDate;
+  if (hasFolderPatch || hasResponseFolder || hasOriginalFolder) merged.folderId = folderId || null;
+  else delete merged.folderId;
+  if (hasCollectionPatch || hasResponseCollections || hasOriginalCollections) merged.collectionIds = collectionIds;
+  else delete merged.collectionIds;
+  delete merged.Id;
+  delete merged.RevisionDate;
+  delete merged.FolderId;
+  delete merged.CollectionIds;
+  for (const [canonical, pascal] of [["login", "Login"], ["card", "Card"], ["identity", "Identity"], ["secureNote", "SecureNote"], ["sshKey", "SshKey"]] as const) {
+    const originalNested = isRecord(original[canonical]) ? original[canonical] : original[pascal];
+    const responseNested = isRecord(response[canonical]) ? response[canonical] : response[pascal];
+    if (isRecord(originalNested) && isRecord(responseNested)) merged[canonical] = { ...originalNested, ...responseNested };
+  }
+  return merged;
 }
 
 /**
@@ -639,6 +707,17 @@ function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[]
   return Array.isArray(result) ? result : [];
 }
 
+function stringArrayValue(raw: Record<string, unknown>, ...names: string[]): string[] | undefined {
+  const result = value(raw, ...names);
+  if (!Array.isArray(result)) return undefined;
+  const ids = result.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 512);
+  return [...new Set(ids)];
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

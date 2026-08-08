@@ -6,12 +6,34 @@ export interface BitwardenOrganizationKeyResult {
   warnings: string[];
 }
 
+/**
+ * Bitwarden has shipped both `Profile.Organizations` and `OrganizationsNew`
+ * projections (and some self-hosted builds wrap them in Data). Normalize all
+ * of those shapes before key unwrapping so a newer sync response is never
+ * mistaken for an empty organization list.
+ */
+export function bitwardenOrganizationRecords(syncPayload: Record<string, unknown>): Record<string, unknown>[] {
+  const profile = recordValue(syncPayload, "Profile", "profile") || {};
+  const result: Record<string, unknown>[] = [];
+  for (const source of [profile, syncPayload]) {
+    for (const name of ["Organizations", "organizations", "OrganizationsNew", "organizationsNew"]) {
+      appendOrganizationRecords(source[name], result);
+    }
+  }
+  const unique = new Map<string, Record<string, unknown>>();
+  for (const record of result) {
+    const id = stringValue(record, "Id", "id");
+    if (id && !unique.has(id)) unique.set(id, record);
+  }
+  return [...unique.values()];
+}
+
 export async function resolveBitwardenOrganizationKeys(
   syncPayload: Record<string, unknown>,
   userVaultKey: BitwardenSymmetricKey
 ): Promise<BitwardenOrganizationKeyResult> {
   const profile = recordValue(syncPayload, "Profile", "profile") || {};
-  const organizations = arrayValue(profile, "Organizations", "organizations").map(record);
+  const organizations = bitwardenOrganizationRecords(syncPayload);
   if (!organizations.length) return { keys: new Map(), warnings: [] };
 
   const protectedPrivateKey = stringValue(profile, "PrivateKey", "privateKey") || stringValue(syncPayload, "PrivateKey", "privateKey");
@@ -28,22 +50,30 @@ export async function resolveBitwardenOrganizationKeys(
 
   const keys = new Map<string, BitwardenSymmetricKey>();
   const warnings: string[] = [];
-  for (const organization of organizations) {
-    const organizationId = stringValue(organization, "Id", "id");
-    const protectedKey = stringValue(organization, "Key", "key");
-    if (!organizationId || !protectedKey) {
-      warnings.push(`Bitwarden 组织 ${organizationId || "unknown"} 缺少 ID 或密钥，相关项目已跳过。`);
-      continue;
+  try {
+    for (const organization of organizations) {
+      const organizationId = stringValue(organization, "Id", "id");
+      const protectedKey = stringValue(organization, "Key", "key");
+      if (!organizationId || !protectedKey) {
+        warnings.push(`Bitwarden 组织 ${organizationId || "unknown"} 缺少 ID 或密钥，相关项目已跳过。`);
+        continue;
+      }
+      try {
+        const rawKey = await decryptBitwardenRsaBytes(protectedKey, privateKeyPkcs8);
+        try {
+          if (rawKey.length !== 64) throw new Error("invalid organization key length");
+          keys.set(organizationId, { encKey: rawKey.slice(0, 32), macKey: rawKey.slice(32) });
+        } finally {
+          rawKey.fill(0);
+        }
+      } catch {
+        warnings.push(`Bitwarden 组织 ${organizationId} 的密钥无法解密，相关项目保持本地缓存且不会被覆盖。`);
+      }
     }
-    try {
-      const rawKey = await decryptBitwardenRsaBytes(protectedKey, privateKeyPkcs8);
-      if (rawKey.length !== 64) throw new Error("invalid organization key length");
-      keys.set(organizationId, { encKey: rawKey.slice(0, 32), macKey: rawKey.slice(32) });
-    } catch {
-      warnings.push(`Bitwarden 组织 ${organizationId} 的密钥无法解密，相关项目保持本地缓存且不会被覆盖。`);
-    }
+    return { keys, warnings };
+  } finally {
+    privateKeyPkcs8.fill(0);
   }
-  return { keys, warnings };
 }
 
 function value(raw: Record<string, unknown>, ...names: string[]): unknown {
@@ -56,16 +86,32 @@ function stringValue(raw: Record<string, unknown>, ...names: string[]): string {
   return typeof result === "string" ? result : "";
 }
 
-function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[] {
-  const result = value(raw, ...names);
-  return Array.isArray(result) ? result : [];
+function appendOrganizationRecords(value: unknown, output: Record<string, unknown>[]): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) output.push(entry as Record<string, unknown>);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const recordValue = value as Record<string, unknown>;
+  if (stringValue(recordValue, "Id", "id")) {
+    output.push(recordValue);
+    return;
+  }
+  for (const nestedName of ["Data", "data", "Organizations", "organizations", "OrganizationsNew", "organizationsNew"]) {
+    if (nestedName in recordValue) appendOrganizationRecords(recordValue[nestedName], output);
+  }
+  // A few API adapters expose OrganizationsNew as an object keyed by ID.
+  for (const nested of Object.values(recordValue)) {
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const candidate = nested as Record<string, unknown>;
+      if (stringValue(candidate, "Id", "id")) output.push(candidate);
+    }
+  }
 }
 
 function recordValue(raw: Record<string, unknown>, ...names: string[]): Record<string, unknown> | undefined {
   const result = value(raw, ...names);
   return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : undefined;
-}
-
-function record(input: unknown): Record<string, unknown> {
-  return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
 }

@@ -64,6 +64,15 @@ describe("Bitwarden Cipher codec", () => {
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
 
+  it("tracks Collection routing only for organization Ciphers", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const base = { Type: 1, Name: await enc("Account"), RevisionDate: REVISION, CreationDate: REVISION, Login: { Uris: [] } };
+    const personal = await decodeBitwardenCipher({ ...base, Id: "personal", CollectionIds: [] }, "provider-1", KEY);
+    const organization = await decodeBitwardenCipher({ ...base, Id: "shared", OrganizationId: "org-1" }, "provider-1", KEY);
+    expect(personal.items[0].providerRefs[0]).not.toHaveProperty("remoteCollectionIds");
+    expect(organization.items[0].providerRefs[0]).toMatchObject({ remoteCollectionIds: [] });
+  });
+
   it("retains a non-ES256 FIDO2 algorithm for the passkey availability policy to reject", async () => {
     const enc = (value: string) => encryptBitwardenString(value, KEY);
     const decoded = await decodeBitwardenCipher({

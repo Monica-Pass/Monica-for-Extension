@@ -83,6 +83,10 @@ export interface BitwardenFolderDeleteResult {
   alreadyAbsent: boolean;
 }
 
+export interface BitwardenCipherCollectionsRequest {
+  collectionIds: string[];
+}
+
 export interface BitwardenLoginInput {
   vaultUrl: string;
   email: string;
@@ -252,6 +256,24 @@ export class BitwardenClient {
 
   updateCipher(session: BitwardenSessionConfig, cipherId: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
     return this.authorizedJson(session, `/ciphers/${encodeURIComponent(cipherId)}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(payload), signal }, "更新 Bitwarden 项目失败");
+  }
+
+  updateCipherCollections(
+    session: BitwardenSessionConfig,
+    cipherId: string,
+    collectionIds: string[],
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    assertPathId(cipherId, "Cipher");
+    if (!Array.isArray(collectionIds) || collectionIds.length > 200 || collectionIds.some((id) => typeof id !== "string" || !id || id.length > 512)) {
+      throw new Error("Bitwarden Collection 路由列表无效。");
+    }
+    return this.authorizedJson(session, `/ciphers/${encodeURIComponent(cipherId)}/collections_v2`, {
+      method: "PUT",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ collectionIds: [...new Set(collectionIds)] } satisfies BitwardenCipherCollectionsRequest),
+      signal
+    }, "更新 Bitwarden Collection 路由失败");
   }
 
   /**

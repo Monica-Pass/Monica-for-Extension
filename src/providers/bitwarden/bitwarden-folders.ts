@@ -1,6 +1,6 @@
 import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { BitwardenClient, type BitwardenFolderRequest, type BitwardenSessionConfig } from "./bitwarden-client";
-import { routeBitwardenCipherToFolder } from "./bitwarden-cipher-codec";
+import { mergeBitwardenCipherProjection, routeBitwardenCipherToFolder } from "./bitwarden-cipher-codec";
 
 export interface BitwardenFolderSummary {
   folderId: string;
@@ -160,10 +160,12 @@ export class BitwardenFolderService {
         return { session: synced.session, result: { changed: false, previousFolderId, targetFolderId: normalizedTarget, rawCipher: raw } };
       }
       const updated = await this.client.updateCipher(synced.session, cipherId, routeBitwardenCipherToFolder(raw, normalizedTarget), signal);
-      const updatedRaw = mergeCipherProjection(raw, unwrapCipherRecord(updated.payload), normalizedTarget);
-      if (stringValue(updatedRaw, "Id", "id") !== cipherId || !stringValue(updatedRaw, "RevisionDate", "revisionDate")) {
+      const responseRaw = unwrapCipherRecord(updated.payload);
+      const responseRevision = stringValue(responseRaw, "RevisionDate", "revisionDate");
+      if (stringValue(responseRaw, "Id", "id") !== cipherId || !responseRevision || !Number.isFinite(Date.parse(responseRevision))) {
         throw new BitwardenFolderError("cipher-response-invalid", "Bitwarden 移动项目响应缺少可验证修订信息，已停止更新本地状态。");
       }
+      const updatedRaw = mergeBitwardenCipherProjection(raw, responseRaw, { folderId: normalizedTarget });
       return {
         session: updated.session,
         result: { changed: true, previousFolderId, targetFolderId: normalizedTarget, rawCipher: updatedRaw, movedCipherCount: 1 }
@@ -266,34 +268,6 @@ function unwrapCipherRecord(payload: Record<string, unknown>): Record<string, un
   if (stringValue(payload, "Id", "id")) return payload;
   for (const name of ["Cipher", "cipher", "Data", "data"]) if (isRecord(payload[name])) return payload[name] as Record<string, unknown>;
   return payload;
-}
-
-/**
- * Some Vaultwarden-compatible builds return a reduced Cipher response for a routing-only PUT.
- * Merge that response over the pre-mutation encrypted object so a reduced response can never
- * replace the preserved source envelope with a partial record.
- */
-function mergeCipherProjection(
-  original: Record<string, unknown>,
-  response: Record<string, unknown>,
-  targetFolderId?: string
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...original, ...response };
-  const cipherId = stringValue(response, "Id", "id") || stringValue(original, "Id", "id");
-  const revision = stringValue(response, "RevisionDate", "revisionDate");
-  const folderId = targetFolderId || ("folderId" in response || "FolderId" in response ? stringValue(response, "FolderId", "folderId") : stringValue(original, "FolderId", "folderId"));
-  merged.id = cipherId;
-  merged.revisionDate = revision;
-  merged.folderId = folderId || null;
-  delete merged.Id;
-  delete merged.RevisionDate;
-  delete merged.FolderId;
-  for (const [canonical, pascal] of [["login", "Login"], ["card", "Card"], ["identity", "Identity"], ["secureNote", "SecureNote"]] as const) {
-    const originalNested = isRecord(original[canonical]) ? original[canonical] : original[pascal];
-    const responseNested = isRecord(response[canonical]) ? response[canonical] : response[pascal];
-    if (isRecord(originalNested) && isRecord(responseNested)) merged[canonical] = { ...originalNested, ...responseNested };
-  }
-  return merged;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

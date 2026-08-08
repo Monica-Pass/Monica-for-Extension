@@ -95,6 +95,18 @@ describe("Bitwarden folder service", () => {
     expect(written).not.toHaveProperty("FolderId");
   });
 
+  it("rejects a reduced move response that does not contain a new revision", async () => {
+    const target = await rawFolder("Work", "folder-work", REVISION);
+    const raw = { Id: "cipher-1", RevisionDate: REVISION, FolderId: null };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Folders: [target], Ciphers: [raw] });
+      if (init?.method === "PUT") return json({ Id: "cipher-1", FolderId: "folder-work" });
+      throw new Error("unexpected request");
+    }) as unknown as typeof fetch;
+    await expect(new BitwardenFolderService(new BitwardenClient(fetcher, fastTransport())).moveCipher(activeSession(), "cipher-1", "folder-work", REVISION, REVISION))
+      .rejects.toMatchObject({ code: "cipher-response-invalid" });
+  });
+
   it("fails closed for organization Ciphers and stale target folders", async () => {
     const target = await rawFolder("Work", "folder-work", REVISION);
     const organizationCipher = { Id: "cipher-org", OrganizationId: "org-1", RevisionDate: REVISION, FolderId: null };

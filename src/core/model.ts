@@ -14,6 +14,8 @@ export interface ProviderReference {
   providerId: string;
   remoteId?: string;
   remoteFolderId?: string;
+  /** Bitwarden organization Ciphers can belong to more than one Collection. */
+  remoteCollectionIds?: string[];
   revision?: string;
   etag?: string;
 }

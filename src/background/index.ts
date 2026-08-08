@@ -26,6 +26,7 @@ import { resolveBitwardenOrganizationKeys } from "../providers/bitwarden/bitward
 import type { BitwardenSymmetricKey } from "../providers/bitwarden/bitwarden-crypto";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutationResult } from "../providers/bitwarden/bitwarden-folders";
+import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
@@ -106,6 +107,7 @@ const providerAttachmentReads = new Map<string, { providerId: string; itemId: st
 const bitwardenAttachmentReadRoutes = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
 const bitwardenFolders = new BitwardenFolderService(bitwardenClient);
+const bitwardenCollections = new BitwardenCollectionService(bitwardenClient);
 const bitwardenAttachmentDownloads = new BitwardenAttachmentDownloadService();
 const bitwardenAttachmentMutations = new BitwardenAttachmentMutationService();
 const CAPTURE_TTL_MS = 60_000;
@@ -245,7 +247,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof BitwardenFolderError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof BitwardenFolderError || error instanceof BitwardenCollectionError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -579,6 +581,32 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       await acknowledgeBitwardenCipherProjection(account, result.session, [result.result.rawCipher], request.itemId);
       await persistBitwardenSession(account, result.session);
       return publicBitwardenFolderMutationResult(result.result);
+    }
+    case "BITWARDEN_COLLECTION_LIST": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenCollections.list(readBitwardenSession(account), request, undefined);
+      await persistBitwardenSession(account, result.session);
+      return result.page;
+    }
+    case "BITWARDEN_CIPHER_MOVE_COLLECTIONS": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const item = await service.getItem(request.itemId);
+      if (!item || !item.providerRefs.some((reference) => reference.providerId === account.id)) {
+        throw new BitwardenCollectionError("cipher-target-not-found", "项目不存在或不属于所选 Bitwarden 密码源。");
+      }
+      const cipherId = bitwardenCipherIdForItem(account.id, item);
+      const result = await bitwardenCollections.moveCipher(
+        readBitwardenSession(account),
+        cipherId,
+        request.collectionIds,
+        request.expectedCipherRevision
+      );
+      if (!result.result.rawCipher) throw new BitwardenCollectionError("cipher-response-invalid", "Bitwarden Collection 响应缺少项目状态。");
+      await acknowledgeBitwardenCipherProjection(account, result.session, [result.result.rawCipher], request.itemId);
+      await persistBitwardenSession(account, result.session);
+      return publicBitwardenCollectionMutationResult(result.result);
     }
     case "MDBX2_HOST_STATUS":
       assertManagerPage(sender);
@@ -2632,14 +2660,19 @@ async function acknowledgeBitwardenCipherProjection(
     if (candidate.id === requiredItemId) requiredFound = true;
     const revision = bitwardenStringValue(raw, "RevisionDate", "revisionDate");
     const folderId = bitwardenStringValue(raw, "FolderId", "folderId");
+    const collectionIds = bitwardenStringArrayValue(raw, "CollectionIds", "collectionIds");
+    const organizationId = bitwardenStringValue(raw, "OrganizationId", "organizationId");
+    const updatedReference = {
+      ...reference,
+      revision,
+      remoteFolderId: folderId || undefined
+    };
+    if (organizationId) updatedReference.remoteCollectionIds = collectionIds || [];
+    else delete updatedReference.remoteCollectionIds;
     return {
       ...candidate,
       updatedAt: revision,
-      providerRefs: [...candidate.providerRefs.filter((entry) => entry.providerId !== account.id), {
-        ...reference,
-        revision,
-        remoteFolderId: folderId || undefined
-      }]
+      providerRefs: [...candidate.providerRefs.filter((entry) => entry.providerId !== account.id), updatedReference]
     } as VaultItem;
   });
   if (!requiredFound) throw new BitwardenFolderError("cipher-target-not-found", "移动完成后找不到本地项目，已停止更新本地状态。");
@@ -2667,6 +2700,11 @@ async function acknowledgeBitwardenCipherProjection(
 }
 
 function publicBitwardenFolderMutationResult(result: BitwardenFolderMutationResult): BitwardenFolderMutationResult {
+  const { rawCipher: _rawCipher, ...publicResult } = result;
+  return publicResult;
+}
+
+function publicBitwardenCollectionMutationResult(result: BitwardenCollectionMutationResult): BitwardenCollectionMutationResult {
   const { rawCipher: _rawCipher, ...publicResult } = result;
   return publicResult;
 }
@@ -2808,6 +2846,16 @@ function bitwardenRecordArray(raw: Record<string, unknown>, ...names: string[]):
 function bitwardenStringValue(raw: Record<string, unknown>, ...names: string[]): string {
   for (const name of names) if (typeof raw[name] === "string") return raw[name] as string;
   return "";
+}
+
+function bitwardenStringArrayValue(raw: Record<string, unknown>, ...names: string[]): string[] | undefined {
+  for (const name of names) {
+    if (!(name in raw)) continue;
+    const value = raw[name];
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 512))];
+  }
+  return undefined;
 }
 
 function pruneProviderAttachmentReads(): void {

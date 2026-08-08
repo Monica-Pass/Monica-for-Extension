@@ -156,6 +156,8 @@ test("MDBX2 bootstrap and synchronization commands are restricted to the manager
       { type: "BITWARDEN_FOLDER_RENAME", providerId: "bitwarden-provider", folderId: "11111111-1111-4111-8111-111111111111", name: "Archive" },
       { type: "BITWARDEN_FOLDER_DELETE", providerId: "bitwarden-provider", folderId: "11111111-1111-4111-8111-111111111111", confirmed: true },
       { type: "BITWARDEN_CIPHER_MOVE_FOLDER", providerId: "bitwarden-provider", itemId: "item-1", targetFolderId: "11111111-1111-4111-8111-111111111111" },
+      { type: "BITWARDEN_COLLECTION_LIST", providerId: "bitwarden-provider", pageSize: 20 },
+      { type: "BITWARDEN_CIPHER_MOVE_COLLECTIONS", providerId: "bitwarden-provider", itemId: "item-1", collectionIds: ["11111111-1111-4111-8111-111111111111"] },
       { type: "PROVIDER_ATTACHMENT_TRANSFER", operationId: "55555555-5555-4555-8555-555555555555", sourceProviderId: "keepass-provider", sourceItemId: "item-1", sourceAttachmentId: "11111111-1111-4111-8111-111111111111", targetProviderId: "mdbx-provider", targetItemId: "item-1", mode: "copy", confirmedMove: false },
       { type: "KEEPASS_GROUP_LIST", providerId: "keepass-provider", includeRecycleBin: true, pageSize: 50 },
       { type: "KEEPASS_GROUP_CREATE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "Work" },
