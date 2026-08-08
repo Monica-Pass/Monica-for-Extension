@@ -219,6 +219,16 @@ function cipherRequestBody(preserved: Record<string, unknown>): Record<string, u
 }
 
 /**
+ * Change only the top-level folder routing field of an already encrypted Cipher.
+ * Encrypted values and unknown fields are copied without decrypting or re-encoding them.
+ */
+export function routeBitwardenCipherToFolder(raw: Record<string, unknown>, folderId?: string): Record<string, unknown> {
+  const payload = Object.fromEntries(Object.entries(raw).map(([name, entry]) => [lowerFirst(name), entry]));
+  payload.folderId = folderId || null;
+  return payload;
+}
+
+/**
  * Mirrors Android's adapter boundary. Unsupported raw entries always survive. Before the first
  * adapter-aware response, remote-only editable occurrences also survive; afterwards the local list
  * is authoritative, so deletion and rename are possible without collapsing duplicate occurrences.

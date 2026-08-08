@@ -7,6 +7,7 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
+import BitwardenFoldersDialog from "./components/BitwardenFoldersDialog.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
 import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
 import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
@@ -106,6 +107,7 @@ const bitwardenBusy = ref(false);
 const bitwardenError = ref("");
 const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
+const bitwardenFoldersProvider = ref<ProviderAccount | undefined>();
 const keePassDialogOpen = ref(false);
 const keePassBusy = ref<"" | "test" | "open" | "export" | "lock" | "restore">("");
 const activeKeePassProviderId = ref("");
@@ -221,7 +223,7 @@ const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePa
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -261,6 +263,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
     if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (mdbx2BatchTransferDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (bitwardenFoldersProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (keePassGroupsProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (exportBackupDialogOpen.value) closeExportBackupDialog();
     else if (mdbx2DialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
@@ -363,6 +366,7 @@ async function lockVault() {
   vaultEditorOpen.value = false;
   webDavDialogOpen.value = false;
   bitwardenDialogOpen.value = false;
+  closeBitwardenFolders();
   mdbx2DialogOpen.value = false;
   mdbx2BatchTransferDialogOpen.value = false;
   mdbx2BatchTransferTargetProviderId.value = undefined;
@@ -529,6 +533,18 @@ function closeKeePassHistory() {
 
 async function handleKeePassHistoryChanged() {
   await Promise.all([refreshKeePassSessions(), refreshItems()]);
+}
+
+function openBitwardenFolders(provider: ProviderAccount) {
+  bitwardenFoldersProvider.value = provider;
+}
+
+function closeBitwardenFolders() {
+  bitwardenFoldersProvider.value = undefined;
+}
+
+async function handleBitwardenFoldersChanged() {
+  await Promise.all([refreshItems(), refreshProviders()]);
 }
 
 function vaultItemStatus(item: VaultItem): string {
@@ -961,6 +977,7 @@ async function removeProvider(provider: ProviderAccount) {
     await Promise.all([refreshItems(), refreshProviders()]);
     if (editingWebDavId.value === provider.id) closeWebDavDialog();
     if (editingBitwardenId.value === provider.id) closeBitwardenDialog();
+    if (bitwardenFoldersProvider.value?.id === provider.id) closeBitwardenFolders();
     if (editingKeePassId.value === provider.id) closeKeePassDialog();
     if (keePassGroupsProvider.value?.id === provider.id) closeKeePassGroups();
     if (keePassHistoryProviders.value.some((candidate) => candidate.id === provider.id)) closeKeePassHistory();
@@ -1800,7 +1817,7 @@ function errorCode(error: unknown): string | undefined {
               <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button></div></div>
                <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>当前支持登录、卡片、身份、笔记、TOTP、Passkey 与加密附件；Sends 仍请使用 Bitwarden 官网或 Monica Android。</span></p>
-              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
+              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenFolders(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
             </div></m3e-card>
             <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span><div class="source-actions"><m3e-button variant="tonal" :disabled="diagnosticBusy" @click="exportProviderDiagnostics"><m3e-icon slot="icon" name="download"></m3e-icon>{{ diagnosticBusy ? '正在导出…' : '导出脱敏诊断' }}</m3e-button></div></div></m3e-card>
           </div>
@@ -1886,6 +1903,16 @@ function errorCode(error: unknown): string | undefined {
       :provider="keePassGroupsProvider"
       @close="closeKeePassGroups"
       @changed="handleKeePassGroupsChanged"
+      @notice="showNotice"
+    />
+
+    <BitwardenFoldersDialog
+      v-if="bitwardenFoldersProvider"
+      :key="bitwardenFoldersProvider.id"
+      :provider="bitwardenFoldersProvider"
+      :items="vaultItems"
+      @close="closeBitwardenFolders"
+      @changed="handleBitwardenFoldersChanged"
       @notice="showNotice"
     />
 

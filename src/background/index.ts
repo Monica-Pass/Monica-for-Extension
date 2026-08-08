@@ -25,6 +25,7 @@ import { BitwardenAttachmentMutationService } from "../providers/bitwarden/bitwa
 import { resolveBitwardenOrganizationKeys } from "../providers/bitwarden/bitwarden-organization";
 import type { BitwardenSymmetricKey } from "../providers/bitwarden/bitwarden-crypto";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
+import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutationResult } from "../providers/bitwarden/bitwarden-folders";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
@@ -104,6 +105,7 @@ const providerAttachmentTransfers = new ProviderAttachmentTransferCoordinator();
 const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenAttachmentReadRoutes = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
+const bitwardenFolders = new BitwardenFolderService(bitwardenClient);
 const bitwardenAttachmentDownloads = new BitwardenAttachmentDownloadService();
 const bitwardenAttachmentMutations = new BitwardenAttachmentMutationService();
 const CAPTURE_TTL_MS = 60_000;
@@ -243,7 +245,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof BitwardenFolderError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -522,6 +524,61 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         masterPassword: request.masterPassword,
         deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID()
       });
+    }
+    case "BITWARDEN_FOLDER_LIST": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenFolders.list(readBitwardenSession(account), request, undefined);
+      await persistBitwardenSession(account, result.session);
+      return result.page;
+    }
+    case "BITWARDEN_FOLDER_CREATE": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenFolders.create(readBitwardenSession(account), request.name);
+      await persistBitwardenSession(account, result.session);
+      return result.result;
+    }
+    case "BITWARDEN_FOLDER_RENAME": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenFolders.rename(readBitwardenSession(account), request.folderId, request.name, request.expectedRevision);
+      await persistBitwardenSession(account, result.session);
+      return result.result;
+    }
+    case "BITWARDEN_FOLDER_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new BitwardenFolderError("folder-delete-confirmation-required", "删除 Bitwarden 文件夹需要明确确认。");
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenFolders.remove(readBitwardenSession(account), request.folderId, request.expectedRevision);
+      await persistBitwardenSession(account, result.session);
+      // Bitwarden clears FolderId on affected Ciphers after deleting a folder. Re-read the
+      // encrypted projection before touching local references; an empty response is never
+      // allowed to erase an existing local baseline.
+      const synced = await bitwardenClient.sync(result.session);
+      await acknowledgeBitwardenCipherProjection(account, synced.session, bitwardenRecordArray(synced.payload, "Ciphers", "ciphers"));
+      await persistBitwardenSession(account, synced.session);
+      return result.result;
+    }
+    case "BITWARDEN_CIPHER_MOVE_FOLDER": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const item = await service.getItem(request.itemId);
+      if (!item || !item.providerRefs.some((reference) => reference.providerId === account.id)) {
+        throw new BitwardenFolderError("cipher-target-not-found", "项目不存在或不属于所选 Bitwarden 密码源。");
+      }
+      const cipherId = bitwardenCipherIdForItem(account.id, item);
+      const result = await bitwardenFolders.moveCipher(
+        readBitwardenSession(account),
+        cipherId,
+        request.targetFolderId,
+        request.expectedCipherRevision,
+        request.expectedTargetFolderRevision
+      );
+      if (!result.result.rawCipher) throw new BitwardenFolderError("cipher-response-invalid", "Bitwarden 移动响应缺少项目状态。");
+      await acknowledgeBitwardenCipherProjection(account, result.session, [result.result.rawCipher], request.itemId);
+      await persistBitwardenSession(account, result.session);
+      return publicBitwardenFolderMutationResult(result.result);
     }
     case "MDBX2_HOST_STATUS":
       assertManagerPage(sender);
@@ -2532,6 +2589,86 @@ interface BitwardenAttachmentContext {
   session: BitwardenSessionConfig;
   rawCipher: Record<string, unknown>;
   organizationKeys: Map<string, BitwardenSymmetricKey>;
+}
+
+async function requireBitwardenAccountRecord(providerId: string): Promise<ProviderAccount> {
+  const account = await service.getProvider(providerId);
+  if (!account || account.kind !== "bitwarden") throw new BitwardenFolderError("folder-provider-not-found", "Bitwarden 密码源不存在。");
+  return account;
+}
+
+/**
+ * A folder-only mutation changes encrypted routing metadata, not the decrypted item body. Apply
+ * the authoritative Cipher projection to every local sibling (including Passkey children) while
+ * keeping raw encrypted fields in the source envelope. No raw Cipher is returned to runtime pages.
+ */
+async function acknowledgeBitwardenCipherProjection(
+  account: ProviderAccount,
+  session: BitwardenSessionConfig,
+  rawCiphers: Record<string, unknown>[],
+  requiredItemId?: string
+): Promise<void> {
+  if (account.kind !== "bitwarden") throw new BitwardenFolderError("folder-provider-not-found", "Bitwarden 密码源不存在。");
+  const state = await service.readState();
+  const scoped = state.items.filter((item) => item.providerRefs.some((reference) => reference.providerId === account.id));
+  const hasBaseline = scoped.some((item) => Boolean(item.providerRefs.find((reference) => reference.providerId === account.id)?.revision));
+  if (!rawCiphers.length && hasBaseline) throw new BitwardenFolderError("sync-empty-protected", "Bitwarden 返回空密码库，未更新本地文件夹路由。");
+  const rawByCipherId = new Map<string, Record<string, unknown>>();
+  for (const raw of rawCiphers) {
+    const cipherId = bitwardenStringValue(raw, "Id", "id");
+    const revision = bitwardenStringValue(raw, "RevisionDate", "revisionDate");
+    if (!cipherId || !revision || !Number.isFinite(Date.parse(revision))) {
+      throw new BitwardenFolderError("cipher-projection-invalid", "Bitwarden 返回了无法验证的 Cipher 修订信息，未更新本地状态。");
+    }
+    rawByCipherId.set(cipherId, raw);
+  }
+  let requiredFound = requiredItemId === undefined;
+  const patchedItems = state.items.map((candidate) => {
+    const reference = candidate.providerRefs.find((entry) => entry.providerId === account.id);
+    if (!reference) return candidate;
+    const cipherId = reference.remoteId?.split("#fido2:")[0] || "";
+    const raw = rawByCipherId.get(cipherId);
+    if (!raw) return candidate;
+    if (candidate.id === requiredItemId) requiredFound = true;
+    const revision = bitwardenStringValue(raw, "RevisionDate", "revisionDate");
+    const folderId = bitwardenStringValue(raw, "FolderId", "folderId");
+    return {
+      ...candidate,
+      updatedAt: revision,
+      providerRefs: [...candidate.providerRefs.filter((entry) => entry.providerId !== account.id), {
+        ...reference,
+        revision,
+        remoteFolderId: folderId || undefined
+      }]
+    } as VaultItem;
+  });
+  if (!requiredFound) throw new BitwardenFolderError("cipher-target-not-found", "移动完成后找不到本地项目，已停止更新本地状态。");
+  const newRecords = await Promise.all([...rawByCipherId.entries()].map(async ([cipherId, raw]) => createSourceRecord({
+    providerId: account.id,
+    remoteId: cipherId,
+    revision: bitwardenStringValue(raw, "RevisionDate", "revisionDate"),
+    format: "bitwarden-cipher",
+    encoding: "json",
+    payload: JSON.stringify(raw)
+  })));
+  const sourceRecords = [
+    ...state.sourceRecords.filter((record) => !(record.providerId === account.id && rawByCipherId.has(record.remoteId))),
+    ...newRecords
+  ];
+  await service.applyProviderSync(
+    account.id,
+    patchedItems,
+    { config: { ...account.config, ...session }, lastSyncAt: new Date().toISOString(), lastError: undefined },
+    [],
+    sourceRecords,
+    state.items
+  );
+  account.config = { ...account.config, ...session };
+}
+
+function publicBitwardenFolderMutationResult(result: BitwardenFolderMutationResult): BitwardenFolderMutationResult {
+  const { rawCipher: _rawCipher, ...publicResult } = result;
+  return publicResult;
 }
 
 async function loadBitwardenAttachmentContext(account: ProviderAccount, item: VaultItem): Promise<BitwardenAttachmentContext> {

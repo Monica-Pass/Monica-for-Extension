@@ -6,6 +6,7 @@ import type { Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdb
 import type { KeePassSessionSummary } from "../providers/keepass/keepass-provider";
 import type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult, KeePassWebDavOpenInput } from "../providers/keepass/keepass-remote-session";
 import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
+import type { BitwardenFolderMutationResult, BitwardenFolderPage } from "../providers/bitwarden/bitwarden-folders";
 import type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
@@ -282,6 +283,11 @@ export type ExtensionRequest =
       isDefaultSaveTarget?: boolean;
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
+  | { type: "BITWARDEN_FOLDER_LIST"; providerId: string; pageSize?: number; cursor?: string }
+  | { type: "BITWARDEN_FOLDER_CREATE"; providerId: string; name: string }
+  | { type: "BITWARDEN_FOLDER_RENAME"; providerId: string; folderId: string; name: string; expectedRevision?: string }
+  | { type: "BITWARDEN_FOLDER_DELETE"; providerId: string; folderId: string; expectedRevision?: string; confirmed: boolean }
+  | { type: "BITWARDEN_CIPHER_MOVE_FOLDER"; providerId: string; itemId: string; targetFolderId?: string; expectedCipherRevision?: string; expectedTargetFolderRevision?: string }
   | { type: "MDBX2_HOST_STATUS" }
   | { type: "MDBX2_TRANSFER_BEGIN"; sizeBytes: number; sha256?: string }
   | { type: "MDBX2_TRANSFER_CHUNK"; transferId: string; offset: number; dataBase64: string }
@@ -370,6 +376,7 @@ export type { ProviderAttachmentTransferRequest, ProviderAttachmentTransferResul
 export type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, KeePassSessionSummary };
 export type { Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus };
 export type { KeePassGroupMutationResult, KeePassGroupPage };
+export type { BitwardenFolderMutationResult, BitwardenFolderPage };
 export type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult };
 export type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult };
 export type { SteamAuthorizedDevice, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground };

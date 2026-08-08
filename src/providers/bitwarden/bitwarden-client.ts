@@ -73,6 +73,16 @@ export interface BitwardenAttachmentUploadInfo {
   cipherMiniResponse?: Record<string, unknown>;
 }
 
+export interface BitwardenFolderRequest {
+  name: string;
+}
+
+export interface BitwardenFolderDeleteResult {
+  session: BitwardenSessionConfig;
+  deleted: true;
+  alreadyAbsent: boolean;
+}
+
 export interface BitwardenLoginInput {
   vaultUrl: string;
   email: string;
@@ -207,6 +217,33 @@ export class BitwardenClient {
 
   async sync(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
     return this.authorizedJson(session, "/sync?excludeDomains=true", { method: "GET", signal }, "同步 Bitwarden 密码库失败");
+  }
+
+  listFolders(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedJson(session, "/folders", { method: "GET", signal }, "读取 Bitwarden 文件夹失败");
+  }
+
+  createFolder(session: BitwardenSessionConfig, payload: BitwardenFolderRequest, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedJson(session, "/folders", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(payload), signal }, "创建 Bitwarden 文件夹失败");
+  }
+
+  updateFolder(session: BitwardenSessionConfig, folderId: string, payload: BitwardenFolderRequest, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    assertPathId(folderId, "文件夹");
+    return this.authorizedJson(session, `/folders/${encodeURIComponent(folderId)}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(payload), signal }, "更新 Bitwarden 文件夹失败");
+  }
+
+  async deleteFolder(session: BitwardenSessionConfig, folderId: string, signal?: AbortSignal): Promise<BitwardenFolderDeleteResult> {
+    assertPathId(folderId, "文件夹");
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const status = await this.request(`${active.apiUrl}/folders/${encodeURIComponent(folderId)}`, {
+      method: "DELETE",
+      headers: authorizedHeaders(active.accessToken),
+      signal
+    }, "删除 Bitwarden 文件夹", true, async (response) => {
+      if (response.status === 200 || response.status === 204 || response.status === 404) return response.status;
+      throw bitwardenHttpError("删除 Bitwarden 文件夹失败", response);
+    });
+    return { session: active, deleted: true, alreadyAbsent: status === 404 };
   }
 
   createCipher(session: BitwardenSessionConfig, payload: Record<string, unknown>, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
