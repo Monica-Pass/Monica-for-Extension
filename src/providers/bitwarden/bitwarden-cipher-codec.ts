@@ -641,28 +641,28 @@ export async function encodeBitwardenPasskeyCipher(
     };
   }
 
-  return {
-    type: 1,
-    name: value(preservedRaw, "Name", "name") || await encryptBitwardenString(item.title, encryptionKey),
-    notes: value(preservedRaw, "Notes", "notes") ?? null,
-    favorite: value(preservedRaw, "Favorite", "favorite") === true,
-    archivedDate: item.archivedAt || null,
-    reprompt: numberValue(preservedRaw, "Reprompt", "reprompt"),
-    key: value(preservedRaw, "Key", "key") ?? null,
-    organizationId: value(preservedRaw, "OrganizationId", "organizationId") ?? null,
-    collectionIds: value(preservedRaw, "CollectionIds", "collectionIds") ?? null,
-    folderId: value(preservedRaw, "FolderId", "folderId") ?? null,
-    fields: value(preservedRaw, "Fields", "fields") ?? null,
-    login: {
-      username: value(preservedLogin, "Username", "username") ?? null,
-      password: value(preservedLogin, "Password", "password") ?? null,
-      totp: value(preservedLogin, "Totp", "totp") ?? null,
-      uris: value(preservedLogin, "Uris", "uris") ?? [],
-      passwordRevisionDate: value(preservedLogin, "PasswordRevisionDate", "passwordRevisionDate") ?? null,
-      autofillOnPageLoad: value(preservedLogin, "AutofillOnPageLoad", "autofillOnPageLoad") ?? null,
-      fido2Credentials
-    }
-  };
+  const base = cipherRequestBody(preservedRaw);
+  base.type = 1;
+  base.name = value(preservedRaw, "Name", "name") || await encryptBitwardenString(item.title, encryptionKey);
+  base.notes = value(preservedRaw, "Notes", "notes") ?? null;
+  base.favorite = value(preservedRaw, "Favorite", "favorite") === true;
+  base.archivedDate = item.archivedAt || null;
+  base.reprompt = numberValue(preservedRaw, "Reprompt", "reprompt");
+  base.key = value(preservedRaw, "Key", "key") ?? null;
+  base.organizationId = value(preservedRaw, "OrganizationId", "organizationId") ?? null;
+  base.collectionIds = value(preservedRaw, "CollectionIds", "collectionIds") ?? null;
+  base.folderId = value(preservedRaw, "FolderId", "folderId") ?? null;
+  base.fields = value(preservedRaw, "Fields", "fields") ?? null;
+  const login = cipherRequestBody(preservedLogin);
+  login.username = value(preservedLogin, "Username", "username") ?? null;
+  login.password = value(preservedLogin, "Password", "password") ?? null;
+  login.totp = value(preservedLogin, "Totp", "totp") ?? null;
+  login.uris = value(preservedLogin, "Uris", "uris") ?? [];
+  login.passwordRevisionDate = value(preservedLogin, "PasswordRevisionDate", "passwordRevisionDate") ?? null;
+  login.autofillOnPageLoad = value(preservedLogin, "AutofillOnPageLoad", "autofillOnPageLoad") ?? null;
+  login.fido2Credentials = fido2Credentials;
+  base.login = login;
+  return base;
 }
 
 async function encodeFido2Credential(item: PasskeyItem, key: BitwardenSymmetricKey, preserved?: Record<string, unknown>): Promise<Record<string, unknown>> {

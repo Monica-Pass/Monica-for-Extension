@@ -572,6 +572,27 @@ describe("Bitwarden Cipher codec", () => {
     await expect(encodeBitwardenPasskeyCipher(decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")!, KEY, raw)).rejects.toThrow("ES256");
   });
 
+  it("preserves parent attachments history and future fields when updating a Passkey", async () => {
+    const initial = await encodeBitwardenPasskeyCipher(passkey("preserved-parent", 1), KEY);
+    const raw: Record<string, unknown> = {
+      ...initial,
+      Attachments: [{ Id: "attachment-1", FileName: "2.encrypted", Size: "64", FutureAttachment: true }],
+      PasswordHistory: [{ Password: "2.history", LastUsedDate: REVISION }],
+      FutureParentField: { nested: [1, 2, 3] },
+      Login: { ...(initial.login as Record<string, unknown>), FutureLoginField: "keep" }
+    };
+    delete raw.login;
+
+    const updated = await encodeBitwardenPasskeyCipher(passkey("preserved-parent", 9), KEY, raw);
+
+    expect(updated.attachments).toEqual(raw.Attachments);
+    expect(updated.passwordHistory).toEqual(raw.PasswordHistory);
+    expect(updated.futureParentField).toEqual(raw.FutureParentField);
+    expect((updated.login as Record<string, unknown>).futureLoginField).toBe("keep");
+    const decoded = await decodeBitwardenCipher({ ...updated, id: "cipher", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
+    expect(decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")).toMatchObject({ signCount: 9 });
+  });
+
   it("updates one FIDO2 credential and retains its sibling", async () => {
     const original = await encodeBitwardenPasskeyCipher(passkey("first", 1), KEY);
     const withSibling = await encodeBitwardenPasskeyCipher(passkey("sibling", 4), KEY, original);

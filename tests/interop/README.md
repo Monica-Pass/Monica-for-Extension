@@ -35,3 +35,15 @@ npm run test:keepass-interop
 The runner injects one JVM unit-test source directory into the sibling Android `:app` project without changing Android files. Android Kotpass creates KDBX 4 fixtures using AES-256, ChaCha20, and Twofish. The extension opens and edits the AES-256 and ChaCha20 fixtures, preserves native fields and metadata, exports them, and Android Kotpass reads the exported files again. The Twofish fixture must fail before decryption with the controlled conversion guidance.
 
 The Android repository revision and complete `git status --porcelain=v1 -uall` value are checked before and after the run. Set `MONICA_ANDROID_REPOSITORY` to select another read-only Android checkout. Set `MONICA_KEEPASS_INTEROP_KEEP=1` to retain encrypted fixture evidence under `.tmp/keepass-android-interop`.
+
+## Bitwarden and Vaultwarden server-contract acceptance
+
+Run from the extension repository:
+
+```powershell
+npm run test:bitwarden-interop
+```
+
+The runner uses two stateful, secret-free recorded server profiles. The official profile uses PascalCase sync data, complete mutation responses, `Profile.Organizations`, and Azure attachment upload. The Vaultwarden profile uses camelCase data, wrapped `OrganizationsNew`, reduced mutation acknowledgements, and Direct attachment upload.
+
+Both profiles perform password login, personal Cipher creation and update, organization-key decryption, Collection routing, Passkey counter persistence, authenticated attachment upload, verification and deletion, plus protected and explicitly confirmed empty-vault synchronization. Signed attachment requests are checked for absent Bearer authorization. Set `MONICA_BITWARDEN_INTEROP_KEEP=1` to write the count-only evidence file to `.tmp/bitwarden-contract-interop/evidence.json`.
