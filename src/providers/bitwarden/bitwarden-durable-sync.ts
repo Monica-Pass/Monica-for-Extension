@@ -2,6 +2,7 @@ import { createSHA256 } from "hash-wasm";
 import type { PendingMutation, ProviderAccount, ProviderMutationReceipt, VaultItem, VaultState } from "../../core/model";
 import type { ProviderAcknowledgedMutation, ProviderSyncResult } from "../../core/provider";
 import type { BitwardenProvider } from "./bitwarden-provider";
+import { bitwardenSshComparableData } from "./bitwarden-cipher-codec";
 
 export const BITWARDEN_ITEM_SYNC_BATCH_LIMIT = 100;
 
@@ -54,13 +55,17 @@ export function bitwardenComparablePayload(item: VaultItem): Record<string, unkn
     }) as Record<string, unknown>;
   }
   const payload = item as unknown as Record<string, unknown>;
-  return stableValue(payload, new Set([
+  const comparablePayload = item.kind === "login" && item.loginType === "SSH_KEY"
+    ? { ...payload, sshKeyData: bitwardenSshComparableData(item) }
+    : payload;
+  return stableValue(comparablePayload, new Set([
     "id",
     "providerRefs",
     "createdAt",
     "updatedAt",
     "deletedAt",
-    "bitwardenCustomFieldsVersion"
+    "bitwardenCustomFieldsVersion",
+    "bitwardenSshKeyMode"
   ])) as Record<string, unknown>;
 }
 

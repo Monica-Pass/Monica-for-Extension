@@ -198,6 +198,118 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).password, itemKey)).resolves.toBe("updated");
   });
 
+  it("decodes and edits a native Type 5 SSH Cipher without dropping unknown fields", async () => {
+    const raw = {
+      Id: "native-ssh",
+      Type: 5,
+      Name: await encryptBitwardenString("Production SSH", KEY),
+      Notes: await encryptBitwardenString("managed by Bitwarden", KEY),
+      Favorite: true,
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      SshKey: {
+        PrivateKey: await encryptBitwardenString("-----BEGIN OPENSSH PRIVATE KEY-----\nnative\n-----END OPENSSH PRIVATE KEY-----", KEY),
+        PublicKey: await encryptBitwardenString("ssh-ed25519 AAAAC3Nza native@example", KEY),
+        KeyFingerprint: await encryptBitwardenString("SHA256:native", KEY),
+        FutureSshField: { version: 2 }
+      },
+      Fields: [
+        { Type: 0, Name: await encryptBitwardenString("Owner", KEY), Value: await encryptBitwardenString("Joy", KEY) },
+        { Type: 2, Name: await encryptBitwardenString("Future boolean", KEY), Value: await encryptBitwardenString("true", KEY), Future: "preserve" }
+      ],
+      FutureTopLevel: ["keep"]
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const item = decoded.items[0] as LoginItem;
+    expect(decoded.warning).toBeUndefined();
+    expect(item).toMatchObject({
+      kind: "login",
+      loginType: "SSH_KEY",
+      bitwardenSshKeyMode: "native",
+      username: "",
+      password: "",
+      customFields: [{ name: "Owner", value: "Joy", protected: false }]
+    });
+    expect(JSON.parse(item.sshKeyData || "{}")).toMatchObject({
+      algorithm: "ED25519",
+      keySize: 0,
+      publicKeyOpenSsh: "ssh-ed25519 AAAAC3Nza native@example",
+      fingerprintSha256: "SHA256:native",
+      format: "OPENSSH"
+    });
+
+    const editedSsh = {
+      ...JSON.parse(item.sshKeyData || "{}"),
+      privateKeyOpenSsh: "-----BEGIN OPENSSH PRIVATE KEY-----\nupdated\n-----END OPENSSH PRIVATE KEY-----",
+      publicKeyOpenSsh: "ssh-ed25519 AAAAC3Nza updated@example",
+      fingerprintSha256: "SHA256:updated"
+    };
+    const encoded = await encodeBitwardenCipher({ ...item, sshKeyData: JSON.stringify(editedSsh) }, KEY, raw);
+    const encodedSsh = encoded.sshKey as Record<string, unknown>;
+
+    expect(encoded.type).toBe(5);
+    expect(encoded.login).toBeUndefined();
+    expect(encoded.futureTopLevel).toEqual(["keep"]);
+    expect(encodedSsh.futureSshField).toEqual({ version: 2 });
+    await expect(decryptBitwardenString(String(encodedSsh.privateKey), KEY)).resolves.toContain("updated");
+    await expect(decryptBitwardenString(String(encodedSsh.publicKey), KEY)).resolves.toBe("ssh-ed25519 AAAAC3Nza updated@example");
+    await expect(decryptBitwardenString(String(encodedSsh.keyFingerprint), KEY)).resolves.toBe("SHA256:updated");
+    expect((encoded.fields as Array<Record<string, unknown>>).some((field) => field.Future === "preserve")).toBe(true);
+  });
+
+  it("round-trips the Monica Android Type 1 SSH fallback with protected private-key fields", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const future = { Type: 99, Name: await enc("Future SSH"), Value: await enc("opaque"), Future: { keep: true } };
+    const raw = {
+      Id: "fallback-ssh",
+      Type: 1,
+      Name: await enc("Fallback SSH"),
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: { Username: null, Password: null, Uris: [], Fido2Credentials: [] },
+      Fields: [
+        { Type: 0, Name: await enc("monica_login_type"), Value: await enc("SSH_KEY") },
+        { Type: 0, Name: await enc("monica_ssh_algorithm"), Value: await enc("RSA") },
+        { Type: 0, Name: await enc("monica_ssh_key_size"), Value: await enc("4096") },
+        { Type: 0, Name: await enc("monica_ssh_public_key"), Value: await enc("ssh-rsa AAAA old") },
+        { Type: 1, Name: await enc("monica_ssh_private_key"), Value: await enc("private-old") },
+        { Type: 0, Name: await enc("monica_ssh_fingerprint"), Value: await enc("SHA256:old") },
+        future
+      ]
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const item = decoded.items[0] as LoginItem;
+    expect(item.bitwardenSshKeyMode).toBe("fallback");
+    expect(JSON.parse(item.sshKeyData || "{}")).toMatchObject({ algorithm: "RSA", keySize: 4096, fingerprintSha256: "SHA256:old" });
+
+    const encoded = await encodeBitwardenCipher({
+      ...item,
+      sshKeyData: JSON.stringify({
+        ...JSON.parse(item.sshKeyData || "{}"),
+        publicKeyOpenSsh: "ssh-rsa AAAA updated",
+        privateKeyOpenSsh: "private-updated",
+        fingerprintSha256: "SHA256:updated"
+      })
+    }, KEY, raw);
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+    const plain = await Promise.all(fields.map(async (field) => ({
+      name: await decryptBitwardenString(String(field.name || field.Name || ""), KEY).catch(() => ""),
+      value: await decryptBitwardenString(String(field.value || field.Value || ""), KEY).catch(() => ""),
+      type: Number(field.type ?? field.Type)
+    })));
+
+    expect(encoded.type).toBe(1);
+    expect(encoded.sshKey).toBeUndefined();
+    expect(plain).toEqual(expect.arrayContaining([
+      { name: "monica_ssh_public_key", value: "ssh-rsa AAAA updated", type: 0 },
+      { name: "monica_ssh_private_key", value: "private-updated", type: 1 },
+      { name: "monica_ssh_fingerprint", value: "SHA256:updated", type: 0 }
+    ]));
+    expect(fields).toContain(future);
+  });
+
   it("preserves reprompt, attachments, history, and unknown Cipher keys when only the title changes", async () => {
     const attachments = [{ Id: "attachment-1", FileName: await encryptBitwardenString("report.pdf", KEY), Size: "2048", Key: "attachment-key" }];
     const passwordHistory = [{ Password: await encryptBitwardenString("old-secret", KEY), LastUsedDate: "2026-07-01T00:00:00.000Z" }];

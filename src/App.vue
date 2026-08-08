@@ -216,6 +216,17 @@ const keePassHistoryProviderById = computed(() => new Map(keePassProviders.value
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
 const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
+const nativeBitwardenSshEdit = computed(() => credentials.value.find((item) => item.id === editingId.value)?.bitwardenSshKeyMode === "native");
+const sshBitwardenFormatHint = computed(() => {
+  if (form.loginType !== "SSH_KEY") return "";
+  const existing = credentials.value.find((item) => item.id === editingId.value);
+  const providerId = existing?.providerRefs[0]?.providerId || form.providerId;
+  if (providers.value.find((provider) => provider.id === providerId)?.kind !== "bitwarden") return "";
+  if (existing?.bitwardenSshKeyMode === "native") return "Bitwarden 原生 SSH Cipher（Type 5）：公钥、私钥和指纹同步；算法按公钥识别，位数、注释、格式与未来 Android 元数据只保留在当前扩展的加密库。";
+  return existing
+    ? "Monica Android 兼容格式（Type 1 + 加密字段）：适用于官方 Bitwarden 与 Vaultwarden。"
+    : "保存到 Bitwarden 时将使用 Monica Android 兼容格式（Type 1 + 加密字段）。";
+});
 const restoreCurrentPasswordHint = computed(() => protectionMode.value === "master-password" ? "替换主密码库时必须验证当前主密码。" : "设备密钥模式可留空；后台仍会重新派生密钥并拒绝无效输入。");
 const keePassProtectionPreview = computed(() => {
   if (keePassKeyFile.value && keePassForm.password) return "密码 + 密钥文件";
@@ -2078,7 +2089,8 @@ function errorCode(error: unknown): string | undefined {
       </template>
       <template v-else-if="form.loginType === 'SSH_KEY'">
         <fieldset class="editor-fieldset special-record-fields field-wide"><legend>SSH 密钥</legend>
-          <label class="field"><span>算法</span><input v-model="form.sshKey.algorithm" list="ssh-algorithms" autocomplete="off" /><datalist id="ssh-algorithms"><option value="ED25519"></option><option value="RSA"></option></datalist></label>
+          <p v-if="sshBitwardenFormatHint" class="ssh-format-hint">{{ sshBitwardenFormatHint }}</p>
+          <label class="field"><span>算法</span><input v-model="form.sshKey.algorithm" list="ssh-algorithms" autocomplete="off" :readonly="nativeBitwardenSshEdit" /><datalist id="ssh-algorithms"><option value="ED25519"></option><option value="RSA"></option></datalist></label>
           <label class="field"><span>密钥位数</span><input v-model.number="form.sshKey.keySize" type="number" min="0" step="1" inputmode="numeric" /></label>
           <label class="field field-wide"><span>OpenSSH 公钥</span><textarea v-model="form.sshKey.publicKeyOpenSsh" rows="3" spellcheck="false"></textarea></label>
           <label class="field field-wide"><span>OpenSSH 私钥</span><textarea v-model="form.sshKey.privateKeyOpenSsh" rows="7" spellcheck="false"></textarea></label>

@@ -89,6 +89,7 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       totpSecret: totpSecret || undefined,
       customFields,
       bitwardenCustomFieldsVersion: BITWARDEN_CUSTOM_FIELDS_VERSION,
+      bitwardenSshKeyMode: sshKeyData ? "fallback" : undefined,
       appPackageName: bitwardenSystemValue(systemFields, "monica_app_package", "appPackageName") || undefined,
       appName: bitwardenSystemValue(systemFields, "monica_app_name", "appName") || undefined,
       email: bitwardenSystemValue(systemFields, "monica_email", "email") || undefined,
@@ -147,6 +148,47 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
     };
   }
 
+  if (type === 5) {
+    const sshKey = recordValue(raw, "SshKey", "SSHKey", "sshKey", "ssh_key");
+    if (!sshKey) return { items: [], warning: `Bitwarden SSH Cipher ${cipherId} 缺少 SSH Key 数据，已保留原始信封。` };
+    const [privateKeyOpenSsh, publicKeyOpenSsh, fingerprintSha256] = await Promise.all([
+      decryptField(sshKey, key, "PrivateKey", "privateKey", "private_key"),
+      decryptField(sshKey, key, "PublicKey", "publicKey", "public_key"),
+      decryptField(sshKey, key, "KeyFingerprint", "keyFingerprint", "Fingerprint", "fingerprint", "key_fingerprint")
+    ]);
+    if (!privateKeyOpenSsh && !publicKeyOpenSsh && !fingerprintSha256) {
+      return { items: [], warning: `Bitwarden SSH Cipher ${cipherId} 的密钥字段为空，已保留原始信封。` };
+    }
+    const decodedFields = await decodeBitwardenCustomFields(arrayValue(raw, "Fields", "fields"), key);
+    const customFields = decodedFields
+      .filter(isEditableBitwardenUserField)
+      .map((field) => ({ name: field.name, value: field.value, protected: field.type === BITWARDEN_HIDDEN_FIELD }));
+    const sshKeyData = JSON.stringify({
+      algorithm: inferSshAlgorithm(publicKeyOpenSsh),
+      keySize: 0,
+      publicKeyOpenSsh,
+      privateKeyOpenSsh,
+      fingerprintSha256,
+      comment: "",
+      format: "OPENSSH"
+    });
+    return {
+      items: [{
+        ...base,
+        kind: "login",
+        username: "",
+        password: "",
+        uris: [],
+        uriRules: [],
+        customFields,
+        bitwardenCustomFieldsVersion: BITWARDEN_CUSTOM_FIELDS_VERSION,
+        bitwardenSshKeyMode: "native",
+        loginType: "SSH_KEY",
+        sshKeyData
+      } satisfies LoginItem]
+    };
+  }
+
   return { items: [], warning: `Bitwarden Cipher ${cipherId} 的类型 ${type} 暂不支持。` };
 }
 
@@ -158,7 +200,8 @@ export async function resolveBitwardenCipherKey(raw: Record<string, unknown>, va
 export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: BitwardenSymmetricKey, preservedRaw?: Record<string, unknown>): Promise<Record<string, unknown>> {
   const preserved = preservedRaw || {};
   const base = cipherRequestBody(preserved);
-  base.type = bitwardenType(item);
+  const nativeSsh = isNativeBitwardenSshCipher(item, preserved);
+  base.type = nativeSsh ? 5 : bitwardenType(item);
   base.name = await encryptBitwardenString(item.title, encryptionKey);
   base.notes = item.notes ? await encryptBitwardenString(item.notes, encryptionKey) : null;
   base.favorite = item.favorite;
@@ -173,17 +216,27 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
   base.fields = value(preserved, "Fields", "fields") ?? null;
 
   if (item.kind === "login") {
-    const login = cipherRequestBody(recordValue(preserved, "Login", "login") || {});
-    login.username = await encryptOptional(item.username, encryptionKey);
-    login.password = await encryptOptional(item.password, encryptionKey);
-    login.totp = await encryptOptional(item.totpSecret || "", encryptionKey);
-    login.uris = await Promise.all(effectiveLoginUriRules(item).map(async (rule) => ({
-      uri: await encryptBitwardenString(rule.uri, encryptionKey),
-      match: bitwardenMatchCode(rule.matchType)
-    })));
-    login.fido2Credentials = login.fido2Credentials ?? null;
-    base.login = login;
-    base.fields = await mergeCipherFieldsPreservingUnknown(item, arrayValue(preserved, "Fields", "fields"), encryptionKey);
+    if (nativeSsh) {
+      const sshData = parseSshKeyData(item.sshKeyData) || {};
+      const sshKey = cipherRequestBody(recordValue(preserved, "SshKey", "SSHKey", "sshKey", "ssh_key") || {});
+      sshKey.privateKey = await encryptOptional(stringProperty(sshData, "privateKeyOpenSsh") || "", encryptionKey);
+      sshKey.publicKey = await encryptOptional(stringProperty(sshData, "publicKeyOpenSsh") || "", encryptionKey);
+      sshKey.keyFingerprint = await encryptOptional(stringProperty(sshData, "fingerprintSha256") || "", encryptionKey);
+      base.sshKey = sshKey;
+      base.fields = await mergeCipherFieldsPreservingUnknown(item, arrayValue(preserved, "Fields", "fields"), encryptionKey, false);
+    } else {
+      const login = cipherRequestBody(recordValue(preserved, "Login", "login") || {});
+      login.username = await encryptOptional(item.username, encryptionKey);
+      login.password = await encryptOptional(item.password, encryptionKey);
+      login.totp = await encryptOptional(item.totpSecret || "", encryptionKey);
+      login.uris = await Promise.all(effectiveLoginUriRules(item).map(async (rule) => ({
+        uri: await encryptBitwardenString(rule.uri, encryptionKey),
+        match: bitwardenMatchCode(rule.matchType)
+      })));
+      login.fido2Credentials = login.fido2Credentials ?? null;
+      base.login = login;
+      base.fields = await mergeCipherFieldsPreservingUnknown(item, arrayValue(preserved, "Fields", "fields"), encryptionKey);
+    }
   } else if (item.kind === "card") {
     const card = cipherRequestBody(recordValue(preserved, "Card", "card") || {});
     card.cardholderName = await encryptOptional(item.cardholderName, encryptionKey);
@@ -304,9 +357,10 @@ export function mergeBitwardenCipherProjection(
 async function mergeCipherFieldsPreservingUnknown(
   item: LoginItem,
   remoteFields: unknown[],
-  encryptionKey: BitwardenSymmetricKey
+  encryptionKey: BitwardenSymmetricKey,
+  includeSystemFields = true
 ): Promise<unknown[] | null> {
-  const systemFields = buildBitwardenSystemFields(item);
+  const systemFields = includeSystemFields ? buildBitwardenSystemFields(item) : [];
   const localFields = item.customFields.filter((field) => field.name.trim());
   const outgoing = [...systemFields, ...localFields];
   const encoded = await Promise.all(outgoing.map(async (field) => ({
@@ -434,6 +488,52 @@ function bitwardenSshKeyData(fields: Map<string, string>): string | undefined {
     comment: bitwardenSystemValue(fields, "monica_ssh_comment"),
     format: bitwardenSystemValue(fields, "monica_ssh_format") || "OPENSSH"
   });
+}
+
+/** Only fields represented by the selected Bitwarden wire format participate in durable recovery. */
+export function bitwardenSshComparableData(item: LoginItem): string | undefined {
+  if (item.loginType !== "SSH_KEY") return item.sshKeyData;
+  const ssh = parseSshKeyData(item.sshKeyData);
+  if (!ssh) return item.sshKeyData;
+  const shared = {
+    publicKeyOpenSsh: stringProperty(ssh, "publicKeyOpenSsh") || "",
+    privateKeyOpenSsh: stringProperty(ssh, "privateKeyOpenSsh") || "",
+    fingerprintSha256: stringProperty(ssh, "fingerprintSha256") || ""
+  };
+  return JSON.stringify(item.bitwardenSshKeyMode === "native" ? shared : {
+    algorithm: stringProperty(ssh, "algorithm") || "",
+    keySize: numberProperty(ssh, "keySize"),
+    ...shared,
+    comment: stringProperty(ssh, "comment") || "",
+    format: stringProperty(ssh, "format") || "OPENSSH"
+  });
+}
+
+/** Preserve Android/future metadata that the current Bitwarden format cannot represent. */
+export function mergeBitwardenSshLocalMetadata(local: LoginItem, remote: LoginItem): string | undefined {
+  if (local.loginType !== "SSH_KEY" || remote.loginType !== "SSH_KEY") return remote.sshKeyData;
+  const localSsh = parseSshKeyData(local.sshKeyData);
+  const remoteSsh = parseSshKeyData(remote.sshKeyData);
+  if (!localSsh) return remote.sshKeyData;
+  if (!remoteSsh) return local.sshKeyData;
+  const merged: Record<string, unknown> = { ...localSsh, ...remoteSsh };
+  if (remote.bitwardenSshKeyMode === "native") {
+    for (const field of ["keySize", "comment", "format"] as const) {
+      if (localSsh[field] !== undefined) merged[field] = localSsh[field];
+    }
+  }
+  return JSON.stringify(merged);
+}
+
+function isNativeBitwardenSshCipher(item: VaultItem, preserved: Record<string, unknown>): boolean {
+  return item.kind === "login" && item.loginType === "SSH_KEY" && numberValue(preserved, "Type", "type") === 5;
+}
+
+function inferSshAlgorithm(publicKey: string): string {
+  const normalized = publicKey.trim().toLowerCase();
+  if (normalized.startsWith("ssh-rsa")) return "RSA";
+  if (normalized.startsWith("ssh-ed25519")) return "ED25519";
+  return "";
 }
 
 function buildBitwardenSystemFields(item: LoginItem): SecureCustomField[] {

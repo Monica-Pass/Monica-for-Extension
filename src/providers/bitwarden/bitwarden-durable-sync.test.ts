@@ -250,6 +250,69 @@ describe("Bitwarden durable item synchronization", () => {
     expect(putCount).toBe(1);
   });
 
+  it("recovers a native SSH update while retaining local-only Android metadata", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    const account = bitwardenAccount();
+    await service.setup("durable native ssh password");
+    await service.upsertProvider(account);
+    let remote: Record<string, unknown> = {
+      Id: "durable-native-ssh",
+      Type: 5,
+      Name: await encryptBitwardenString("Native SSH", KEY),
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      SshKey: {
+        PrivateKey: await encryptBitwardenString("private-old", KEY),
+        PublicKey: await encryptBitwardenString("ssh-ed25519 AAAA old", KEY),
+        KeyFingerprint: await encryptBitwardenString("SHA256:old", KEY),
+        FutureNative: "preserve"
+      }
+    };
+    let putCount = 0;
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (init?.method === "PUT") {
+        putCount += 1;
+        remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), Id: "durable-native-ssh", RevisionDate: "2026-08-08T00:04:30.000Z", CreationDate: REVISION };
+        return new Response("{lost-response", { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    };
+    const provider = new BitwardenProvider(fetcher);
+    const imported = await provider.sync(account, { now: REVISION, localItems: [] });
+    await service.applyProviderSync(account.id, imported.items, imported.accountPatch, imported.conflicts, imported.sourceRecords);
+    const item = (await service.listItems())[0] as LoginItem;
+    const ssh = JSON.parse(item.sshKeyData || "{}") as Record<string, unknown>;
+    await service.upsertItem({
+      ...item,
+      sshKeyData: JSON.stringify({
+        ...ssh,
+        publicKeyOpenSsh: "ssh-ed25519 AAAA updated",
+        fingerprintSha256: "SHA256:updated",
+        keySize: 256,
+        comment: "local-only comment",
+        futureAndroidField: { keep: true }
+      })
+    });
+
+    await new BitwardenDurableSyncCoordinator(provider, service).synchronize(account);
+    expect((await service.readState()).providerMutationReceipts).toEqual([expect.objectContaining({ stage: "attempted", operation: "update" })]);
+    await new BitwardenDurableSyncCoordinator(provider, service).synchronize(account);
+    const final = await service.readState();
+    const finalItem = final.items[0] as LoginItem;
+    expect(final.mutationQueue).toEqual([]);
+    expect(final.providerMutationReceipts).toEqual([]);
+    expect(finalItem.bitwardenSshKeyMode).toBe("native");
+    expect(JSON.parse(finalItem.sshKeyData || "{}")).toMatchObject({
+      publicKeyOpenSsh: "ssh-ed25519 AAAA updated",
+      fingerprintSha256: "SHA256:updated",
+      keySize: 256,
+      comment: "local-only comment",
+      futureAndroidField: { keep: true }
+    });
+    expect(putCount).toBe(1);
+  });
+
   it("preserves an edit made while an acknowledged update response is in flight", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     const account = bitwardenAccount();

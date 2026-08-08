@@ -217,6 +217,108 @@ describe("Bitwarden provider", () => {
     expect(putCount).toBe(1);
   }, RSA_FIXTURE_TIMEOUT_MS);
 
+  it("keeps an imported native SSH Cipher native while editing its known fields", async () => {
+    let remote: Record<string, unknown> = {
+      Id: "native-ssh-cipher",
+      Type: 5,
+      Name: await encryptBitwardenString("Native SSH", KEY),
+      Notes: null,
+      Favorite: false,
+      RevisionDate: OLD_REVISION,
+      CreationDate: OLD_REVISION,
+      SshKey: {
+        PrivateKey: await encryptBitwardenString("private-old", KEY),
+        PublicKey: await encryptBitwardenString("ssh-ed25519 AAAA old", KEY),
+        KeyFingerprint: await encryptBitwardenString("SHA256:old", KEY),
+        FutureNative: { keep: true }
+      },
+      FutureTopLevel: "keep"
+    };
+    let putCount = 0;
+    let written: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (init?.method === "PUT") {
+        putCount += 1;
+        written = JSON.parse(String(init.body)) as Record<string, unknown>;
+        remote = { ...written, Id: "native-ssh-cipher", RevisionDate: "2026-07-15T03:06:00.000Z", CreationDate: OLD_REVISION };
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const imported = await provider.sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [] });
+    const item = imported.items[0] as LoginItem;
+    const ssh = JSON.parse(item.sshKeyData || "{}") as Record<string, unknown>;
+    expect(item).toMatchObject({ loginType: "SSH_KEY", bitwardenSshKeyMode: "native" });
+
+    const result = await provider.sync(account(), {
+      now: "2026-07-15T03:07:00.000Z",
+      localItems: [{
+        ...item,
+        updatedAt: "2026-07-15T03:05:00.000Z",
+        sshKeyData: JSON.stringify({ ...ssh, publicKeyOpenSsh: "ssh-ed25519 AAAA updated", fingerprintSha256: "SHA256:updated" })
+      }]
+    });
+
+    expect(result.conflicts).toEqual([]);
+    expect(putCount).toBe(1);
+    expect(written).toMatchObject({ type: 5, futureTopLevel: "keep", sshKey: { futureNative: { keep: true } } });
+    const writtenSsh = written?.sshKey as Record<string, unknown>;
+    await expect(decryptBitwardenString(String(writtenSsh.publicKey), KEY)).resolves.toBe("ssh-ed25519 AAAA updated");
+    expect(result.items[0]).toMatchObject({ loginType: "SSH_KEY", bitwardenSshKeyMode: "native" });
+  });
+
+  it("creates new SSH keys in the Monica Android Type 1 fallback format", async () => {
+    let createdRequest: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [] });
+      if (init?.method === "POST") {
+        createdRequest = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return json({ ...createdRequest, Id: "fallback-created", RevisionDate: "2026-07-15T03:08:00.000Z", CreationDate: OLD_REVISION });
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const local: LoginItem = {
+      id: "local-fallback-ssh",
+      kind: "login",
+      title: "Fallback SSH",
+      username: "",
+      password: "",
+      uris: [],
+      uriRules: [],
+      customFields: [{ name: "Owner", value: "Joy", protected: false }],
+      favorite: false,
+      notes: "",
+      loginType: "SSH_KEY",
+      sshKeyData: JSON.stringify({
+        algorithm: "RSA",
+        keySize: 4096,
+        publicKeyOpenSsh: "ssh-rsa AAAA fallback",
+        privateKeyOpenSsh: "private-fallback",
+        fingerprintSha256: "SHA256:fallback",
+        comment: "joy",
+        format: "OPENSSH"
+      }),
+      createdAt: OLD_REVISION,
+      updatedAt: "2026-07-15T03:07:00.000Z",
+      providerRefs: [{ providerId: "provider-1" }]
+    };
+
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:09:00.000Z", localItems: [local] });
+
+    expect(createdRequest?.type).toBe(1);
+    expect(createdRequest?.sshKey).toBeUndefined();
+    await expect(decryptedRequestFields(createdRequest || {})).resolves.toEqual(expect.arrayContaining([
+      ["monica_login_type", "SSH_KEY", 0, null],
+      ["monica_ssh_algorithm", "RSA", 0, null],
+      ["monica_ssh_private_key", "private-fallback", 1, null],
+      ["monica_ssh_fingerprint", "SHA256:fallback", 0, null],
+      ["Owner", "Joy", 0, null]
+    ]));
+    expect(result.items[0]).toMatchObject({ id: local.id, loginType: "SSH_KEY", bitwardenSshKeyMode: "fallback" });
+  });
+
   it("retains cached organization items when the organization key is unavailable", async () => {
     const remote = await organizationLoginCipher("remote-secret", OLD_REVISION);
     const cached: LoginItem = {

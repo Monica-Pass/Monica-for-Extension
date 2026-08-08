@@ -88,6 +88,8 @@ export interface LoginItem extends VaultItemBase {
   customFields: SecureCustomField[];
   /** Encrypted local marker: this Bitwarden Cipher completed the Android-compatible field adapter. */
   bitwardenCustomFieldsVersion?: 1;
+  /** Derived encrypted marker for truthful SSH UI and format-preserving writes. */
+  bitwardenSshKeyMode?: "native" | "fallback";
   loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE";
   ssoProvider?: string;
   ssoRefEntryId?: number;

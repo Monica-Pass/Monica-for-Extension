@@ -1,7 +1,7 @@
 import type { LoginItem, PendingMutation, ProviderAccount, ProviderMutationReceipt, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
-import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { bitwardenSshComparableData, decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, mergeBitwardenSshLocalMetadata, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
@@ -420,7 +420,10 @@ function withCreatedReference(local: VaultItem, created: VaultItem, providerId: 
     ...local,
     updatedAt: created.updatedAt,
     ...(local.kind === "login" && created.kind === "login"
-      ? { bitwardenCustomFieldsVersion: created.bitwardenCustomFieldsVersion }
+      ? {
+          bitwardenCustomFieldsVersion: created.bitwardenCustomFieldsVersion,
+          bitwardenSshKeyMode: created.bitwardenSshKeyMode
+        }
       : {}),
     providerRefs: [...local.providerRefs.filter((candidate) => candidate.providerId !== providerId), reference]
   } as VaultItem;
@@ -539,6 +542,9 @@ function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[], providerId
         passkeyMode: local.passkeyMode
       };
     }
+    if (local.kind === "login" && remote.kind === "login" && local.loginType === "SSH_KEY" && remote.loginType === "SSH_KEY") {
+      return { ...remote, id: local.id, sshKeyData: mergeBitwardenSshLocalMetadata(local, remote) };
+    }
     return { ...remote, id: local.id } as VaultItem;
   });
 }
@@ -548,6 +554,12 @@ function withRecoveredReference(local: VaultItem, providerId: string, remoteId: 
   const remoteReference = remote?.providerRefs.find((reference) => reference.providerId === providerId);
   return {
     ...local,
+    ...(local.kind === "login" && remote?.kind === "login"
+      ? {
+          bitwardenCustomFieldsVersion: remote.bitwardenCustomFieldsVersion,
+          bitwardenSshKeyMode: remote.bitwardenSshKeyMode
+        }
+      : {}),
     providerRefs: [
       ...local.providerRefs.filter((reference) => reference.providerId !== providerId),
       {
@@ -567,8 +579,10 @@ function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {
 function comparableVaultPayload(item: VaultItem): Record<string, unknown> {
   const { providerRefs: _refs, updatedAt: _updated, deletedAt: _deleted, ...payload } = item;
   if (payload.kind !== "login") return payload;
-  const { bitwardenCustomFieldsVersion: _version, ...comparable } = payload;
-  return comparable;
+  const { bitwardenCustomFieldsVersion: _version, bitwardenSshKeyMode: _sshMode, ...comparable } = payload;
+  return comparable.loginType === "SSH_KEY"
+    ? { ...comparable, sshKeyData: bitwardenSshComparableData(item as LoginItem) }
+    : comparable;
 }
 
 function cipherOwnerKey(
