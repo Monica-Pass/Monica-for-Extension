@@ -62,7 +62,7 @@ AES-256 与 ChaCha20 通过。保护字段、OTP 参数、未知字段、CustomD
 
 ## Windows Hello
 
-Windows Hello 由固定清单和精确扩展来源约束的 Native Host 调用 Windows WebAuthn 平台验证器。Popup、内容脚本和网页无法调用注册、验证或撤销，也无法获得凭据 ID、断言、签名、设备密钥或私钥。
+Windows Hello 由固定清单和精确扩展来源约束的 Native Host 调用 Windows WebAuthn 平台验证器。注册和验证使用当前前台窗口作为系统模态界面的父窗口。Popup、内容脚本和网页无法调用注册、验证或撤销，也无法获得凭据 ID、断言、签名、设备密钥或私钥。
 
 设备密钥信封保存一个经过格式校验的不透明绑定提示。正常解锁顺序为：
 

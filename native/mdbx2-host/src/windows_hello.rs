@@ -419,7 +419,9 @@ mod windows_platform {
     use std::iter::once;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::core::HRESULT;
+    use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::Networking::WindowsWebServices::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     fn wide(value: &str) -> Vec<u16> {
         OsStr::new(value).encode_wide().chain(once(0)).collect()
@@ -464,6 +466,19 @@ mod windows_platform {
         unsafe { WebAuthNGetApiVersionNumber() }.clamp(1, WEBAUTHN_API_CURRENT_VERSION)
     }
 
+    fn interaction_window(action: &str) -> Result<HWND, RpcFailure> {
+        let window = unsafe { GetForegroundWindow() };
+        if window.is_null() {
+            Err(RpcFailure::new(
+                "hello-window-unavailable",
+                format!("Windows Hello {action} 缺少可用的前台窗口。"),
+                true,
+            ))
+        } else {
+            Ok(window)
+        }
+    }
+
     pub fn available() -> Result<bool, RpcFailure> {
         let mut available = 0;
         let hr = unsafe { WebAuthNIsUserVerifyingPlatformAuthenticatorAvailable(&mut available) };
@@ -474,6 +489,7 @@ mod windows_platform {
     }
 
     pub fn enroll(binding_id: &str, display_name: &str) -> Result<Vec<u8>, RpcFailure> {
+        let window = interaction_window("注册")?;
         let rp_id = wide(HELLO_RP_ID);
         let rp_name = wide("Monica Password Manager");
         let user_name = wide(display_name);
@@ -529,7 +545,7 @@ mod windows_platform {
         let mut attestation = std::ptr::null_mut();
         let hr = unsafe {
             WebAuthNAuthenticatorMakeCredential(
-                std::ptr::null_mut(),
+                window,
                 &rp,
                 &user,
                 &credential_parameters,
@@ -574,6 +590,7 @@ mod windows_platform {
     }
 
     pub fn verify(_: &str, challenge: &[u8], credential_id: &[u8]) -> Result<(), RpcFailure> {
+        let window = interaction_window("验证")?;
         let rp_id = wide(HELLO_RP_ID);
         let challenge_encoded = URL_SAFE_NO_PAD.encode(challenge);
         let mut client_json = format!(r#"{{"type":"webauthn.get","challenge":"{challenge_encoded}","origin":"{HELLO_ORIGIN}"}}"#).into_bytes();
@@ -607,7 +624,7 @@ mod windows_platform {
         let mut assertion = std::ptr::null_mut();
         let hr = unsafe {
             WebAuthNAuthenticatorGetAssertion(
-                std::ptr::null_mut(),
+                window,
                 rp_id.as_ptr(),
                 &client_data,
                 &options,
