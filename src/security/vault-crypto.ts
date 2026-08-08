@@ -1,6 +1,6 @@
 import { argon2id } from "hash-wasm";
 import type { VaultState } from "../core/model";
-import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState } from "../core/migrations";
+import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState, validProviderMutationReceipt } from "../core/migrations";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
@@ -131,6 +131,9 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     !Array.isArray(state.items) ||
     !Array.isArray(state.providers) ||
     !Array.isArray(state.mutationQueue) ||
+    !Array.isArray(state.providerMutationReceipts) ||
+    state.providerMutationReceipts.length > 500 ||
+    !state.providerMutationReceipts.every(validProviderMutationReceipt) ||
     !Array.isArray(state.providerConflicts) ||
     state.providerConflicts.length > 1_000 ||
     !state.providerConflicts.every(validProviderConflict) ||
@@ -143,6 +146,7 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     !state.settings ||
     typeof state.settings.defaultProviderId !== "string" ||
     (state.settings.protectionMode !== "master-password" && state.settings.protectionMode !== "device-key") ||
+    (state.settings.windowsHello !== undefined && !validWindowsHelloBinding(state.settings.windowsHello)) ||
     !Number.isInteger(state.settings.autoLockMinutes) ||
     state.settings.autoLockMinutes < 1 ||
     state.settings.autoLockMinutes > 1440 ||
@@ -151,6 +155,17 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
+}
+
+function validWindowsHelloBinding(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const binding = value as Record<string, unknown>;
+  return binding.version === 1
+    && typeof binding.bindingId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(binding.bindingId)
+    && binding.rpId === "monica-extension.local"
+    && typeof binding.enrolledAt === "string"
+    && binding.enrolledAt.length <= 64;
 }
 
 function validProviderSourceRecord(value: unknown): boolean {

@@ -295,6 +295,30 @@ export interface PendingMutation {
   lastError?: string;
 }
 
+export type ProviderMutationReceiptStage = "prepared" | "attempted" | "committed";
+
+/**
+ * Encrypted, restart-safe provider write journal. It contains only routing,
+ * operation identity and fingerprints; provider tokens, keys and plaintext
+ * item payloads remain outside the receipt.
+ */
+export interface ProviderMutationReceipt {
+  version: 1;
+  providerId: string;
+  mutationId: string;
+  itemId: string;
+  operation: PendingMutation["operation"];
+  stage: ProviderMutationReceiptStage;
+  intentFingerprint: string;
+  remoteId?: string;
+  baseRevision?: string;
+  attemptCount: number;
+  attemptedAt?: string;
+  committedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProviderConflictInput {
   itemId: string;
   reason: string;
@@ -349,6 +373,7 @@ export interface VaultState {
   items: VaultItem[];
   providers: ProviderAccount[];
   mutationQueue: PendingMutation[];
+  providerMutationReceipts: ProviderMutationReceipt[];
   providerConflicts: ProviderConflict[];
   providerDiagnostics: ProviderDiagnostic[];
   sourceRecords: ProviderSourceRecord[];
@@ -356,7 +381,15 @@ export interface VaultState {
     autoLockMinutes: number;
     defaultProviderId: string;
     protectionMode: "master-password" | "device-key";
+    windowsHello?: WindowsHelloBinding;
   };
+}
+
+export interface WindowsHelloBinding {
+  version: 1;
+  bindingId: string;
+  rpId: "monica-extension.local";
+  enrolledAt: string;
 }
 
 export function createEmptyVaultState(now = new Date().toISOString()): VaultState {
@@ -378,6 +411,7 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
       }
     ],
     mutationQueue: [],
+    providerMutationReceipts: [],
     providerConflicts: [],
     providerDiagnostics: [],
     sourceRecords: [],

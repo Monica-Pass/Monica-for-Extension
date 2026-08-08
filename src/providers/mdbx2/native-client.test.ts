@@ -43,6 +43,8 @@ import {
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_PROTOCOL_VERSION,
   MDBX2_SYNC_SEGMENT_PAGE_SIZE,
+  MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+  MDBX2_WINDOWS_HELLO_RP_ID,
   Mdbx2NativeHostError,
   validateMdbx2HostCapabilities
 } from "./native-contract";
@@ -143,7 +145,10 @@ const HELLO = {
   syncProfile: "full",
   syncProtocolVersion: MDBX2_SYNC_PROTOCOL_VERSION,
   enabledStorageCapabilityIds: ["object-record-v2"],
-  enabledSyncCapabilityIds: ["authenticated-state-delta-v8"]
+  enabledSyncCapabilityIds: ["authenticated-state-delta-v8"],
+  supportsWindowsHello: true,
+  windowsHelloProtocolVersion: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+  windowsHelloRpId: MDBX2_WINDOWS_HELLO_RP_ID
 } as const;
 
 const DIAGNOSTIC_COUNTS = {
@@ -280,6 +285,34 @@ describe("MDBX2 Native Messaging client", () => {
       method: "host.hello",
       params: {}
     }]);
+    client.close();
+  });
+
+  it("keeps Windows Hello registration and verification material inside the Native Host contract", async () => {
+    const runtime = new FakeRuntime();
+    const bindingId = "11111111-1111-4111-8111-111111111111";
+    const proofId = "22222222-2222-4222-8222-222222222222";
+    const challenge = "A".repeat(43);
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string; method: string; params: Record<string, unknown> };
+      const result = request.method === "hello.status"
+        ? { version: 1, supported: true, available: true, enrolled: true, bindingIdPresent: true, rpId: MDBX2_WINDOWS_HELLO_RP_ID, reason: "ready" }
+        : request.method === "hello.enroll"
+          ? { version: 1, bindingId, rpId: MDBX2_WINDOWS_HELLO_RP_ID, enrolledAtUnixSeconds: 1_785_600_000, verified: true }
+          : request.method === "hello.verify"
+            ? { version: 1, verified: true, bindingId, proofId, expiresAtUnixSeconds: 1_785_600_060 }
+            : { version: 1, revoked: true, bindingId };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    let sequence = 0;
+    const client = new Mdbx2NativeClient(runtime, () => `hello-request-${++sequence}`);
+
+    await expect(client.windowsHelloStatus(bindingId)).resolves.toMatchObject({ enrolled: true, reason: "ready" });
+    await expect(client.enrollWindowsHello(bindingId)).resolves.toMatchObject({ bindingId, verified: true });
+    await expect(client.verifyWindowsHello(bindingId, challenge)).resolves.toMatchObject({ bindingId, proofId, verified: true });
+    await expect(client.revokeWindowsHello(bindingId)).resolves.toBe(true);
+    expect(JSON.stringify(runtime.port.messages)).not.toContain("credentialId");
+    expect(JSON.stringify(runtime.port.messages)).not.toContain("privateKey");
     client.close();
   });
 

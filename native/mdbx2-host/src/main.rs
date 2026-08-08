@@ -1,5 +1,8 @@
+#![recursion_limit = "256"]
+
 mod cloud_sync;
 mod runtime;
+mod windows_hello;
 
 use runtime::{HostRuntime, RpcFailure, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};

@@ -25,6 +25,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::cloud_sync;
+use crate::windows_hello::WindowsHelloStore;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const HOST_NAME: &str = "com.monica_pass.mdbx2";
@@ -554,6 +555,7 @@ pub struct HostRuntime {
     health_repairs: HealthRepairState,
     attachment_reads: HashMap<String, AttachmentReadSession>,
     attachment_uploads: HashMap<String, AttachmentUploadSession>,
+    windows_hello: WindowsHelloStore,
 }
 
 impl HostRuntime {
@@ -573,7 +575,14 @@ impl HostRuntime {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(root)?;
-        for directory in ["transfers", "imports", "vaults", "backups", "operations"] {
+        for directory in [
+            "transfers",
+            "imports",
+            "vaults",
+            "backups",
+            "operations",
+            "hello",
+        ] {
             fs::create_dir_all(root.join(directory))?;
         }
         for directory in ["sync/incoming", "sync/outbound", "sync/states"] {
@@ -585,6 +594,7 @@ impl HostRuntime {
         let snapshot_operations = load_snapshot_operation_state(&root)?;
         let conflict_resolutions = load_conflict_resolution_state(&root)?;
         let health_repairs = load_health_repair_state(&root)?;
+        let hello_root = root.clone();
         Ok(Self {
             root,
             device_id,
@@ -596,6 +606,7 @@ impl HostRuntime {
             health_repairs,
             attachment_reads: HashMap::new(),
             attachment_uploads: HashMap::new(),
+            windows_hello: WindowsHelloStore::new(hello_root),
         })
     }
 
@@ -648,6 +659,10 @@ impl HostRuntime {
             "attachment.upload.finish" => self.attachment_upload_finish(params),
             "attachment.upload.abort" => self.attachment_upload_abort(params),
             "attachment.delete" => self.attachment_delete(params),
+            "hello.status" => self.windows_hello.status(params),
+            "hello.enroll" => self.windows_hello.enroll(params),
+            "hello.verify" => self.windows_hello.verify(params),
+            "hello.revoke" => self.windows_hello.revoke(params),
             _ if cloud_sync::supports(method) => cloud_sync::handle(self, method, params),
             _ => Err(RpcFailure::new(
                 "method-unsupported",
@@ -708,6 +723,9 @@ impl HostRuntime {
             "maxBlobReferencePageSize": cloud_sync::MAX_BLOB_PAGE_SIZE,
             "maxRemoteBlobBytes": cloud_sync::MAX_REMOTE_BLOB_BYTES,
             "supportedUnlockMethods": ["password", "security-key", "password-security-key"],
+            "supportsWindowsHello": cfg!(windows),
+            "windowsHelloProtocolVersion": crate::windows_hello::HELLO_PROTOCOL_VERSION,
+            "windowsHelloRpId": crate::windows_hello::HELLO_RP_ID,
             "storageProfile": capabilities.storage_profile,
             "syncProfile": capabilities.sync_profile,
             "syncProtocolVersion": capabilities.sync_protocol_version,

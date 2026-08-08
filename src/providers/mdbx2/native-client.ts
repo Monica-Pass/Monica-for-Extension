@@ -33,6 +33,8 @@ import {
   MDBX2_NATIVE_HOST_NAME,
   MDBX2_NATIVE_PROTOCOL_VERSION,
   MDBX2_SYNC_SEGMENT_PAGE_SIZE,
+  MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+  MDBX2_WINDOWS_HELLO_RP_ID,
   MDBX2_HEALTH_REPAIR_KINDS,
   MDBX2_HEALTH_REPAIR_OBJECT_TYPES,
   MDBX2_VAULT_DIAGNOSTIC_CATEGORIES,
@@ -43,6 +45,9 @@ import {
   validateMdbx2HostCapabilities,
   type Mdbx2HostCapabilities,
   type Mdbx2HostStatus,
+  type Mdbx2WindowsHelloEnrollment,
+  type Mdbx2WindowsHelloStatus,
+  type Mdbx2WindowsHelloVerification,
   type Mdbx2HealthRepairApplyResult,
   type Mdbx2HealthRepairChoice,
   type Mdbx2HealthRepairDecision,
@@ -156,6 +161,30 @@ export class Mdbx2NativeClient {
 
   async hello(timeoutMs = 5_000): Promise<Mdbx2HostCapabilities> {
     return validateMdbx2HostCapabilities(await this.request("host.hello", {}, timeoutMs));
+  }
+
+  async windowsHelloStatus(bindingId?: string, timeoutMs = 15_000): Promise<Mdbx2WindowsHelloStatus> {
+    const normalized = bindingId ? opaqueHandle(bindingId, "Windows Hello 绑定") : undefined;
+    return windowsHelloStatus(await this.request("hello.status", { bindingId: normalized || null }, timeoutMs));
+  }
+
+  async enrollWindowsHello(bindingId: string, displayName = "Monica 密码库", timeoutMs = 5 * 60_000): Promise<Mdbx2WindowsHelloEnrollment> {
+    const normalized = opaqueHandle(bindingId, "Windows Hello 绑定");
+    if (displayName.length < 1 || displayName.length > 128) throw new Mdbx2NativeHostError("params-invalid", "Windows Hello 显示名称长度无效。", false);
+    return windowsHelloEnrollment(await this.request("hello.enroll", { bindingId: normalized, displayName, confirmed: true }, timeoutMs), normalized);
+  }
+
+  async verifyWindowsHello(bindingId: string, challengeBase64Url: string, timeoutMs = 5 * 60_000): Promise<Mdbx2WindowsHelloVerification> {
+    const normalized = opaqueHandle(bindingId, "Windows Hello 绑定");
+    if (!/^[A-Za-z0-9_-]{43,86}$/.test(challengeBase64Url)) throw new Mdbx2NativeHostError("params-invalid", "Windows Hello 验证挑战格式无效。", false);
+    return windowsHelloVerification(await this.request("hello.verify", { bindingId: normalized, challengeBase64Url }, timeoutMs), normalized);
+  }
+
+  async revokeWindowsHello(bindingId: string, timeoutMs = 60_000): Promise<boolean> {
+    const normalized = opaqueHandle(bindingId, "Windows Hello 绑定");
+    const value = objectResult(await this.request("hello.revoke", { bindingId: normalized, confirmed: true }, timeoutMs), "Windows Hello 撤销响应无效。");
+    if (value.version !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION || value.bindingId !== normalized || value.revoked !== true) throw incompatibleResult("Windows Hello 撤销响应与请求不一致。");
+    return true;
   }
 
   async beginInboundTransfer(
@@ -1276,6 +1305,43 @@ function externalBlobReceiveState(input: unknown): Mdbx2ExternalBlobReceiveState
 function transferPurpose(value: unknown): Mdbx2InboundTransferPurpose {
   if (value === "vault-bootstrap" || value === "sync-segment") return value;
   throw incompatibleResult("Native Host 文件用途无效。");
+}
+
+function windowsHelloStatus(input: unknown): Mdbx2WindowsHelloStatus {
+  const value = objectResult(input, "Windows Hello 状态响应无效。");
+  const reason = value.reason === "windows-only" || value.reason === "platform-authenticator-unavailable" || value.reason === "not-enrolled" || value.reason === "ready"
+    ? value.reason
+    : undefined;
+  if (value.version !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION || value.rpId !== MDBX2_WINDOWS_HELLO_RP_ID || !reason) throw incompatibleResult("Windows Hello 状态响应版本或 RP ID 无效。");
+  return {
+    version: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+    supported: booleanResult(value.supported, "Windows Hello 支持状态"),
+    available: booleanResult(value.available, "Windows Hello 可用状态"),
+    enrolled: booleanResult(value.enrolled, "Windows Hello 注册状态"),
+    bindingIdPresent: booleanResult(value.bindingIdPresent, "Windows Hello 绑定状态"),
+    rpId: MDBX2_WINDOWS_HELLO_RP_ID,
+    reason
+  };
+}
+
+function windowsHelloEnrollment(input: unknown, bindingId: string): Mdbx2WindowsHelloEnrollment {
+  const value = objectResult(input, "Windows Hello 注册响应无效。");
+  if (value.version !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION || value.bindingId !== bindingId || value.rpId !== MDBX2_WINDOWS_HELLO_RP_ID || value.verified !== true) throw incompatibleResult("Windows Hello 注册响应与请求不一致。");
+  return {
+    version: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+    bindingId,
+    rpId: MDBX2_WINDOWS_HELLO_RP_ID,
+    enrolledAtUnixSeconds: safeInteger(value.enrolledAtUnixSeconds, "Windows Hello 注册时间"),
+    verified: true
+  };
+}
+
+function windowsHelloVerification(input: unknown, bindingId: string): Mdbx2WindowsHelloVerification {
+  const value = objectResult(input, "Windows Hello 验证响应无效。");
+  const proofId = opaqueHandle(value.proofId, "Windows Hello 验证证明");
+  const expiresAtUnixSeconds = safeInteger(value.expiresAtUnixSeconds, "Windows Hello 证明有效期");
+  if (value.version !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION || value.bindingId !== bindingId || value.verified !== true || expiresAtUnixSeconds <= 0) throw incompatibleResult("Windows Hello 验证响应与请求不一致。");
+  return { version: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION, verified: true, bindingId, proofId, expiresAtUnixSeconds };
 }
 
 function vaultInspection(input: unknown): Mdbx2VaultInspection {

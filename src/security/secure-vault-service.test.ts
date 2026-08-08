@@ -3,7 +3,7 @@ import { createEmptyVaultState, createLoginItem, type LoginItem, type VaultItem,
 import { MAX_SOURCE_RECORD_PAYLOAD_BYTES } from "../core/source-records";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
-import { SecureVaultService, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
+import { SecureVaultService, VaultHelloRequiredError, VaultLockedError, VaultUnlockError } from "./secure-vault-service";
 import { MemoryVaultStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore } from "./vault-device-key";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
@@ -617,6 +617,108 @@ describe("encrypted vault", () => {
     expect(state.mutationQueue).toEqual([expect.objectContaining({ itemId: created.id, operation: "delete" })]);
   });
 
+  it("rejects reuse of one durable mutation ID for a different encrypted intent", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("receipt intent password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = await service.upsertItem(createLoginItem({ title: "Receipt", password: "secret", providerRefs: [{ providerId: "bw" }] }));
+    const mutation = (await service.readState()).mutationQueue[0];
+    const receipt = {
+      version: 1 as const,
+      providerId: "bw",
+      mutationId: mutation.id,
+      itemId: item.id,
+      operation: "create" as const,
+      stage: "prepared" as const,
+      intentFingerprint: "a".repeat(64),
+      attemptCount: 0,
+      createdAt: mutation.createdAt,
+      updatedAt: mutation.createdAt
+    };
+    await service.prepareProviderMutationReceipts([receipt]);
+    await expect(service.prepareProviderMutationReceipts([{ ...receipt, intentFingerprint: "b".repeat(64) }])).rejects.toThrow("不同的持久同步意图");
+    expect((await service.readState()).providerMutationReceipts).toEqual([receipt]);
+  });
+
+  it("never downgrades a committed receipt when an attempt marker is replayed", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("receipt stage password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = await service.upsertItem(createLoginItem({ title: "Receipt stage", providerRefs: [{ providerId: "bw" }] }));
+    const mutation = (await service.readState()).mutationQueue[0];
+    await service.prepareProviderMutationReceipts([{
+      version: 1,
+      providerId: "bw",
+      mutationId: mutation.id,
+      itemId: item.id,
+      operation: "create",
+      stage: "prepared",
+      intentFingerprint: "c".repeat(64),
+      attemptCount: 0,
+      createdAt: mutation.createdAt,
+      updatedAt: mutation.createdAt
+    }]);
+    await service.markProviderMutationReceiptsAttempted("bw", [mutation.id]);
+    await service.commitProviderMutationReceipts("bw", [{ mutationId: mutation.id, itemId: item.id, operation: "create", remoteId: "remote-receipt" }]);
+    const committed = (await service.readState()).providerMutationReceipts[0];
+    await service.markProviderMutationReceiptsAttempted("bw", [mutation.id]);
+    expect((await service.readState()).providerMutationReceipts[0]).toEqual(committed);
+  });
+
+  it("fails closed when a synchronization acknowledgement has no matching queue entry", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("orphan acknowledgement password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = createLoginItem({ title: "Orphan", providerRefs: [{ providerId: "bw", remoteId: "remote-orphan", revision: "2026-08-08T00:00:00.000Z" }] });
+    await service.applyProviderSync("bw", [item]);
+    await expect(service.applyProviderSync(
+      "bw",
+      [item],
+      undefined,
+      [],
+      undefined,
+      structuredClone((await service.readState()).items),
+      [{ mutationId: "missing-mutation", itemId: item.id, operation: "update", remoteId: "remote-orphan" }]
+    )).rejects.toThrow("没有对应的排队操作");
+  });
+
+  it("queues a provider-discovered normalization through the encrypted mutation queue", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("provider requested mutation password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const baseline = createLoginItem({ title: "Normalize", providerRefs: [{ providerId: "bw", remoteId: "remote-normalize", revision: "2026-08-08T00:00:00.000Z" }] });
+    await service.applyProviderSync("bw", [baseline]);
+    const snapshot = structuredClone((await service.readState()).items);
+    const normalized = { ...baseline, updatedAt: "2026-08-08T00:01:00.000Z", bitwardenCustomFieldsVersion: 1 as const };
+    await service.applyProviderSync("bw", [normalized], undefined, [], undefined, snapshot, [], [{ itemId: baseline.id, operation: "update" }]);
+    expect((await service.readState()).mutationQueue).toEqual([expect.objectContaining({ providerId: "bw", itemId: baseline.id, operation: "update" })]);
+  });
+
+  it("removes durable queue entries and receipts together with their provider", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("remove provider receipt password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = await service.upsertItem(createLoginItem({ title: "Remove provider", providerRefs: [{ providerId: "bw" }] }));
+    const mutation = (await service.readState()).mutationQueue[0];
+    await service.prepareProviderMutationReceipts([{
+      version: 1,
+      providerId: "bw",
+      mutationId: mutation.id,
+      itemId: item.id,
+      operation: "create",
+      stage: "prepared",
+      intentFingerprint: "d".repeat(64),
+      attemptCount: 0,
+      createdAt: mutation.createdAt,
+      updatedAt: mutation.createdAt
+    }]);
+    await service.removeProvider("bw");
+    const state = await service.readState();
+    expect(state.mutationQueue).toEqual([]);
+    expect(state.providerMutationReceipts).toEqual([]);
+    expect(state.providers.some((provider) => provider.id === "bw")).toBe(false);
+  });
+
   it("keeps the service baseline immutable through a real first WebDAV creation sync", async () => {
     const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await service.setup("webdav first creation password");
@@ -703,6 +805,56 @@ describe("encrypted vault", () => {
     const restarted = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => Date.now(), deviceKeys);
     await deviceKeys.setAutoUnlockSuspended(false);
     await expect(restarted.status()).resolves.toBe("unlocked");
+  });
+
+  it("requires a fresh Windows Hello platform verification before reopening an enrolled device-key vault", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const sessions = new MemoryVaultSessionStore();
+    const service = new SecureVaultService(storage, sessions, () => 1_785_600_000_000, deviceKeys);
+    await service.setup("", [createLoginItem({ title: "Hello vault" })]);
+    const enrolled = await service.enrollWindowsHello(async (bindingId) => ({
+      version: 1,
+      bindingId,
+      rpId: "monica-extension.local",
+      enrolledAtUnixSeconds: 1_785_600_000,
+      verified: true
+    }));
+    expect(enrolled.bindingId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(storage.envelope)).not.toContain(enrolled.bindingId);
+
+    await service.lock();
+    await deviceKeys.setAutoUnlockSuspended(false);
+    await expect(service.status()).resolves.toBe("locked");
+    await expect(service.unlock("")).rejects.toBeInstanceOf(VaultHelloRequiredError);
+
+    let verifiedBinding = "";
+    let verifiedChallenge = "";
+    await expect(service.unlockWithWindowsHello(async (bindingId, challenge) => {
+      verifiedBinding = bindingId;
+      verifiedChallenge = challenge;
+    })).resolves.toMatchObject({ items: [expect.objectContaining({ title: "Hello vault" })] });
+    expect(verifiedBinding).toBe(enrolled.bindingId);
+    expect(verifiedChallenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    await expect(service.status()).resolves.toBe("unlocked");
+  });
+
+  it("keeps the session locked when Windows Hello is cancelled and removes the binding only after native revocation", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await service.setup("");
+    const binding = await service.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    await service.lock();
+    await expect(service.unlockWithWindowsHello(async () => { throw new Error("cancelled"); })).rejects.toThrow("cancelled");
+    await expect(service.status()).resolves.toBe("locked");
+
+    await deviceKeys.setAutoUnlockSuspended(false);
+    await service.unlockWithWindowsHello(async () => undefined);
+    let revoked = "";
+    await service.revokeWindowsHello(async (bindingId) => { revoked = bindingId; });
+    expect(revoked).toBe(binding.bindingId);
+    expect(await service.windowsHelloBinding()).toBeUndefined();
   });
 
   it("exports a device-key vault into a portable password-derived backup", async () => {

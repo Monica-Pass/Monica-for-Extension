@@ -94,6 +94,8 @@ export const MDBX2_MAX_ATTACHMENT_MEMORY_BYTES = 128 * 1024 * 1024;
 export const MDBX2_SYNC_SEGMENT_PAGE_SIZE = 128;
 export const MDBX2_BLOB_REFERENCE_PAGE_SIZE = 256;
 export const MDBX2_MAX_REMOTE_BLOB_BYTES = 64 * 1024 * 1024 + 128 * 1024;
+export const MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION = 1;
+export const MDBX2_WINDOWS_HELLO_RP_ID = "monica-extension.local";
 
 export type Mdbx2NativeMethod =
   | "host.hello"
@@ -143,6 +145,10 @@ export type Mdbx2NativeMethod =
   | "attachment.upload.finish"
   | "attachment.upload.abort"
   | "attachment.delete"
+  | "hello.status"
+  | "hello.enroll"
+  | "hello.verify"
+  | "hello.revoke"
   | "transfer.read"
   | "transfer.release"
   | "sync.state.register"
@@ -924,6 +930,37 @@ export interface Mdbx2HostCapabilities {
   syncProtocolVersion: typeof MDBX2_SYNC_PROTOCOL_VERSION;
   enabledStorageCapabilityIds: string[];
   enabledSyncCapabilityIds: string[];
+  supportsWindowsHello: boolean;
+  windowsHelloProtocolVersion: typeof MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION;
+  windowsHelloRpId: typeof MDBX2_WINDOWS_HELLO_RP_ID;
+}
+
+export type Mdbx2WindowsHelloReason = "windows-only" | "platform-authenticator-unavailable" | "not-enrolled" | "ready";
+
+export interface Mdbx2WindowsHelloStatus {
+  version: typeof MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION;
+  supported: boolean;
+  available: boolean;
+  enrolled: boolean;
+  bindingIdPresent: boolean;
+  rpId: typeof MDBX2_WINDOWS_HELLO_RP_ID;
+  reason: Mdbx2WindowsHelloReason;
+}
+
+export interface Mdbx2WindowsHelloEnrollment {
+  version: typeof MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION;
+  bindingId: string;
+  rpId: typeof MDBX2_WINDOWS_HELLO_RP_ID;
+  enrolledAtUnixSeconds: number;
+  verified: true;
+}
+
+export interface Mdbx2WindowsHelloVerification {
+  version: typeof MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION;
+  verified: true;
+  bindingId: string;
+  proofId: string;
+  expiresAtUnixSeconds: number;
 }
 
 export type Mdbx2HostAvailability = "ready" | "not-installed" | "incompatible" | "unavailable";
@@ -1028,6 +1065,9 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   if (value.maxBlobReferencePageSize !== MDBX2_BLOB_REFERENCE_PAGE_SIZE) throw incompatible("Native Host Blob 分页限制与插件不一致。");
   if (value.maxRemoteBlobBytes !== MDBX2_MAX_REMOTE_BLOB_BYTES) throw incompatible("Native Host Blob 大小限制与插件不一致。");
   if (value.syncProtocolVersion !== MDBX2_SYNC_PROTOCOL_VERSION) throw incompatible("Native Host 同步协议版本与插件不一致。");
+  if (typeof value.supportsWindowsHello !== "boolean") throw incompatible("Native Host Windows Hello 能力标记无效。");
+  if (value.windowsHelloProtocolVersion !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION) throw incompatible("Native Host Windows Hello 协议版本不匹配。");
+  if (value.windowsHelloRpId !== MDBX2_WINDOWS_HELLO_RP_ID) throw incompatible("Native Host Windows Hello RP ID 不匹配。");
   const supportedUnlockMethods = stringArray(value.supportedUnlockMethods, 8, 64, "Native Host 解锁方式列表无效。") as Mdbx2UnlockMethod[];
   if (JSON.stringify(supportedUnlockMethods) !== JSON.stringify(["password", "security-key", "password-security-key"])) {
     throw incompatible("Native Host 解锁方式与插件不一致。");
@@ -1094,7 +1134,10 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     syncProfile: boundedString(value.syncProfile, 128, "Native Host 同步能力配置无效。"),
     syncProtocolVersion: MDBX2_SYNC_PROTOCOL_VERSION,
     enabledStorageCapabilityIds: capabilityIds(value.enabledStorageCapabilityIds, "存储"),
-    enabledSyncCapabilityIds: capabilityIds(value.enabledSyncCapabilityIds, "同步")
+    enabledSyncCapabilityIds: capabilityIds(value.enabledSyncCapabilityIds, "同步"),
+    supportsWindowsHello: value.supportsWindowsHello,
+    windowsHelloProtocolVersion: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+    windowsHelloRpId: MDBX2_WINDOWS_HELLO_RP_ID
   };
 }
 

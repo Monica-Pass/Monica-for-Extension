@@ -25,6 +25,7 @@ import { BitwardenAttachmentMutationService } from "../providers/bitwarden/bitwa
 import { resolveBitwardenOrganizationKeys } from "../providers/bitwarden/bitwarden-organization";
 import type { BitwardenSymmetricKey } from "../providers/bitwarden/bitwarden-crypto";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
+import { BitwardenDurableSyncCoordinator } from "../providers/bitwarden/bitwarden-durable-sync";
 import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutationResult } from "../providers/bitwarden/bitwarden-folders";
 import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
@@ -64,7 +65,7 @@ import { validatePasskeyRequest } from "../passkey/request-policy";
 import { hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
 import { base64ToBytes, bytesToBase64 } from "../security/encoding";
 import { ChromeVaultSessionStore } from "../security/vault-session";
-import { SecureVaultService, VaultLockedError } from "../security/secure-vault-service";
+import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
 import { ChromeVaultDeviceKeyStore } from "../security/vault-device-key";
 import { configureSessionStorageAccess } from "./startup";
@@ -74,7 +75,9 @@ const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
 const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore(), () => Date.now(), new ChromeVaultDeviceKeyStore());
 const providers = new ProviderRegistry();
 providers.register(new MonicaWebDavProvider());
-providers.register(new BitwardenProvider());
+const bitwardenProvider = new BitwardenProvider();
+providers.register(bitwardenProvider);
+const bitwardenDurableSync = new BitwardenDurableSyncCoordinator(bitwardenProvider, service);
 const mdbx2NativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime());
 const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);
 const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);
@@ -239,6 +242,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
     .catch((error: unknown) => {
       const code = error instanceof VaultLockedError
         ? "VAULT_LOCKED"
+        : error instanceof VaultHelloRequiredError
+          ? "VAULT_HELLO_REQUIRED"
         : error instanceof PasskeyUnavailableError
           ? "PASSKEY_UNAVAILABLE"
           : error instanceof PasskeyExcludedError
@@ -260,6 +265,36 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
   switch (request.type) {
     case "VAULT_STATUS":
       return service.status();
+    case "VAULT_UNLOCK_HELLO": {
+      assertManagerPage(sender);
+      const state = await service.unlockWithWindowsHello((bindingId, challenge) => mdbx2NativeClient.verifyWindowsHello(bindingId, challenge).then(() => undefined));
+      return state.items.filter((item) => !item.deletedAt);
+    }
+    case "VAULT_HELLO_STATUS": {
+      assertManagerPage(sender);
+      const binding = await service.windowsHelloBindingForRuntime();
+      const native = await mdbx2NativeClient.windowsHelloStatus(binding?.bindingId);
+      const protectionMode = await service.protectionModeForRuntime();
+      return {
+        native,
+        vaultEnrolled: Boolean(binding),
+        protectionMode,
+        unlockAvailable: Boolean(binding && protectionMode === "device-key" && native.supported && native.available)
+      };
+    }
+    case "VAULT_HELLO_ENROLL": {
+      assertManagerPage(sender);
+      const binding = await service.enrollWindowsHello(
+        (bindingId) => mdbx2NativeClient.enrollWindowsHello(bindingId),
+        (bindingId) => mdbx2NativeClient.revokeWindowsHello(bindingId).then(() => undefined)
+      );
+      return binding;
+    }
+    case "VAULT_HELLO_REVOKE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error("撤销 Windows Hello 需要明确确认。");
+      return service.revokeWindowsHello((bindingId) => mdbx2NativeClient.revokeWindowsHello(bindingId).then(() => undefined));
+    }
     case "VAULT_SETUP": {
       assertExtensionPage(sender);
       const initialItems = await readLegacyItems();
@@ -441,8 +476,24 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.listProviders();
     case "PROVIDER_QUEUE_STATUS": {
       assertExtensionPage(sender);
-      const queue = (await service.readState()).mutationQueue;
-      return [...new Set(queue.map((item) => item.providerId))].map((providerId) => { const entries = queue.filter((item) => item.providerId === providerId); const lastError = [...entries].reverse().find((item) => item.lastError)?.lastError; return { providerId, pending: entries.length, failed: entries.filter((item) => item.lastError).length, maxAttempts: Math.max(0, ...entries.map((item) => item.attempts)), lastError: lastError ? redactProviderMessage(lastError) : undefined }; });
+      const state = await service.readState();
+      const providerIds = new Set([
+        ...state.mutationQueue.map((item) => item.providerId),
+        ...state.providerMutationReceipts.map((receipt) => receipt.providerId)
+      ]);
+      return [...providerIds].map((providerId) => {
+        const entries = state.mutationQueue.filter((item) => item.providerId === providerId);
+        const receipts = state.providerMutationReceipts.filter((receipt) => receipt.providerId === providerId);
+        const lastError = [...entries].reverse().find((item) => item.lastError)?.lastError;
+        return {
+          providerId,
+          pending: entries.length,
+          failed: entries.filter((item) => item.lastError).length,
+          recovering: receipts.filter((receipt) => receipt.stage !== "prepared").length,
+          maxAttempts: Math.max(0, ...entries.map((item) => item.attempts), ...receipts.map((receipt) => receipt.attemptCount)),
+          lastError: lastError ? redactProviderMessage(lastError) : undefined
+        };
+      });
     }
     case "PROVIDER_CONFLICT_LIST":
       assertExtensionPage(sender);
@@ -1641,6 +1692,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         let result: ProviderSyncResult;
         if (account.kind === "keepass") {
           result = await synchronizeKeePassProvider(account, controller.signal);
+        } else if (account.kind === "bitwarden") {
+          result = await bitwardenDurableSync.synchronize(account, controller.signal);
         } else {
           // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
           // concurrent local edit against. Both must be the same read of the vault.

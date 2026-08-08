@@ -18,9 +18,13 @@ uniffi = "=0.31.1"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WindowsWebServices"] }
+
 [dev-dependencies]
 mdbx-storage = { git = "https://github.com/Monica-Pass/Mdbx.git", rev = "974c517465e7b6cac0947d2d59875aa4211fa16b", default-features = false, features = ["core", "filesystem-blob-store"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

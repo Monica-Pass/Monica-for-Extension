@@ -3,6 +3,7 @@ import type { LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../c
 import { bytesToBase64 } from "../../security/encoding";
 import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { BitwardenProvider } from "./bitwarden-provider";
+import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
 
 const KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32) };
 const ORGANIZATION_KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 64), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 96) };
@@ -34,6 +35,10 @@ describe("Bitwarden provider", () => {
     expect(second.conflicts).toEqual([]);
     expect(second.items[0]).toMatchObject({ password: "browser-secret", updatedAt: "2026-07-15T03:05:00.000Z" });
     expect(putCount).toBe(1);
+    expect(second.sourceRecords?.[0]?.revision).toBe("2026-07-15T03:05:00.000Z");
+    const finalRaw = JSON.parse(second.sourceRecords?.[0]?.payload || "{}") as Record<string, unknown>;
+    const finalLogin = (finalRaw.login || finalRaw.Login) as Record<string, unknown>;
+    await expect(decryptBitwardenString(String(finalLogin.password || finalLogin.Password), KEY)).resolves.toBe("browser-secret");
   });
 
   it("initializes matching legacy custom fields without an unnecessary upload", async () => {
@@ -149,6 +154,40 @@ describe("Bitwarden provider", () => {
       ["Duplicate", "same", 0, null],
       ["Duplicate", "same", 0, null]
     ]);
+  });
+
+  it("requests a durable migration mutation instead of bypassing an explicit empty batch", async () => {
+    const remoteField = { Type: 0, Name: await encryptBitwardenString("Remote", KEY), Value: await encryptBitwardenString("remote", KEY) };
+    const remote = { ...(await loginCipher("remote-secret", OLD_REVISION)), Fields: [remoteField] };
+    let putCount = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") putCount += 1;
+      return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+    }) as unknown as typeof fetch;
+    const cached: LoginItem = {
+      id: "bitwarden:provider-1:cipher-1",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "remote-secret",
+      uris: ["https://example.com"],
+      customFields: [
+        { name: "Remote", value: "remote", protected: false },
+        { name: "Local only", value: "local", protected: true }
+      ],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: OLD_REVISION,
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    };
+    const now = "2026-07-15T03:01:00.000Z";
+
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now, localItems: [cached], pendingMutations: [] });
+
+    expect(putCount).toBe(0);
+    expect(result.requestedMutations).toEqual([{ itemId: cached.id, operation: "update" }]);
+    expect(result.items[0]).toMatchObject({ bitwardenCustomFieldsVersion: 1, updatedAt: now, customFields: cached.customFields });
   });
 
   it("imports and updates an organization-shared login Cipher", async () => {
@@ -597,6 +636,104 @@ describe("Bitwarden provider", () => {
     await new BitwardenProvider(fetcher).remove(account(), item);
 
     expect(calls).toEqual(["PUT /api/ciphers/cipher-1/delete"]);
+  });
+
+  it("defers local edits outside the durable batch instead of overwriting them", async () => {
+    let remoteA = await loginCipher("remote-a", OLD_REVISION);
+    let remoteB = { ...(await loginCipher("remote-b", OLD_REVISION)), Id: "cipher-2" };
+    let putCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remoteA, remoteB] });
+      if (init?.method === "PUT") {
+        putCount += 1;
+        remoteA = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), Id: "cipher-1", RevisionDate: "2026-07-15T10:01:00.000Z", CreationDate: OLD_REVISION } as typeof remoteA;
+        return json(remoteA);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const imported = await provider.sync(account(), { now: "2026-07-15T10:00:00.000Z", localItems: [] });
+    const first = imported.items.find((item) => item.providerRefs.some((reference) => reference.remoteId === "cipher-1")) as LoginItem;
+    const second = imported.items.find((item) => item.providerRefs.some((reference) => reference.remoteId === "cipher-2")) as LoginItem;
+    const changedA = { ...first, password: "browser-a", updatedAt: "2026-07-15T10:00:30.000Z" };
+    const changedB = { ...second, password: "browser-b", updatedAt: "2026-07-15T10:00:31.000Z" };
+    const result = await provider.sync(account(), {
+      now: "2026-07-15T10:02:00.000Z",
+      localItems: [changedA, changedB],
+      pendingMutations: [{ id: "mutation-a", providerId: "provider-1", itemId: changedA.id, operation: "update", createdAt: changedA.updatedAt, attempts: 0 }]
+    });
+    expect(putCount).toBe(1);
+    expect(result.conflicts).toEqual([]);
+    expect(result.items.find((item) => item.id === changedB.id)).toMatchObject({ password: "browser-b" });
+  });
+
+  it("recovers a Bitwarden create after the response is lost without issuing a second POST", async () => {
+    let remote: Record<string, unknown>[] = [];
+    let postCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: remote });
+      if (init?.method === "POST") {
+        postCount += 1;
+        const request = JSON.parse(String(init.body)) as Record<string, unknown>;
+        remote = [{ ...request, id: "created-after-restart", revisionDate: "2026-07-15T11:01:00.000Z", creationDate: OLD_REVISION }];
+        if (postCount === 1) return new Response("{malformed", { status: 200, headers: { "Content-Type": "application/json" } });
+        return json(remote[0]);
+      }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    // Build the local item from the same Android/Bitwarden projection used by
+    // the decoder so the recovery fingerprint compares content only.
+    const local: LoginItem = {
+      id: "create-after-restart",
+      kind: "login",
+      title: "Example",
+      username: "alice",
+      password: "secret",
+      uris: ["https://example.com"],
+      uriRules: [{ uri: "https://example.com", matchType: "base-domain" }],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: OLD_REVISION,
+      updatedAt: "2026-07-15T11:00:00.000Z",
+      providerRefs: [{ providerId: "provider-1" }]
+    };
+    const fingerprint = await bitwardenMutationFingerprint(local);
+    const mutation = { id: "mutation-create", providerId: "provider-1", itemId: local.id, operation: "create" as const, createdAt: local.updatedAt, attempts: 0 };
+    let attempted = false;
+    const prepared = {
+      version: 1 as const,
+      providerId: "provider-1",
+      mutationId: mutation.id,
+      itemId: local.id,
+      operation: "create" as const,
+      stage: "prepared" as const,
+      intentFingerprint: fingerprint,
+      attemptCount: 0,
+      createdAt: local.createdAt,
+      updatedAt: local.updatedAt
+    };
+    const first = await provider.sync(account(), {
+      now: "2026-07-15T11:00:01.000Z",
+      localItems: [local],
+      pendingMutations: [mutation],
+      mutationReceipts: [prepared],
+      markMutationsAttempted: async () => { attempted = true; }
+    });
+    expect(attempted).toBe(true);
+    expect(first.conflicts).toHaveLength(1);
+    expect(postCount).toBe(1);
+    const recovered = await provider.sync(account(), {
+      now: "2026-07-15T11:02:00.000Z",
+      localItems: [local],
+      pendingMutations: [mutation],
+      mutationReceipts: [{ ...prepared, stage: "attempted", attemptCount: 1, attemptedAt: "2026-07-15T11:00:01.000Z", updatedAt: "2026-07-15T11:00:01.000Z" }]
+    });
+    expect(recovered.conflicts).toEqual([]);
+    expect(recovered.acknowledgedMutations).toMatchObject([{ mutationId: mutation.id, itemId: local.id, operation: "create", remoteId: "created-after-restart" }]);
+    expect(postCount).toBe(1);
+    expect(recovered.items.find((item) => item.id === local.id)?.providerRefs).toContainEqual(expect.objectContaining({ remoteId: "created-after-restart" }));
   });
 });
 

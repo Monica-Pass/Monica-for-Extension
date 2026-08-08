@@ -15,9 +15,10 @@ describe("vault schema migrations", () => {
       settings: { autoLockMinutes: 15, defaultProviderId: current.settings.defaultProviderId }
     } as Record<string, unknown>;
     delete legacy.sourceRecords;
+    delete legacy.providerMutationReceipts;
 
     const migrated = migrateVaultState(legacy);
-    expect(migrated).toMatchObject({ schemaVersion: 2, sourceRecords: [], settings: { protectionMode: "master-password" } });
+    expect(migrated).toMatchObject({ schemaVersion: 2, sourceRecords: [], providerMutationReceipts: [], settings: { protectionMode: "master-password" } });
     expect(migrated.items[0]).toMatchObject({
       kind: "login",
       uriRules: [

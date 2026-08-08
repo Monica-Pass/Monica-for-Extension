@@ -19,6 +19,68 @@
   font-size: 0.8rem;
 }
 
+.hello-unlock-action {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  padding-top: 14px;
+}
+
+.hello-unlock-action m3e-button {
+  justify-self: start;
+}
+
+.hello-unlock-action small,
+.hello-status-note {
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  line-height: 1.5;
+}
+
+.windows-hello-card {
+  grid-column: 1 / -1;
+}
+
+.settings-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-card-heading > m3e-icon {
+  flex: 0 0 auto;
+  --m3e-icon-size: 24px;
+  color: var(--app-primary);
+}
+
+.hello-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: var(--app-shape-card);
+  overflow: hidden;
+}
+
+.hello-status-grid > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+
+.hello-status-grid > span + span {
+  border-left: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+}
+
+.hello-status-grid strong,
+.hello-status-grid small {
+  overflow-wrap: anywhere;
+}
+
+.hello-status-grid small {
+  color: var(--app-muted);
+}
+
 .nav-count {
   min-width: 28px;
   border-radius: 999px;
@@ -912,6 +974,15 @@
 
   .provider-session-summary {
     grid-template-columns: 1fr;
+  }
+
+  .hello-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hello-status-grid > span + span {
+    border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+    border-left: 0;
   }
 
   .keepass-remote-facts {

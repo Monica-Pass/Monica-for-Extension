@@ -1,10 +1,23 @@
-import type { PendingMutation, ProviderAccount, ProviderConflictInput, ProviderKind, ProviderSourceRecord, VaultItem } from "./model";
+import type { PendingMutation, ProviderAccount, ProviderConflictInput, ProviderKind, ProviderMutationReceipt, ProviderSourceRecord, VaultItem } from "./model";
 
 export interface ProviderAcknowledgedMutation {
   mutationId: string;
   itemId: string;
   operation: PendingMutation["operation"];
   remoteId: string;
+  /** The committed intent was recovered, but a newer local edit still needs another write. */
+  followUp?: boolean;
+}
+
+/**
+ * A provider-discovered local normalization that must be written through the
+ * same durable mutation queue as an explicit user edit. The request contains
+ * only stable routing metadata; the encrypted vault remains authoritative for
+ * the item payload.
+ */
+export interface ProviderRequestedMutation {
+  itemId: string;
+  operation: PendingMutation["operation"];
 }
 
 export interface ProviderSyncContext {
@@ -15,6 +28,10 @@ export interface ProviderSyncContext {
   pendingMutations?: PendingMutation[];
   /** Provider writes already committed before a previous Service Worker stopped. */
   acknowledgedMutations?: ProviderAcknowledgedMutation[];
+  /** Encrypted durable intents prepared before provider writes begin. */
+  mutationReceipts?: ProviderMutationReceipt[];
+  /** Must be awaited immediately before the provider starts a remote write. */
+  markMutationsAttempted?: (mutationIds: string[]) => Promise<void>;
 }
 
 export interface ProviderSyncResult {
@@ -23,6 +40,8 @@ export interface ProviderSyncResult {
   conflicts: ProviderConflictInput[];
   warnings: string[];
   sourceRecords?: ProviderSourceRecord[];
+  acknowledgedMutations?: ProviderAcknowledgedMutation[];
+  requestedMutations?: ProviderRequestedMutation[];
 }
 
 export interface ProviderAdapter<TAccount extends ProviderAccount = ProviderAccount> {

@@ -1,11 +1,12 @@
-import type { LoginItem, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
-import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
+import type { LoginItem, PendingMutation, ProviderAccount, ProviderMutationReceipt, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
+import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
-import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCustomFieldOccurrences, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
+import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
@@ -25,9 +26,13 @@ export class BitwardenProvider implements ProviderAdapter {
     const synced = await this.client.sync(session, context.signal);
     session = synced.session;
     const rawCiphers = arrayValue(synced.payload, "Ciphers", "ciphers").map(record);
-    const sourceRecords = await bitwardenSourceRecords(rawCiphers, account.id);
     const localScoped = context.localItems.filter((item) => hasProviderReference(item, account.id));
     const unrelated = context.localItems.filter((item) => !hasProviderReference(item, account.id));
+    const pendingByItemId = context.pendingMutations === undefined
+      ? undefined
+      : boundedPendingMutations(context.pendingMutations, account.id);
+    const receiptsByMutationId = boundedMutationReceipts(context.mutationReceipts || [], account.id);
+    const acknowledgedByMutationId = boundedAcknowledgedMutations(context.acknowledgedMutations || []);
     const hasExistingBaseline = localScoped.some((item) => Boolean(providerReference(item, account.id)?.revision));
     if (!rawCiphers.length && hasExistingBaseline) {
       return {
@@ -35,7 +40,7 @@ export class BitwardenProvider implements ProviderAdapter {
         accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: session },
         conflicts: [{ itemId: account.id, reason: "Bitwarden 返回空密码库，但本地存在已同步项目。" }],
         warnings: ["Bitwarden 返回空密码库，未删除本地缓存；请确认服务器状态后重试。"],
-        sourceRecords
+        sourceRecords: await bitwardenSourceRecords(rawCiphers, account.id)
       };
     }
 
@@ -67,12 +72,117 @@ export class BitwardenProvider implements ProviderAdapter {
       }
     }
 
-    const localNew = localScoped.filter((item) => !providerReference(item, account.id)?.remoteId);
-    const localByCipher = groupByCipher(localScoped.filter((item) => Boolean(providerReference(item, account.id)?.remoteId)), account.id);
+    const acknowledgedMutations: ProviderAcknowledgedMutation[] = [];
+    const acknowledgedByItemId = new Map<string, ProviderAcknowledgedMutation>();
+    const recoveredRemoteByItemId = new Map<string, VaultItem>();
+    const claimedRemoteIds = new Set(localScoped.flatMap((item) => {
+      const remoteId = providerReference(item, account.id)?.remoteId;
+      return remoteId ? [baseCipherId(remoteId)!] : [];
+    }));
+    const blockedMutationIds = new Set<string>();
+    const recoveryConflicts: ProviderSyncResult["conflicts"] = [];
+    const requestedMutations: NonNullable<ProviderSyncResult["requestedMutations"]> = [];
+    const fingerprintCache = new Map<string, string>();
+    const remoteFingerprint = async (item: VaultItem): Promise<string> => {
+      const key = `${item.id}:${item.updatedAt}`;
+      const cached = fingerprintCache.get(key);
+      if (cached) return cached;
+      const value = await bitwardenMutationFingerprint(item);
+      fingerprintCache.set(key, value);
+      return value;
+    };
+    const registerAcknowledgement = async (
+      receipt: ProviderMutationReceipt | undefined,
+      mutation: ProviderAcknowledgedMutation,
+      remote?: VaultItem
+    ): Promise<void> => {
+      if (acknowledgedByItemId.has(mutation.itemId)) return;
+      const local = localScoped.find((item) => item.id === mutation.itemId);
+      const followUp = Boolean(receipt && local && (await bitwardenMutationFingerprint(local)) !== receipt.intentFingerprint);
+      const acknowledged = followUp ? { ...mutation, followUp: true } : mutation;
+      acknowledgedMutations.push(acknowledged);
+      acknowledgedByItemId.set(mutation.itemId, acknowledged);
+      if (remote) recoveredRemoteByItemId.set(mutation.itemId, remote);
+    };
+
+    for (const [mutationId, acknowledgement] of acknowledgedByMutationId) {
+      const receipt = receiptsByMutationId.get(mutationId);
+      const remoteId = acknowledgement.remoteId;
+      const remote = remoteItems.find((item) => baseCipherId(providerReference(item, account.id)?.remoteId) === baseCipherId(remoteId)
+        && (acknowledgement.operation === "delete" || !receipt || item.kind === (localScoped.find((candidate) => candidate.id === acknowledgement.itemId)?.kind)));
+      if (!remote && acknowledgement.operation !== "delete") {
+        blockedMutationIds.add(mutationId);
+        recoveryConflicts.push({ itemId: acknowledgement.itemId, reason: "Bitwarden 持久同步回执指向的 Cipher 已无法在远端确认。", local: localScoped.find((item) => item.id === acknowledgement.itemId) });
+        continue;
+      }
+      await registerAcknowledgement(receipt, acknowledgement, remote);
+    }
+
+    for (const receipt of receiptsByMutationId.values()) {
+      if (acknowledgedByItemId.has(receipt.itemId) || receipt.stage !== "attempted") continue;
+      const local = localScoped.find((item) => item.id === receipt.itemId);
+      const remoteId = receipt.remoteId ? baseCipherId(receipt.remoteId) : undefined;
+      if (receipt.operation === "delete") {
+        const raw = remoteId ? rawByCipherId.get(remoteId) : undefined;
+        if ((!raw || Boolean(stringValue(raw, "DeletedDate", "deletedDate"))) && receipt.remoteId) {
+          await registerAcknowledgement(receipt, { mutationId: receipt.mutationId, itemId: receipt.itemId, operation: "delete", remoteId: receipt.remoteId });
+        }
+        continue;
+      }
+      if (receipt.operation === "update" && remoteId) {
+        const candidate = remoteItems.find((item) => baseCipherId(providerReference(item, account.id)?.remoteId) === remoteId && (!local || findEquivalent(local, [item])));
+        if (candidate && await remoteFingerprint(candidate) === receipt.intentFingerprint) {
+          await registerAcknowledgement(receipt, { mutationId: receipt.mutationId, itemId: receipt.itemId, operation: "update", remoteId: providerReference(candidate, account.id)?.remoteId || receipt.remoteId! }, candidate);
+        }
+        continue;
+      }
+      if (receipt.operation === "create") {
+        const matches: VaultItem[] = [];
+        for (const candidate of remoteItems) {
+          if (local && candidate.kind !== local.kind) continue;
+          const candidateRemoteId = providerReference(candidate, account.id)?.remoteId;
+          if (!candidateRemoteId || (claimedRemoteIds.has(baseCipherId(candidateRemoteId)!) && baseCipherId(candidateRemoteId) !== remoteId)) continue;
+          if (await remoteFingerprint(candidate) === receipt.intentFingerprint) matches.push(candidate);
+          if (matches.length > 1) break;
+        }
+        if (matches.length === 1) {
+          const candidate = matches[0];
+          const candidateRemoteId = providerReference(candidate, account.id)?.remoteId;
+          if (candidateRemoteId) await registerAcknowledgement(receipt, { mutationId: receipt.mutationId, itemId: receipt.itemId, operation: "create", remoteId: candidateRemoteId }, candidate);
+        } else if (matches.length > 1 || receipt.attemptCount > 0) {
+          blockedMutationIds.add(receipt.mutationId);
+          recoveryConflicts.push({
+            itemId: receipt.itemId,
+            reason: matches.length > 1
+              ? "Bitwarden 创建操作的远端匹配不唯一，已停止重试以避免重复 Cipher。"
+              : "Bitwarden 创建操作的结果未知，已停止重试以避免重复 Cipher。",
+            local
+          });
+        }
+      }
+    }
+
+    const scopedForMerge = localScoped.map((item) => {
+      const acknowledgement = acknowledgedByItemId.get(item.id);
+      const remote = recoveredRemoteByItemId.get(item.id);
+      return acknowledgement ? withRecoveredReference(item, account.id, acknowledgement.remoteId, remote) : item;
+    });
+    const deferredCreations = localScoped.filter((item) =>
+      !providerReference(item, account.id)?.remoteId
+      && !acknowledgedByItemId.has(item.id)
+      && !item.deletedAt
+      && Boolean(pendingByItemId && !pendingByItemId.has(item.id))
+    );
+    const localNew = localScoped.filter((item) =>
+      !providerReference(item, account.id)?.remoteId
+      && !acknowledgedByItemId.has(item.id)
+      && (!pendingByItemId || pendingByItemId.has(item.id))
+    );
+    const localByCipher = groupByCipher(scopedForMerge.filter((item) => Boolean(providerReference(item, account.id)?.remoteId)), account.id);
     const remoteByCipher = groupByCipher(remoteItems, account.id);
     const cipherIds = new Set([...rawByCipherId.keys(), ...localByCipher.keys(), ...remoteByCipher.keys()]);
-    const merged: VaultItem[] = [...unrelated];
-    const conflicts: ProviderSyncResult["conflicts"] = [];
+    const merged: VaultItem[] = [...unrelated, ...deferredCreations];
+    const conflicts: ProviderSyncResult["conflicts"] = [...recoveryConflicts];
 
     for (const cipherId of cipherIds) {
       const locals = localByCipher.get(cipherId) || [];
@@ -85,19 +195,44 @@ export class BitwardenProvider implements ProviderAdapter {
         merged.push(...remotes);
         continue;
       }
-      const customFieldMigration = prepareBitwardenCustomFieldMigration(locals, remotes, account.id);
+      const customFieldMigration = prepareBitwardenCustomFieldMigration(locals, remotes, account.id, context.now, pendingByItemId);
+      requestedMutations.push(...customFieldMigration.requestedMutations);
       const workingLocals = customFieldMigration.locals;
       const raw = rawByCipherId.get(cipherId);
       if (!raw) {
         for (const local of workingLocals.filter((item) => itemChanged(item, account.id))) {
-          conflicts.push({ itemId: local.id, reason: "此项目已在 Bitwarden 删除，但浏览器中也有未同步修改。", local });
+          const pending = pendingByItemId?.get(local.id);
+          if (local.deletedAt && pending && providerReference(local, account.id)?.remoteId) {
+            await registerAcknowledgement(
+              receiptsByMutationId.get(pending.id),
+              { mutationId: pending.id, itemId: local.id, operation: "delete", remoteId: providerReference(local, account.id)!.remoteId! }
+            );
+          } else {
+            conflicts.push({ itemId: local.id, reason: "此项目已在 Bitwarden 删除，但浏览器中也有未同步修改。", local });
+          }
         }
         merged.push(...workingLocals.filter((item) => itemChanged(item, account.id)));
         continue;
       }
-      const changes = workingLocals.filter((item) => itemChanged(item, account.id) || customFieldMigration.forcedItemIds.has(item.id));
+      const changes = workingLocals.filter((item) => {
+        if (acknowledgedByItemId.has(item.id) || blockedMutationIds.has(pendingByItemId?.get(item.id)?.id || "")) return false;
+        if (pendingByItemId && !pendingByItemId.has(item.id)) return false;
+        return itemChanged(item, account.id) || customFieldMigration.forcedItemIds.has(item.id);
+      });
+      const deferredChanges = workingLocals.filter((item) => {
+        if (acknowledgedByItemId.has(item.id) || blockedMutationIds.has(pendingByItemId?.get(item.id)?.id || "")) return false;
+        if (!itemChanged(item, account.id) && !customFieldMigration.forcedItemIds.has(item.id)) return false;
+        return Boolean(pendingByItemId && !pendingByItemId.has(item.id));
+      });
+      for (const deferred of deferredChanges) {
+        const remote = findEquivalent(deferred, remotes);
+        const reference = providerReference(deferred, account.id);
+        if (remote && reference?.revision && remote.updatedAt !== reference.revision && !sameVaultPayload(deferred, remote)) {
+          conflicts.push({ itemId: deferred.id, reason: "Bitwarden 在浏览器修改排队期间又修改了同一项目。", local: deferred, remote });
+        }
+      }
       if (!changes.length) {
-        merged.push(...rebaseRemoteItems(remotes, workingLocals));
+        merged.push(...rebaseRemoteItems(remotes, workingLocals, account.id, deferredChanges));
         continue;
       }
       const concurrent = changes.flatMap((local) => {
@@ -116,24 +251,52 @@ export class BitwardenProvider implements ProviderAdapter {
         if (primary?.deletedAt) {
           // Monica's local delete is a recycle-bin tombstone, so the remote copy has to land in
           // Bitwarden's recycle bin as well. `DELETE /ciphers/{id}` purges it irreversibly.
-          if (!trashedRemotely) session = await this.client.softDeleteCipher(session, cipherId, context.signal);
+          await markMutationsAttempted(context, changes, pendingByItemId);
+          if (!trashedRemotely) {
+            session = await this.client.softDeleteCipher(session, cipherId, context.signal);
+            rawByCipherId.set(cipherId, withBitwardenDeletedDate(raw, context.now));
+          }
+          for (const change of changes) {
+            const pending = pendingByItemId?.get(change.id);
+            const remoteId = providerReference(change, account.id)?.remoteId;
+            if (pending && remoteId) {
+              await registerAcknowledgement(receiptsByMutationId.get(pending.id), { mutationId: pending.id, itemId: change.id, operation: "delete", remoteId });
+            }
+          }
           continue;
         }
         // A live local item over a trashed Cipher means the item came back; Bitwarden rejects
         // edits to trashed Ciphers, so restore before writing rather than silently dropping.
         const current = trashedRemotely ? await this.restoreCipher(session, cipherId, raw, context.signal) : { session, raw };
         session = current.session;
+        rawByCipherId.set(cipherId, current.raw);
         const ownerKey = requireCipherOwnerKey(current.raw, vaultKey, organizations.keys);
         const cipherKey = await resolveBitwardenCipherKey(current.raw, ownerKey);
         let payload = primary ? await encodeBitwardenCipher(primary, cipherKey, current.raw) : current.raw;
         for (const passkey of changes.filter((item): item is Extract<VaultItem, { kind: "passkey" }> => item.kind === "passkey")) {
           payload = await encodeBitwardenPasskeyCipher(passkey, cipherKey, payload, passkey.deletedAt ? "delete" : "upsert");
         }
+        await markMutationsAttempted(context, changes, pendingByItemId);
         const updated = await this.client.updateCipher(session, cipherId, payload, context.signal);
         session = updated.session;
-        const decoded = await decodeBitwardenCipher(updated.payload, account.id, ownerKey);
+        requireBitwardenMutationRevision(updated.payload, stringValue(current.raw, "RevisionDate", "revisionDate"), "更新");
+        // The encoded request already contains the complete preserved Cipher
+        // with the current plaintext changes. Merge a possibly reduced server
+        // acknowledgement over that projection, never over the stale pre-write
+        // Cipher or PascalCase nested values could shadow the update.
+        const finalRaw = mergeBitwardenCipherProjection(payload, updated.payload);
+        rawByCipherId.set(cipherId, finalRaw);
+        const decoded = await decodeBitwardenCipher(finalRaw, account.id, ownerKey);
         if (!decoded.items.length) throw new Error("Bitwarden 更新响应无法映射回 Monica 项目。");
-        merged.push(...rebaseRemoteItems(decoded.items, workingLocals));
+        merged.push(...rebaseRemoteItems(decoded.items, workingLocals, account.id));
+        for (const change of changes) {
+          const pending = pendingByItemId?.get(change.id);
+          const candidate = decoded.items.find((item) => findEquivalent(change, [item]));
+          const remoteId = candidate && providerReference(candidate, account.id)?.remoteId;
+          if (pending && remoteId) {
+            await registerAcknowledgement(receiptsByMutationId.get(pending.id), { mutationId: pending.id, itemId: change.id, operation: pending.operation, remoteId }, candidate);
+          }
+        }
       } catch (error) {
         for (const local of changes) conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote: findEquivalent(local, remotes) });
         merged.push(...workingLocals);
@@ -141,11 +304,23 @@ export class BitwardenProvider implements ProviderAdapter {
     }
 
     for (const local of localNew) {
-      if (local.deletedAt) continue;
+      if (local.deletedAt || blockedMutationIds.has(pendingByItemId?.get(local.id)?.id || "")) {
+        if (local.deletedAt) merged.push(local);
+        continue;
+      }
       try {
+        await markMutationsAttempted(context, [local], pendingByItemId);
         const created = await this.createWithSession(session, account.id, local, context.signal);
         session = created.session;
+        const createdCipherId = baseCipherId(providerReference(created.item, account.id)?.remoteId);
+        if (createdCipherId) rawByCipherId.set(createdCipherId, created.raw);
         merged.push(...created.items);
+        const pending = pendingByItemId?.get(local.id);
+        const createdItem = created.items.find((item) => findEquivalent(local, [item]));
+        const remoteId = createdItem && providerReference(createdItem, account.id)?.remoteId;
+        if (pending && remoteId) {
+          await registerAcknowledgement(receiptsByMutationId.get(pending.id), { mutationId: pending.id, itemId: local.id, operation: pending.operation, remoteId }, createdItem);
+        }
       } catch (error) {
         conflicts.push({ itemId: local.id, reason: errorMessage(error), local });
         merged.push(local);
@@ -153,11 +328,13 @@ export class BitwardenProvider implements ProviderAdapter {
     }
 
     return {
-      items: merged.filter((item) => !item.deletedAt),
+      items: merged.filter((item) => !item.deletedAt || conflicts.some((conflict) => conflict.itemId === item.id && Boolean(conflict.local?.deletedAt))),
       accountPatch: { config: session, lastSyncAt: context.now, lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined },
       conflicts,
       warnings,
-      sourceRecords
+      sourceRecords: await bitwardenSourceRecords([...rawByCipherId.values()], account.id),
+      acknowledgedMutations,
+      requestedMutations: requestedMutations.length ? requestedMutations : undefined
     };
   }
 
@@ -215,10 +392,11 @@ export class BitwardenProvider implements ProviderAdapter {
     return { session: restored.session, raw: payload };
   }
 
-  private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[] }> {
+  private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[]; raw: Record<string, unknown> }> {
     const vaultKey = this.client.vaultKey(session);
     const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, vaultKey) : await encodeBitwardenCipher(item, vaultKey);
     const response = await this.client.createCipher(session, payload, signal);
+    requireBitwardenMutationRevision(response.payload, undefined, "创建");
     const decoded = await decodeBitwardenCipher(response.payload, providerId, vaultKey);
     const created = item.kind === "passkey"
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId)
@@ -231,7 +409,7 @@ export class BitwardenProvider implements ProviderAdapter {
     const items = item.kind === "passkey"
       ? decoded.items.map((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId ? canonical : candidate)
       : [canonical];
-    return { session: response.session, item: canonical, items };
+    return { session: response.session, item: canonical, items, raw: response.payload };
   }
 }
 
@@ -251,20 +429,30 @@ function withCreatedReference(local: VaultItem, created: VaultItem, providerId: 
 function prepareBitwardenCustomFieldMigration(
   locals: VaultItem[],
   remotes: VaultItem[],
-  providerId: string
-): { locals: VaultItem[]; forcedItemIds: Set<string> } {
+  providerId: string,
+  now: string,
+  pendingByItemId: Map<string, PendingMutation> | undefined
+): { locals: VaultItem[]; forcedItemIds: Set<string>; requestedMutations: NonNullable<ProviderSyncResult["requestedMutations"]> } {
   const local = locals.find((item): item is LoginItem => item.kind === "login");
   const remote = remotes.find((item): item is LoginItem => item.kind === "login");
   const forcedItemIds = new Set<string>();
-  if (!local || !remote || local.bitwardenCustomFieldsVersion === 1) return { locals, forcedItemIds };
-  if (providerReference(local, providerId)?.revision !== remote.updatedAt) return { locals, forcedItemIds };
+  const requestedMutations: NonNullable<ProviderSyncResult["requestedMutations"]> = [];
+  if (!local || !remote || local.bitwardenCustomFieldsVersion === 1) return { locals, forcedItemIds, requestedMutations };
+  if (providerReference(local, providerId)?.revision !== remote.updatedAt) return { locals, forcedItemIds, requestedMutations };
 
   const migration = mergeBitwardenCustomFieldOccurrences(remote.customFields, local.customFields);
-  const migrated: LoginItem = { ...local, customFields: migration.fields };
-  if (migration.needsUpload) forcedItemIds.add(local.id);
+  const mustQueue = migration.needsUpload && pendingByItemId !== undefined && !pendingByItemId.has(local.id);
+  const migrated: LoginItem = {
+    ...local,
+    customFields: migration.fields,
+    ...(mustQueue ? { bitwardenCustomFieldsVersion: 1, updatedAt: now } : {})
+  };
+  if (migration.needsUpload && !mustQueue) forcedItemIds.add(local.id);
+  if (mustQueue) requestedMutations.push({ itemId: local.id, operation: "update" });
   return {
     locals: locals.map((item) => item.id === local.id ? migrated : item),
-    forcedItemIds
+    forcedItemIds,
+    requestedMutations
   };
 }
 
@@ -331,10 +519,11 @@ function findEquivalent(local: VaultItem, remotes: VaultItem[]): VaultItem | und
  * sees one deletion plus one insertion, duplicates the credential, and a later delete becomes a false
  * concurrent-edit conflict.
  */
-function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[]): VaultItem[] {
+function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[], providerId: string, deferred: VaultItem[] = []): VaultItem[] {
   return remotes.map((remote) => {
     const local = locals.find((candidate) => Boolean(findEquivalent(candidate, [remote])));
     if (!local) return remote;
+    if (deferred.some((candidate) => candidate.id === local.id)) return withRecoveredReference(local, providerId, providerReference(remote, providerId)?.remoteId || "", remote);
     if (local.kind === "passkey" && remote.kind === "passkey") {
       return {
         ...remote,
@@ -352,6 +541,23 @@ function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[]): VaultItem
     }
     return { ...remote, id: local.id } as VaultItem;
   });
+}
+
+function withRecoveredReference(local: VaultItem, providerId: string, remoteId: string, remote?: VaultItem): VaultItem {
+  if (!remoteId) return local;
+  const remoteReference = remote?.providerRefs.find((reference) => reference.providerId === providerId);
+  return {
+    ...local,
+    providerRefs: [
+      ...local.providerRefs.filter((reference) => reference.providerId !== providerId),
+      {
+        providerId,
+        remoteId,
+        revision: remoteReference?.revision || remote?.updatedAt,
+        etag: remoteReference?.etag
+      }
+    ]
+  } as VaultItem;
 }
 
 function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {
@@ -410,4 +616,72 @@ function record(value: unknown): Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Bitwarden 操作失败。";
+}
+
+function requireBitwardenMutationRevision(response: Record<string, unknown>, previousRevision: string | undefined, operation: string): string {
+  const revision = stringValue(response, "RevisionDate", "revisionDate");
+  if (!revision || !Number.isFinite(Date.parse(revision))) {
+    throw new Error(`Bitwarden ${operation}响应缺少可验证的新修订。`);
+  }
+  if (previousRevision && revision === previousRevision) {
+    throw new Error(`Bitwarden ${operation}响应仍是旧修订，未确认远端写入。`);
+  }
+  return revision;
+}
+
+function withBitwardenDeletedDate(raw: Record<string, unknown>, deletedAt: string): Record<string, unknown> {
+  const result = { ...raw };
+  if (Object.prototype.hasOwnProperty.call(raw, "DeletedDate")) result.DeletedDate = deletedAt;
+  else result.deletedDate = deletedAt;
+  return result;
+}
+
+function boundedPendingMutations(input: PendingMutation[], providerId: string): Map<string, PendingMutation> {
+  if (!Array.isArray(input) || input.length > 100) throw new Error("Bitwarden 单批项目同步超过 100 条上限。");
+  const result = new Map<string, PendingMutation>();
+  for (const mutation of input) {
+    if (!mutation || mutation.providerId !== providerId || !mutation.id || !mutation.itemId || result.has(mutation.itemId)) {
+      throw new Error("Bitwarden 项目同步批次包含无效或重复操作。");
+    }
+    result.set(mutation.itemId, structuredClone(mutation));
+  }
+  return result;
+}
+
+function boundedMutationReceipts(input: ProviderMutationReceipt[], providerId: string): Map<string, ProviderMutationReceipt> {
+  if (!Array.isArray(input) || input.length > 100) throw new Error("Bitwarden 持久同步回执超过 100 条上限。");
+  const result = new Map<string, ProviderMutationReceipt>();
+  for (const receipt of input) {
+    if (!receipt || receipt.version !== 1 || receipt.providerId !== providerId || !receipt.mutationId || !receipt.itemId || result.has(receipt.mutationId)) {
+      throw new Error("Bitwarden 持久同步回执无效或重复。");
+    }
+    if (!/^[a-f0-9]{64}$/.test(receipt.intentFingerprint)) throw new Error("Bitwarden 持久同步指纹无效。");
+    result.set(receipt.mutationId, structuredClone(receipt));
+  }
+  return result;
+}
+
+function boundedAcknowledgedMutations(input: ProviderAcknowledgedMutation[]): Map<string, ProviderAcknowledgedMutation> {
+  if (!Array.isArray(input) || input.length > 100) throw new Error("Bitwarden 持久同步确认超过 100 条上限。");
+  const result = new Map<string, ProviderAcknowledgedMutation>();
+  for (const acknowledgement of input) {
+    if (!acknowledgement || !acknowledgement.mutationId || !acknowledgement.itemId || !acknowledgement.remoteId || result.has(acknowledgement.mutationId)) {
+      throw new Error("Bitwarden 持久同步确认无效或重复。");
+    }
+    result.set(acknowledgement.mutationId, { ...acknowledgement });
+  }
+  return result;
+}
+
+async function markMutationsAttempted(
+  context: ProviderSyncContext,
+  items: VaultItem[],
+  pendingByItemId: Map<string, PendingMutation> | undefined
+): Promise<void> {
+  if (!context.markMutationsAttempted || !pendingByItemId) return;
+  const mutationIds = [...new Set(items.flatMap((item) => {
+    const mutation = pendingByItemId.get(item.id);
+    return mutation ? [mutation.id] : [];
+  }))];
+  if (mutationIds.length) await context.markMutationsAttempted(mutationIds);
 }

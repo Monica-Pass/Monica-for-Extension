@@ -202,6 +202,7 @@ function isSensitivePageAllowed(raw: string): boolean {
         <span class="unlock-icon"><m3e-icon name="lock"></m3e-icon></span><div><strong>密码库已锁定</strong><small>解锁后才会读取当前网站的匹配项。</small></div>
         <label><span>主密码（设备密钥模式留空）</span><input v-model="masterPassword" aria-label="主密码" type="password" autocomplete="current-password" autofocus /></label>
         <m3e-button variant="filled" type="submit" :disabled="unlocking">{{ unlocking ? '解锁中…' : '解锁' }}</m3e-button>
+        <m3e-button variant="text" type="button" :disabled="unlocking" @click="openManager"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>在管理页使用 Windows Hello</m3e-button>
       </form>
 
       <template v-else>

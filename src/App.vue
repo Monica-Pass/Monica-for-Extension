@@ -30,7 +30,7 @@ import { presentKeePassRemoteError, type KeePassRemoteErrorPresentation } from "
 import type { Mdbx2HostStatus, Mdbx2VaultRuntimeStatus } from "./providers/mdbx2/native-contract";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
 import { ExtensionRuntimeError, vaultClient } from "./runtime/client";
-import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyncStatus } from "./runtime/messages";
+import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyncStatus, VaultWindowsHelloStatus } from "./runtime/messages";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
@@ -78,7 +78,7 @@ interface KeePassFormState {
 
 const vaultItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
-const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; maxAttempts: number; lastError?: string }>>([]);
+const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; recovering?: number; maxAttempts: number; lastError?: string }>>([]);
 const providerConflicts = ref<ProviderConflict[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
@@ -151,6 +151,9 @@ const keePassHistoryProviders = ref<ProviderAccount[]>([]);
 // authoritatively re-derives the envelope key, so a stale value can never weaken
 // the actual cryptographic check.
 const protectionMode = ref<"master-password" | "device-key" | "unknown">("unknown");
+const windowsHelloStatus = ref<VaultWindowsHelloStatus | null>(null);
+const windowsHelloBusy = ref<"" | "status" | "verify" | "enroll" | "revoke">("");
+const windowsHelloError = ref("");
 
 const auth = reactive({ masterPassword: "", confirmation: "" });
 const passwordChange = reactive({ currentPassword: "", newPassword: "", confirmation: "" });
@@ -296,7 +299,8 @@ async function initialize() {
   loading.value = true;
   try {
     lifecycle.value = await vaultClient.status();
-    if (lifecycle.value === "unlocked") await Promise.all([refreshItems(), refreshProviders()]);
+    if (lifecycle.value === "unlocked") await Promise.all([refreshItems(), refreshProviders(), refreshWindowsHelloStatus()]);
+    else if (lifecycle.value === "locked") await refreshWindowsHelloStatus();
   } catch (error) {
     authError.value = errorMessage(error);
   } finally {
@@ -384,6 +388,67 @@ async function lockVault() {
   keePassCardErrors.value = {};
   mdbx2RuntimeStatuses.value = {};
   mdbx2SyncStatuses.value = {};
+  void refreshWindowsHelloStatus();
+}
+
+async function refreshWindowsHelloStatus() {
+  windowsHelloBusy.value = "status";
+  windowsHelloError.value = "";
+  try {
+    windowsHelloStatus.value = await vaultClient.windowsHelloStatus();
+    if (windowsHelloStatus.value.protectionMode !== "unknown") rememberProtectionMode(windowsHelloStatus.value.protectionMode);
+  } catch (error) {
+    windowsHelloStatus.value = null;
+    windowsHelloError.value = errorMessage(error);
+  } finally {
+    windowsHelloBusy.value = "";
+  }
+}
+
+async function unlockVaultWithWindowsHello() {
+  windowsHelloBusy.value = "verify";
+  authError.value = "";
+  windowsHelloError.value = "";
+  try {
+    vaultItems.value = await vaultClient.unlockWithWindowsHello();
+    lifecycle.value = "unlocked";
+    rememberProtectionMode("device-key");
+    await Promise.all([refreshProviders(), refreshWindowsHelloStatus()]);
+  } catch (error) {
+    authError.value = errorMessage(error);
+  } finally {
+    windowsHelloBusy.value = "";
+  }
+}
+
+async function enrollWindowsHello() {
+  if (!window.confirm("Windows 将弹出系统验证并创建 Monica 专用凭据。注册后设备密钥解锁会要求 Windows Hello，确定继续吗？")) return;
+  windowsHelloBusy.value = "enroll";
+  windowsHelloError.value = "";
+  try {
+    await vaultClient.enrollWindowsHello();
+    await refreshWindowsHelloStatus();
+    showNotice("Windows Hello 已注册；下次设备密钥解锁将要求系统验证。");
+  } catch (error) {
+    windowsHelloError.value = errorMessage(error);
+  } finally {
+    windowsHelloBusy.value = "";
+  }
+}
+
+async function revokeWindowsHello() {
+  if (!window.confirm("撤销后将恢复设备密钥的普通解锁方式。确定删除本机 Windows Hello 凭据吗？")) return;
+  windowsHelloBusy.value = "revoke";
+  windowsHelloError.value = "";
+  try {
+    await vaultClient.revokeWindowsHello();
+    await refreshWindowsHelloStatus();
+    showNotice("Windows Hello 本机绑定已撤销。");
+  } catch (error) {
+    windowsHelloError.value = errorMessage(error);
+  } finally {
+    windowsHelloBusy.value = "";
+  }
 }
 
 async function refreshItems() {
@@ -474,6 +539,7 @@ function navigate(section: Section) {
   activeSection.value = section;
   mobileNavOpen.value = false;
   if (section === "providers") void refreshProviders();
+  if (section === "settings") void refreshWindowsHelloStatus();
 }
 
 function sectionTitle(section: Section): string {
@@ -1638,6 +1704,11 @@ function errorCode(error: unknown): string | undefined {
           <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可留空。留空时使用本机设备密钥自动解锁；设置主密码可获得更强的离线保护。' : '主密码模式请输入密码；设备密钥模式可留空解锁。' }}</p></div>
           <label class="field"><span>主密码{{ lifecycle === 'uninitialized' ? '（可选）' : '' }}</span><input v-model="auth.masterPassword" aria-label="主密码" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></label>
           <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
+          <div v-if="lifecycle === 'locked' && windowsHelloStatus?.unlockAvailable" class="hello-unlock-action">
+            <m3e-button variant="tonal" type="button" :disabled="Boolean(windowsHelloBusy) || authBusy" @click="unlockVaultWithWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'verify' ? '正在等待 Windows Hello…' : '使用 Windows Hello 解锁' }}</m3e-button>
+            <small>验证成功后只释放当前浏览器会话的设备密钥；取消或超时会保持锁定。</small>
+          </div>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 当前不可用，仍可使用主密码或设备密钥恢复。</p>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
           <div v-if="lifecycle === 'uninitialized'" class="recovery-panel stack">
@@ -1811,7 +1882,7 @@ function errorCode(error: unknown): string | undefined {
               <div v-if="!isRemoteKeePass(provider) && keePassSessionFor(provider.id)?.dirty" class="provider-dirty-warning" role="status"><m3e-icon name="save"></m3e-icon><div><strong>有尚未导出的 KDBX 修改</strong><p>修改只在内存中。请立即导出并手动覆盖原文件；锁库、关闭浏览器或后台重启都会丢失未导出的文件改动。</p></div></div>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 KDBX 版本' : '接受文件删除' }}</m3e-button></div></div>
               <p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>{{ isRemoteKeePass(provider) ? 'WebDAV 使用本机加密工作副本和精确 ETag 条件写入；并发修改会重组或明确停止，远端文件不会按最后修改时间静默覆盖。' : '本地文件由浏览器内存编辑，完成后需要导出覆盖原 KDBX。Twofish KDBX 请先在 Monica Android 或 KeePassXC 中转换为 AES-256。' }}</span></p>
-              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
+              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.recovering"> · {{ queueFor(provider.id)?.recovering }} 项正在恢复远端结果</span><span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
               <div class="source-actions">
                 <m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
                 <m3e-button v-else-if="isRemoteKeePass(provider) && keePassRemoteStatusFor(provider.id)?.sessionState === 'restorable'" variant="filled" :disabled="Boolean(keePassBusy) || Boolean(webDavBusy)" @click="restoreKeePassRemoteSession(provider)"><m3e-icon slot="icon" name="restore"></m3e-icon>{{ activeKeePassProviderId === provider.id && keePassBusy === 'restore' ? '恢复中…' : '恢复本机会话' }}</m3e-button>
@@ -1827,7 +1898,7 @@ function errorCode(error: unknown): string | undefined {
               <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
               <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
               <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
-              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
+              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.recovering"> · {{ queueFor(provider.id)?.recovering }} 项正在恢复远端结果</span><span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button></div></div>
                <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>当前支持登录、卡片、身份、笔记、TOTP、Passkey 与加密附件；Sends 仍请使用 Bitwarden 官网或 Monica Android。</span></p>
               <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenFolders(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenCollections(provider)"><m3e-icon slot="icon" name="folder_shared"></m3e-icon>管理 Collection</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
@@ -1838,6 +1909,15 @@ function errorCode(error: unknown): string | undefined {
 
         <section v-else class="settings-grid">
           <AppearancePanel class="motion-card" />
+          <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
+            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows 平台验证器保护本机设备密钥解锁。私钥留在 Windows Hello，主密码恢复始终保留。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
+            <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? '设备可用' : '设备不可用' }}</strong><small>平台验证器</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? '已注册' : '未注册' }}</strong><small>当前密码库</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? '设备密钥' : windowsHelloStatus.protectionMode === 'master-password' ? '主密码' : '未知' }}</strong><small>保护方式</small></span></div>
+            <p v-if="windowsHelloStatus?.protectionMode === 'master-password'" class="supporting">当前使用主密码保护。转换为设备密钥后才能使用 Windows Hello 免输入解锁。</p>
+            <p v-else-if="windowsHelloStatus?.vaultEnrolled" class="supporting">每次自动锁定后需要重新完成系统验证；取消、超时和 Native Host 异常均保持锁定。</p>
+            <p v-else class="supporting">注册需要当前密码库已经解锁，并会在 Windows 中创建 Monica 专用平台凭据。</p>
+            <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册 Windows Hello' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>
+            <p v-if="windowsHelloError" class="form-error" role="alert">{{ windowsHelloError }}</p>
+          </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>加密整库备份</h2>
             <p class="supporting">包含项目、密码源和设置，使用独立备份密码加密；恢复时需要此备份密码，与主密码互不影响。</p>
