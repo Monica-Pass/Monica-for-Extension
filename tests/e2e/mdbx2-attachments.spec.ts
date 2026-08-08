@@ -99,7 +99,7 @@ test("MDBX2 item attachments support download upload replace delete and narrow M
     const confirmNew = newRow.getByRole("button", { name: "确认删除" });
     await expect(confirmNew).toBeFocused();
     await confirmNew.click();
-    await expect(dialog.getByText("此项目还没有附件。")).toBeVisible();
+    await expect(dialog.getByText("此项目还没有普通附件。")).toBeVisible();
     await expectNoHorizontalOverflow(dialog);
     await page.screenshot({ path: testInfo.outputPath("mdbx2-attachments-empty.png"), fullPage: true });
   } finally {
