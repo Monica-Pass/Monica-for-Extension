@@ -921,7 +921,8 @@ describe("encrypted vault", () => {
       verified: true
     }));
     expect(enrolled.bindingId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(JSON.stringify(storage.envelope)).not.toContain(enrolled.bindingId);
+    expect(storage.envelope?.kdf).toMatchObject({ name: "DEVICE-KEY", windowsHelloBindingId: enrolled.bindingId });
+    expect(storage.envelope?.ciphertext).not.toContain(enrolled.bindingId);
 
     await service.lock();
     await deviceKeys.setAutoUnlockSuspended(false);
@@ -937,6 +938,91 @@ describe("encrypted vault", () => {
     expect(verifiedBinding).toBe(enrolled.bindingId);
     expect(verifiedChallenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
     await expect(service.status()).resolves.toBe("unlocked");
+  });
+
+  it("verifies Windows Hello before reading the device key and decrypting the vault", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await service.setup("");
+    const binding = await service.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    await service.lock();
+    deviceKeys.keys.clear();
+    let verifiedBinding = "";
+    await expect(service.unlockWithWindowsHello(async (bindingId) => {
+      verifiedBinding = bindingId;
+      throw new Error("cancelled-before-key-read");
+    })).rejects.toThrow("cancelled-before-key-read");
+    expect(verifiedBinding).toBe(binding.bindingId);
+    await expect(service.status()).resolves.toBe("locked");
+  });
+
+  it("migrates legacy encrypted bindings and rejects a header-to-vault binding mismatch", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await service.setup("");
+    const binding = await service.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    if (!storage.envelope || storage.envelope.kdf.name !== "DEVICE-KEY") throw new Error("device envelope expected");
+    storage.envelope.kdf = { name: "DEVICE-KEY", keyId: storage.envelope.kdf.keyId };
+    await service.lock();
+
+    const restarted = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await expect(restarted.windowsHelloBindingIdForRuntime()).resolves.toBe(binding.bindingId);
+    expect(storage.envelope?.kdf).toMatchObject({ windowsHelloBindingId: binding.bindingId });
+
+    const differentBinding = "22222222-2222-4222-8222-222222222222";
+    if (!storage.envelope || storage.envelope.kdf.name !== "DEVICE-KEY") throw new Error("device envelope expected");
+    storage.envelope.kdf.windowsHelloBindingId = differentBinding;
+    let verifiedBinding = "";
+    await expect(restarted.unlockWithWindowsHello(async (bindingId) => { verifiedBinding = bindingId; }))
+      .rejects.toThrow("本机绑定与加密密码库不一致");
+    expect(verifiedBinding).toBe(differentBinding);
+    await expect(restarted.status()).resolves.toBe("locked");
+  });
+
+  it("requires native revocation before changing an enrolled device-key protection mode", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore(), () => 1_785_600_000_000, new MemoryVaultDeviceKeyStore());
+    await service.setup("");
+    await service.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    await expect(service.changeMasterPassword("", "new recovery password")).rejects.toThrow("先撤销当前 Windows Hello");
+  });
+
+  it("restores a portable encrypted backup over a locked Hello vault and removes the replaced device key", async () => {
+    const source = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await source.setup("source vault password", [createLoginItem({ title: "Recovered item", password: "recovered secret" })]);
+    const backup = await source.exportEncryptedBackup("portable backup password");
+
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const target = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await target.setup("");
+    await target.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    await target.lock();
+
+    const restored = await target.restoreEncryptedBackup(backup, "portable backup password", { replaceExisting: true, currentPassword: "" });
+    expect(restored.settings.windowsHello).toBeUndefined();
+    expect(restored.items).toEqual([expect.objectContaining({ title: "Recovered item", password: "recovered secret" })]);
+    expect(storage.envelope?.kdf.name).toBe("ARGON2ID");
+    expect(deviceKeys.keys.size).toBe(0);
+    await expect(target.status()).resolves.toBe("unlocked");
+  });
+
+  it("removes a Windows Hello binding from a legacy same-device device-key backup", async () => {
+    const storage = new MemoryVaultStorage();
+    const deviceKeys = new MemoryVaultDeviceKeyStore();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore(), () => 1_785_600_000_000, deviceKeys);
+    await service.setup("", [createLoginItem({ title: "Legacy device backup" })]);
+    await service.enrollWindowsHello(async (bindingId) => ({ version: 1, bindingId, rpId: "monica-extension.local", enrolledAtUnixSeconds: 1_785_600_000, verified: true }));
+    if (!storage.envelope) throw new Error("vault envelope expected");
+    const backup = { magic: "MONICA_EXTENSION_BACKUP" as const, version: 1 as const, exportedAt: new Date().toISOString(), envelope: structuredClone(storage.envelope) };
+
+    const restored = await service.restoreEncryptedBackup(backup, "", { replaceExisting: true, currentPassword: "" });
+    expect(restored.settings.windowsHello).toBeUndefined();
+    expect(storage.envelope?.kdf).toMatchObject({ name: "DEVICE-KEY" });
+    if (storage.envelope?.kdf.name !== "DEVICE-KEY") throw new Error("device envelope expected");
+    expect(storage.envelope.kdf.windowsHelloBindingId).toBeUndefined();
+    await expect(service.readState()).resolves.toMatchObject({ settings: { windowsHello: undefined } });
   });
 
   it("keeps the session locked when Windows Hello is cancelled and removes the binding only after native revocation", async () => {

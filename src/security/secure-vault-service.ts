@@ -63,10 +63,14 @@ export class SecureVaultService {
     const session = await this.sessions.read();
     if (!session) {
       if (envelope.kdf.name !== "DEVICE-KEY" || await this.deviceKeys.isAutoUnlockSuspended()) return "locked";
+      if (envelope.kdf.windowsHelloBindingId) return "locked";
       try {
         const key = await this.deviceKey(envelope.kdf);
         const state = await decryptVaultState(envelope, key);
-        if (state.settings.windowsHello) return "locked";
+        if (state.settings.windowsHello) {
+          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)));
+          return "locked";
+        }
         await this.startSession(key, state.settings.autoLockMinutes);
         return "unlocked";
       } catch {
@@ -111,6 +115,7 @@ export class SecureVaultService {
   async unlock(masterPassword: string): Promise<VaultState> {
     return this.runExclusive(async () => {
     const envelope = await this.requireEnvelope();
+    if (envelope.kdf.name === "DEVICE-KEY" && envelope.kdf.windowsHelloBindingId) throw new VaultHelloRequiredError();
     let key: CryptoKey;
     let state: VaultState;
     try {
@@ -120,7 +125,10 @@ export class SecureVaultService {
       await this.sessions.clear();
       throw new VaultUnlockError();
     }
-    if (envelope.kdf.name === "DEVICE-KEY" && state.settings.windowsHello) throw new VaultHelloRequiredError();
+    if (envelope.kdf.name === "DEVICE-KEY" && state.settings.windowsHello) {
+      await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)));
+      throw new VaultHelloRequiredError();
+    }
     if (envelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(envelope.kdf)) {
       try {
         const upgraded = await deriveVaultKey(masterPassword);
@@ -148,26 +156,45 @@ export class SecureVaultService {
     verify: (bindingId: string, challengeBase64Url: string) => Promise<unknown>
   ): Promise<VaultState> {
     return this.runExclusive(async () => {
-      const envelope = await this.requireEnvelope();
+      let envelope = await this.requireEnvelope();
       if (envelope.kdf.name !== "DEVICE-KEY") {
         throw new VaultHelloRequiredError("当前密码库使用主密码保护，请输入主密码；Windows Hello 只用于本机设备密钥密码库。");
       }
-      let key: CryptoKey;
-      let state: VaultState;
+      const deviceKdf = envelope.kdf;
+      let bindingId = deviceKdf.windowsHelloBindingId;
+      let key: CryptoKey | undefined;
+      let state: VaultState | undefined;
+      if (!bindingId) {
+        try {
+          key = await this.deviceKey(deviceKdf);
+          state = await decryptVaultState(envelope, key);
+        } catch {
+          await this.sessions.clear();
+          throw new VaultUnlockError();
+        }
+        const legacyBinding = state.settings.windowsHello;
+        if (!legacyBinding) throw new VaultHelloRequiredError("当前密码库没有有效的 Windows Hello 绑定。");
+        bindingId = legacyBinding.bindingId;
+        envelope = await encryptVaultState(state, key, withWindowsHelloBindingId(deviceKdf, bindingId));
+        await this.storage.write(envelope);
+      }
+      const challengeBase64Url = bytesToBase64(randomBytes(32))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      await verify(bindingId, challengeBase64Url);
       try {
-        key = await this.deviceKey(envelope.kdf);
-        state = await decryptVaultState(envelope, key);
+        key ||= await this.deviceKey(deviceKdf);
+        state ||= await decryptVaultState(envelope, key);
       } catch {
         await this.sessions.clear();
         throw new VaultUnlockError();
       }
       const binding = state.settings.windowsHello;
-      if (!binding) throw new VaultHelloRequiredError("当前密码库尚未注册 Windows Hello，请使用主密码或先在已解锁管理页注册。");
-      const challengeBase64Url = bytesToBase64(randomBytes(32))
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/g, "");
-      await verify(binding.bindingId, challengeBase64Url);
+      if (!binding || binding.bindingId !== bindingId || binding.rpId !== "monica-extension.local") {
+        await this.sessions.clear();
+        throw new VaultHelloRequiredError("Windows Hello 本机绑定与加密密码库不一致，密码库保持锁定。");
+      }
       await this.startSession(key, state.settings.autoLockMinutes);
       await this.deviceKeys.setAutoUnlockSuspended(false);
       return state;
@@ -183,10 +210,11 @@ export class SecureVaultService {
     });
   }
 
-  async windowsHelloBindingForRuntime(): Promise<WindowsHelloBinding | undefined> {
+  async windowsHelloBindingIdForRuntime(): Promise<string | undefined> {
     return this.runExclusive(async () => {
       const envelope = await this.storage.read();
       if (!envelope) return undefined;
+      if (envelope.kdf.name === "DEVICE-KEY" && envelope.kdf.windowsHelloBindingId) return envelope.kdf.windowsHelloBindingId;
       try {
         const session = await this.sessions.read();
         let key: CryptoKey;
@@ -194,7 +222,11 @@ export class SecureVaultService {
         else if (envelope.kdf.name === "DEVICE-KEY") key = await this.deviceKey(envelope.kdf);
         else return undefined;
         const state = await decryptVaultState(envelope, key);
-        return structuredClone(state.settings.windowsHello);
+        const bindingId = state.settings.windowsHello?.bindingId;
+        if (bindingId && envelope.kdf.name === "DEVICE-KEY") {
+          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, bindingId)));
+        }
+        return bindingId;
       } catch {
         return undefined;
       }
@@ -222,10 +254,10 @@ export class SecureVaultService {
       let nativeEnrolled = false;
       try {
         const native = await enroll(bindingId);
+        nativeEnrolled = true;
         if (native.version !== 1 || native.bindingId !== bindingId || native.rpId !== "monica-extension.local" || native.verified !== true || !Number.isSafeInteger(native.enrolledAtUnixSeconds) || native.enrolledAtUnixSeconds < 1) {
           throw new Error("Windows Hello 注册响应无效。");
         }
-        nativeEnrolled = true;
         const binding: WindowsHelloBinding = {
           version: 1,
           bindingId,
@@ -234,7 +266,8 @@ export class SecureVaultService {
         };
         state.settings.windowsHello = binding;
         state.updatedAt = new Date(this.now()).toISOString();
-        await this.persist(state, key, envelope.kdf);
+        if (envelope.kdf.name !== "DEVICE-KEY") throw new VaultHelloRequiredError();
+        await this.persist(state, key, withWindowsHelloBindingId(envelope.kdf, bindingId));
         return binding;
       } catch (error) {
         if (nativeEnrolled && revoke) {
@@ -253,7 +286,7 @@ export class SecureVaultService {
       await revoke(binding.bindingId);
       delete state.settings.windowsHello;
       state.updatedAt = new Date(this.now()).toISOString();
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, withoutWindowsHelloBindingId(envelope.kdf));
     });
   }
 
@@ -267,6 +300,7 @@ export class SecureVaultService {
       } catch {
         throw new VaultUnlockError();
       }
+      if (state.settings.windowsHello) throw new VaultHelloRequiredError("更改保护方式前需要先撤销当前 Windows Hello 本机绑定。");
       let newKey: CryptoKey;
       let newKdf: VaultKdfParameters;
       if (newPassword) {
@@ -320,6 +354,7 @@ export class SecureVaultService {
       const backup = validateEncryptedBackup(input);
       const existing = await this.storage.read();
       if (existing && !options.replaceExisting) throw new Error("当前已存在密码库；替换恢复需要明确确认。");
+      const replacedDeviceKeyId = existing?.kdf.name === "DEVICE-KEY" ? existing.kdf.keyId : undefined;
 
       let restoredState: VaultState;
       let backupKey: CryptoKey;
@@ -347,10 +382,7 @@ export class SecureVaultService {
         }
       }
 
-      let restoredEnvelope = structuredClone(backup.envelope);
-      if (backup.envelope.kdf.name !== "DEVICE-KEY") {
-        restoredEnvelope = await encryptVaultState(restoredState, backupKey, restoredEnvelope.kdf);
-      }
+      let restoredEnvelope = await encryptVaultState(restoredState, backupKey, withoutWindowsHelloBindingId(backup.envelope.kdf));
       if (restoredEnvelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(restoredEnvelope.kdf)) {
         try {
           const upgraded = await deriveVaultKey(backupPassword);
@@ -363,9 +395,13 @@ export class SecureVaultService {
       await this.storage.write(restoredEnvelope);
       try {
         await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
+        await this.deviceKeys.setAutoUnlockSuspended(false);
       } catch {
         await this.sessions.clear();
         throw new Error("加密备份已恢复，但无法继续当前会话；请使用备份密码重新解锁。");
+      }
+      if (replacedDeviceKeyId && (restoredEnvelope.kdf.name !== "DEVICE-KEY" || restoredEnvelope.kdf.keyId !== replacedDeviceKeyId)) {
+        try { await this.deviceKeys.remove(replacedDeviceKeyId); } catch { /* The replaced vault is already durable; stale key cleanup is best effort. */ }
       }
       return restoredState;
     });
@@ -1153,10 +1189,18 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
 }
 
 export class VaultHelloRequiredError extends Error {
-  constructor(message = "此设备密钥密码库需要 Windows Hello 验证，或使用主密码恢复。") {
+  constructor(message = "此设备密钥密码库需要 Windows Hello 验证；本机绑定不可用时请使用加密整库备份恢复。") {
     super(message);
     this.name = "VaultHelloRequiredError";
   }
+}
+
+function withWindowsHelloBindingId(kdf: DeviceVaultKdfParameters, bindingId: string): DeviceVaultKdfParameters {
+  return { name: "DEVICE-KEY", keyId: kdf.keyId, windowsHelloBindingId: bindingId };
+}
+
+function withoutWindowsHelloBindingId(kdf: VaultKdfParameters): VaultKdfParameters {
+  return kdf.name === "DEVICE-KEY" ? { name: "DEVICE-KEY", keyId: kdf.keyId } : kdf;
 }
 
 export interface WindowsHelloNativeEnrollment {

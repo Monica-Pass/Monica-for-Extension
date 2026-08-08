@@ -935,7 +935,7 @@ export interface Mdbx2HostCapabilities {
   windowsHelloRpId: typeof MDBX2_WINDOWS_HELLO_RP_ID;
 }
 
-export type Mdbx2WindowsHelloReason = "windows-only" | "platform-authenticator-unavailable" | "not-enrolled" | "ready";
+export type Mdbx2WindowsHelloReason = "windows-only" | "platform-authenticator-unavailable" | "not-enrolled" | "binding-record-invalid" | "ready";
 
 export interface Mdbx2WindowsHelloStatus {
   version: typeof MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION;

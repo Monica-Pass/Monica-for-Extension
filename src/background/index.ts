@@ -277,14 +277,17 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_HELLO_STATUS": {
       assertManagerPage(sender);
-      const binding = await service.windowsHelloBindingForRuntime();
-      const native = await mdbx2NativeClient.windowsHelloStatus(binding?.bindingId);
+      const bindingId = await service.windowsHelloBindingIdForRuntime();
+      const native = await mdbx2NativeClient.windowsHelloStatus(bindingId);
       const protectionMode = await service.protectionModeForRuntime();
+      const vaultEnrolled = Boolean(bindingId);
+      const bindingConsistent = !vaultEnrolled || native.enrolled;
       return {
         native,
-        vaultEnrolled: Boolean(binding),
+        vaultEnrolled,
+        bindingConsistent,
         protectionMode,
-        unlockAvailable: Boolean(binding && protectionMode === "device-key" && native.supported && native.available)
+        unlockAvailable: Boolean(vaultEnrolled && bindingConsistent && protectionMode === "device-key" && native.supported && native.available)
       };
     }
     case "VAULT_HELLO_ENROLL": {
@@ -335,6 +338,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.exportEncryptedBackup(request.backupPassword);
     case "VAULT_RESTORE_ENCRYPTED": {
       assertExtensionPage(sender);
+      const replacedHelloBindingId = request.replaceExisting ? await service.windowsHelloBindingIdForRuntime() : undefined;
       abortProviderSyncs();
       mdbx2NativeClient.close();
       mdbx2Provider.lock();
@@ -347,6 +351,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         replaceExisting: request.replaceExisting,
         currentPassword: request.currentPassword
       });
+      if (replacedHelloBindingId) {
+        try { await mdbx2NativeClient.revokeWindowsHello(replacedHelloBindingId); }
+        catch { /* The restored vault no longer trusts this binding; native orphan cleanup is best effort. */ }
+      }
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();

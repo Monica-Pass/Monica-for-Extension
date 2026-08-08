@@ -316,6 +316,24 @@ describe("MDBX2 Native Messaging client", () => {
     client.close();
   });
 
+  it("accepts the bounded damaged-binding status without exposing credential material", async () => {
+    const runtime = new FakeRuntime();
+    const bindingId = "11111111-1111-4111-8111-111111111111";
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({
+        protocol: MDBX2_NATIVE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        ok: true,
+        result: { version: 1, supported: true, available: true, enrolled: false, bindingIdPresent: true, rpId: MDBX2_WINDOWS_HELLO_RP_ID, reason: "binding-record-invalid" }
+      } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime, () => "hello-invalid-record");
+    await expect(client.windowsHelloStatus(bindingId)).resolves.toMatchObject({ enrolled: false, bindingIdPresent: true, reason: "binding-record-invalid" });
+    expect(JSON.stringify(runtime.port.messages)).not.toContain("credentialId");
+    client.close();
+  });
+
   it("rejects a Host that claims MDBX1 support or a different chunk boundary", () => {
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, supportsMdbx1: true })).toThrowError(Mdbx2NativeHostError);
     expect(() => validateMdbx2HostCapabilities({ ...HELLO, maxBinaryChunkBytes: 64 * 1024 })).toThrow("分块限制");

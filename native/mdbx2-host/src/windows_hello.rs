@@ -50,10 +50,17 @@ impl WindowsHelloStore {
         let binding_id = optional_binding_id(params.remove("bindingId"))?;
         reject_unknown(params)?;
         let available = platform_authenticator_available()?;
-        let enrolled = binding_id
-            .as_deref()
-            .map(|id| matches!(read_record(&self.record_path(id)), Ok(Some(_))))
-            .unwrap_or(false);
+        let (enrolled, record_invalid) = match binding_id.as_deref() {
+            None => (false, false),
+            Some(id) => match read_record(&self.record_path(id)) {
+                Ok(None) => (false, false),
+                Ok(Some(record)) => match credential_bytes(&record, id) {
+                    Ok(_) => (true, false),
+                    Err(_) => (false, true),
+                },
+                Err(_) => (false, true),
+            },
+        };
         Ok(json!({
             "version": HELLO_PROTOCOL_VERSION,
             "supported": cfg!(windows),
@@ -61,7 +68,7 @@ impl WindowsHelloStore {
             "enrolled": enrolled,
             "bindingIdPresent": binding_id.is_some(),
             "rpId": HELLO_RP_ID,
-            "reason": if !cfg!(windows) { "windows-only" } else if !available { "platform-authenticator-unavailable" } else if !enrolled { "not-enrolled" } else { "ready" }
+            "reason": if !cfg!(windows) { "windows-only" } else if record_invalid { "binding-record-invalid" } else if !available { "platform-authenticator-unavailable" } else if !enrolled { "not-enrolled" } else { "ready" }
         }))
     }
 
@@ -126,32 +133,7 @@ impl WindowsHelloStore {
                 false,
             )
         })?;
-        if record.rp_id != HELLO_RP_ID
-            || record.binding_id != binding_id
-            || record.version != HELLO_PROTOCOL_VERSION
-        {
-            return Err(RpcFailure::new(
-                "hello-record-invalid",
-                "Windows Hello 本机绑定记录无效，已保持锁定。",
-                false,
-            ));
-        }
-        let credential_id = URL_SAFE_NO_PAD
-            .decode(record.credential_id.as_bytes())
-            .map_err(|_| {
-                RpcFailure::new(
-                    "hello-record-invalid",
-                    "Windows Hello 凭据记录无效，已保持锁定。",
-                    false,
-                )
-            })?;
-        if credential_id.is_empty() || credential_id.len() > MAX_CREDENTIAL_ID_BYTES {
-            return Err(RpcFailure::new(
-                "hello-record-invalid",
-                "Windows Hello 凭据记录长度无效，已保持锁定。",
-                false,
-            ));
-        }
+        let credential_id = credential_bytes(&record, &binding_id)?;
         platform_verify(&binding_id, &challenge, &credential_id)?;
         let verified_at = unix_seconds()?;
         record.last_verified_at_unix_secs = Some(verified_at);
@@ -178,18 +160,12 @@ impl WindowsHelloStore {
             ));
         }
         let path = self.record_path(&binding_id);
-        let record = read_record(&path)?.ok_or_else(|| {
-            RpcFailure::new("hello-not-enrolled", "Windows Hello 尚未注册。", false)
-        })?;
-        let credential_id = URL_SAFE_NO_PAD
-            .decode(record.credential_id.as_bytes())
-            .map_err(|_| {
-                RpcFailure::new(
-                    "hello-record-invalid",
-                    "Windows Hello 凭据记录无效。",
-                    false,
-                )
-            })?;
+        let Some(record) = read_record(&path)? else {
+            return Ok(
+                json!({ "version": HELLO_PROTOCOL_VERSION, "revoked": true, "bindingId": binding_id }),
+            );
+        };
+        let credential_id = credential_bytes(&record, &binding_id)?;
         platform_revoke(&credential_id)?;
         fs::remove_file(&path).map_err(|_| {
             RpcFailure::new(
@@ -315,6 +291,39 @@ fn read_record(path: &Path) -> Result<Option<HelloCredentialRecord>, RpcFailure>
         )
     })?;
     Ok(Some(record))
+}
+
+fn credential_bytes(
+    record: &HelloCredentialRecord,
+    binding_id: &str,
+) -> Result<Vec<u8>, RpcFailure> {
+    if record.rp_id != HELLO_RP_ID
+        || record.binding_id != binding_id
+        || record.version != HELLO_PROTOCOL_VERSION
+    {
+        return Err(RpcFailure::new(
+            "hello-record-invalid",
+            "Windows Hello 本机绑定记录无效，已保持锁定。",
+            false,
+        ));
+    }
+    let credential_id = URL_SAFE_NO_PAD
+        .decode(record.credential_id.as_bytes())
+        .map_err(|_| {
+            RpcFailure::new(
+                "hello-record-invalid",
+                "Windows Hello 凭据记录无效，已保持锁定。",
+                false,
+            )
+        })?;
+    if credential_id.is_empty() || credential_id.len() > MAX_CREDENTIAL_ID_BYTES {
+        return Err(RpcFailure::new(
+            "hello-record-invalid",
+            "Windows Hello 凭据记录长度无效，已保持锁定。",
+            false,
+        ));
+    }
+    Ok(credential_id)
 }
 
 fn write_record(path: &Path, record: &HelloCredentialRecord) -> Result<(), RpcFailure> {
@@ -702,6 +711,27 @@ mod tests {
         assert_eq!(result["version"], HELLO_PROTOCOL_VERSION);
         assert!(result.get("credentialId").is_none());
         assert!(result.get("privateKey").is_none());
+    }
+
+    #[test]
+    fn status_reports_a_damaged_binding_and_missing_revoke_is_idempotent() {
+        let directory = tempdir().unwrap();
+        let binding_id = Uuid::new_v4().to_string();
+        let path = directory
+            .path()
+            .join("hello")
+            .join(format!("{binding_id}.json"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, br#"{"version":1,"bindingId":"wrong","rpId":"monica-extension.local","credentialId":"AA","createdAtUnixSecs":1}"#).unwrap();
+        let store = WindowsHelloStore::new(directory.path());
+        let status = store.status(json!({ "bindingId": binding_id })).unwrap();
+        assert_eq!(status["enrolled"], false);
+        assert_eq!(status["reason"], "binding-record-invalid");
+        fs::remove_file(&path).unwrap();
+        let revoked = store
+            .revoke(json!({ "bindingId": binding_id, "confirmed": true }))
+            .unwrap();
+        assert_eq!(revoked["revoked"], true);
     }
 
     #[test]

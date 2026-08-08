@@ -22,7 +22,7 @@ test("Windows Hello remains manager-only and exposes a truthful device-key recov
 
     await manager.getByRole("button", { name: "设置与备份" }).click();
     await expect(manager.getByRole("heading", { name: "Windows Hello" })).toBeVisible();
-    await expect(manager.getByText(/主密码恢复始终保留/)).toBeVisible();
+    await expect(manager.getByText(/设备密钥模式不保存主密码，请保留加密整库备份/)).toBeVisible();
 
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);

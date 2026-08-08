@@ -1309,7 +1309,7 @@ function transferPurpose(value: unknown): Mdbx2InboundTransferPurpose {
 
 function windowsHelloStatus(input: unknown): Mdbx2WindowsHelloStatus {
   const value = objectResult(input, "Windows Hello 状态响应无效。");
-  const reason = value.reason === "windows-only" || value.reason === "platform-authenticator-unavailable" || value.reason === "not-enrolled" || value.reason === "ready"
+  const reason = value.reason === "windows-only" || value.reason === "platform-authenticator-unavailable" || value.reason === "not-enrolled" || value.reason === "binding-record-invalid" || value.reason === "ready"
     ? value.reason
     : undefined;
   if (value.version !== MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION || value.rpId !== MDBX2_WINDOWS_HELLO_RP_ID || !reason) throw incompatibleResult("Windows Hello 状态响应版本或 RP ID 无效。");

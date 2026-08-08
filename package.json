@@ -22,6 +22,9 @@
     "test:bitwarden-interop": "vitest run --config vitest.bitwarden-interop.config.ts",
     "test:mdbx2-host": "cargo test --locked --manifest-path native/mdbx2-host/Cargo.toml",
     "build:mdbx2-host:debug": "cargo build --locked --manifest-path native/mdbx2-host/Cargo.toml",
+    "test:windows-hello:host": "npm run build:mdbx2-host:debug && node scripts/windows-hello-host-probe.mjs",
+    "test:windows-hello": "npm run test:windows-hello:host && vitest run src/providers/mdbx2/native-client.test.ts src/security/secure-vault-service.test.ts src/security/vault-crypto.test.ts src/runtime/sender-policy.test.ts && npm run build && playwright test tests/e2e/windows-hello.spec.ts tests/e2e/shared-security-ui.spec.ts",
+    "test:windows-hello:hardware": "npm run build:mdbx2-host:debug && node scripts/windows-hello-hardware-acceptance.mjs",
     "test:mdbx2-android-interop": "npm run build:mdbx2-host:debug && vitest run --config vitest.android-interop.config.ts",
     "test:keepass-interop": "vitest run --config vitest.keepass-interop.config.ts",
     "lint:mdbx2-host": "cargo clippy --locked --manifest-path native/mdbx2-host/Cargo.toml --all-targets -- -D warnings",
@@ -41,7 +44,7 @@
     "verify:workflows": "node scripts/verify-workflows.mjs",
     "verify:mdbx2-host": "node scripts/verify-mdbx2-host.mjs",
     "verify:supply-chain": "npm run verify:toolchain && npm run verify:lockfile && npm run verify:workflows && npm run verify:mdbx2-host",
-    "release:check": "npm run verify:supply-chain && npm run audit:production && npm run test:mdbx2-host && npm run lint:mdbx2-host && npm run validate && npm run test:bitwarden-interop && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
+    "release:check": "npm run verify:supply-chain && npm run audit:production && npm run test:mdbx2-host && npm run test:windows-hello:host && npm run lint:mdbx2-host && npm run validate && npm run test:bitwarden-interop && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "release:windows": "npm run release:check && npm run package:mdbx2-host && npm run package:verify:mdbx2-host",
     "preview": "vite preview --host 127.0.0.1"
   },

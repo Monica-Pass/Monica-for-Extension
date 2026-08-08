@@ -91,8 +91,9 @@ test("shared provider and Windows Hello actions use secret-free retry-safe M3E c
             return { ok: true };
           }
           if (message.type === "VAULT_HELLO_STATUS") return { ok: true, data: {
-            native: { version: 1, supported: true, available: true, enrolled: helloEnrolled, bindingIdPresent: helloEnrolled, rpId: "monica-extension.local", reason: "ready" },
+            native: { version: 1, supported: true, available: true, enrolled: helloEnrolled, bindingIdPresent: helloEnrolled, rpId: "monica-extension.local", reason: helloEnrolled ? "ready" : "not-enrolled" },
             vaultEnrolled: helloEnrolled,
+            bindingConsistent: true,
             protectionMode: "device-key",
             unlockAvailable: helloEnrolled
           } };

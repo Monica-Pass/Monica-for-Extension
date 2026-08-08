@@ -1785,7 +1785,7 @@ async function selectEncryptedBackup(event: Event) {
 async function restoreEncryptedVault() {
   if (!selectedEncryptedBackup.value) return void (securityError.value = "请先选择加密整库备份。");
   if (!restoreForm.backupPassword) return void (securityError.value = "请输入备份时使用的独立备份密码。");
-  const replacing = lifecycle.value === "unlocked";
+  const replacing = lifecycle.value !== "uninitialized";
   // DEVICE-KEY vaults do not have a master password, so an empty currentPassword
   // must not be blocked here. The runtime re-derives the device key and rejects
   // invalid input authoritatively. Master-password vaults still need UI validation
@@ -1898,23 +1898,25 @@ function errorCode(error: unknown): string | undefined {
       <div class="brand"><img src="/icons/logo-256.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
       <m3e-card variant="outlined" class="login-card">
         <div slot="content" class="stack">
-          <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可留空。留空时使用本机设备密钥自动解锁；设置主密码可获得更强的离线保护。' : '主密码模式请输入密码；设备密钥模式可留空解锁。' }}</p></div>
+          <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可留空。留空时使用本机设备密钥自动解锁；设置主密码可获得更强的离线保护。' : windowsHelloStatus?.vaultEnrolled && windowsHelloStatus.protectionMode === 'device-key' ? '当前设备密钥密码库需要 Windows Hello。绑定不可用时请使用加密整库备份恢复。' : '主密码模式请输入密码；设备密钥模式可留空解锁。' }}</p></div>
           <label class="field"><span>主密码{{ lifecycle === 'uninitialized' ? '（可选）' : '' }}</span><input v-model="auth.masterPassword" aria-label="主密码" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></label>
           <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
           <div v-if="lifecycle === 'locked' && windowsHelloStatus?.unlockAvailable" class="hello-unlock-action">
             <m3e-button variant="tonal" type="button" :disabled="Boolean(windowsHelloBusy) || authBusy" @click="unlockVaultWithWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'verify' ? '正在等待 Windows Hello…' : '使用 Windows Hello 解锁' }}</m3e-button>
             <small>验证成功后只释放当前浏览器会话的设备密钥；取消或超时会保持锁定。</small>
           </div>
-          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 当前不可用，仍可使用主密码或设备密钥恢复。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting hello-status-note">Windows Hello 本机绑定缺失或损坏，密码库保持锁定。请修复 Native Host 后重试，或使用加密整库备份恢复。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.native.available" class="supporting hello-status-note">Windows Hello 平台验证器当前不可用，密码库保持锁定。请恢复系统验证器后重试，或使用加密整库备份恢复。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 状态检查失败，密码库保持锁定。请修复 Native Host 后重试，或使用加密整库备份恢复。</p>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
-          <div v-if="lifecycle === 'uninitialized'" class="recovery-panel stack">
-            <div><strong>已有加密整库备份？</strong><p class="supporting">选择备份并输入对应的备份密码，可恢复项目、密码源和设置。</p></div>
+          <div v-if="lifecycle === 'uninitialized' || lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled" class="recovery-panel stack">
+            <div><strong>{{ lifecycle === 'locked' ? '使用加密整库备份恢复' : '已有加密整库备份？' }}</strong><p class="supporting">{{ lifecycle === 'locked' ? '恢复会验证备份密码并替换当前本地密码库，同时清除恢复数据中的 Windows Hello 绑定。' : '选择备份并输入对应的备份密码，可恢复项目、密码源和设置。' }}</p></div>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
               <label class="field"><span>备份密码</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
-              <m3e-button variant="tonal" type="button" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在恢复…' : '恢复并解锁' }}</m3e-button>
+              <m3e-button variant="tonal" type="button" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在恢复…' : lifecycle === 'locked' ? '验证备份并替换恢复' : '恢复并解锁' }}</m3e-button>
             </template>
             <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
           </div>
@@ -2130,9 +2132,10 @@ function errorCode(error: unknown): string | undefined {
         <section v-else class="settings-grid">
           <AppearancePanel class="motion-card" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
-            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows 平台验证器保护本机设备密钥解锁。私钥留在 Windows Hello，主密码恢复始终保留。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
-            <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? '设备可用' : '设备不可用' }}</strong><small>平台验证器</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? '已注册' : '未注册' }}</strong><small>当前密码库</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? '设备密钥' : windowsHelloStatus.protectionMode === 'master-password' ? '主密码' : '未知' }}</strong><small>保护方式</small></span></div>
+            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows 平台验证器保护本机设备密钥解锁。私钥留在 Windows Hello；设备密钥模式不保存主密码，请保留加密整库备份。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
+            <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? '设备可用' : '设备不可用' }}</strong><small>平台验证器</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? windowsHelloStatus.bindingConsistent ? '已注册' : '绑定异常' : '未注册' }}</strong><small>当前密码库</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? '设备密钥' : windowsHelloStatus.protectionMode === 'master-password' ? '主密码' : '未知' }}</strong><small>保护方式</small></span></div>
             <p v-if="windowsHelloStatus?.protectionMode === 'master-password'" class="supporting">当前使用主密码保护。转换为设备密钥后才能使用 Windows Hello 免输入解锁。</p>
+            <p v-else-if="windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting">加密密码库记录与 Native Host 本机凭据不一致。当前保持锁定；撤销失效绑定后可重新注册。</p>
             <p v-else-if="windowsHelloStatus?.vaultEnrolled" class="supporting">每次自动锁定后需要重新完成系统验证；取消、超时和 Native Host 异常均保持锁定。</p>
             <p v-else class="supporting">注册需要当前密码库已经解锁，并会在 Windows 中创建 Monica 专用平台凭据。</p>
             <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册 Windows Hello' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>

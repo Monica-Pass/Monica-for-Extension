@@ -31,6 +31,7 @@ export interface Argon2idVaultKdfParameters {
 export interface DeviceVaultKdfParameters {
   name: "DEVICE-KEY";
   keyId: string;
+  windowsHelloBindingId?: string;
 }
 
 export type VaultKdfParameters = Pbkdf2VaultKdfParameters | Argon2idVaultKdfParameters | DeviceVaultKdfParameters;
@@ -221,6 +222,9 @@ function validateKdfParameters(value: unknown): asserts value is VaultKdfParamet
   const kdf = value as Partial<VaultKdfParameters>;
   if (kdf.name === "DEVICE-KEY") {
     if (typeof kdf.keyId !== "string" || !/^[0-9a-f-]{16,64}$/i.test(kdf.keyId)) throw new Error("Unsupported or unsafe vault KDF parameters");
+    if (kdf.windowsHelloBindingId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(kdf.windowsHelloBindingId)) {
+      throw new Error("Unsupported or unsafe vault KDF parameters");
+    }
     return;
   } else if (kdf.name === "PBKDF2-SHA256") {
     if (!Number.isInteger(kdf.iterations) || kdf.iterations! < 100_000 || kdf.iterations! > MAX_PBKDF2_ITERATIONS) throw new Error("Unsupported or unsafe vault KDF parameters");

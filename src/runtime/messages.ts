@@ -149,6 +149,7 @@ export interface CredentialCaptureInput {
 export interface VaultWindowsHelloStatus {
   native: Mdbx2WindowsHelloStatus;
   vaultEnrolled: boolean;
+  bindingConsistent: boolean;
   protectionMode: "master-password" | "device-key" | "unknown";
   unlockAvailable: boolean;
 }
