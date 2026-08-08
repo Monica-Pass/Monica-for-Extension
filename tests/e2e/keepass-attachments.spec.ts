@@ -203,6 +203,125 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
   }
 });
 
+test("KeePass Android-managed bank-card photos have front/back controls and preserve ordinary binaries", async ({}, testInfo) => {
+  let context: BrowserContext | undefined;
+  try {
+    const launched = await launchExtension(testInfo);
+    context = launched.context;
+    const page = launched.manager;
+    const databasePassword = "keepass managed photo fixture password";
+    const frontBytes = Buffer.from("android bank card front photo");
+    const backBytes = Buffer.from("android bank card back photo");
+    const replacementBytes = Buffer.from("extension replaced bank card front photo");
+    const receiptBytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+    const fixture = await buildKeePassFixture({
+      password: databasePassword,
+      version: 4,
+      kdf: "argon2id",
+      name: "KeePass Managed Photo Fixture",
+      entries: [{
+        title: "Android Bank Card",
+        fields: {
+          MonicaItemType: "BANK_CARD",
+          "Card Holder": "Android Card Holder",
+          "Card Expiry": "12/2030",
+          "Card Type": "CREDIT"
+        },
+        protectedFields: {
+          "Card Number": "4111111111111111",
+          "Card CVV": "123"
+        },
+        binaries: {
+          "Monica_BankCard_Front.jpg": new Uint8Array(frontBytes),
+          "Monica_BankCard_Back.jpg": new Uint8Array(backBytes),
+          "receipt.pdf": new Uint8Array(receiptBytes)
+        }
+      }]
+    });
+
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: "密码源" }).click();
+    await page.getByRole("button", { name: "连接 KeePass" }).click();
+    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    await sourceDialog.getByLabel("显示名称").fill("KeePass Managed Photo Source");
+    await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
+      name: "managed-photo-fixture.kdbx",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from(fixture)
+    });
+    await sourceDialog.getByLabel("数据库密码（可留空）").fill(databasePassword);
+    await sourceDialog.getByRole("button", { name: "解锁并连接" }).click();
+    await expect(sourceDialog).toHaveCount(0);
+    const providerCard = page.locator("m3e-card.source-card").filter({ has: page.getByRole("heading", { name: "KeePass Managed Photo Source" }) });
+    await providerCard.getByRole("button", { name: "立即同步" }).click();
+    await expect.poll(async () => (await listItems(page)).some((item) => item.title === "Android Bank Card")).toBe(true);
+
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: /^钱包与身份/ }).click();
+    const cardRow = page.getByRole("row").filter({ hasText: "Android Bank Card" });
+    await expect(cardRow).toBeVisible();
+    await cardRow.getByRole("button", { name: "管理 Android Bank Card 的附件" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "附件 · Android Bank Card" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("银行卡照片", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("使用 Monica Android 保留的 KDBX 文件名", { exact: false })).toBeVisible();
+    const front = dialog.locator('[data-managed-photo-slot="front"]');
+    const back = dialog.locator('[data-managed-photo-slot="back"]');
+    await expect(front).toContainText("正面照片");
+    await expect(front).toContainText("已保存");
+    await expect(back).toContainText("背面照片");
+    await expect(back).toContainText("已保存");
+    await expect(dialog.getByText("receipt.pdf", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Monica_BankCard_Front.jpg", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("Monica_BankCard_Back.jpg", { exact: true })).toHaveCount(0);
+    await expect(dialog).toHaveCSS("border-radius", "16px");
+    await expect(dialog.locator(".keepass-managed-photos")).toHaveCSS("border-radius", "8px");
+    await expectNoGradients(dialog);
+    await expectNoHorizontalOverflow(dialog);
+    await expectIconsRemainFixedSize(dialog);
+    await expectVisibleTargetsAtLeast44(dialog);
+    await expectCentered(front.locator(".managed-photo-icon"), front.locator(".managed-photo-icon m3e-icon"));
+
+    const replaceChooser = page.waitForEvent("filechooser");
+    await front.getByRole("button", { name: "替换" }).click();
+    await (await replaceChooser).setFiles({ name: "replacement.png", mimeType: "image/png", buffer: replacementBytes });
+    await expect(front).toContainText("已保存");
+
+    const frontDownload = page.waitForEvent("download");
+    await front.getByRole("button", { name: "下载正面照片" }).click();
+    expect(await downloadBytes(await frontDownload)).toEqual(replacementBytes);
+
+    await back.getByRole("button", { name: "删除背面照片" }).click();
+    const confirmBack = back.getByRole("button", { name: "确认删除" });
+    await expect(confirmBack).toBeFocused();
+    await expectMinimumTarget(confirmBack);
+    await confirmBack.click();
+    await expect(back).toContainText("未添加");
+    await expect(dialog.getByText("Monica_BankCard_Back.jpg", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("receipt.pdf", { exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(dialog);
+
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: "密码源" }).click();
+    const refreshedCard = page.locator("m3e-card.source-card").filter({ has: page.getByRole("heading", { name: "KeePass Managed Photo Source" }) });
+    await expect(refreshedCard.getByRole("button", { name: "导出 KDBX" })).toBeVisible();
+    const exportDownload = page.waitForEvent("download");
+    await refreshedCard.getByRole("button", { name: "导出 KDBX" }).click();
+    const exported = await downloadBytes(await exportDownload);
+    const database = await kdbxRuntime.Kdbx.load(new Uint8Array(exported).slice().buffer, keePassCredentials(databasePassword));
+    const entry = database.getDefaultGroup().entries.find((candidate) => fieldText(candidate.fields.get("Title")) === "Android Bank Card");
+    expect(entry).toBeTruthy();
+    expect(fieldText(entry!.fields.get("Card Holder"))).toBe("Android Card Holder");
+    expect([...binaryBytes(entry!.binaries.get("Monica_BankCard_Front.jpg")!)]).toEqual([...replacementBytes]);
+    expect(entry!.binaries.has("Monica_BankCard_Back.jpg")).toBe(false);
+    expect([...binaryBytes(entry!.binaries.get("receipt.pdf")!)]).toEqual([...receiptBytes]);
+  } finally {
+    await context?.close();
+  }
+});
+
 async function listItems(page: Page): Promise<Array<Record<string, any>>> {
   const response = await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as RuntimeResponse<Array<Record<string, any>>>;
   expect(response, response.error).toMatchObject({ ok: true });

@@ -9,6 +9,11 @@ import {
   type ProviderAttachmentSummary
 } from "../providers/attachments/attachment-contract";
 import type { ProviderAttachmentTransferMode } from "../providers/attachments/attachment-transfer";
+import {
+  keepassManagedPhotoSlotForFileName,
+  keepassManagedPhotoSlots,
+  type KeePassManagedPhotoSlot
+} from "../providers/keepass/keepass-managed-photos";
 import { base64ToBytes } from "../security/encoding";
 import { ExtensionRuntimeError, vaultClient } from "../runtime/client";
 import type { ProviderAttachmentRecoveryStatus } from "../runtime/messages";
@@ -21,11 +26,13 @@ interface PendingUpload {
   fileName: string;
   mediaType?: string;
   replaceExisting: boolean;
+  displayName: string;
   transferId?: string;
 }
 
 interface PendingFileSelection {
   attachment?: ProviderAttachmentSummary;
+  managedPhoto?: KeePassManagedPhotoSlot;
 }
 
 interface PendingTransfer {
@@ -66,6 +73,7 @@ const recoveryBusy = ref(false);
 const error = ref("");
 const status = ref("");
 const fileInput = ref<HTMLInputElement | null>(null);
+const fileInputAccept = ref("");
 const dialogRoot = ref<HTMLElement | null>(null);
 let activeRead: { providerId: string; readHandle: string } | undefined;
 let listGeneration = 0;
@@ -76,6 +84,14 @@ const transferTargets = computed(() => props.providers.filter((provider) => prov
 const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
 const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || recoveryBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
 const providerLimit = computed(() => attachmentLimit(selectedProvider.value));
+const managedPhotoSlots = computed(() => {
+  if (selectedProvider.value?.kind !== "keepass") return [];
+  return keepassManagedPhotoSlots(props.item.kind);
+});
+const regularAttachments = computed(() => {
+  const managedNames = new Set(managedPhotoSlots.value.map((slot) => slot.fileName));
+  return attachments.value.filter((attachment) => !managedNames.has(attachment.fileName));
+});
 const providerDescription = computed(() => {
   if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
   if (selectedProvider.value?.kind === "bitwarden") return "Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。";
@@ -129,9 +145,10 @@ async function loadAttachments(reset: boolean) {
   }
 }
 
-function chooseAttachmentFile(attachment?: ProviderAttachmentSummary) {
+function chooseAttachmentFile(attachment?: ProviderAttachmentSummary, managedPhoto?: KeePassManagedPhotoSlot) {
   if (interactionLocked.value) return;
-  pendingFileSelection.value = { attachment };
+  pendingFileSelection.value = { attachment, managedPhoto };
+  fileInputAccept.value = managedPhoto ? "image/*" : "";
   if (fileInput.value) {
     fileInput.value.value = "";
     fileInput.value.click();
@@ -145,6 +162,14 @@ async function handleFileSelection(event: Event) {
   pendingFileSelection.value = undefined;
   input.value = "";
   if (!file || !selection) return;
+  if (selection.managedPhoto && file.type && !file.type.toLocaleLowerCase().startsWith("image/")) {
+    error.value = "正面或背面照片必须是图像文件。";
+    return;
+  }
+  if (!selection.managedPhoto && keepassManagedPhotoSlotForFileName(props.item.kind, file.name)) {
+    error.value = "此文件名由 Android 正面或背面照片保留，请使用照片入口。";
+    return;
+  }
   if (file.size > providerLimit.value) {
     error.value = `附件超过 ${formatBytes(providerLimit.value)} 上限。`;
     return;
@@ -156,9 +181,10 @@ async function handleFileSelection(event: Event) {
     file,
     operationId,
     attachmentId: selection.attachment?.attachmentId || crypto.randomUUID(),
-    fileName: selection.attachment?.fileName || file.name,
-    mediaType: selection.attachment ? selection.attachment.mediaType : file.type || undefined,
-    replaceExisting: Boolean(selection.attachment)
+    fileName: selection.managedPhoto?.fileName || selection.attachment?.fileName || file.name,
+    mediaType: selection.managedPhoto?.mediaType || (selection.attachment ? selection.attachment.mediaType : file.type || undefined),
+    replaceExisting: Boolean(selection.attachment),
+    displayName: selection.managedPhoto?.label || selection.attachment?.fileName || file.name
   };
   uploadProgress.value = 0;
   await runPendingUpload();
@@ -169,7 +195,7 @@ async function runPendingUpload() {
   if (!upload || upload.providerId !== selectedProviderId.value) return;
   uploadBusy.value = true;
   error.value = "";
-  status.value = upload.replaceExisting ? `正在替换 ${upload.fileName} 的内容。` : `正在添加 ${upload.fileName}。`;
+  status.value = upload.replaceExisting ? `正在替换 ${upload.displayName}。` : `正在添加 ${upload.displayName}。`;
   try {
     const begun = await vaultClient.beginProviderAttachmentUpload(upload.providerId, props.item.id, {
       fileName: upload.fileName,
@@ -195,7 +221,7 @@ async function runPendingUpload() {
     const completed = await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId, upload.operationId);
     if (completed.attachment) rememberPlaintextSize(upload.providerId, completed.attachment.attachmentId, completed.attachment.sizeBytes);
     await vaultClient.abortProviderAttachmentUpload(upload.providerId, begun.transferId).catch(() => false);
-    const completedLabel = upload.replaceExisting ? `${upload.fileName} 的内容已替换。` : `${upload.fileName} 已添加。`;
+    const completedLabel = upload.replaceExisting ? `${upload.displayName} 已替换。` : `${upload.displayName} 已添加。`;
     pendingUpload.value = undefined;
     uploadProgress.value = 100;
     status.value = completedLabel;
@@ -214,6 +240,7 @@ async function discardPendingUpload() {
   const upload = pendingUpload.value;
   pendingUpload.value = undefined;
   uploadProgress.value = 0;
+  fileInputAccept.value = "";
   if (upload?.transferId) await vaultClient.abortProviderAttachmentUpload(upload.providerId, upload.transferId).catch(() => false);
 }
 
@@ -277,6 +304,7 @@ async function requestDelete(attachment: ProviderAttachmentSummary) {
 async function confirmDelete() {
   const attachment = pendingDelete.value;
   if (!attachment) return;
+  const managedPhotoSlot = managedPhotoSlotForAttachment(attachment);
   const providerId = selectedProviderId.value;
   const operationKey = `${providerId}\n${props.item.id}\n${attachment.attachmentId}`;
   deletingAttachmentId.value = attachment.attachmentId;
@@ -302,7 +330,10 @@ async function confirmDelete() {
   }
   if (deleted) {
     await nextTick();
-    dialogRoot.value?.querySelector<HTMLElement>('[aria-label="刷新附件列表"]')?.focus();
+    const focusTarget = managedPhotoSlot
+      ? dialogRoot.value?.querySelector<HTMLElement>(`[data-managed-photo-action="${managedPhotoSlot.id}"]`)
+      : dialogRoot.value?.querySelector<HTMLElement>('[aria-label="刷新附件列表"]');
+    focusTarget?.focus();
   }
 }
 
@@ -431,6 +462,30 @@ function attachmentLimit(provider: ProviderAccount | undefined): number {
   return KEEPASS_ATTACHMENT_MAX_BYTES;
 }
 
+function managedPhotoAttachment(slot: KeePassManagedPhotoSlot): ProviderAttachmentSummary | undefined {
+  return attachments.value.find((attachment) => attachment.fileName === slot.fileName);
+}
+
+function managedPhotoStatus(slot: KeePassManagedPhotoSlot): string {
+  const attachment = managedPhotoAttachment(slot);
+  return attachment ? `已保存 · ${attachmentSizeLabel(attachment)}` : "未添加";
+}
+
+function downloadManagedPhoto(slot: KeePassManagedPhotoSlot): void {
+  const attachment = managedPhotoAttachment(slot);
+  if (attachment) void downloadAttachment(attachment);
+}
+
+function requestDeleteManagedPhoto(slot: KeePassManagedPhotoSlot): void {
+  const attachment = managedPhotoAttachment(slot);
+  if (attachment) void requestDelete(attachment);
+}
+
+function managedPhotoSlotForAttachment(attachment: ProviderAttachmentSummary): KeePassManagedPhotoSlot | undefined {
+  if (selectedProvider.value?.kind !== "keepass") return undefined;
+  return keepassManagedPhotoSlotForFileName(props.item.kind, attachment.fileName);
+}
+
 async function loadRecoveryStatus() {
   const provider = selectedProvider.value;
   if (!provider || provider.kind !== "bitwarden") {
@@ -505,10 +560,59 @@ function transferErrorMessage(cause: unknown): string {
           <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : 'KeePass' }}</small></span>
         </div>
         <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>添加附件</m3e-button>
-        <input ref="fileInput" class="attachment-file-input" type="file" aria-label="选择附件文件" @change="handleFileSelection" />
+        <input ref="fileInput" class="attachment-file-input" type="file" :accept="fileInputAccept || undefined" aria-label="选择附件文件" @change="handleFileSelection" />
       </div>
 
       <p class="attachment-provider-help">{{ providerDescription }} 单个附件上限 {{ formatBytes(providerLimit) }}。</p>
+
+      <section v-if="managedPhotoSlots.length" class="keepass-managed-photos" aria-labelledby="keepass-managed-photos-title">
+        <header>
+          <div>
+            <strong id="keepass-managed-photos-title">{{ item.kind === 'card' ? '银行卡照片' : '证件照片' }}</strong>
+            <small>使用 Monica Android 保留的 KDBX 文件名；其他普通附件保持原样。</small>
+          </div>
+          <m3e-icon name="image"></m3e-icon>
+        </header>
+        <div v-for="slot in managedPhotoSlots" :key="slot.id" class="keepass-managed-photo-row" :data-managed-photo-slot="slot.id">
+          <span class="managed-photo-icon"><m3e-icon name="image"></m3e-icon></span>
+          <div class="managed-photo-copy">
+            <strong>{{ slot.label }}</strong>
+            <small>{{ managedPhotoStatus(slot) }}</small>
+          </div>
+          <div class="managed-photo-actions">
+            <m3e-button
+              :data-managed-photo-action="slot.id"
+              variant="tonal"
+              type="button"
+              :disabled="interactionLocked"
+              @click="chooseAttachmentFile(managedPhotoAttachment(slot), slot)"
+            >
+              <m3e-icon slot="icon" name="upload_file"></m3e-icon>{{ managedPhotoAttachment(slot) ? '替换' : '添加' }}
+            </m3e-button>
+            <m3e-icon-button
+              v-if="managedPhotoAttachment(slot)"
+              :aria-label="`下载${slot.label}`"
+              :disabled="interactionLocked"
+              @click="downloadManagedPhoto(slot)"
+            ><m3e-icon name="download"></m3e-icon></m3e-icon-button>
+            <m3e-icon-button
+              v-if="managedPhotoAttachment(slot)"
+              class="attachment-delete-button"
+              :aria-label="`删除${slot.label}`"
+              :disabled="interactionLocked"
+              @click="requestDeleteManagedPhoto(slot)"
+            ><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+          </div>
+          <div v-if="pendingDelete?.attachmentId === managedPhotoAttachment(slot)?.attachmentId" class="attachment-delete-confirmation keepass-managed-photo-delete">
+            <m3e-icon name="warning"></m3e-icon>
+            <span><strong>删除{{ slot.label }}？</strong><small>删除会移除 Android 保留的 KDBX Binary；其他普通附件不会受到影响。</small></span>
+            <span class="attachment-confirm-actions">
+              <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">取消</m3e-button>
+              <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? '删除中…' : '确认删除' }}</m3e-button>
+            </span>
+          </div>
+        </div>
+      </section>
 
       <section v-if="recovery?.pending.length" class="attachment-recovery-panel" role="status" aria-labelledby="attachment-recovery-title">
         <m3e-icon name="sync_problem"></m3e-icon>
@@ -541,14 +645,14 @@ function transferErrorMessage(cause: unknown): string {
 
       <section class="attachment-list-shell" aria-labelledby="attachment-list-title">
         <div class="attachment-list-heading">
-          <div><strong id="attachment-list-title">项目附件</strong><small>{{ attachments.length }} 个已加载</small></div>
+          <div><strong id="attachment-list-title">普通附件</strong><small>{{ regularAttachments.length }} 个已加载</small></div>
           <m3e-icon-button aria-label="刷新附件列表" :disabled="interactionLocked" @click="loadAttachments(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
         </div>
 
         <div v-if="listBusy && !loaded" class="attachment-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取附件摘要…</span></div>
-        <div v-else-if="loaded && !attachments.length" class="attachment-empty"><m3e-icon name="attach_file_off"></m3e-icon><span>此项目还没有附件。</span></div>
+        <div v-else-if="loaded && !regularAttachments.length" class="attachment-empty"><m3e-icon name="attach_file_off"></m3e-icon><span>此项目还没有普通附件。</span></div>
         <ul v-else class="attachment-list">
-          <li v-for="attachment in attachments" :key="attachment.attachmentId" class="provider-attachment-row">
+          <li v-for="attachment in regularAttachments" :key="attachment.attachmentId" class="provider-attachment-row">
             <div class="attachment-row-main">
               <span class="attachment-file-icon"><m3e-icon name="draft"></m3e-icon></span>
               <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ attachmentSizeLabel(attachment) }} · {{ attachment.mediaType || '未知媒体类型' }} · 随密码源加密</small></span>
@@ -691,6 +795,97 @@ function transferErrorMessage(cause: unknown): string {
   margin: 8px 0 16px;
   color: var(--md-sys-color-on-surface-variant, var(--app-muted));
   line-height: 1.5;
+}
+
+.keepass-managed-photos {
+  min-width: 0;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0 0 12px;
+  background: var(--md-sys-color-surface-container-lowest, var(--app-surface));
+}
+
+.keepass-managed-photos > header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+}
+
+.keepass-managed-photos > header > div,
+.managed-photo-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.keepass-managed-photos > header small,
+.managed-photo-copy small {
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.keepass-managed-photos > header > m3e-icon {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--app-primary);
+  background: var(--md-sys-color-secondary-container, var(--app-selected));
+  border-radius: 8px;
+  --m3e-icon-size: 20px;
+}
+
+.keepass-managed-photo-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.keepass-managed-photo-row + .keepass-managed-photo-row {
+  border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+}
+
+.managed-photo-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--app-primary);
+  background: var(--md-sys-color-surface-container-high, var(--app-surface-high));
+}
+
+.managed-photo-icon m3e-icon {
+  --m3e-icon-size: 20px;
+}
+
+.managed-photo-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.managed-photo-actions :deep(m3e-button) {
+  min-height: 44px;
+}
+
+.keepass-managed-photo-delete {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: 2px;
 }
 
 .attachment-recovery-panel {
@@ -1049,6 +1244,7 @@ function transferErrorMessage(cause: unknown): string {
   .attachment-upload-panel,
   .attachment-recovery-panel,
   .attachment-row-main,
+  .keepass-managed-photo-row,
   .attachment-transfer-panel,
   .attachment-delete-confirmation {
     grid-template-columns: 40px minmax(0, 1fr);
@@ -1057,6 +1253,7 @@ function transferErrorMessage(cause: unknown): string {
   .attachment-progress-value,
   .attachment-recovery-panel > m3e-icon-button,
   .attachment-row-actions,
+  .managed-photo-actions,
   .attachment-transfer-actions,
   .attachment-confirm-actions {
     grid-column: 1 / -1;
@@ -1076,6 +1273,8 @@ function transferErrorMessage(cause: unknown): string {
   }
 
   .attachment-list-heading,
+  .keepass-managed-photos > header,
+  .keepass-managed-photo-row,
   .attachment-row-main,
   .attachment-transfer-panel,
   .attachment-delete-confirmation {

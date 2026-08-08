@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as kdbxweb from "kdbxweb";
-import type { LoginItem, ProviderAccount } from "../../src/core/model";
+import type { CardItem, IdentityItem, LoginItem, ProviderAccount } from "../../src/core/model";
 import { readKeePassHeader } from "../../src/providers/keepass/keepass-format";
 import { keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
 import { keePassFieldText } from "../../src/providers/keepass/keepass-login-codec";
@@ -13,6 +13,20 @@ import { runCommand, runText, sha256Hex } from "./mdbx2-interop-support";
 const FIXTURE_CLASS = "takagi.ru.monica.keepass.ExtensionKeePassInteropFixtureTest";
 const PASSWORD = "monica-android-extension-interop-password";
 const ATTACHMENT_BYTES = new TextEncoder().encode("recovery attachment from Monica Android");
+const CARD_FRONT_NAME = "Monica_BankCard_Front.jpg";
+const CARD_BACK_NAME = "Monica_BankCard_Back.jpg";
+const CARD_RECEIPT_NAME = "receipt.pdf";
+const CARD_FRONT_BYTES = new TextEncoder().encode("android bank card front photo");
+const CARD_BACK_BYTES = new TextEncoder().encode("android bank card back photo");
+const CARD_FRONT_REPLACED_BYTES = new TextEncoder().encode("extension replaced bank card front photo");
+const CARD_RECEIPT_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+const DOCUMENT_FRONT_NAME = "Monica_Document_Front.jpg";
+const DOCUMENT_BACK_NAME = "Monica_Document_Back.jpg";
+const DOCUMENT_RECEIPT_NAME = "document-receipt.pdf";
+const DOCUMENT_FRONT_BYTES = new TextEncoder().encode("android document front photo");
+const DOCUMENT_BACK_BYTES = new TextEncoder().encode("android document back photo");
+const DOCUMENT_FRONT_REPLACED_BYTES = new TextEncoder().encode("extension replaced document front photo");
+const DOCUMENT_RECEIPT_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]);
 const PASSKEY_CREDENTIAL_ID = "YW5kcm9pZC1pbnRlcm9wLWNyZWRlbnRpYWw";
 const PRIVATE_KEY_BASE64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkW37q4De5OLmElVzGV+eVyxKWzUYTgiSmQGGNnkVvqKhRANCAATo31tQ78NEbm2ja6k1Omi1xPfSUGS3V74fv6x7WzvFrNxBDYm+FGmQVEiECyXmpcFTNeV0D/WFBONp8oJJZPn0";
 const PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----\n${PRIVATE_KEY_BASE64}\n-----END PRIVATE KEY-----`;
@@ -82,7 +96,7 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         expect(summary).toMatchObject({
           versionMajor: 4,
           cipherName: variant.cipherName,
-          itemCount: 2,
+          itemCount: 4,
           dirty: false
         });
         expect(summary.skipped).toHaveLength(1);
@@ -94,6 +108,22 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         });
         const login = synchronized.items.find((item): item is LoginItem => item.kind === "login" && item.title === "GitHub");
         expect(login).toBeDefined();
+        const card = synchronized.items.find((item): item is CardItem => item.kind === "card" && item.title === "Android Bank Card");
+        expect(card).toBeDefined();
+        expect(card).toMatchObject({
+          number: "4111111111111111",
+          cardholderName: "Android Card Holder",
+          expiryMonth: "12",
+          expiryYear: "2030",
+          securityCode: "123"
+        });
+        const document = synchronized.items.find((item): item is IdentityItem => item.kind === "identity" && item.title === "Android Passport");
+        expect(document).toBeDefined();
+        expect(document).toMatchObject({
+          documentType: "PASSPORT",
+          documentNumber: "P99887766",
+          fullName: "Android Document"
+        });
         expect(login).toMatchObject({
           username: "octocat",
           password: "old-password",
@@ -115,18 +145,69 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         expect(attachmentRead.bytes).toEqual(ATTACHMENT_BYTES);
         expect(provider.listEntryHistory(target, login!)).toMatchObject({ totalCount: 1 });
 
+        const cardAttachments = provider.listAttachments(target, card!);
+        expect(cardAttachments.map((attachment) => attachment.fileName).sort()).toEqual([
+          CARD_BACK_NAME,
+          CARD_FRONT_NAME,
+          CARD_RECEIPT_NAME
+        ].sort());
+        expect(cardAttachments.find((attachment) => attachment.fileName === CARD_FRONT_NAME)?.sizeBytes).toBe(CARD_FRONT_BYTES.length);
+        expect(cardAttachments.find((attachment) => attachment.fileName === CARD_BACK_NAME)?.sizeBytes).toBe(CARD_BACK_BYTES.length);
+        expect(cardAttachments.find((attachment) => attachment.fileName === CARD_RECEIPT_NAME)?.sizeBytes).toBe(CARD_RECEIPT_BYTES.length);
+        for (const [fileName, expected] of [[CARD_FRONT_NAME, CARD_FRONT_BYTES], [CARD_BACK_NAME, CARD_BACK_BYTES], [CARD_RECEIPT_NAME, CARD_RECEIPT_BYTES]] as const) {
+          const attachment = cardAttachments.find((candidate) => candidate.fileName === fileName);
+          expect(attachment).toBeDefined();
+          expect(provider.readAttachment(target, card!, attachment!.attachmentId, 0).bytes).toEqual(expected);
+        }
+
+        const documentAttachments = provider.listAttachments(target, document!);
+        expect(documentAttachments.map((attachment) => attachment.fileName).sort()).toEqual([
+          DOCUMENT_BACK_NAME,
+          DOCUMENT_FRONT_NAME,
+          DOCUMENT_RECEIPT_NAME
+        ].sort());
+        for (const [fileName, expected] of [[DOCUMENT_FRONT_NAME, DOCUMENT_FRONT_BYTES], [DOCUMENT_BACK_NAME, DOCUMENT_BACK_BYTES], [DOCUMENT_RECEIPT_NAME, DOCUMENT_RECEIPT_BYTES]] as const) {
+          const attachment = documentAttachments.find((candidate) => candidate.fileName === fileName);
+          expect(attachment).toBeDefined();
+          expect(provider.readAttachment(target, document!, attachment!.attachmentId, 0).bytes).toEqual(expected);
+        }
+
         const rawInput = await openRaw(input);
-        assertRawFixture(rawInput, 1, "octocat", "original notes", "Monica Android interop");
+        assertRawFixture(rawInput, 1, "octocat", "original notes", "Monica Android interop", "Android Card Holder", CARD_FRONT_BYTES, "Android Document Holder", DOCUMENT_FRONT_BYTES);
 
         await provider.update(target, {
           ...login!,
           username: variant.editedUsername,
           notes: variant.editedNotes
         });
+        const updatedCard = await provider.update(target, {
+          ...card!,
+          cardholderName: "Extension Card Holder"
+        });
+        const replacedCardPhoto = await provider.addAttachment(
+          target,
+          updatedCard,
+          CARD_FRONT_NAME,
+          CARD_FRONT_REPLACED_BYTES,
+          true
+        );
+        expect(replacedCardPhoto).toMatchObject({ fileName: CARD_FRONT_NAME, sizeBytes: CARD_FRONT_REPLACED_BYTES.length });
+        const updatedDocument = await provider.update(target, {
+          ...document!,
+          fullName: "Extension Document Holder"
+        });
+        const replacedDocumentPhoto = await provider.addAttachment(
+          target,
+          updatedDocument,
+          DOCUMENT_FRONT_NAME,
+          DOCUMENT_FRONT_REPLACED_BYTES,
+          true
+        );
+        expect(replacedDocumentPhoto).toMatchObject({ fileName: DOCUMENT_FRONT_NAME, sizeBytes: DOCUMENT_FRONT_REPLACED_BYTES.length });
         const exported = await provider.exportFile(target.id);
         expect(readKeePassHeader(exported, variant.outputName).cipherName).toBe(variant.cipherName);
         const rawExport = await openRaw(exported);
-        assertRawFixture(rawExport, 2, variant.editedUsername, variant.editedNotes, "KdbxWeb");
+        assertRawFixture(rawExport, 2, variant.editedUsername, variant.editedNotes, "KdbxWeb", "Extension Card Holder", CARD_FRONT_REPLACED_BYTES, "Extension Document Holder", DOCUMENT_FRONT_REPLACED_BYTES);
         await writeFile(join(runRoot, variant.outputName), exported);
         variantEvidence.push({
           cipher: variant.cipherName,
@@ -164,6 +245,8 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
           "timestamps",
           "history",
           "attachments and binary pool",
+          "Android-managed bank-card front/back photos and ordinary attachments",
+          "Android-managed document front/back photos and ordinary attachments",
           "KeePassDX and Monica passkey fields",
           "nested groups and future entries"
         ]
@@ -249,7 +332,11 @@ function assertRawFixture(
   expectedHistoryCount: number,
   expectedUsername: string,
   expectedNotes: string,
-  expectedGenerator: string
+  expectedGenerator: string,
+  expectedCardHolder = "Android Card Holder",
+  expectedCardFront = CARD_FRONT_BYTES,
+  expectedDocumentHolder = "Android Document Holder",
+  expectedDocumentFront = DOCUMENT_FRONT_BYTES
 ): void {
   expect(database.meta.generator).toBe(expectedGenerator);
   expect(database.meta.name).toBe("Android KeePass interoperability");
@@ -278,6 +365,21 @@ function assertRawFixture(
   expect(login!.customData?.get("plugin-state")?.value).toBe("custom must stay");
   expect(login!.history).toHaveLength(expectedHistoryCount);
   expect(binaryBytes(login!.binaries.get("recovery.txt")!)).toEqual(ATTACHMENT_BYTES);
+
+  const card = group!.entries.find((entry) => keePassFieldText(entry.fields.get("Title")) === "Android Bank Card");
+  expect(card).toBeDefined();
+  expect(keePassFieldText(card!.fields.get("Card Holder"))).toBe(expectedCardHolder);
+  expect(binaryBytes(card!.binaries.get(CARD_FRONT_NAME)!)).toEqual(expectedCardFront);
+  expect(binaryBytes(card!.binaries.get(CARD_BACK_NAME)!)).toEqual(CARD_BACK_BYTES);
+  expect(binaryBytes(card!.binaries.get(CARD_RECEIPT_NAME)!)).toEqual(CARD_RECEIPT_BYTES);
+
+  const document = group!.entries.find((entry) => keePassFieldText(entry.fields.get("Title")) === "Android Passport");
+  expect(document).toBeDefined();
+  const documentData = JSON.parse(keePassFieldText(document!.fields.get("MonicaItemData")));
+  expect(documentData.fullName).toBe(expectedDocumentHolder);
+  expect(binaryBytes(document!.binaries.get(DOCUMENT_FRONT_NAME)!)).toEqual(expectedDocumentFront);
+  expect(binaryBytes(document!.binaries.get(DOCUMENT_BACK_NAME)!)).toEqual(DOCUMENT_BACK_BYTES);
+  expect(binaryBytes(document!.binaries.get(DOCUMENT_RECEIPT_NAME)!)).toEqual(DOCUMENT_RECEIPT_BYTES);
 
   const historical = login!.history.find((entry) => keePassFieldText(entry.fields.get("Title")) === "Historical title");
   expect(historical).toBeDefined();

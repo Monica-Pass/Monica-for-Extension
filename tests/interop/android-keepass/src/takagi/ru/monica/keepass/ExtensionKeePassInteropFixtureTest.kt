@@ -25,6 +25,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import takagi.ru.monica.data.ItemType
 import takagi.ru.monica.utils.KeePassCodecSupport
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -52,13 +53,17 @@ class ExtensionKeePassInteropFixtureTest {
             output.resolve(EXTENSION_AES_FILE),
             BaseCiphers.Aes.uuid,
             "extension-aes-user",
-            "Edited by Monica Extension through AES-256"
+            "Edited by Monica Extension through AES-256",
+            "Extension Card Holder",
+            "Extension Document Holder"
         )
         verifyExport(
             output.resolve(EXTENSION_CHACHA20_FILE),
             BaseCiphers.ChaCha20.uuid,
             "extension-chacha20-user",
-            "Edited by Monica Extension through ChaCha20"
+            "Edited by Monica Extension through ChaCha20",
+            "Extension Card Holder",
+            "Extension Document Holder"
         )
     }
 
@@ -67,6 +72,14 @@ class ExtensionKeePassInteropFixtureTest {
         val attachment = BinaryData.Uncompressed(
             memoryProtection = false,
             rawContent = ATTACHMENT_BYTES.copyOf()
+        )
+        val cardReceipt = BinaryData.Uncompressed(
+            memoryProtection = false,
+            rawContent = CARD_RECEIPT_BYTES.copyOf()
+        )
+        val documentReceipt = BinaryData.Uncompressed(
+            memoryProtection = false,
+            rawContent = DOCUMENT_RECEIPT_BYTES.copyOf()
         )
         val base = KeePassDatabase.Ver4x.create(
             rootName = "Root",
@@ -87,7 +100,12 @@ class ExtensionKeePassInteropFixtureTest {
         )
         val database = base
             .copy(header = base.header.copy(cipherId = cipherId))
-            .modifyBinaries { binaries -> binaries + (attachment.hash to attachment) }
+            .modifyBinaries { binaries ->
+                binaries +
+                    (attachment.hash to attachment) +
+                    (cardReceipt.hash to cardReceipt) +
+                    (documentReceipt.hash to documentReceipt)
+            }
             .modifyParentGroup {
                 copy(
                     groups = groups + Group(
@@ -96,7 +114,12 @@ class ExtensionKeePassInteropFixtureTest {
                         notes = "group notes must stay",
                         times = GROUP_TIMES,
                         tags = listOf("android-group", "interop"),
-                        entries = listOf(loginEntry(attachment), passkeyEntry()),
+                        entries = listOf(
+                            loginEntry(attachment),
+                            passkeyEntry(),
+                            bankCardEntry(cardReceipt),
+                            documentEntry(documentReceipt)
+                        ),
                         groups = listOf(
                             Group(
                                 uuid = NESTED_GROUP_UUID,
@@ -116,7 +139,29 @@ class ExtensionKeePassInteropFixtureTest {
                     )
                 )
             }
-        val encoded = encode(database)
+        val withManagedPhotos = KeePassSecureItemPhotoAttachments.synchronize(
+            database = database,
+            entryUuid = CARD_ENTRY_UUID,
+            itemType = ItemType.BANK_CARD,
+            updates = mapOf(
+                KeePassSecureItemPhotoAttachments.Slot.FRONT to KeePassSecureItemPhotoAttachments.SlotUpdate.Replace(CARD_FRONT_BYTES.copyOf()),
+                KeePassSecureItemPhotoAttachments.Slot.BACK to KeePassSecureItemPhotoAttachments.SlotUpdate.Replace(CARD_BACK_BYTES.copyOf())
+            )
+        ).database
+        val card = requireNotNull(findEntry(withManagedPhotos.content.group, CARD_ENTRY_UUID))
+        assertManagedCard(withManagedPhotos, card, CARD_FRONT_BYTES, CARD_BACK_BYTES)
+        val withDocumentPhotos = KeePassSecureItemPhotoAttachments.synchronize(
+            database = withManagedPhotos,
+            entryUuid = DOCUMENT_ENTRY_UUID,
+            itemType = ItemType.DOCUMENT,
+            updates = mapOf(
+                KeePassSecureItemPhotoAttachments.Slot.FRONT to KeePassSecureItemPhotoAttachments.SlotUpdate.Replace(DOCUMENT_FRONT_BYTES.copyOf()),
+                KeePassSecureItemPhotoAttachments.Slot.BACK to KeePassSecureItemPhotoAttachments.SlotUpdate.Replace(DOCUMENT_BACK_BYTES.copyOf())
+            )
+        ).database
+        val document = requireNotNull(findEntry(withDocumentPhotos.content.group, DOCUMENT_ENTRY_UUID))
+        assertManagedDocument(withDocumentPhotos, document, DOCUMENT_FRONT_BYTES, DOCUMENT_BACK_BYTES)
+        val encoded = encode(withDocumentPhotos)
         val generated = decode(encoded, credentials())
         assertEquals("Monica Android interop", generated.content.meta.generator)
         assertEquals(cipherId, generated.header.cipherId)
@@ -127,7 +172,9 @@ class ExtensionKeePassInteropFixtureTest {
         source: Path,
         expectedCipherId: UUID,
         expectedUsername: String,
-        expectedNotes: String
+        expectedNotes: String,
+        expectedCardHolder: String,
+        expectedDocumentHolder: String
     ) {
         assertTrue("Extension export is missing: $source", Files.isRegularFile(source))
         val database = decode(Files.readAllBytes(source), credentials())
@@ -186,6 +233,16 @@ class ExtensionKeePassInteropFixtureTest {
         assertEquals(LOGIN_TIMES.usageCount, login.times?.usageCount)
         assertEquals("custom must stay", login.customData.getValue("plugin-state").value)
         assertAttachment(database, login)
+
+        val card = group.entries.single { it.uuid == CARD_ENTRY_UUID }
+        assertEquals("Android Bank Card", card.fields.getValue("Title").content)
+        assertEquals(expectedCardHolder, card.fields.getValue("Card Holder").content)
+        assertEquals("4111111111111111", card.fields.getValue("Card Number").content)
+        assertManagedCard(database, card, CARD_FRONT_REPLACED_BYTES, CARD_BACK_BYTES)
+
+        val document = group.entries.single { it.uuid == DOCUMENT_ENTRY_UUID }
+        assertTrue(document.fields.getValue("MonicaItemData").content.contains("\"fullName\":\"$expectedDocumentHolder\""))
+        assertManagedDocument(database, document, DOCUMENT_FRONT_REPLACED_BYTES, DOCUMENT_BACK_BYTES)
 
         assertEquals(2, login.history.size)
         val historical = login.history.single {
@@ -291,6 +348,44 @@ class ExtensionKeePassInteropFixtureTest {
         )
     }
 
+    private fun bankCardEntry(receipt: BinaryData): Entry {
+        return Entry(
+            uuid = CARD_ENTRY_UUID,
+            fields = EntryFields.of(
+                "Title" to EntryValue.Plain("Android Bank Card"),
+                "UserName" to EntryValue.Plain(""),
+                "Password" to EntryValue.Encrypted(EncryptedValue.fromString("")),
+                "URL" to EntryValue.Plain(""),
+                "Notes" to EntryValue.Plain("card notes"),
+                "MonicaItemType" to EntryValue.Plain("BANK_CARD"),
+                "Card Number" to EntryValue.Encrypted(EncryptedValue.fromString("4111111111111111")),
+                "Card Holder" to EntryValue.Plain("Android Card Holder"),
+                "Card Expiry" to EntryValue.Plain("12/2030"),
+                "Card CVV" to EntryValue.Encrypted(EncryptedValue.fromString("123")),
+                "Card Type" to EntryValue.Plain("CREDIT")
+            ),
+            binaries = listOf(BinaryReference(hash = receipt.hash, name = CARD_RECEIPT_NAME)),
+            tags = listOf("wallet", "android-photo")
+        )
+    }
+
+    private fun documentEntry(receipt: BinaryData): Entry {
+        return Entry(
+            uuid = DOCUMENT_ENTRY_UUID,
+            fields = EntryFields.of(
+                "Title" to EntryValue.Plain("Android Passport"),
+                "UserName" to EntryValue.Plain(""),
+                "Password" to EntryValue.Encrypted(EncryptedValue.fromString("")),
+                "URL" to EntryValue.Plain(""),
+                "Notes" to EntryValue.Plain("document notes"),
+                "MonicaItemType" to EntryValue.Plain("DOCUMENT"),
+                "MonicaItemData" to EntryValue.Encrypted(EncryptedValue.fromString(DOCUMENT_DATA))
+            ),
+            binaries = listOf(BinaryReference(hash = receipt.hash, name = DOCUMENT_RECEIPT_NAME)),
+            tags = listOf("identity", "android-photo")
+        )
+    }
+
     private fun futureEntry(): Entry {
         return Entry(
             uuid = FUTURE_ENTRY_UUID,
@@ -314,6 +409,40 @@ class ExtensionKeePassInteropFixtureTest {
         val binary = database.binaries.getValue(reference.hash)
         val bytes = binary.inputStream().use { it.readBytes() }
         assertArrayEquals(ATTACHMENT_BYTES, bytes)
+    }
+
+    private fun assertManagedCard(
+        database: KeePassDatabase,
+        entry: Entry,
+        expectedFront: ByteArray,
+        expectedBack: ByteArray
+    ) {
+        val front = entry.binaries.single { it.name == CARD_FRONT_NAME }
+        val back = entry.binaries.single { it.name == CARD_BACK_NAME }
+        val receipt = entry.binaries.single { it.name == CARD_RECEIPT_NAME }
+        assertArrayEquals(expectedFront, database.binaries.getValue(front.hash).inputStream().use { it.readBytes() })
+        assertArrayEquals(expectedBack, database.binaries.getValue(back.hash).inputStream().use { it.readBytes() })
+        assertArrayEquals(CARD_RECEIPT_BYTES, database.binaries.getValue(receipt.hash).inputStream().use { it.readBytes() })
+    }
+
+    private fun assertManagedDocument(
+        database: KeePassDatabase,
+        entry: Entry,
+        expectedFront: ByteArray,
+        expectedBack: ByteArray
+    ) {
+        val front = entry.binaries.single { it.name == DOCUMENT_FRONT_NAME }
+        val back = entry.binaries.single { it.name == DOCUMENT_BACK_NAME }
+        val receipt = entry.binaries.single { it.name == DOCUMENT_RECEIPT_NAME }
+        assertArrayEquals(expectedFront, database.binaries.getValue(front.hash).inputStream().use { it.readBytes() })
+        assertArrayEquals(expectedBack, database.binaries.getValue(back.hash).inputStream().use { it.readBytes() })
+        assertArrayEquals(DOCUMENT_RECEIPT_BYTES, database.binaries.getValue(receipt.hash).inputStream().use { it.readBytes() })
+    }
+
+    private fun findEntry(group: Group, uuid: UUID): Entry? {
+        group.entries.firstOrNull { it.uuid == uuid }?.let { return it }
+        group.groups.forEach { child -> findEntry(child, uuid)?.let { return it } }
+        return null
     }
 
     private fun findGroup(group: Group, uuid: UUID): Group? {
@@ -360,6 +489,12 @@ class ExtensionKeePassInteropFixtureTest {
         private const val EXTENSION_AES_FILE = "extension-aes.kdbx"
         private const val EXTENSION_CHACHA20_FILE = "extension-chacha20.kdbx"
         private const val ATTACHMENT_NAME = "recovery.txt"
+        private const val CARD_FRONT_NAME = "Monica_BankCard_Front.jpg"
+        private const val CARD_BACK_NAME = "Monica_BankCard_Back.jpg"
+        private const val CARD_RECEIPT_NAME = "receipt.pdf"
+        private const val DOCUMENT_FRONT_NAME = "Monica_Document_Front.jpg"
+        private const val DOCUMENT_BACK_NAME = "Monica_Document_Back.jpg"
+        private const val DOCUMENT_RECEIPT_NAME = "document-receipt.pdf"
         private const val OTP_URI = "otpauth://totp/GitHub:octocat?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
         private const val PASSKEY_CREDENTIAL_ID = "YW5kcm9pZC1pbnRlcm9wLWNyZWRlbnRpYWw"
         private const val PRIVATE_KEY_BASE64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkW37q4De5OLmElVzGV+eVyxKWzUYTgiSmQGGNnkVvqKhRANCAATo31tQ78NEbm2ja6k1Omi1xPfSUGS3V74fv6x7WzvFrNxBDYm+FGmQVEiECyXmpcFTNeV0D/WFBONp8oJJZPn0"
@@ -367,6 +502,15 @@ class ExtensionKeePassInteropFixtureTest {
         private const val PASSKEY_PAYLOAD = "{\"credentialId\":\"$PASSKEY_CREDENTIAL_ID\",\"rpId\":\"github.com\",\"rpName\":\"GitHub\",\"userId\":\"github-user-handle\",\"userName\":\"octocat\",\"userDisplayName\":\"Octocat\",\"publicKeyAlgorithm\":-7,\"publicKey\":\"fixture-public-key\",\"privateKeyAlias\":\"$PRIVATE_KEY_BASE64\",\"createdAt\":1782259200000,\"lastUsedAt\":1782259800000,\"useCount\":3,\"iconUrl\":null,\"isDiscoverable\":true,\"isUserVerificationRequired\":true,\"transports\":\"internal\",\"aaguid\":\"00000000-0000-0000-0000-000000000000\",\"signCount\":4,\"notes\":\"passkey notes\",\"passkeyMode\":\"KEEPASS_COMPAT\"}"
 
         private val ATTACHMENT_BYTES = "recovery attachment from Monica Android".toByteArray(Charsets.UTF_8)
+        private val CARD_FRONT_BYTES = "android bank card front photo".toByteArray(Charsets.UTF_8)
+        private val CARD_BACK_BYTES = "android bank card back photo".toByteArray(Charsets.UTF_8)
+        private val CARD_FRONT_REPLACED_BYTES = "extension replaced bank card front photo".toByteArray(Charsets.UTF_8)
+        private val CARD_RECEIPT_BYTES = byteArrayOf(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37)
+        private val DOCUMENT_FRONT_BYTES = "android document front photo".toByteArray(Charsets.UTF_8)
+        private val DOCUMENT_BACK_BYTES = "android document back photo".toByteArray(Charsets.UTF_8)
+        private val DOCUMENT_FRONT_REPLACED_BYTES = "extension replaced document front photo".toByteArray(Charsets.UTF_8)
+        private val DOCUMENT_RECEIPT_BYTES = byteArrayOf(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a)
+        private const val DOCUMENT_DATA = "{\"documentType\":\"PASSPORT\",\"documentNumber\":\"P99887766\",\"fullName\":\"Android Document Holder\",\"firstName\":\"Android\",\"middleName\":\"\",\"lastName\":\"Document\",\"expiryDate\":\"2030-12-31\"}"
         private val META_TIME = Instant.parse("2026-06-24T00:00:00Z")
         private val INTEROP_GROUP_UUID = UUID.fromString("10000000-0000-4000-8000-000000000001")
         private val NESTED_GROUP_UUID = UUID.fromString("10000000-0000-4000-8000-000000000002")
@@ -374,6 +518,8 @@ class ExtensionKeePassInteropFixtureTest {
         private val HISTORY_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000002")
         private val PASSKEY_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000003")
         private val FUTURE_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000004")
+        private val CARD_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000005")
+        private val DOCUMENT_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000006")
         private val GROUP_TIMES = timeData("2026-06-24T00:00:00Z", 4)
         private val NESTED_GROUP_TIMES = timeData("2026-06-24T00:05:00Z", 2)
         private val LOGIN_TIMES = timeData("2026-06-24T00:10:00Z", 7, expires = true)
