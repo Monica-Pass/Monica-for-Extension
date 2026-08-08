@@ -73,6 +73,12 @@ export interface BitwardenAttachmentUploadInfo {
   cipherMiniResponse?: Record<string, unknown>;
 }
 
+export interface BitwardenSendFileUploadInfo {
+  fileUploadType: BitwardenFileUploadType;
+  url?: string;
+  sendResponse: Record<string, unknown>;
+}
+
 export interface BitwardenFolderRequest {
   name: string;
 }
@@ -103,6 +109,7 @@ const MAX_ATTACHMENT_CIPHERTEXT_BYTES = 100 * 1024 * 1024 + 64;
 const MAX_ATTACHMENT_METADATA_TEXT = 1024 * 1024;
 const MAX_PATH_ID_BYTES = 4096;
 const MAX_ATTACHMENTS_IN_UPLOAD_RESPONSE = 512;
+const MAX_SEND_FILE_CIPHERTEXT_BYTES = 100 * 1024 * 1024 + 128;
 
 export class BitwardenClient {
   constructor(
@@ -457,6 +464,155 @@ export class BitwardenClient {
       throw bitwardenHttpError("删除 Bitwarden 附件失败", response);
     });
     return { session: active, deleted: true };
+  }
+
+  async listSends(
+    session: BitwardenSessionConfig,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedJson(session, "/sends", { method: "GET", headers: commonHeaders(), signal }, "获取 Bitwarden Send 列表");
+  }
+
+  async getSend(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    assertPathId(sendId, "Send");
+    return this.authorizedJson(session, `/sends/${encodeURIComponent(sendId)}`, { method: "GET", headers: commonHeaders(), signal }, "获取 Bitwarden Send");
+  }
+
+  async createSend(
+    session: BitwardenSessionConfig,
+    request: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedJson(session, "/sends", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(request), signal }, "创建 Bitwarden Send");
+  }
+
+  async createFileSend(
+    session: BitwardenSessionConfig,
+    request: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; upload: BitwardenSendFileUploadInfo }> {
+    const result = await this.authorizedJson(session, "/sends/file/v2", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(request), signal }, "创建 Bitwarden 文件 Send");
+    const sendResponse = recordValue(result.payload, "SendResponse", "sendResponse");
+    if (!sendResponse) throw new Error("Bitwarden 文件 Send 响应缺少 Send 数据。");
+    const rawType = scalarInteger(result.payload, "FileUploadType", "fileUploadType");
+    if (rawType !== 0 && rawType !== 1) throw new Error("Bitwarden 返回了未知的 Send 文件上传模式。");
+    const url = optionalStringValue(result.payload, "Url", "url");
+    if (rawType === 1 && !url) throw new Error("Bitwarden Azure Send 上传响应缺少签名地址。");
+    return {
+      session: result.session,
+      upload: { fileUploadType: rawType, url: url ? validateAttachmentSignedUrl(url) : undefined, sendResponse }
+    };
+  }
+
+  async updateSend(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    request: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    assertPathId(sendId, "Send");
+    return this.authorizedJson(session, `/sends/${encodeURIComponent(sendId)}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(request), signal }, "更新 Bitwarden Send");
+  }
+
+  async removeSendPassword(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    assertPathId(sendId, "Send");
+    return this.authorizedJson(session, `/sends/${encodeURIComponent(sendId)}/remove-password`, { method: "PUT", headers: commonHeaders(), signal }, "移除 Bitwarden Send 密码");
+  }
+
+  async deleteSend(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; alreadyAbsent: boolean }> {
+    assertPathId(sendId, "Send");
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const status = await this.request(`${active.apiUrl}/sends/${encodeURIComponent(sendId)}`, {
+      method: "DELETE",
+      headers: authorizedHeaders(active.accessToken),
+      signal
+    }, "删除 Bitwarden Send", true, async (response) => {
+      if (response.status === 200 || response.status === 204 || response.status === 404) return response.status;
+      throw bitwardenHttpError("删除 Bitwarden Send 失败", response);
+    });
+    return { session: active, alreadyAbsent: status === 404 };
+  }
+
+  async uploadSendFileDirect(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    fileId: string,
+    encryptedFileName: string,
+    encryptedBytes: Uint8Array,
+    signal?: AbortSignal
+  ): Promise<BitwardenSessionConfig> {
+    assertPathId(sendId, "Send");
+    assertPathId(fileId, "Send 文件");
+    if (!encryptedFileName || encryptedFileName.length > MAX_ATTACHMENT_METADATA_TEXT) throw new Error("Bitwarden Send 加密文件名无效。");
+    if (!(encryptedBytes instanceof Uint8Array) || encryptedBytes.length < 65 || encryptedBytes.length > MAX_SEND_FILE_CIPHERTEXT_BYTES) {
+      throw new Error("Bitwarden Send 文件密文大小无效。");
+    }
+    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, signal) : session;
+    const form = new FormData();
+    form.append("data", new Blob([encryptedBytes as BlobPart], { type: "application/octet-stream" }), encryptedFileName);
+    await this.request(`${active.apiUrl}/sends/${encodeURIComponent(sendId)}/file/${encodeURIComponent(fileId)}`, {
+      method: "POST",
+      headers: authorizedHeaders(active.accessToken),
+      body: form,
+      signal
+    }, "上传 Bitwarden Send 文件", false, async (response) => {
+      if (!response.ok) throw bitwardenHttpError("上传 Bitwarden Send 文件失败", response);
+    });
+    return active;
+  }
+
+  async uploadSendFileAzure(signedUrl: string, encryptedBytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+    const url = validateAttachmentSignedUrl(signedUrl);
+    if (!(encryptedBytes instanceof Uint8Array) || encryptedBytes.length < 65 || encryptedBytes.length > MAX_SEND_FILE_CIPHERTEXT_BYTES) {
+      throw new Error("Bitwarden Send 文件密文大小无效。");
+    }
+    const headers = new Headers({
+      "Content-Type": "application/octet-stream",
+      "x-ms-blob-type": "BlockBlob",
+      "x-ms-date": new Date().toUTCString()
+    });
+    const serviceVersion = new URL(url).searchParams.get("sv");
+    if (serviceVersion) headers.set("x-ms-version", serviceVersion);
+    await this.request(url, {
+      method: "PUT",
+      headers,
+      body: new Blob([encryptedBytes as BlobPart], { type: "application/octet-stream" }),
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal
+    }, "上传 Bitwarden Azure Send 文件", true, async (response) => {
+      if (response.status !== 201) throw providerHttpError("上传 Bitwarden Azure Send 文件失败", response);
+    });
+  }
+
+  async renewSendFileUploadUrl(
+    session: BitwardenSessionConfig,
+    sendId: string,
+    fileId: string,
+    signal?: AbortSignal
+  ): Promise<{ session: BitwardenSessionConfig; fileUploadType: BitwardenFileUploadType; url?: string }> {
+    assertPathId(sendId, "Send");
+    assertPathId(fileId, "Send 文件");
+    const result = await this.authorizedJson(session, `/sends/${encodeURIComponent(sendId)}/file/${encodeURIComponent(fileId)}`, { method: "GET", headers: commonHeaders(), signal }, "续签 Bitwarden Send 文件上传地址");
+    const rawType = scalarInteger(result.payload, "FileUploadType", "fileUploadType");
+    if (rawType !== 0 && rawType !== 1) throw new Error("Bitwarden 返回了未知的 Send 文件上传模式。");
+    const url = optionalStringValue(result.payload, "Url", "url");
+    if (rawType === 1 && !url) throw new Error("Bitwarden Send 续签响应缺少签名地址。");
+    return { session: result.session, fileUploadType: rawType, url: url ? validateAttachmentSignedUrl(url) : undefined };
   }
 
   private async authorizedJson(

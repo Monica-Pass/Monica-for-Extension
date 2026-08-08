@@ -23,6 +23,8 @@ const KEY_BYTES = 32;
 const IV_BYTES = 16;
 const MAX_CIPHER_STRING_LENGTH = 1024 * 1024;
 const MAX_RSA_PRIVATE_KEY_BYTES = 64 * 1024;
+export const BITWARDEN_SEND_KEY_BYTES = 16;
+export const BITWARDEN_SEND_KDF_ITERATIONS = 100_000;
 // Bitwarden's default Argon2id configuration (64 MiB, 3 iterations, 4 lanes)
 // remains supported while preventing a self-hosted server from exhausting an
 // MV3 extension worker.
@@ -105,6 +107,53 @@ export async function decryptBitwardenSymmetricKey(value: string, wrappingKey: B
     return { encKey: bytes.slice(0, 32), macKey: bytes.slice(32) };
   } finally {
     bytes.fill(0);
+  }
+}
+
+/** Bitwarden Send stores a random 128-bit seed and derives the content key from it. */
+export function generateBitwardenSendKeyMaterial(randomness: (length: number) => Uint8Array = randomBytes): Uint8Array {
+  const material = randomness(BITWARDEN_SEND_KEY_BYTES);
+  if (!(material instanceof Uint8Array) || material.length !== BITWARDEN_SEND_KEY_BYTES) {
+    material?.fill?.(0);
+    throw new Error("Bitwarden Send 密钥材料长度无效。");
+  }
+  return material;
+}
+
+export async function deriveBitwardenSendKey(keyMaterial: Uint8Array): Promise<BitwardenSymmetricKey> {
+  if (!(keyMaterial instanceof Uint8Array) || keyMaterial.length !== BITWARDEN_SEND_KEY_BYTES) {
+    throw new Error("Bitwarden Send 密钥材料长度无效。");
+  }
+  const material = await crypto.subtle.importKey("raw", keyMaterial as BufferSource, "HKDF", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({
+    name: "HKDF",
+    hash: "SHA-256",
+    salt: encoder.encode("bitwarden-send") as BufferSource,
+    info: encoder.encode("send") as BufferSource
+  }, material, 512));
+  try {
+    return { encKey: bits.slice(0, 32), macKey: bits.slice(32, 64) };
+  } finally {
+    bits.fill(0);
+  }
+}
+
+export async function hashBitwardenSendPassword(password: string, keyMaterial: Uint8Array): Promise<string> {
+  if (typeof password !== "string" || !password) throw new Error("Bitwarden Send 访问密码不能为空。");
+  if (!(keyMaterial instanceof Uint8Array) || keyMaterial.length !== BITWARDEN_SEND_KEY_BYTES) {
+    throw new Error("Bitwarden Send 密钥材料长度无效。");
+  }
+  const material = await crypto.subtle.importKey("raw", encoder.encode(password) as BufferSource, "PBKDF2", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({
+    name: "PBKDF2",
+    hash: "SHA-256",
+    salt: keyMaterial as BufferSource,
+    iterations: BITWARDEN_SEND_KDF_ITERATIONS
+  }, material, 256));
+  try {
+    return bytesToBase64(bits);
+  } finally {
+    bits.fill(0);
   }
 }
 

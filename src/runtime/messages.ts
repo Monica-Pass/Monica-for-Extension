@@ -8,6 +8,7 @@ import type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult, KeePassWebDa
 import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
 import type { BitwardenFolderMutationResult, BitwardenFolderPage } from "../providers/bitwarden/bitwarden-folders";
 import type { BitwardenCollectionMutationResult, BitwardenCollectionPage } from "../providers/bitwarden/bitwarden-collections";
+import type { BitwardenSendDetail, BitwardenSendFileInput, BitwardenSendPage, BitwardenSendTextInput, BitwardenSendUpdateInput } from "../providers/bitwarden/bitwarden-sends";
 import type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
@@ -165,6 +166,11 @@ export interface ProviderAttachmentRecoveryStatus {
   completedCount: number;
 }
 
+export interface BitwardenSendFileUploadInput extends Omit<BitwardenSendFileInput, "bytes"> {
+  sizeBytes: number;
+  sha256?: string;
+}
+
 export interface Mdbx2VaultOpenInput {
   providerId?: string;
   name: string;
@@ -302,6 +308,16 @@ export type ExtensionRequest =
   | { type: "BITWARDEN_CIPHER_MOVE_FOLDER"; providerId: string; itemId: string; targetFolderId?: string; expectedCipherRevision?: string; expectedTargetFolderRevision?: string }
   | { type: "BITWARDEN_COLLECTION_LIST"; providerId: string; pageSize?: number; cursor?: string }
   | { type: "BITWARDEN_CIPHER_MOVE_COLLECTIONS"; providerId: string; itemId: string; collectionIds: string[]; expectedCipherRevision?: string }
+  | { type: "BITWARDEN_SEND_LIST"; providerId: string; pageSize?: number; cursor?: string }
+  | { type: "BITWARDEN_SEND_GET"; providerId: string; sendId: string }
+  | { type: "BITWARDEN_SEND_CREATE_TEXT"; providerId: string; input: BitwardenSendTextInput }
+  | { type: "BITWARDEN_SEND_UPDATE"; providerId: string; input: BitwardenSendUpdateInput }
+  | { type: "BITWARDEN_SEND_DELETE"; providerId: string; sendId: string; expectedRevision?: string; confirmed: boolean }
+  | { type: "BITWARDEN_SEND_REMOVE_PASSWORD"; providerId: string; sendId: string; expectedRevision?: string; confirmed: boolean }
+  | { type: "BITWARDEN_SEND_FILE_UPLOAD_BEGIN"; providerId: string; input: BitwardenSendFileUploadInput }
+  | { type: "BITWARDEN_SEND_FILE_UPLOAD_CHUNK"; providerId: string; transferId: string; offset: number; dataBase64: string }
+  | { type: "BITWARDEN_SEND_FILE_UPLOAD_FINISH"; providerId: string; transferId: string }
+  | { type: "BITWARDEN_SEND_FILE_UPLOAD_ABORT"; providerId: string; transferId: string }
   | { type: "MDBX2_HOST_STATUS" }
   | { type: "MDBX2_TRANSFER_BEGIN"; sizeBytes: number; sha256?: string }
   | { type: "MDBX2_TRANSFER_CHUNK"; transferId: string; offset: number; dataBase64: string }
@@ -387,6 +403,7 @@ export type VaultStatusResponse = VaultLifecycleStatus;
 export type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem };
 export type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult };
 export type { ProviderAttachmentTransferRequest, ProviderAttachmentTransferResult };
+export type { BitwardenSendDetail, BitwardenSendPage, BitwardenSendSummary, BitwardenSendTextInput, BitwardenSendUpdateInput } from "../providers/bitwarden/bitwarden-sends";
 export type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, KeePassSessionSummary };
 export type { Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus };
 export type { KeePassGroupMutationResult, KeePassGroupPage };

@@ -48,6 +48,25 @@ describe("provider resilient transport", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("normalizes a browser-provided stream on a null-body response status", async () => {
+    let cancelled = false;
+    const malformed = new Response(null, { status: 204 });
+    Object.defineProperty(malformed, "body", {
+      configurable: true,
+      value: new ReadableStream<Uint8Array>({ cancel: () => { cancelled = true; } })
+    });
+
+    const response = await resilientFetch("https://provider.example/item", { method: "DELETE" }, {
+      operation: "delete",
+      fetcher: vi.fn().mockResolvedValue(malformed),
+      maxAttempts: 1
+    }, async (value) => value);
+
+    expect(response.status).toBe(204);
+    expect(response.body).toBeNull();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+  });
+
   it("does not retry an unsafe write after a network failure", async () => {
     const fetcher = vi.fn().mockRejectedValue(new TypeError("network failed with token=secret-token"));
     await expect(resilientFetch("https://provider.example/ciphers", { method: "POST" }, { operation: "create", fetcher, maxAttempts: 3, idempotent: false }, async (response) => response))

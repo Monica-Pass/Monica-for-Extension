@@ -154,6 +154,13 @@ interface ManagedResponseBody {
 
 function manageResponseBody(response: Response): { response: Response; body?: ManagedResponseBody } {
   if (!response.body) return { response };
+  if (response.status === 204 || response.status === 205 || response.status === 304) {
+    const responseBody = response.body;
+    return {
+      response: new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers }),
+      body: { cancel: () => responseBody.cancel() }
+    };
+  }
   const source = response.body.getReader();
   let ended = false;
   let cancelled = false;

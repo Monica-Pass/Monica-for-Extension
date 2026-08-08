@@ -28,6 +28,7 @@ import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { BitwardenDurableSyncCoordinator } from "../providers/bitwarden/bitwarden-durable-sync";
 import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutationResult } from "../providers/bitwarden/bitwarden-folders";
 import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
+import { BitwardenSendError, BitwardenSendService, type BitwardenSendFileInput } from "../providers/bitwarden/bitwarden-sends";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
@@ -111,8 +112,11 @@ const bitwardenAttachmentReadRoutes = new Map<string, { providerId: string; item
 const bitwardenClient = new BitwardenClient();
 const bitwardenFolders = new BitwardenFolderService(bitwardenClient);
 const bitwardenCollections = new BitwardenCollectionService(bitwardenClient);
+const bitwardenSends = new BitwardenSendService(bitwardenClient);
 const bitwardenAttachmentDownloads = new BitwardenAttachmentDownloadService();
 const bitwardenAttachmentMutations = new BitwardenAttachmentMutationService();
+const bitwardenSendUploads = new ProviderAttachmentUploadStore();
+const bitwardenSendUploadInputs = new Map<string, { providerId: string; input: Omit<BitwardenSendFileInput, "bytes"> }>();
 const CAPTURE_TTL_MS = 60_000;
 const MDBX2_MAX_BASE64_CHUNK_LENGTH = Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4;
 const PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH = Math.ceil(PROVIDER_ATTACHMENT_CHUNK_BYTES / 3) * 4;
@@ -231,6 +235,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") clearKeePassPendingPersistence();
       if (status !== "unlocked") clearBitwardenAttachmentSessions();
       if (status !== "unlocked") providerAttachmentUploads.clear();
+      if (status !== "unlocked") clearBitwardenSendUploads();
       if (status !== "unlocked") mdbx2BatchTransferStatuses.clear();
     });
   }
@@ -252,7 +257,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
               ? "PASSKEY_CANCELLED"
               : error instanceof PasskeyCommitUnknownError
                 ? "PASSKEY_COMMIT_UNKNOWN"
-                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof BitwardenFolderError || error instanceof BitwardenCollectionError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
+                : error instanceof Mdbx2NativeHostError || error instanceof ProviderAttachmentError || error instanceof BitwardenFolderError || error instanceof BitwardenCollectionError || error instanceof BitwardenSendError || error instanceof KeePassGroupError || error instanceof KeePassHistoryError || error instanceof KeePassRemoteSessionError || error instanceof KeePassWebDavError || error instanceof KeePassWorkingCopyStoreError || error instanceof ProviderTransportError
                   ? error.code
                   : undefined;
       sendResponse({ ok: false, error: error instanceof Error ? error.message : "未知后台错误", code });
@@ -315,6 +320,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       clearKeePassPendingPersistence();
       clearBitwardenAttachmentSessions();
       providerAttachmentUploads.clear();
+      clearBitwardenSendUploads();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
@@ -336,6 +342,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       clearKeePassPendingPersistence();
       clearBitwardenAttachmentSessions();
       providerAttachmentUploads.clear();
+      clearBitwardenSendUploads();
       const state = await service.restoreEncryptedBackup(request.backup, request.backupPassword, {
         replaceExisting: request.replaceExisting,
         currentPassword: request.currentPassword
@@ -658,6 +665,97 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       await acknowledgeBitwardenCipherProjection(account, result.session, [result.result.rawCipher], request.itemId);
       await persistBitwardenSession(account, result.session);
       return publicBitwardenCollectionMutationResult(result.result);
+    }
+    case "BITWARDEN_SEND_LIST": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.list(readBitwardenSession(account), account.id, request);
+      await persistBitwardenSession(account, result.session);
+      return result.page;
+    }
+    case "BITWARDEN_SEND_GET": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.get(readBitwardenSession(account), account.id, request.sendId);
+      await persistBitwardenSession(account, result.session);
+      return result.send;
+    }
+    case "BITWARDEN_SEND_CREATE_TEXT": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.createText(readBitwardenSession(account), account.id, request.input);
+      await persistBitwardenSession(account, result.session);
+      return result.send;
+    }
+    case "BITWARDEN_SEND_UPDATE": {
+      assertManagerPage(sender);
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.update(readBitwardenSession(account), account.id, request.input);
+      await persistBitwardenSession(account, result.session);
+      return result.send;
+    }
+    case "BITWARDEN_SEND_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new BitwardenSendError("send-delete-confirmation-required", "删除 Bitwarden Send 需要明确确认。");
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.remove(readBitwardenSession(account), account.id, request.sendId, request.expectedRevision);
+      await persistBitwardenSession(account, result.session);
+      return { deleted: result.deleted };
+    }
+    case "BITWARDEN_SEND_REMOVE_PASSWORD": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new BitwardenSendError("send-password-removal-confirmation-required", "移除 Bitwarden Send 密码需要明确确认。");
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      const result = await bitwardenSends.removePassword(readBitwardenSession(account), account.id, request.sendId, request.expectedRevision);
+      await persistBitwardenSession(account, result.session);
+      return result.send;
+    }
+    case "BITWARDEN_SEND_FILE_UPLOAD_BEGIN": {
+      assertManagerPage(sender);
+      await requireBitwardenAccountRecord(request.providerId);
+      const { sizeBytes, sha256, ...input } = request.input;
+      const begun = bitwardenSendUploads.begin({
+        providerId: request.providerId,
+        itemId: "bitwarden-send",
+        providerKind: "bitwarden",
+        fileName: input.fileName,
+        sizeBytes,
+        sha256,
+        replaceExisting: false
+      }, BITWARDEN_ATTACHMENT_MAX_BYTES);
+      bitwardenSendUploadInputs.set(begun.transferId, { providerId: request.providerId, input });
+      return begun;
+    }
+    case "BITWARDEN_SEND_FILE_UPLOAD_CHUNK": {
+      assertManagerPage(sender);
+      if (typeof request.dataBase64 !== "string" || request.dataBase64.length > PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH) {
+        throw new ProviderAttachmentError("attachment-upload-chunk-invalid", "Send 文件上传分块编码超过安全上限。");
+      }
+      const metadata = bitwardenSendUploadInputs.get(request.transferId);
+      if (!metadata || metadata.providerId !== request.providerId) throw new ProviderAttachmentError("attachment-upload-not-found", "Send 文件上传已过期或 Service Worker 已重启，请重新选择文件。");
+      return bitwardenSendUploads.write(request.transferId, request.offset, base64ToBytes(request.dataBase64));
+    }
+    case "BITWARDEN_SEND_FILE_UPLOAD_FINISH": {
+      assertManagerPage(sender);
+      const metadata = bitwardenSendUploadInputs.get(request.transferId);
+      if (!metadata || metadata.providerId !== request.providerId) throw new ProviderAttachmentError("attachment-upload-not-found", "Send 文件上传已过期或 Service Worker 已重启，请重新选择文件。");
+      const account = await requireBitwardenAccountRecord(request.providerId);
+      try {
+        const completed = await bitwardenSendUploads.complete(request.transferId);
+        const result = await bitwardenSends.createFile(readBitwardenSession(account), account.id, { ...metadata.input, bytes: completed.bytes });
+        await persistBitwardenSession(account, result.session);
+        return result.send;
+      } finally {
+        bitwardenSendUploads.release(request.transferId);
+        bitwardenSendUploadInputs.delete(request.transferId);
+      }
+    }
+    case "BITWARDEN_SEND_FILE_UPLOAD_ABORT": {
+      assertManagerPage(sender);
+      const metadata = bitwardenSendUploadInputs.get(request.transferId);
+      if (metadata && metadata.providerId !== request.providerId) throw new ProviderAttachmentError("attachment-upload-not-found", "Send 文件上传不属于所选密码源。");
+      bitwardenSendUploadInputs.delete(request.transferId);
+      return bitwardenSendUploads.abort(request.transferId);
     }
     case "MDBX2_HOST_STATUS":
       assertManagerPage(sender);
@@ -1766,6 +1864,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       clearKeePassPendingPersistence(request.providerId);
       clearBitwardenAttachmentSessions(request.providerId);
       providerAttachmentUploads.clear(request.providerId);
+      clearBitwardenSendUploads(request.providerId);
       await keePassWorkingCopies.delete(request.providerId).catch(() => undefined);
       return service.removeProvider(request.providerId);
   }
@@ -2870,6 +2969,13 @@ function clearBitwardenAttachmentSessions(providerId?: string): void {
   bitwardenAttachmentDownloads.clear();
   for (const [readHandle, route] of bitwardenAttachmentReadRoutes) {
     if (providerId === undefined || route.providerId === providerId) bitwardenAttachmentReadRoutes.delete(readHandle);
+  }
+}
+
+function clearBitwardenSendUploads(providerId?: string): void {
+  bitwardenSendUploads.clear(providerId);
+  for (const [transferId, metadata] of bitwardenSendUploadInputs) {
+    if (providerId === undefined || metadata.providerId === providerId) bitwardenSendUploadInputs.delete(transferId);
   }
 }
 
