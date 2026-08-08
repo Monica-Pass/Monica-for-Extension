@@ -273,7 +273,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_UNLOCK_HELLO": {
       assertManagerPage(sender);
       const state = await service.unlockWithWindowsHello((bindingId, challenge) => mdbx2NativeClient.verifyWindowsHello(bindingId, challenge).then(() => undefined));
-      return state.items.filter((item) => !item.deletedAt);
+      return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
     }
     case "VAULT_HELLO_STATUS": {
       assertManagerPage(sender);
@@ -305,11 +305,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const initialItems = await readLegacyItems();
       const state = await service.setup(request.masterPassword, initialItems);
       if (initialItems.length) await chrome.storage.local.remove(LEGACY_VAULT_KEY);
-      return state.items.filter((item) => !item.deletedAt);
+      return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
     }
     case "VAULT_UNLOCK": {
       assertExtensionPage(sender);
-      return (await service.unlock(request.masterPassword)).items.filter((item) => !item.deletedAt);
+      return (await service.unlock(request.masterPassword)).items.filter((item) => !item.deletedAt && !item.archivedAt);
     }
     case "VAULT_LOCK": {
       assertExtensionPage(sender);
@@ -350,7 +350,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
-      return state.items.filter((item) => !item.deletedAt);
+      return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
     }
     case "VAULT_IMPORT_ITEMS":
       assertExtensionPage(sender);
@@ -358,8 +358,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_LIST_ITEMS":
       assertExtensionPage(sender);
       return service.listItems();
+    case "VAULT_LIST_ARCHIVED_ITEMS":
+      assertManagerPage(sender);
+      return service.listArchivedItems();
+    case "VAULT_LIST_DELETED_ITEMS":
+      assertManagerPage(sender);
+      return service.listDeletedItems();
     case "VAULT_GET_ITEM":
-      assertExtensionPage(sender);
+      assertManagerPage(sender);
       return service.getItem(request.itemId);
     case "VAULT_UPSERT_ITEM":
       assertExtensionPage(sender);
@@ -367,6 +373,9 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_DELETE_ITEM":
       assertExtensionPage(sender);
       return service.deleteItem(request.itemId);
+    case "VAULT_RESTORE_ITEM":
+      assertManagerPage(sender);
+      return service.restoreItem(request.itemId);
     case "VAULT_MATCH_LOGINS": {
       assertExtensionPage(sender);
       const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
@@ -1776,6 +1785,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return undefined;
     case "PROVIDER_SYNC": {
       assertExtensionPage(sender);
+      if (request.allowEmptyRemote === true) assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account) throw new Error("密码源不存在。");
       if (account.kind === "local") throw new Error("本地密码源不需要同步。");
@@ -1791,7 +1801,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         if (account.kind === "keepass") {
           result = await synchronizeKeePassProvider(account, controller.signal);
         } else if (account.kind === "bitwarden") {
-          result = await bitwardenDurableSync.synchronize(account, controller.signal);
+          result = await bitwardenDurableSync.synchronize(account, controller.signal, { allowEmptyRemote: request.allowEmptyRemote === true });
         } else {
           // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
           // concurrent local edit against. Both must be the same read of the vault.
@@ -2561,7 +2571,7 @@ async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId
 async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) {
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
   const item = await service.getItem(itemId);
-  if (!item || !isLoginItem(item)) throw new Error("登录项不存在或已被删除。");
+  if (!item || !isLoginItem(item) || item.deletedAt || item.archivedAt) throw new Error("登录项不存在、已归档或已被删除。");
   if (loginMatchScore(item, target.url) <= 0) throw new Error("登录项与目标页面不匹配，已阻止填充。");
   const otp = await resolveLoginOtp(item, await service.listItems());
   const response = (await chrome.tabs.sendMessage(tabId, {

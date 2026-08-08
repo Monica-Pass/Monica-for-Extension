@@ -32,6 +32,8 @@ export interface ProviderSyncContext {
   mutationReceipts?: ProviderMutationReceipt[];
   /** Must be awaited immediately before the provider starts a remote write. */
   markMutationsAttempted?: (mutationIds: string[]) => Promise<void>;
+  /** Manager-authorized adoption of an authenticated empty remote projection. */
+  allowEmptyRemote?: boolean;
 }
 
 export interface ProviderSyncResult {
@@ -42,6 +44,8 @@ export interface ProviderSyncResult {
   sourceRecords?: ProviderSourceRecord[];
   acknowledgedMutations?: ProviderAcknowledgedMutation[];
   requestedMutations?: ProviderRequestedMutation[];
+  /** An explicit manager decision authorizes removal of unchanged cached records absent remotely. */
+  adoptRemoteRemovals?: boolean;
 }
 
 export interface ProviderAdapter<TAccount extends ProviderAccount = ProviderAccount> {

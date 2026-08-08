@@ -482,7 +482,15 @@ export class SecureVaultService {
   }
 
   async listItems(): Promise<VaultItem[]> {
-    return (await this.readState()).items.filter((item) => !item.deletedAt);
+    return (await this.readState()).items.filter((item) => !item.deletedAt && !item.archivedAt);
+  }
+
+  async listArchivedItems(): Promise<VaultItem[]> {
+    return (await this.readState()).items.filter((item) => !item.deletedAt && Boolean(item.archivedAt));
+  }
+
+  async listDeletedItems(): Promise<VaultItem[]> {
+    return (await this.readState()).items.filter((item) => Boolean(item.deletedAt));
   }
 
   async getItem(itemId: string): Promise<VaultItem | undefined> {
@@ -552,7 +560,8 @@ export class SecureVaultService {
     sourceRecords?: ProviderSourceRecord[],
     syncSnapshot?: VaultItem[],
     acknowledgedMutations: ProviderAcknowledgedMutation[] = [],
-    requestedMutations: ProviderRequestedMutation[] = []
+    requestedMutations: ProviderRequestedMutation[] = [],
+    adoptRemoteRemovals = false
   ): Promise<{ conflicts: number }> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
@@ -579,7 +588,7 @@ export class SecureVaultService {
     const acknowledgementsByItemId = new Map([...acknowledgementsById.values()].map((acknowledgement) => [acknowledgement.itemId, acknowledgement]));
     if (acknowledgementsByItemId.size !== acknowledgementsById.size) throw new Error("密码源同步确认包含重复项目。");
     const merge = syncSnapshot
-      ? mergeProviderSyncItems(providerId, syncSnapshot, state.items, items, acknowledgementsByItemId)
+      ? mergeProviderSyncItems(providerId, syncSnapshot, state.items, items, acknowledgementsByItemId, adoptRemoteRemovals)
       : { items, conflicts: [] as ProviderConflictInput[], locallyChangedIds: new Set<string>(), confirmedMutationIds: new Set<string>() };
     const persistedConflicts: ProviderConflict[] = [...conflicts, ...merge.conflicts].slice(0, 500).map((conflict) => ({
       ...structuredClone(conflict),
@@ -935,6 +944,49 @@ export class SecureVaultService {
     });
   }
 
+  async restoreItem(itemId: string): Promise<VaultItem> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const item = state.items.find((candidate) => candidate.id === itemId);
+      if (!item) throw new Error("回收站项目不存在。");
+      if (!item.deletedAt) return structuredClone(item);
+
+      const now = new Date(this.now()).toISOString();
+      const sharedBitwardenCiphers = new Set(item.providerRefs.flatMap((reference) => {
+        const provider = state.providers.find((candidate) => candidate.id === reference.providerId);
+        return provider?.kind === "bitwarden" && reference.remoteId
+          ? [`${reference.providerId}\u0000${baseProviderRemoteId(reference.remoteId)}`]
+          : [];
+      }));
+      const targets = state.items.filter((candidate) => candidate.deletedAt && (
+        candidate.id === itemId || candidate.providerRefs.some((reference) => reference.remoteId && sharedBitwardenCiphers.has(`${reference.providerId}\u0000${baseProviderRemoteId(reference.remoteId)}`))
+      ));
+      const restoredById = new Map(targets.map((candidate) => [candidate.id, { ...candidate, deletedAt: undefined, updatedAt: now } as VaultItem]));
+      state.items = state.items.map((candidate) => restoredById.get(candidate.id) || candidate);
+
+      for (const restored of restoredById.values()) {
+        for (const reference of restored.providerRefs) {
+          const provider = state.providers.find((candidate) => candidate.id === reference.providerId);
+          if (!provider || provider.kind === "local") continue;
+          const pendingDelete = state.mutationQueue.find((mutation) => mutation.providerId === provider.id && mutation.itemId === restored.id && mutation.operation === "delete");
+          if (pendingDelete) {
+            const receipt = state.providerMutationReceipts.find((candidate) => candidate.providerId === provider.id && candidate.mutationId === pendingDelete.id);
+            if (!receipt || receipt.stage === "prepared") {
+              state.mutationQueue = state.mutationQueue.filter((mutation) => mutation !== pendingDelete);
+              state.providerMutationReceipts = state.providerMutationReceipts.filter((candidate) => candidate !== receipt);
+            }
+            continue;
+          }
+          queueProviderMutation(state, restored, provider.id, "update", now);
+        }
+      }
+
+      state.updatedAt = now;
+      await this.persist(state, key, envelope.kdf);
+      return structuredClone(restoredById.get(itemId)!);
+    });
+  }
+
   async deleteItem(itemId: string): Promise<void> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
@@ -1232,7 +1284,8 @@ function mergeProviderSyncItems(
   snapshot: VaultItem[],
   current: VaultItem[],
   remote: VaultItem[],
-  acknowledgementsByItemId: Map<string, ProviderAcknowledgedMutation> = new Map()
+  acknowledgementsByItemId: Map<string, ProviderAcknowledgedMutation> = new Map(),
+  adoptRemoteRemovals = false
 ): { items: VaultItem[]; conflicts: ProviderConflictInput[]; locallyChangedIds: Set<string>; confirmedMutationIds: Set<string> } {
   const snapshotById = new Map(snapshot.map((item) => [item.id, item]));
   const currentById = new Map(current.map((item) => [item.id, item]));
@@ -1263,6 +1316,10 @@ function mergeProviderSyncItems(
     // not an independent remote edit. If the user changed the item while the
     // request was in flight, preserve that newer payload and only rebase the
     // authoritative remote reference so a follow-up mutation remains queued.
+    if (acknowledgement?.followUp && local) {
+      replacementById.set(id, withAcknowledgedProviderReference(local, incoming, providerId, acknowledgement.remoteId));
+      continue;
+    }
     if (localChanged && acknowledgement && local) {
       replacementById.set(id, withAcknowledgedProviderReference(local, incoming, providerId, acknowledgement.remoteId));
       continue;
@@ -1289,6 +1346,10 @@ function mergeProviderSyncItems(
       continue;
     }
     if (local && !local.deletedAt && !incoming) {
+      if (adoptRemoteRemovals && !localChanged) {
+        replacementById.set(id, undefined);
+        continue;
+      }
       conflicts.push({ itemId: id, reason: "此项目已在远端删除，但浏览器中仍保留本地版本。", local });
       continue;
     }

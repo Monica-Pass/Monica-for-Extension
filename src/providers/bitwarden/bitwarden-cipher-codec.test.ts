@@ -139,6 +139,48 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
   });
 
+  it("writes the local archive timestamp into the Bitwarden Cipher", async () => {
+    const archivedAt = "2026-07-15T04:00:00.000Z";
+    const item: LoginItem = {
+      id: "archived-login",
+      kind: "login",
+      title: "Archived",
+      username: "user",
+      password: "pass",
+      uris: [],
+      customFields: [],
+      favorite: false,
+      notes: "",
+      createdAt: REVISION,
+      updatedAt: archivedAt,
+      archivedAt,
+      providerRefs: []
+    };
+
+    const encoded = await encodeBitwardenCipher(item, KEY);
+
+    expect(encoded.archivedDate).toBe(archivedAt);
+  });
+
+  it("clears a preserved Bitwarden archive marker when the local item is unarchived", async () => {
+    const raw = {
+      Id: "archived-login",
+      Type: 1,
+      Name: await encryptBitwardenString("Archived", KEY),
+      ArchivedDate: "2026-07-15T04:00:00.000Z",
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      FutureTopLevel: { keep: true },
+      Login: { Username: null, Password: null, Uris: [] }
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+
+    const encoded = await encodeBitwardenCipher({ ...decoded.items[0], archivedAt: undefined }, KEY, raw);
+
+    expect(encoded.archivedDate).toBeNull();
+    expect(encoded.futureTopLevel).toEqual({ keep: true });
+  });
+
   it("writes every Bitwarden URI match mode without collapsing it to the default", async () => {
     const item: LoginItem = {
       id: "uri-rules",

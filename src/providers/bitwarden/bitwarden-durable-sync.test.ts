@@ -15,6 +15,18 @@ const KEY: BitwardenSymmetricKey = {
 const REVISION = "2026-08-08T00:00:00.000Z";
 
 describe("Bitwarden durable item synchronization", () => {
+  it("includes Passkey archive state in the durable Bitwarden intent fingerprint", async () => {
+    const raw = await loginCipher("secret", REVISION, "archive-passkey-cipher");
+    raw.Login = { ...(raw.Login as Record<string, unknown>), Fido2Credentials: [await fidoCredential("archive-credential", 0)] };
+    const provider = new BitwardenProvider(async () => json({ Profile: { Id: "user" }, Ciphers: [raw] }));
+    const imported = await provider.sync(bitwardenAccount(), { now: REVISION, localItems: [] });
+    const passkey = imported.items.find((item): item is PasskeyItem => item.kind === "passkey")!;
+
+    await expect(bitwardenMutationFingerprint(passkey)).resolves.not.toBe(
+      await bitwardenMutationFingerprint({ ...passkey, archivedAt: "2026-08-08T00:01:00.000Z" })
+    );
+  });
+
   it("survives a Service Worker restart after a committed create response is lost", async () => {
     const storage = new MemoryVaultStorage();
     const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
@@ -204,8 +216,74 @@ describe("Bitwarden durable item synchronization", () => {
     const final = await service.readState();
     expect(final.providerMutationReceipts).toEqual([]);
     expect(final.mutationQueue).toEqual([]);
-    expect(final.items.find((item) => item.id === original.id)).toBeUndefined();
+    expect(final.items.find((item) => item.id === original.id)).toMatchObject({ deletedAt: "2026-08-08T00:03:00.000Z" });
     expect(deleteCount).toBe(attemptsBeforeRestart);
+  });
+
+  it("restores a Cipher after a lost recycle-bin response without losing the local restore intent", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    const account = bitwardenAccount();
+    await service.setup("durable restore vault password");
+    await service.upsertProvider(account);
+    const original: LoginItem = {
+      id: "durable-restore-item",
+      kind: "login",
+      title: "Restore me",
+      username: "alice",
+      password: "secret",
+      uris: ["https://example.com"],
+      uriRules: [{ uri: "https://example.com", matchType: "base-domain" }],
+      customFields: [],
+      bitwardenCustomFieldsVersion: 1,
+      favorite: false,
+      notes: "",
+      createdAt: REVISION,
+      updatedAt: REVISION,
+      providerRefs: [{ providerId: account.id, remoteId: "restore-cipher", revision: REVISION }]
+    };
+    await service.applyProviderSync(account.id, [original]);
+    await service.deleteItem(original.id);
+
+    let remote = await loginCipher("secret", REVISION, "restore-cipher");
+    let deleteCount = 0;
+    let restoreCount = 0;
+    let updateCount = 0;
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url.includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (url.endsWith("/delete") && init?.method === "PUT") {
+        deleteCount += 1;
+        remote = { ...remote, DeletedDate: "2026-08-08T00:03:00.000Z" };
+        throw new DOMException("response lost", "AbortError");
+      }
+      if (url.endsWith("/restore") && init?.method === "PUT") {
+        restoreCount += 1;
+        remote = { ...remote, DeletedDate: null };
+        return json(remote);
+      }
+      if (init?.method === "PUT") {
+        updateCount += 1;
+        remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), Id: "restore-cipher", RevisionDate: "2026-08-08T00:04:00.000Z", CreationDate: REVISION, DeletedDate: null };
+        return json(remote);
+      }
+      throw new Error(`Unexpected ${init?.method} ${url}`);
+    };
+
+    await new BitwardenDurableSyncCoordinator(new BitwardenProvider(fetcher), service).synchronize(account);
+    const deleteAttemptsBeforeRestore = deleteCount;
+    await service.restoreItem(original.id);
+    await new BitwardenDurableSyncCoordinator(new BitwardenProvider(fetcher), service).synchronize(account);
+    expect((await service.readState()).mutationQueue).toEqual([expect.objectContaining({ itemId: original.id, operation: "update" })]);
+    expect((await service.readState()).items.find((item) => item.id === original.id)?.deletedAt).toBeUndefined();
+
+    await new BitwardenDurableSyncCoordinator(new BitwardenProvider(fetcher), service).synchronize(account);
+    const final = await service.readState();
+    expect(final.items.find((item) => item.id === original.id)).toMatchObject({ password: "secret" });
+    expect(final.items.find((item) => item.id === original.id)?.deletedAt).toBeUndefined();
+    expect(final.mutationQueue).toEqual([]);
+    expect(final.providerMutationReceipts).toEqual([]);
+    expect(deleteCount).toBe(deleteAttemptsBeforeRestore);
+    expect({ restoreCount, updateCount }).toEqual({ restoreCount: 1, updateCount: 1 });
   });
 
   it("recovers login and Passkey children committed by one Cipher update", async () => {

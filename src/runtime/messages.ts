@@ -252,9 +252,12 @@ export type ExtensionRequest =
   | { type: "VAULT_RESTORE_ENCRYPTED"; backup: EncryptedVaultBackup; backupPassword: string; replaceExisting?: boolean; currentPassword?: string }
   | { type: "VAULT_IMPORT_ITEMS"; items: VaultItem[] }
   | { type: "VAULT_LIST_ITEMS" }
+  | { type: "VAULT_LIST_ARCHIVED_ITEMS" }
+  | { type: "VAULT_LIST_DELETED_ITEMS" }
   | { type: "VAULT_GET_ITEM"; itemId: string }
   | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
+  | { type: "VAULT_RESTORE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
   | { type: "VAULT_MATCH_PASSKEYS"; pageUrl: string }
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
@@ -391,7 +394,7 @@ export type ExtensionRequest =
   | { type: "KEEPASS_HISTORY_RESTORE"; providerId: string; itemId: string; operationId: string; historyId: string; confirmed: boolean }
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
   | { type: "KEEPASS_LOCK"; providerId?: string }
-  | { type: "PROVIDER_SYNC"; providerId: string }
+  | { type: "PROVIDER_SYNC"; providerId: string; allowEmptyRemote?: true }
   | { type: "PROVIDER_SYNC_CANCEL"; providerId: string }
   | { type: "PROVIDER_REMOVE"; providerId: string };
 

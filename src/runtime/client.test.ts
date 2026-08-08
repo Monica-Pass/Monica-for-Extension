@@ -5,6 +5,23 @@ import type { Mdbx2HealthRepairDecision } from "./messages";
 describe("extension runtime client", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("keeps archive, recycle-bin, restore, and empty-vault confirmation manager messages explicit", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    await vaultClient.listArchivedItems();
+    await vaultClient.listDeletedItems();
+    await vaultClient.restoreItem("item-1");
+    await vaultClient.syncProvider("provider-1", true);
+
+    expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: "VAULT_LIST_ARCHIVED_ITEMS" },
+      { type: "VAULT_LIST_DELETED_ITEMS" },
+      { type: "VAULT_RESTORE_ITEM", itemId: "item-1" },
+      { type: "PROVIDER_SYNC", providerId: "provider-1", allowEmptyRemote: true }
+    ]);
+  });
+
   it("preserves a bounded background error code for MDBX2 safety recovery", async () => {
     const sendMessage = vi.fn().mockResolvedValue({
       ok: false,

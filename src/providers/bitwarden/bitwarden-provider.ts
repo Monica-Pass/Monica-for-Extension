@@ -34,12 +34,35 @@ export class BitwardenProvider implements ProviderAdapter {
     const receiptsByMutationId = boundedMutationReceipts(context.mutationReceipts || [], account.id);
     const acknowledgedByMutationId = boundedAcknowledgedMutations(context.acknowledgedMutations || []);
     const hasExistingBaseline = localScoped.some((item) => Boolean(providerReference(item, account.id)?.revision));
-    if (!rawCiphers.length && hasExistingBaseline) {
+    const unsynchronizedForEmptyRemote = pendingByItemId === undefined
+      ? localScoped.filter((item) => {
+          const reference = providerReference(item, account.id);
+          return !reference?.remoteId || item.updatedAt !== reference.revision;
+        })
+      : localScoped.filter((item) => pendingByItemId.has(item.id));
+    if (!rawCiphers.length && hasExistingBaseline && !context.allowEmptyRemote) {
       return {
         items: context.localItems,
-        accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: session },
+        accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: session, requiresEmptyRemoteConfirmation: true },
         conflicts: [{ itemId: account.id, reason: "Bitwarden 返回空密码库，但本地存在已同步项目。" }],
         warnings: ["Bitwarden 返回空密码库，未删除本地缓存；请确认服务器状态后重试。"],
+        sourceRecords: await bitwardenSourceRecords(rawCiphers, account.id)
+      };
+    }
+    if (!rawCiphers.length && hasExistingBaseline && context.allowEmptyRemote && unsynchronizedForEmptyRemote.length) {
+      return {
+        items: context.localItems,
+        accountPatch: {
+          lastError: "Bitwarden 空密码库确认已暂停：浏览器仍有未同步修改。",
+          config: session,
+          requiresEmptyRemoteConfirmation: true
+        },
+        conflicts: unsynchronizedForEmptyRemote.map((local) => ({
+          itemId: local.id,
+          reason: "服务器为空，但此项目仍有未同步修改；已保留完整本地缓存。",
+          local
+        })),
+        warnings: ["Bitwarden 空密码库确认未生效；请先处理本地修改或同步冲突。"],
         sourceRecords: await bitwardenSourceRecords(rawCiphers, account.id)
       };
     }
@@ -50,6 +73,8 @@ export class BitwardenProvider implements ProviderAdapter {
     const rawByCipherId = new Map<string, Record<string, unknown>>();
     const skippedCipherIds = new Set<string>();
     const warnings: string[] = [...organizations.warnings];
+    let preservedUnsupportedRecords = 0;
+    let unreadableRecords = 0;
     for (const rawCipher of rawCiphers) {
       const cipherId = stringValue(rawCipher, "Id", "id");
       if (cipherId) rawByCipherId.set(cipherId, rawCipher);
@@ -57,6 +82,7 @@ export class BitwardenProvider implements ProviderAdapter {
         const ownerKey = cipherOwnerKey(rawCipher, vaultKey, organizations.keys);
         if (!ownerKey) {
           warnings.push(missingOrganizationKeyWarning(rawCipher, cipherId));
+          unreadableRecords += 1;
           if (cipherId) skippedCipherIds.add(cipherId);
           continue;
         }
@@ -64,10 +90,13 @@ export class BitwardenProvider implements ProviderAdapter {
         remoteItems.push(...decoded.items);
         if (decoded.warning) {
           warnings.push(decoded.warning);
+          if (decoded.unsupported) preservedUnsupportedRecords += 1;
+          else unreadableRecords += 1;
           if (cipherId) skippedCipherIds.add(cipherId);
         }
       } catch (error) {
         warnings.push(`Bitwarden Cipher ${cipherId || "unknown"} 解密失败：${errorMessage(error)}`);
+        unreadableRecords += 1;
         if (cipherId) skippedCipherIds.add(cipherId);
       }
     }
@@ -98,7 +127,10 @@ export class BitwardenProvider implements ProviderAdapter {
     ): Promise<void> => {
       if (acknowledgedByItemId.has(mutation.itemId)) return;
       const local = localScoped.find((item) => item.id === mutation.itemId);
-      const followUp = Boolean(receipt && local && (await bitwardenMutationFingerprint(local)) !== receipt.intentFingerprint);
+      const followUp = Boolean(receipt && local && (
+        (receipt.operation === "delete" && !local.deletedAt)
+        || (await bitwardenMutationFingerprint(local)) !== receipt.intentFingerprint
+      ));
       const acknowledged = followUp ? { ...mutation, followUp: true } : mutation;
       acknowledgedMutations.push(acknowledged);
       acknowledgedByItemId.set(mutation.itemId, acknowledged);
@@ -263,6 +295,9 @@ export class BitwardenProvider implements ProviderAdapter {
               await registerAcknowledgement(receiptsByMutationId.get(pending.id), { mutationId: pending.id, itemId: change.id, operation: "delete", remoteId });
             }
           }
+          const deletedAt = primary.deletedAt || context.now;
+          const tombstones = (remotes.length ? remotes : workingLocals).map((item) => ({ ...item, deletedAt })) as VaultItem[];
+          merged.push(...rebaseRemoteItems(tombstones, workingLocals, account.id));
           continue;
         }
         // A live local item over a trashed Cipher means the item came back; Bitwarden rejects
@@ -328,13 +363,20 @@ export class BitwardenProvider implements ProviderAdapter {
     }
 
     return {
-      items: merged.filter((item) => !item.deletedAt || conflicts.some((conflict) => conflict.itemId === item.id && Boolean(conflict.local?.deletedAt))),
-      accountPatch: { config: session, lastSyncAt: context.now, lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined },
+      items: merged,
+      accountPatch: {
+        config: session,
+        lastSyncAt: context.now,
+        lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined,
+        requiresEmptyRemoteConfirmation: false,
+        compatibility: { preservedUnsupportedRecords, unreadableRecords }
+      },
       conflicts,
       warnings,
       sourceRecords: await bitwardenSourceRecords([...rawByCipherId.values()], account.id),
       acknowledgedMutations,
-      requestedMutations: requestedMutations.length ? requestedMutations : undefined
+      requestedMutations: requestedMutations.length ? requestedMutations : undefined,
+      adoptRemoteRemovals: Boolean(context.allowEmptyRemote && !rawCiphers.length && hasExistingBaseline)
     };
   }
 

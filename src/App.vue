@@ -35,7 +35,7 @@ import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyn
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | VaultManagerSection | "steam" | "sends" | "generator" | "providers" | "settings";
+type Section = "overview" | VaultManagerSection | "steam" | "sends" | "archive" | "trash" | "generator" | "providers" | "settings";
 type LoginType = NonNullable<LoginItem["loginType"]>;
 type KeePassSourceMode = "local-file" | "webdav";
 
@@ -78,6 +78,8 @@ interface KeePassFormState {
 }
 
 const vaultItems = ref<VaultItem[]>([]);
+const archivedItems = ref<VaultItem[]>([]);
+const deletedItems = ref<VaultItem[]>([]);
 const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; recovering?: number; maxAttempts: number; lastError?: string }>>([]);
 const providerConflicts = ref<ProviderConflict[]>([]);
@@ -196,6 +198,10 @@ const noteItems = computed(() => vaultItems.value.filter((item) => itemSection(i
 const totpItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "totp"));
 const steamItems = computed(() => totpItems.value.filter((item): item is TotpItem => item.kind === "totp" && item.otpType === "STEAM"));
 const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
+const archivedCredentials = computed(() => archivedItems.value.filter(isLoginItem));
+const credentialById = computed(() => new Map([...credentials.value, ...archivedCredentials.value].map((item) => [item.id, item])));
+const filteredArchiveItems = computed(() => filterManagerItems(archivedItems.value));
+const filteredDeletedItems = computed(() => filterManagerItems(deletedItems.value));
 const filteredSectionItems = computed(() => {
   if (activeSection.value !== "wallet" && activeSection.value !== "notes" && activeSection.value !== "totp" && activeSection.value !== "passkeys") return [];
   const needle = query.value.trim().toLocaleLowerCase();
@@ -217,10 +223,10 @@ const keePassHistoryProviderById = computed(() => new Map(keePassProviders.value
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
 const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
 const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
-const nativeBitwardenSshEdit = computed(() => credentials.value.find((item) => item.id === editingId.value)?.bitwardenSshKeyMode === "native");
+const nativeBitwardenSshEdit = computed(() => credentialById.value.get(editingId.value || "")?.bitwardenSshKeyMode === "native");
 const sshBitwardenFormatHint = computed(() => {
   if (form.loginType !== "SSH_KEY") return "";
-  const existing = credentials.value.find((item) => item.id === editingId.value);
+  const existing = credentialById.value.get(editingId.value || "");
   const providerId = existing?.providerRefs[0]?.providerId || form.providerId;
   if (providers.value.find((provider) => provider.id === providerId)?.kind !== "bitwarden") return "";
   if (existing?.bitwardenSshKeyMode === "native") return "Bitwarden 原生 SSH Cipher（Type 5）：公钥、私钥和指纹同步；算法按公钥识别，位数、注释、格式与未来 Android 元数据只保留在当前扩展的加密库。";
@@ -361,7 +367,7 @@ async function authenticate(action: () => Promise<VaultItem[]>) {
   authBusy.value = true;
   try {
     vaultItems.value = await action();
-    await refreshProviders();
+    await Promise.all([refreshItems(), refreshProviders()]);
     lifecycle.value = "unlocked";
     rememberProtectionMode(auth.masterPassword ? "master-password" : "device-key");
     auth.masterPassword = "";
@@ -379,6 +385,8 @@ async function lockVault() {
   if (hasLocalKeePassChanges && !window.confirm("KeePass 数据库还有未导出的修改。现在锁定会丢失这些内存中的 KDBX 改动，仍要继续吗？")) return;
   await vaultClient.lock();
   vaultItems.value = [];
+  archivedItems.value = [];
+  deletedItems.value = [];
   lifecycle.value = "locked";
   activeSection.value = "overview";
   editorOpen.value = false;
@@ -425,7 +433,7 @@ async function unlockVaultWithWindowsHello() {
     vaultItems.value = await vaultClient.unlockWithWindowsHello();
     lifecycle.value = "unlocked";
     rememberProtectionMode("device-key");
-    await Promise.all([refreshProviders(), refreshWindowsHelloStatus()]);
+    await Promise.all([refreshItems(), refreshProviders(), refreshWindowsHelloStatus()]);
   } catch (error) {
     authError.value = errorMessage(error);
   } finally {
@@ -464,7 +472,14 @@ async function revokeWindowsHello() {
 }
 
 async function refreshItems() {
-  vaultItems.value = await vaultClient.listItems();
+  const [active, archived, deleted] = await Promise.all([
+    vaultClient.listItems(),
+    vaultClient.listArchivedItems(),
+    vaultClient.listDeletedItems()
+  ]);
+  vaultItems.value = active;
+  archivedItems.value = archived;
+  deletedItems.value = deleted;
 }
 
 async function refreshProviders() {
@@ -555,11 +570,16 @@ function navigate(section: Section) {
 }
 
 function sectionTitle(section: Section): string {
-  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", sends: "安全发送", generator: "生成器", providers: "密码源", settings: "设置与备份" } as const)[section];
+  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", sends: "安全发送", archive: "归档", trash: "回收站", generator: "生成器", providers: "密码源", settings: "设置与备份" } as const)[section];
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", sends: "创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", sends: "创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。", archive: "归档项目从普通分类、自动填充和 Passkey 候选中隐藏，取消归档后恢复使用。", trash: "远端回收站项目保存在加密墓碑中，可恢复且不会被静默永久删除。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+}
+
+function filterManagerItems(items: VaultItem[]): VaultItem[] {
+  const needle = query.value.trim().toLocaleLowerCase();
+  return items.filter((item) => !needle || itemSearchText(item).toLocaleLowerCase().includes(needle));
 }
 
 function providerName(item: VaultItem): string {
@@ -650,6 +670,18 @@ async function removeVaultItem(item: VaultItem) {
   showNotice(`${itemKindLabel(item.kind)}已删除。`);
 }
 
+async function unarchiveItem(item: VaultItem) {
+  await vaultClient.upsertItem({ ...item, archivedAt: undefined });
+  await refreshItems();
+  showNotice(`${itemKindLabel(item.kind)}已取消归档。`);
+}
+
+async function restoreDeletedItem(item: VaultItem) {
+  await vaultClient.restoreItem(item.id);
+  await refreshItems();
+  showNotice(`${itemKindLabel(item.kind)}已从回收站恢复。`);
+}
+
 function openCreate() {
   editingId.value = null;
   Object.assign(form, emptyLoginForm(defaultProviderId.value));
@@ -731,7 +763,7 @@ async function submitCredential() {
   const ssoRefEntryId = form.ssoRefEntryId.trim() ? Number(form.ssoRefEntryId) : undefined;
   if (ssoRefEntryId !== undefined && (!Number.isSafeInteger(ssoRefEntryId) || ssoRefEntryId < 0)) return void (formError.value = "SSO 引用条目 ID 必须是非负整数。");
 
-  const existing = credentials.value.find((item) => item.id === editingId.value);
+  const existing = credentialById.value.get(editingId.value || "");
   const wifiMetadata = form.loginType === "WIFI"
     ? serializeWifiMetadata(form.wifiMetadataRaw, form.wifi)
     : existing?.wifiMetadata;
@@ -998,12 +1030,12 @@ async function saveWebDav() {
   });
 }
 
-async function syncProvider(provider: ProviderAccount) {
+async function syncProvider(provider: ProviderAccount, allowEmptyRemote = false) {
   activeSyncProviderId.value = provider.id;
   await runWebDavAction("sync", async () => {
     let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
     try {
-      result = await vaultClient.syncProvider(provider.id);
+      result = await vaultClient.syncProvider(provider.id, allowEmptyRemote);
       if (provider.kind === "keepass") {
         const nextErrors = { ...keePassCardErrors.value };
         delete nextErrors[provider.id];
@@ -1025,6 +1057,12 @@ async function syncProvider(provider: ProviderAccount) {
     showNotice(details);
   });
   activeSyncProviderId.value = "";
+}
+
+async function confirmBitwardenEmptyRemote(provider: ProviderAccount) {
+  if (provider.kind !== "bitwarden") return;
+  if (!window.confirm("服务器返回了空密码库。确认服务器数据已清空，并采用空库结果吗？本地活动项目将从当前列表移除，回收站墓碑和加密源记录仍按同步结果处理。")) return;
+  await syncProvider(provider, true);
 }
 
 async function cancelProviderSync(provider: ProviderAccount) {
@@ -1753,6 +1791,8 @@ function errorCode(error: unknown): string | undefined {
             <button class="nav-item" :class="{ selected: activeSection === 'steam' }" :aria-current="activeSection === 'steam' ? 'page' : undefined" type="button" @click="navigate('steam')"><m3e-icon name="sports_esports"></m3e-icon><span>Steam</span><span class="nav-count">{{ steamItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'passkeys' }" :aria-current="activeSection === 'passkeys' ? 'page' : undefined" type="button" @click="navigate('passkeys')"><m3e-icon name="key_vertical"></m3e-icon><span>Passkey</span><span class="nav-count">{{ passkeyItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'sends' }" :aria-current="activeSection === 'sends' ? 'page' : undefined" type="button" @click="navigate('sends')"><m3e-icon name="send"></m3e-icon><span>安全发送</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'archive' }" :aria-current="activeSection === 'archive' ? 'page' : undefined" type="button" @click="navigate('archive')"><m3e-icon name="archive"></m3e-icon><span>归档</span><span class="nav-count">{{ archivedItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'trash' }" :aria-current="activeSection === 'trash' ? 'page' : undefined" type="button" @click="navigate('trash')"><m3e-icon name="delete"></m3e-icon><span>回收站</span><span class="nav-count">{{ deletedItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'providers' }" :aria-current="activeSection === 'providers' ? 'page' : undefined" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
           </section>
           <section>
@@ -1782,7 +1822,7 @@ function errorCode(error: unknown): string | undefined {
 
         <section v-if="activeSection === 'overview'" class="metrics">
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="password"></m3e-icon><p>登录项</p><strong>{{ credentials.length }}</strong><small>加密缓存中的有效项</small></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="inventory_2"></m3e-icon><p>全部项目</p><strong>{{ vaultItems.length }}</strong><small>所有可管理的加密记录</small></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="inventory_2"></m3e-icon><p>全部项目</p><strong>{{ vaultItems.length + archivedItems.length + deletedItems.length }}</strong><small>含归档与回收站的加密记录</small></div></m3e-card>
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="star"></m3e-icon><p>收藏</p><strong>{{ favoriteCount }}</strong><small>优先匹配的账号</small></div></m3e-card>
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="encrypted"></m3e-icon><p>安全状态</p><strong class="metric-word">已解锁</strong><small>15 分钟无操作自动锁定</small></div></m3e-card>
         </section>
@@ -1807,6 +1847,16 @@ function errorCode(error: unknown): string | undefined {
         <GeneratorPanel v-else-if="activeSection === 'generator'" />
 
         <BitwardenSendsPanel v-else-if="activeSection === 'sends'" :providers="providers" :query="query" />
+
+        <section v-else-if="activeSection === 'archive' || activeSection === 'trash'" class="content-grid lifecycle-page">
+          <m3e-card variant="filled" class="data-card motion-card">
+            <div slot="header" class="card-head"><h2>{{ activeSection === 'archive' ? '已归档项目' : '回收站项目' }}</h2><p>{{ activeSection === 'archive' ? filteredArchiveItems.length : filteredDeletedItems.length }} 个结果</p></div>
+            <div v-if="(activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems).length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
+              <tr v-for="item in (activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems)" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? passkeyAvailabilityLabel(passkeyAvailability(item)) : itemKindLabel(item.kind) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要">{{ itemSafeSummary(item) }}</td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="时间">{{ new Date(item.deletedAt || item.archivedAt || item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="activeSection === 'archive' && item.kind === 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive' && isEditableVaultItem(item) && item.kind !== 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`取消归档 ${item.title}`" @click="unarchiveItem(item)"><m3e-icon name="unarchive"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`删除归档的 ${item.title}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button><m3e-icon-button v-else :aria-label="`恢复 ${item.title}`" @click="restoreDeletedItem(item)"><m3e-icon name="restore"></m3e-icon></m3e-icon-button></td></tr>
+            </tbody></table></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'archive' ? 'archive' : 'delete'" /><h2>{{ query ? '没有匹配项目' : activeSection === 'archive' ? '还没有归档项目' : '回收站为空' }}</h2><p>{{ query ? '换一个关键词试试。' : activeSection === 'archive' ? '归档项目会从普通列表和自动填充候选中隐藏。' : 'Bitwarden 软删除项目会保留在这里，恢复前不会永久清除。' }}</p></div>
+          </m3e-card>
+        </section>
 
         <section v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
           <m3e-card variant="filled" class="data-card motion-card">
@@ -1911,11 +1961,13 @@ function errorCode(error: unknown): string | undefined {
             </div></m3e-card>
             <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
               <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
-              <span class="state" :class="provider.lastError || conflictsFor(provider.id).length ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
+              <span class="state" :class="provider.lastError || conflictsFor(provider.id).length || provider.requiresEmptyRemoteConfirmation || (provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0) ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.requiresEmptyRemoteConfirmation ? '等待空库确认' : (provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0) ? '兼容性提示' : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
               <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
+              <div v-if="provider.requiresEmptyRemoteConfirmation" class="provider-dirty-warning" role="alert"><m3e-icon name="warning"></m3e-icon><div><strong>服务器返回空密码库</strong><p>本地已有同步基线。确认服务器确实应为空后，才会采用空库结果并移除本地活动项目。</p></div><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="confirmBitwardenEmptyRemote(provider)">确认采用空库</m3e-button></div>
+              <div v-if="(provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0)" class="provider-dirty-warning" role="status"><m3e-icon name="info"></m3e-icon><div><strong>有项目以兼容模式保留</strong><p><template v-if="provider.compatibility?.preservedUnsupportedRecords">{{ provider.compatibility.preservedUnsupportedRecords }} 个未来类型仅保存原始 Cipher。</template><template v-if="provider.compatibility?.unreadableRecords">{{ provider.compatibility?.preservedUnsupportedRecords ? ' ' : '' }}{{ provider.compatibility.unreadableRecords }} 个项目暂时无法解密。</template>这些记录不会被自动填充或改写。</p></div></div>
               <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.recovering"> · {{ queueFor(provider.id)?.recovering }} 项正在恢复远端结果</span><span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
               <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button></div></div>
-               <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>当前支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；组织 Collection 和个人文件夹由管理页操作。</span></p>
+                <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>当前支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；归档、回收站、组织 Collection 和个人文件夹由管理页操作。</span></p>
               <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenFolders(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenCollections(provider)"><m3e-icon slot="icon" name="folder_shared"></m3e-icon>管理 Collection</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
             </div></m3e-card>
             <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span><div class="source-actions"><m3e-button variant="tonal" :disabled="diagnosticBusy" @click="exportProviderDiagnostics"><m3e-icon slot="icon" name="download"></m3e-icon>{{ diagnosticBusy ? '正在导出…' : '导出脱敏诊断' }}</m3e-button></div></div></m3e-card>

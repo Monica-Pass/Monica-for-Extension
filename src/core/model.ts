@@ -285,6 +285,13 @@ export interface ProviderAccount {
   config: Record<string, unknown>;
   lastSyncAt?: string;
   lastError?: string;
+  /** A successful authenticated sync returned no records while a prior baseline exists. */
+  requiresEmptyRemoteConfirmation?: boolean;
+  /** Count-only compatibility state; raw provider records remain in encrypted source envelopes. */
+  compatibility?: {
+    preservedUnsupportedRecords: number;
+    unreadableRecords: number;
+  };
 }
 
 export interface PendingMutation {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createEmptyVaultState, createLoginItem, type LoginItem, type VaultItem, type VaultState } from "../core/model";
+import { createEmptyVaultState, createLoginItem, type LoginItem, type PasskeyItem, type VaultItem, type VaultState } from "../core/model";
 import { MAX_SOURCE_RECORD_PAYLOAD_BYTES } from "../core/source-records";
 import { decryptVaultState, deriveVaultKey, encryptVaultState, type Pbkdf2VaultKdfParameters } from "./vault-crypto";
 import { MemoryVaultSessionStore } from "./vault-session";
@@ -79,6 +79,87 @@ describe("encrypted vault", () => {
     now += 16 * 60_000;
     expect(await service.status()).toBe("locked");
     await expect(service.listItems()).rejects.toBeInstanceOf(VaultLockedError);
+  });
+
+  it("separates active, archived, and deleted items through dedicated manager views", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    const archivedAt = "2026-08-08T12:00:00.000Z";
+    const deletedAt = "2026-08-08T13:00:00.000Z";
+    const active = createLoginItem({ title: "Active" });
+    const archived = { ...createLoginItem({ title: "Archived" }), archivedAt };
+    const deleted = { ...createLoginItem({ title: "Deleted" }), deletedAt };
+    await service.setup("item views password", [active, archived, deleted]);
+
+    expect((await service.listItems()).map((item) => item.id)).toEqual([active.id]);
+    expect((await service.listArchivedItems()).map((item) => item.id)).toEqual([archived.id]);
+    expect((await service.listDeletedItems()).map((item) => item.id)).toEqual([deleted.id]);
+  });
+
+  it("cancels an unattempted provider delete when a trashed item is restored", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("restore queued delete password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const item = createLoginItem({
+      title: "Restore before sync",
+      providerRefs: [{ providerId: "bw", remoteId: "cipher-restore", revision: "2026-08-08T10:00:00.000Z" }]
+    });
+    await service.applyProviderSync("bw", [item]);
+    await service.deleteItem(item.id);
+
+    const restored = await service.restoreItem(item.id);
+    const state = await service.readState();
+
+    expect(restored).toMatchObject({ id: item.id, deletedAt: undefined });
+    expect(state.mutationQueue).toEqual([]);
+    expect(state.providerMutationReceipts).toEqual([]);
+  });
+
+  it("restores every Bitwarden Cipher sibling together while retaining archive state", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("restore sibling password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const deletedAt = "2026-08-08T13:00:00.000Z";
+    const archivedAt = "2026-08-08T12:00:00.000Z";
+    const login: LoginItem = {
+      ...createLoginItem({ title: "Cipher parent" }),
+      archivedAt,
+      deletedAt,
+      providerRefs: [{ providerId: "bw", remoteId: "cipher-siblings", revision: "2026-08-08T10:00:00.000Z" }]
+    };
+    const passkey: PasskeyItem = {
+      id: "cipher-passkey",
+      kind: "passkey",
+      title: "Cipher Passkey",
+      favorite: false,
+      notes: "",
+      createdAt: "2026-08-08T10:00:00.000Z",
+      updatedAt: "2026-08-08T10:00:00.000Z",
+      deletedAt,
+      providerRefs: [{ providerId: "bw", remoteId: "cipher-siblings#fido2:credential", revision: "2026-08-08T10:00:00.000Z" }],
+      credentialId: "credential",
+      rpId: "example.com",
+      rpName: "Example",
+      userHandle: "user",
+      userName: "user",
+      userDisplayName: "User",
+      algorithm: -7,
+      publicKey: "public",
+      privateKeyPkcs8: "private",
+      signCount: 0,
+      discoverable: true,
+      sourceMode: "bitwarden"
+    };
+    await service.applyProviderSync("bw", [login, passkey]);
+
+    await service.restoreItem(passkey.id);
+    const state = await service.readState();
+
+    expect(state.items.find((item) => item.id === login.id)).toMatchObject({ archivedAt });
+    expect(state.items.filter((item) => item.id === login.id || item.id === passkey.id).every((item) => !item.deletedAt)).toBe(true);
+    expect(state.mutationQueue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ itemId: login.id, operation: "update" }),
+      expect.objectContaining({ itemId: passkey.id, operation: "update" })
+    ]));
   });
 
   it("keeps provider credentials inside the encrypted envelope", async () => {
@@ -615,6 +696,25 @@ describe("encrypted vault", () => {
     expect(tombstone?.deletedAt).toBeTruthy();
     expect(tombstone?.providerRefs).toEqual([expect.objectContaining({ remoteId: "remote-created-then-deleted" })]);
     expect(state.mutationQueue).toEqual([expect.objectContaining({ itemId: created.id, operation: "delete" })]);
+  });
+
+  it("adopts confirmed remote removals while preserving an edit made during the empty-vault request", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("confirmed empty merge password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const unchanged = createLoginItem({ title: "Remove after confirmation", password: "one", providerRefs: [{ providerId: "bw", remoteId: "cipher-1", revision: "2026-08-08T10:00:00.000Z" }] });
+    const edited = createLoginItem({ title: "Edited during request", password: "before", providerRefs: [{ providerId: "bw", remoteId: "cipher-2", revision: "2026-08-08T10:00:00.000Z" }] });
+    await service.applyProviderSync("bw", [unchanged, edited]);
+    const snapshot = structuredClone((await service.readState()).items);
+    await service.upsertItem({ ...edited, password: "after" });
+
+    const result = await service.applyProviderSync("bw", [], { requiresEmptyRemoteConfirmation: false }, [], undefined, snapshot, [], [], true);
+    const state = await service.readState();
+
+    expect(result.conflicts).toBe(1);
+    expect(state.items.find((item) => item.id === unchanged.id)).toBeUndefined();
+    expect(state.items.find((item) => item.id === edited.id)).toMatchObject({ password: "after" });
+    expect(state.providerConflicts).toEqual([expect.objectContaining({ itemId: edited.id, local: expect.objectContaining({ password: "after" }) })]);
   });
 
   it("rejects reuse of one durable mutation ID for a different encrypted intent", async () => {

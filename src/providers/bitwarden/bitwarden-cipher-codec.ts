@@ -26,6 +26,7 @@ interface PlainBitwardenCustomField {
 export interface DecodedBitwardenCipher {
   items: VaultItem[];
   warning?: string;
+  unsupported?: boolean;
 }
 
 export async function decodeBitwardenCipher(raw: Record<string, unknown>, providerId: string, vaultKey: BitwardenSymmetricKey): Promise<DecodedBitwardenCipher> {
@@ -189,7 +190,7 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
     };
   }
 
-  return { items: [], warning: `Bitwarden Cipher ${cipherId} 的类型 ${type} 暂不支持。` };
+  return { items: [], warning: `Bitwarden Cipher ${cipherId} 的类型 ${type} 暂不支持。`, unsupported: true };
 }
 
 export async function resolveBitwardenCipherKey(raw: Record<string, unknown>, vaultKey: BitwardenSymmetricKey): Promise<BitwardenSymmetricKey> {
@@ -214,6 +215,7 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
     : value(preserved, "CollectionIds", "collectionIds") ?? null;
   base.folderId = item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null;
   base.fields = value(preserved, "Fields", "fields") ?? null;
+  base.archivedDate = item.archivedAt || null;
 
   if (item.kind === "login") {
     if (nativeSsh) {
@@ -626,6 +628,7 @@ export async function encodeBitwardenPasskeyCipher(
       favorite: item.favorite,
       reprompt: 0,
       key: null,
+      archivedDate: item.archivedAt || null,
       folderId: item.providerRefs.find((reference) => reference.remoteFolderId)?.remoteFolderId || null,
       fields: null,
       login: {
@@ -643,6 +646,7 @@ export async function encodeBitwardenPasskeyCipher(
     name: value(preservedRaw, "Name", "name") || await encryptBitwardenString(item.title, encryptionKey),
     notes: value(preservedRaw, "Notes", "notes") ?? null,
     favorite: value(preservedRaw, "Favorite", "favorite") === true,
+    archivedDate: item.archivedAt || null,
     reprompt: numberValue(preservedRaw, "Reprompt", "reprompt"),
     key: value(preservedRaw, "Key", "key") ?? null,
     organizationId: value(preservedRaw, "OrganizationId", "organizationId") ?? null,

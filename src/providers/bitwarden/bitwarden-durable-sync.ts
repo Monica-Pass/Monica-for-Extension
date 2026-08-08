@@ -20,7 +20,8 @@ export interface BitwardenDurableSyncVault {
     sourceRecords?: ProviderSyncResult["sourceRecords"],
     syncSnapshot?: VaultItem[],
     acknowledgedMutations?: ProviderAcknowledgedMutation[],
-    requestedMutations?: ProviderSyncResult["requestedMutations"]
+    requestedMutations?: ProviderSyncResult["requestedMutations"],
+    adoptRemoteRemovals?: boolean
   ): Promise<unknown>;
 }
 
@@ -51,7 +52,8 @@ export function bitwardenComparablePayload(item: VaultItem): Record<string, unkn
       keyAlgorithm: item.keyAlgorithm || (item.algorithm === -7 ? "ECDSA" : undefined),
       privateKeyPkcs8: item.privateKeyPkcs8,
       signCount: Math.max(0, Math.floor(item.signCount)),
-      discoverable: item.discoverable
+      discoverable: item.discoverable,
+      archivedAt: item.archivedAt
     }) as Record<string, unknown>;
   }
   const payload = item as unknown as Record<string, unknown>;
@@ -75,7 +77,7 @@ export class BitwardenDurableSyncCoordinator {
     private readonly vault: BitwardenDurableSyncVault
   ) {}
 
-  async synchronize(account: ProviderAccount, signal?: AbortSignal): Promise<ProviderSyncResult> {
+  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { allowEmptyRemote?: boolean } = {}): Promise<ProviderSyncResult> {
     if (account.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
     signal?.throwIfAborted();
 
@@ -163,7 +165,8 @@ export class BitwardenDurableSyncCoordinator {
       pendingMutations: structuredClone(activePending),
       acknowledgedMutations: committed,
       mutationReceipts: structuredClone(receipts),
-      markMutationsAttempted: (mutationIds) => this.vault.markProviderMutationReceiptsAttempted(account.id, mutationIds)
+      markMutationsAttempted: (mutationIds) => this.vault.markProviderMutationReceiptsAttempted(account.id, mutationIds),
+      allowEmptyRemote: options.allowEmptyRemote === true
     });
 
     const acknowledgements = uniqueAcknowledgements([...committed, ...(result.acknowledgedMutations || [])]);
@@ -176,7 +179,8 @@ export class BitwardenDurableSyncCoordinator {
       result.sourceRecords,
       snapshot,
       acknowledgements,
-      result.requestedMutations
+      result.requestedMutations,
+      result.adoptRemoteRemovals
     );
     if (acknowledgements.length) await this.vault.clearProviderMutationReceipts(account.id, acknowledgements.map((acknowledgement) => acknowledgement.mutationId));
 

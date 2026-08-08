@@ -36,9 +36,12 @@ export const vaultClient = {
     send<VaultItem[]>({ type: "VAULT_RESTORE_ENCRYPTED", backup, backupPassword, replaceExisting, currentPassword }),
   importItems: (items: VaultItem[]) => send<VaultItem[]>({ type: "VAULT_IMPORT_ITEMS", items }),
   listItems: () => send<VaultItem[]>({ type: "VAULT_LIST_ITEMS" }),
+  listArchivedItems: () => send<VaultItem[]>({ type: "VAULT_LIST_ARCHIVED_ITEMS" }),
+  listDeletedItems: () => send<VaultItem[]>({ type: "VAULT_LIST_DELETED_ITEMS" }),
   getItem: (itemId: string) => send<VaultItem | undefined>({ type: "VAULT_GET_ITEM", itemId }),
   upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
+  restoreItem: (itemId: string) => send<VaultItem>({ type: "VAULT_RESTORE_ITEM", itemId }),
   matchLogins: (pageUrl: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl }),
   matchPasskeys: (pageUrl: string) => send<PasskeyMatchSummary[]>({ type: "VAULT_MATCH_PASSKEYS", pageUrl }),
   fillLogin: (itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) => send<{ filledUsername: boolean; filledPassword: boolean; filledTotp: boolean; filledCustomFields: number }>({ type: "VAULT_FILL_LOGIN", itemId, tabId, frameId, documentId, expectedOrigin }),
@@ -177,7 +180,11 @@ export const vaultClient = {
   restoreKeePassHistory: (providerId: string, itemId: string, operationId: string, historyId: string) => send<KeePassHistoryRestoreResult>({ type: "KEEPASS_HISTORY_RESTORE", providerId, itemId, operationId, historyId, confirmed: true }),
   exportKeePassFile: (providerId: string) => send<KeePassFileExport>({ type: "KEEPASS_EXPORT_FILE", providerId }),
   lockKeePass: (providerId?: string) => send<void>({ type: "KEEPASS_LOCK", providerId }),
-  syncProvider: (providerId: string) => send<{ warnings: string[]; conflicts: number }>({ type: "PROVIDER_SYNC", providerId }),
+  syncProvider: (providerId: string, allowEmptyRemote = false) => send<{ warnings: string[]; conflicts: number }>({
+    type: "PROVIDER_SYNC",
+    providerId,
+    ...(allowEmptyRemote ? { allowEmptyRemote: true as const } : {})
+  }),
   cancelProviderSync: (providerId: string) => send<{ cancelled: boolean }>({ type: "PROVIDER_SYNC_CANCEL", providerId }),
   removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
 };
