@@ -143,6 +143,19 @@ export interface CredentialCaptureInput {
   captureKind: "login" | "password-change";
 }
 
+export interface ProviderAttachmentRecoveryRecord {
+  operationId: string;
+  kind: "upload" | "replace" | "delete";
+  stage: string;
+  updatedAt: string;
+}
+
+export interface ProviderAttachmentRecoveryStatus {
+  providerId: string;
+  pending: ProviderAttachmentRecoveryRecord[];
+  completedCount: number;
+}
+
 export interface Mdbx2VaultOpenInput {
   providerId?: string;
   name: string;
@@ -315,6 +328,7 @@ export type ExtensionRequest =
   | { type: "MDBX2_CONFLICT_RESOLVE"; providerId: string; operationId: string; conflictId: string; choice: Mdbx2ConflictResolutionChoice }
   | ({ type: "PROVIDER_ATTACHMENT_TRANSFER" } & ProviderAttachmentTransferRequest)
   | { type: "PROVIDER_ATTACHMENT_LIST"; providerId: string; itemId: string; pageSize?: number; cursor?: string }
+  | { type: "PROVIDER_ATTACHMENT_RECOVERY_STATUS"; providerId: string }
   | { type: "PROVIDER_ATTACHMENT_READ_BEGIN"; providerId: string; itemId: string; attachmentId: string }
   | { type: "PROVIDER_ATTACHMENT_READ_CHUNK"; providerId: string; readHandle: string; offset: number; maxBytes?: number }
   | { type: "PROVIDER_ATTACHMENT_READ_RELEASE"; providerId: string; readHandle: string }

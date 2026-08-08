@@ -130,6 +130,12 @@ export class ProviderAttachmentUploadStore {
     return this.release(transferId);
   }
 
+  clear(providerId?: string): void {
+    for (const [transferId, upload] of this.uploads) {
+      if (providerId === undefined || upload.intent.providerId === providerId) this.release(transferId);
+    }
+  }
+
   release(transferId: string): boolean {
     const upload = this.uploads.get(transferId);
     if (!upload) return false;
@@ -181,7 +187,7 @@ function validateIntent(input: ProviderAttachmentUploadIntent, maxBytes: number)
   if (input.operationId !== undefined && !isUuid(input.operationId)) {
     throw new ProviderAttachmentError("attachment-operation-invalid", "附件操作 ID 无效。");
   }
-  if (input.attachmentId !== undefined && !isUuid(input.attachmentId)) {
+  if (input.attachmentId !== undefined && (input.providerKind === "bitwarden" ? !isOpaqueId(input.attachmentId) : !isUuid(input.attachmentId))) {
     throw new ProviderAttachmentError("attachment-id-invalid", "附件 ID 无效。");
   }
   return { ...input, mediaType: input.mediaType?.trim() || undefined, replaceExisting: input.replaceExisting === true };
@@ -189,6 +195,11 @@ function validateIntent(input: ProviderAttachmentUploadIntent, maxBytes: number)
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+}
+
+function isOpaqueId(value: unknown): value is string {
+  if (typeof value !== "string" || !value || new TextEncoder().encode(value).byteLength > 4096) return false;
+  return !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

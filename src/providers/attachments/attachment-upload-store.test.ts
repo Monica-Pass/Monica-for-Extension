@@ -68,6 +68,12 @@ describe("provider attachment upload store", () => {
     });
   });
 
+  it("preserves opaque Bitwarden attachment IDs while keeping native IDs strict", () => {
+    const store = new ProviderAttachmentUploadStore(() => 1000, () => crypto.randomUUID());
+    expect(() => store.begin(intent({ providerKind: "bitwarden", attachmentId: "initial-attachment", replaceExisting: true }), KEEPASS_ATTACHMENT_MAX_BYTES)).not.toThrow();
+    expect(() => store.begin(intent({ attachmentId: "initial-attachment", replaceExisting: true }), KEEPASS_ATTACHMENT_MAX_BYTES)).toThrowError(/附件 ID 无效/);
+  });
+
   it("keeps a bounded committed receipt for a lost manager response", async () => {
     const store = new ProviderAttachmentUploadStore(() => 1000, () => crypto.randomUUID());
     const begun = store.begin(intent(), KEEPASS_ATTACHMENT_MAX_BYTES);

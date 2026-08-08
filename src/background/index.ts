@@ -3,6 +3,7 @@ import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
 import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
 import {
+  BITWARDEN_ATTACHMENT_MAX_BYTES,
   KEEPASS_ATTACHMENT_MAX_BYTES,
   PROVIDER_ATTACHMENT_CHUNK_BYTES,
   PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS,
@@ -18,6 +19,11 @@ import { paginateProviderAttachments } from "../providers/attachments/attachment
 import { ProviderAttachmentTransferCoordinator, type ProviderAttachmentTransferBackend } from "../providers/attachments/attachment-transfer";
 import { ProviderAttachmentUploadStore } from "../providers/attachments/attachment-upload-store";
 import { BitwardenClient } from "../providers/bitwarden/bitwarden-client";
+import type { BitwardenSessionConfig } from "../providers/bitwarden/bitwarden-client";
+import { BitwardenAttachmentDownloadService } from "../providers/bitwarden/bitwarden-attachments";
+import { BitwardenAttachmentMutationService } from "../providers/bitwarden/bitwarden-attachment-mutations";
+import { resolveBitwardenOrganizationKeys } from "../providers/bitwarden/bitwarden-organization";
+import type { BitwardenSymmetricKey } from "../providers/bitwarden/bitwarden-crypto";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
@@ -48,6 +54,7 @@ import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLog
 import { revokeSteamAuthorizedDevice } from "../providers/steam/steam-revocation";
 import { createProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
 import { ProviderTransportError } from "../providers/provider-transport";
+import { createSourceRecord } from "../core/source-records";
 import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, LoginMatchSummary, Mdbx2ManagerSyncStatus, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, SavePromptProviderSummary, WalletFillKind, WalletFillPayload, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
@@ -95,7 +102,10 @@ const mdbx2BatchTransferCoordinator = new Mdbx2BatchTransferCoordinator(
 const providerAttachmentUploads = new ProviderAttachmentUploadStore();
 const providerAttachmentTransfers = new ProviderAttachmentTransferCoordinator();
 const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
+const bitwardenAttachmentReadRoutes = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 const bitwardenClient = new BitwardenClient();
+const bitwardenAttachmentDownloads = new BitwardenAttachmentDownloadService();
+const bitwardenAttachmentMutations = new BitwardenAttachmentMutationService();
 const CAPTURE_TTL_MS = 60_000;
 const MDBX2_MAX_BASE64_CHUNK_LENGTH = Math.ceil(MDBX2_MAX_BINARY_CHUNK_BYTES / 3) * 4;
 const PROVIDER_ATTACHMENT_MAX_BASE64_CHUNK_LENGTH = Math.ceil(PROVIDER_ATTACHMENT_CHUNK_BYTES / 3) * 4;
@@ -212,6 +222,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       if (status !== "unlocked") mdbx2Provider.lock();
       if (status !== "unlocked") keePassProvider.lock();
       if (status !== "unlocked") clearKeePassPendingPersistence();
+      if (status !== "unlocked") clearBitwardenAttachmentSessions();
+      if (status !== "unlocked") providerAttachmentUploads.clear();
       if (status !== "unlocked") mdbx2BatchTransferStatuses.clear();
     });
   }
@@ -262,6 +274,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       mdbx2Provider.lock();
       keePassProvider.lock();
       clearKeePassPendingPersistence();
+      clearBitwardenAttachmentSessions();
+      providerAttachmentUploads.clear();
       pendingCredentialCaptures.clear();
       await clearPendingUsernameContexts();
       await clearPendingPasskeyRequests();
@@ -279,6 +293,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       abortProviderSyncs();
       mdbx2NativeClient.close();
       mdbx2Provider.lock();
+      keePassProvider.lock();
+      clearKeePassPendingPersistence();
+      clearBitwardenAttachmentSessions();
+      providerAttachmentUploads.clear();
       const state = await service.restoreEncryptedBackup(request.backup, request.backupPassword, {
         replaceExisting: request.replaceExisting,
         currentPassword: request.currentPassword
@@ -864,7 +882,31 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const page = await mdbx2NativeClient.listAttachments(target.vaultHandle, target.collectionId, target.objectId, request);
         return { items: page.items.map(providerAttachmentSummaryFromMdbx2), nextCursor: page.nextCursor };
       }
+      if (account.kind === "bitwarden") {
+        const context = await loadBitwardenAttachmentContext(account, item);
+        try {
+          const page = await bitwardenAttachmentDownloads.listAttachments(context, request);
+          await persistBitwardenSession(account, context.session);
+          return page;
+        } finally {
+          clearBitwardenOrganizationKeys(context.organizationKeys);
+        }
+      }
       throw unsupportedAttachmentProvider(account.kind);
+    }
+    case "PROVIDER_ATTACHMENT_RECOVERY_STATUS": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account) throw new ProviderAttachmentError("attachment-provider-not-found", "附件密码源不存在。");
+      if (account.kind !== "bitwarden") return { providerId: account.id, pending: [], completedCount: 0 };
+      const records = await bitwardenAttachmentMutations.listRecoveryRecords(account.id);
+      return {
+        providerId: account.id,
+        pending: records
+          .filter((record) => record.stage !== "completed")
+          .map((record) => ({ operationId: record.operationId, kind: record.kind, stage: record.stage, updatedAt: record.updatedAt })),
+        completedCount: records.filter((record) => record.stage === "completed").length
+      };
     }
     case "PROVIDER_ATTACHMENT_READ_BEGIN": {
       assertManagerPage(sender);
@@ -889,6 +931,27 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const target = requireMdbx2AttachmentTarget(account, item);
         const result = await mdbx2NativeClient.beginAttachmentRead(target.vaultHandle, request.attachmentId);
         return { ...providerAttachmentSummaryFromMdbx2(result), readHandle: result.readHandle, maxChunkBytes: result.maxChunkBytes };
+      }
+      if (account.kind === "bitwarden") {
+        pruneProviderAttachmentReads();
+        if (bitwardenAttachmentReadRoutes.size >= PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS) {
+          throw new ProviderAttachmentError("attachment-read-limit", "同时进行的附件下载过多，请完成或取消现有下载。");
+        }
+        const context = await loadBitwardenAttachmentContext(account, item);
+        try {
+          const result = await bitwardenAttachmentDownloads.beginDownload({ ...context, attachmentId: request.attachmentId });
+          await persistBitwardenSession(account, result.session);
+          bitwardenAttachmentReadRoutes.set(result.readHandle, {
+            providerId: account.id,
+            itemId: item.id,
+            attachmentId: result.attachmentId,
+            expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS
+          });
+          const { session: _session, ...publicResult } = result;
+          return publicResult;
+        } finally {
+          clearBitwardenOrganizationKeys(context.organizationKeys);
+        }
       }
       throw unsupportedAttachmentProvider(account.kind);
     }
@@ -922,6 +985,28 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const result = await mdbx2NativeClient.readAttachmentChunk(request.readHandle, request.offset, request.maxBytes);
         return { ...result };
       }
+      if (account.kind === "bitwarden") {
+        pruneProviderAttachmentReads();
+        const route = bitwardenAttachmentReadRoutes.get(request.readHandle);
+        if (!route || route.providerId !== account.id) throw new ProviderAttachmentError("attachment-read-not-found", "Bitwarden 附件下载已过期，请重新开始。");
+        const maximum = request.maxBytes ?? PROVIDER_ATTACHMENT_CHUNK_BYTES;
+        const result = bitwardenAttachmentDownloads.readChunk(account.id, request.readHandle, request.offset, maximum);
+        route.expiresAt = Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS;
+        try {
+          return {
+            readHandle: result.readHandle,
+            attachmentId: result.attachmentId,
+            fileName: result.fileName,
+            sizeBytes: result.sizeBytes,
+            offset: result.offset,
+            nextOffset: result.nextOffset,
+            dataBase64: bytesToBase64(result.bytes),
+            eof: result.eof
+          };
+        } finally {
+          result.bytes.fill(0);
+        }
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_READ_RELEASE": {
@@ -930,6 +1015,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (!account) return providerAttachmentReads.delete(request.readHandle);
       if (account.kind === "keepass") return providerAttachmentReads.delete(request.readHandle);
       if (account.kind === "mdbx2") return mdbx2NativeClient.releaseAttachmentRead(request.readHandle);
+      if (account.kind === "bitwarden") {
+        bitwardenAttachmentReadRoutes.delete(request.readHandle);
+        return bitwardenAttachmentDownloads.release(account.id, request.readHandle);
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_BEGIN": {
@@ -977,6 +1066,34 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         });
         return { ...result, expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS };
       }
+      if (account.kind === "bitwarden") {
+        const context = await loadBitwardenAttachmentContext(account, item);
+        try {
+          if (request.replaceExisting) {
+            if (!request.attachmentId) throw new ProviderAttachmentError("attachment-id-required", "替换 Bitwarden 附件需要指定现有附件。");
+            const page = await bitwardenAttachmentDownloads.listAttachments(context, { pageSize: 50 });
+            const attachment = page.items.find((candidate) => candidate.attachmentId === request.attachmentId);
+            if (!attachment) throw new ProviderAttachmentError("attachment-not-found", "要替换的 Bitwarden 附件不存在，请刷新附件列表。");
+            if (attachment.fileName !== request.fileName) throw new ProviderAttachmentError("attachment-target-mismatch", "Bitwarden 附件替换必须保留原文件名。");
+          }
+          const operationId = request.operationId || crypto.randomUUID();
+          return providerAttachmentUploads.begin({
+            providerId: account.id,
+            itemId: item.id,
+            providerKind: "bitwarden",
+            fileName: request.fileName,
+            mediaType: request.mediaType,
+            sizeBytes: request.sizeBytes,
+            sha256: request.sha256,
+            replaceExisting: request.replaceExisting === true,
+            operationId,
+            attachmentId: request.replaceExisting ? request.attachmentId : undefined
+          }, BITWARDEN_ATTACHMENT_MAX_BYTES);
+        } finally {
+          await persistBitwardenSession(account, context.session);
+          clearBitwardenOrganizationKeys(context.organizationKeys);
+        }
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_CHUNK": {
@@ -991,6 +1108,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         if (account.kind === "keepass") {
           const intent = providerAttachmentUploads.intent(request.transferId);
           if (intent && (intent.providerId !== account.id || intent.providerKind !== "keepass")) {
+            throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+          }
+          return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
+        }
+        if (account.kind === "bitwarden") {
+          const intent = providerAttachmentUploads.intent(request.transferId);
+          if (intent && (intent.providerId !== account.id || intent.providerKind !== "bitwarden")) {
             throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
           }
           return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
@@ -1048,6 +1172,37 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const result = await mdbx2NativeClient.finishAttachmentUpload(request.transferId);
         return { changed: result.changed, attachment: providerAttachmentSummaryFromMdbx2(result.attachment) };
       }
+      if (account.kind === "bitwarden") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (!intent || intent.providerId !== account.id || intent.itemId !== item.id || intent.providerKind !== "bitwarden") {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "Bitwarden 附件上传目标与当前项目不一致。");
+        }
+        const committed = providerAttachmentUploads.committedResult(request.transferId);
+        if (committed) return committed;
+        const upload = await providerAttachmentUploads.complete(request.transferId);
+        const operationId = upload.intent.operationId || request.operationId;
+        if (!operationId) throw new ProviderAttachmentError("attachment-operation-invalid", "Bitwarden 附件上传缺少可恢复的操作标识。");
+        const context = await loadBitwardenAttachmentContext(account, item);
+        try {
+          const result = await bitwardenAttachmentMutations.upload({
+            ...context,
+            operationId,
+            fileName: upload.intent.fileName,
+            bytes: upload.bytes,
+            sha256: upload.sha256,
+            replaceAttachmentId: upload.intent.replaceExisting ? upload.intent.attachmentId : undefined
+          });
+          await acknowledgeBitwardenAttachmentMutation(account, item, result.session, result.rawCipher);
+          const publicResult: ProviderAttachmentMutationResult = {
+            changed: result.changed,
+            attachment: result.attachment
+          };
+          providerAttachmentUploads.markCommitted(request.transferId, publicResult);
+          return publicResult;
+        } finally {
+          clearBitwardenOrganizationKeys(context.organizationKeys);
+        }
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_ABORT": {
@@ -1062,6 +1217,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         return providerAttachmentUploads.abort(request.transferId);
       }
       if (account.kind === "mdbx2") return mdbx2NativeClient.abortAttachmentUpload(request.transferId);
+      if (account.kind === "bitwarden") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (intent && (intent.providerId !== account.id || intent.providerKind !== "bitwarden")) {
+          throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+        }
+        return providerAttachmentUploads.abort(request.transferId);
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_DELETE": {
@@ -1088,6 +1250,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const target = requireMdbx2AttachmentTarget(account, item);
         const result = await mdbx2NativeClient.deleteAttachment(target.vaultHandle, request.operationId, request.attachmentId);
         return { changed: result.changed, attachment: providerAttachmentSummaryFromMdbx2(result.attachment) };
+      }
+      if (account.kind === "bitwarden") {
+        const context = await loadBitwardenAttachmentContext(account, item);
+        try {
+          const result = await bitwardenAttachmentMutations.delete({
+            ...context,
+            operationId: request.operationId,
+            attachmentId: request.attachmentId
+          });
+          await acknowledgeBitwardenAttachmentMutation(account, item, result.session, result.rawCipher);
+          return { changed: result.changed };
+        } finally {
+          clearBitwardenOrganizationKeys(context.organizationKeys);
+        }
       }
       throw unsupportedAttachmentProvider(account.kind);
     }
@@ -1450,6 +1626,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       mdbx2Provider.lockAccount(request.providerId);
       keePassProvider.lockAccount(request.providerId);
       clearKeePassPendingPersistence(request.providerId);
+      clearBitwardenAttachmentSessions(request.providerId);
+      providerAttachmentUploads.clear(request.providerId);
       await keePassWorkingCopies.delete(request.providerId).catch(() => undefined);
       return service.removeProvider(request.providerId);
   }
@@ -2348,10 +2526,163 @@ function providerAttachmentSummaryFromMdbx2(input: { attachmentId: string; fileN
   };
 }
 
+interface BitwardenAttachmentContext {
+  providerId: string;
+  itemId: string;
+  session: BitwardenSessionConfig;
+  rawCipher: Record<string, unknown>;
+  organizationKeys: Map<string, BitwardenSymmetricKey>;
+}
+
+async function loadBitwardenAttachmentContext(account: ProviderAccount, item: VaultItem): Promise<BitwardenAttachmentContext> {
+  if (account.kind !== "bitwarden") throw unsupportedAttachmentProvider(account.kind);
+  const session = readBitwardenSession(account);
+  const cipherId = bitwardenCipherIdForItem(account.id, item);
+  const synced = await bitwardenClient.sync(session);
+  const ciphers = bitwardenRecordArray(synced.payload, "Ciphers", "ciphers");
+  const rawCipher = ciphers.find((candidate) => bitwardenStringValue(candidate, "Id", "id") === cipherId);
+  if (!rawCipher) throw new ProviderAttachmentError("attachment-target-not-found", "Bitwarden 项目不存在或已被删除，请先同步密码源。");
+
+  const vaultKey = bitwardenClient.vaultKey(synced.session);
+  try {
+    const organizations = await resolveBitwardenOrganizationKeys(synced.payload, vaultKey);
+    return {
+      providerId: account.id,
+      itemId: item.id,
+      session: synced.session,
+      rawCipher,
+      organizationKeys: organizations.keys
+    };
+  } finally {
+    clearBitwardenSymmetricKey(vaultKey);
+  }
+}
+
+function readBitwardenSession(account: ProviderAccount): BitwardenSessionConfig {
+  const config = account.config as Partial<BitwardenSessionConfig>;
+  const required = [config.vaultUrl, config.apiUrl, config.identityUrl, config.email, config.deviceId, config.accessToken, config.vaultKeyEnc, config.vaultKeyMac];
+  if (required.some((value) => typeof value !== "string" || !value) || !config.kdf || typeof config.expiresAt !== "number") {
+    throw new ProviderAttachmentError("attachment-provider-not-authenticated", "Bitwarden 密码源尚未完成登录，请重新登录。");
+  }
+  return config as BitwardenSessionConfig;
+}
+
+function bitwardenCipherIdForItem(providerId: string, item: VaultItem): string {
+  const reference = item.providerRefs.find((candidate) => candidate.providerId === providerId);
+  const remoteId = reference?.remoteId?.split("#fido2:")[0] || "";
+  if (!remoteId) throw new ProviderAttachmentError("attachment-target-not-synced", "该项目尚未写入 Bitwarden，完成项目同步后才能管理附件。");
+  return remoteId;
+}
+
+async function persistBitwardenSession(account: ProviderAccount, session: BitwardenSessionConfig): Promise<void> {
+  if (account.kind !== "bitwarden") return;
+  const config = { ...account.config, ...session };
+  if (sameBitwardenConfig(account.config, config)) return;
+  await service.upsertProvider({ ...account, config, lastError: undefined });
+  account.config = config;
+}
+
+async function acknowledgeBitwardenAttachmentMutation(
+  account: ProviderAccount,
+  item: VaultItem,
+  session: BitwardenSessionConfig,
+  rawCipher: Record<string, unknown>
+): Promise<void> {
+  if (account.kind !== "bitwarden") throw unsupportedAttachmentProvider(account.kind);
+  const cipherId = bitwardenStringValue(rawCipher, "Id", "id");
+  const revision = bitwardenStringValue(rawCipher, "RevisionDate", "revisionDate");
+  if (!cipherId || !revision || !Number.isFinite(Date.parse(revision))) {
+    throw new ProviderAttachmentError("bitwarden-cipher-revision-invalid", "Bitwarden 附件操作返回了无效的 Cipher 修订时间。");
+  }
+  const state = await service.readState();
+  const folderValue = bitwardenStringValue(rawCipher, "FolderId", "folderId");
+  let matchedTarget = false;
+  const patchedItems = state.items.map((candidate) => {
+    const reference = candidate.providerRefs.find((entry) => entry.providerId === account.id);
+    if (!reference || reference.remoteId?.split("#fido2:")[0] !== cipherId) return candidate;
+    if (candidate.id === item.id) matchedTarget = true;
+    const updatedReference = {
+      ...reference,
+      revision,
+      remoteFolderId: folderValue || undefined
+    };
+    return {
+      ...candidate,
+      updatedAt: revision,
+      providerRefs: [...candidate.providerRefs.filter((entry) => entry.providerId !== account.id), updatedReference]
+    } as VaultItem;
+  });
+  if (!matchedTarget) {
+    throw new ProviderAttachmentError("attachment-target-not-found", "Bitwarden 附件操作完成后找不到原项目，已停止更新本地状态。");
+  }
+  const sourceRecord = await createSourceRecord({
+    providerId: account.id,
+    remoteId: cipherId,
+    revision,
+    format: "bitwarden-cipher",
+    encoding: "json",
+    payload: JSON.stringify(rawCipher)
+  });
+  const sourceRecords = [
+    ...state.sourceRecords.filter((record) => !(record.providerId === account.id && record.remoteId === cipherId)),
+    sourceRecord
+  ];
+  await service.applyProviderSync(
+    account.id,
+    patchedItems,
+    { config: { ...account.config, ...session }, lastSyncAt: new Date().toISOString(), lastError: undefined },
+    [],
+    sourceRecords,
+    state.items
+  );
+  account.config = { ...account.config, ...session };
+}
+
+function clearBitwardenAttachmentSessions(providerId?: string): void {
+  bitwardenAttachmentDownloads.clear();
+  for (const [readHandle, route] of bitwardenAttachmentReadRoutes) {
+    if (providerId === undefined || route.providerId === providerId) bitwardenAttachmentReadRoutes.delete(readHandle);
+  }
+}
+
+function clearBitwardenOrganizationKeys(keys: Map<string, BitwardenSymmetricKey>): void {
+  for (const key of keys.values()) clearBitwardenSymmetricKey(key);
+  keys.clear();
+}
+
+function clearBitwardenSymmetricKey(key: BitwardenSymmetricKey): void {
+  key.encKey.fill(0);
+  key.macKey.fill(0);
+}
+
+function sameBitwardenConfig(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  const normalize = (value: Record<string, unknown>) => JSON.stringify(Object.entries(value)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b)));
+  return normalize(left) === normalize(right);
+}
+
+function bitwardenRecordArray(raw: Record<string, unknown>, ...names: string[]): Record<string, unknown>[] {
+  const value = names.map((name) => raw[name]).find((candidate) => candidate !== undefined);
+  if (!Array.isArray(value)) throw new ProviderAttachmentError("bitwarden-sync-response-invalid", "Bitwarden 同步响应缺少 Cipher 列表。");
+  return value.filter((candidate): candidate is Record<string, unknown> => Boolean(candidate) && typeof candidate === "object" && !Array.isArray(candidate));
+}
+
+function bitwardenStringValue(raw: Record<string, unknown>, ...names: string[]): string {
+  for (const name of names) if (typeof raw[name] === "string") return raw[name] as string;
+  return "";
+}
+
 function pruneProviderAttachmentReads(): void {
   const now = Date.now();
   for (const [readHandle, route] of providerAttachmentReads) {
     if (route.expiresAt <= now) providerAttachmentReads.delete(readHandle);
+  }
+  for (const [readHandle, route] of bitwardenAttachmentReadRoutes) {
+    if (route.expiresAt <= now) {
+      bitwardenAttachmentReadRoutes.delete(readHandle);
+      bitwardenAttachmentDownloads.release(route.providerId, readHandle);
+    }
   }
 }
 

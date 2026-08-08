@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import type { ProviderAccount, VaultItem } from "../core/model";
 import {
+  BITWARDEN_ATTACHMENT_MAX_BYTES,
   KEEPASS_ATTACHMENT_MAX_BYTES,
   MDBX2_ATTACHMENT_MAX_BYTES,
   PROVIDER_ATTACHMENT_CHUNK_BYTES,
@@ -10,6 +11,7 @@ import {
 import type { ProviderAttachmentTransferMode } from "../providers/attachments/attachment-transfer";
 import { base64ToBytes } from "../security/encoding";
 import { ExtensionRuntimeError, vaultClient } from "../runtime/client";
+import type { ProviderAttachmentRecoveryStatus } from "../runtime/messages";
 
 interface PendingUpload {
   providerId: string;
@@ -46,6 +48,7 @@ const emit = defineEmits<{
 
 const selectedProviderId = ref(props.providers[0]?.id || "");
 const attachments = ref<ProviderAttachmentSummary[]>([]);
+const knownPlaintextSizes = ref(new Map<string, number>());
 const nextCursor = ref<string | undefined>();
 const loaded = ref(false);
 const listBusy = ref(false);
@@ -58,6 +61,8 @@ const pendingTransfer = ref<PendingTransfer | undefined>();
 const uploadBusy = ref(false);
 const transferBusy = ref(false);
 const uploadProgress = ref(0);
+const recovery = ref<ProviderAttachmentRecoveryStatus | undefined>();
+const recoveryBusy = ref(false);
 const error = ref("");
 const status = ref("");
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -69,10 +74,11 @@ const deleteOperationIds = new Map<string, string>();
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
 const transferTargets = computed(() => props.providers.filter((provider) => provider.id !== selectedProviderId.value));
 const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
-const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
+const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || recoveryBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
 const providerLimit = computed(() => attachmentLimit(selectedProvider.value));
 const providerDescription = computed(() => {
   if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
+  if (selectedProvider.value?.kind === "bitwarden") return "Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。";
   if (selectedProvider.value?.config.sourceMode === "webdav") return "KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。";
   return "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。";
 });
@@ -83,7 +89,10 @@ watch(selectedProviderId, () => {
   pendingTransfer.value = undefined;
   error.value = "";
   status.value = "";
-  void discardPendingUpload().finally(() => loadAttachments(true));
+  recovery.value = undefined;
+  void discardPendingUpload().finally(async () => {
+    await Promise.all([loadAttachments(true), loadRecoveryStatus()]);
+  });
 }, { immediate: true });
 
 onBeforeUnmount(() => {
@@ -108,7 +117,8 @@ async function loadAttachments(reset: boolean) {
       cursor: reset ? undefined : nextCursor.value
     });
     if (generation !== listGeneration || provider.id !== selectedProviderId.value) return;
-    attachments.value = reset ? page.items : appendUniqueAttachments(attachments.value, page.items);
+    const incoming = page.items.map((attachment) => withKnownPlaintextSize(provider.id, attachment));
+    attachments.value = reset ? incoming : appendUniqueAttachments(attachments.value, incoming);
     nextCursor.value = page.nextCursor;
     loaded.value = true;
     error.value = "";
@@ -182,7 +192,8 @@ async function runPendingUpload() {
       offset = chunk.nextOffset;
       uploadProgress.value = percentage(offset, upload.file.size);
     }
-    await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId, upload.operationId);
+    const completed = await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId, upload.operationId);
+    if (completed.attachment) rememberPlaintextSize(upload.providerId, completed.attachment.attachmentId, completed.attachment.sizeBytes);
     await vaultClient.abortProviderAttachmentUpload(upload.providerId, begun.transferId).catch(() => false);
     const completedLabel = upload.replaceExisting ? `${upload.fileName} 的内容已替换。` : `${upload.fileName} 已添加。`;
     pendingUpload.value = undefined;
@@ -190,6 +201,7 @@ async function runPendingUpload() {
     status.value = completedLabel;
     emit("notice", completedLabel);
     await loadAttachments(true);
+    await loadRecoveryStatus();
   } catch (cause) {
     error.value = `${errorMessage(cause)} 可使用原文件和原操作标识重试，或取消此次上传。`;
     status.value = "";
@@ -222,6 +234,7 @@ async function downloadAttachment(attachment: ProviderAttachmentSummary) {
   try {
     const begun = await vaultClient.beginProviderAttachmentRead(providerId, props.item.id, attachment.attachmentId);
     activeRead = { providerId, readHandle: begun.readHandle };
+    rememberPlaintextSize(providerId, begun.attachmentId, begun.sizeBytes);
     const parts: BlobPart[] = [];
     let offset = 0;
     while (offset < begun.sizeBytes) {
@@ -274,13 +287,16 @@ async function confirmDelete() {
     deleteOperationIds.set(operationKey, operationId);
     await vaultClient.deleteProviderAttachment(providerId, props.item.id, attachment.attachmentId, operationId);
     deleteOperationIds.delete(operationKey);
+    knownPlaintextSizes.value.delete(attachmentKey(providerId, attachment.attachmentId));
     pendingDelete.value = undefined;
     status.value = `${attachment.fileName} 已删除。`;
     emit("notice", `${attachment.fileName} 已删除。`);
     await loadAttachments(true);
+    await loadRecoveryStatus();
     deleted = true;
   } catch (cause) {
     error.value = errorMessage(cause);
+    if (selectedProvider.value?.kind === "bitwarden") await loadRecoveryStatus();
   } finally {
     deletingAttachmentId.value = "";
   }
@@ -317,7 +333,8 @@ async function confirmTransfer() {
   const sourceProvider = selectedProvider.value;
   const targetProvider = pendingTransferTarget.value;
   if (!transfer || !sourceProvider || !targetProvider) return;
-  if (transfer.attachment.sizeBytes > attachmentLimit(targetProvider)) {
+  const sourceSize = knownAttachmentSize(transfer.attachment);
+  if (sourceSize !== undefined && sourceSize > attachmentLimit(targetProvider)) {
     error.value = `目标密码源单个附件上限为 ${formatBytes(attachmentLimit(targetProvider))}。`;
     return;
   }
@@ -367,6 +384,23 @@ function appendUniqueAttachments(current: ProviderAttachmentSummary[], incoming:
   return [...next.values()];
 }
 
+function attachmentKey(providerId: string, attachmentId: string): string {
+  return `${providerId}\n${attachmentId}`;
+}
+
+function withKnownPlaintextSize(providerId: string, attachment: ProviderAttachmentSummary): ProviderAttachmentSummary {
+  const sizeBytes = knownPlaintextSizes.value.get(attachmentKey(providerId, attachment.attachmentId));
+  return sizeBytes === undefined ? attachment : { ...attachment, sizeBytes };
+}
+
+function rememberPlaintextSize(providerId: string, attachmentId: string, sizeBytes: number): void {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return;
+  knownPlaintextSizes.value.set(attachmentKey(providerId, attachmentId), sizeBytes);
+  attachments.value = attachments.value.map((attachment) => attachment.attachmentId === attachmentId
+    ? { ...attachment, sizeBytes }
+    : attachment);
+}
+
 function percentage(received: number, total: number): number {
   return total === 0 ? 100 : Math.min(100, Math.round(received / total * 100));
 }
@@ -377,8 +411,55 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
+function attachmentSizeLabel(attachment: ProviderAttachmentSummary): string {
+  const provider = selectedProvider.value;
+  if (provider?.kind !== "bitwarden") return formatBytes(attachment.sizeBytes);
+  const known = knownAttachmentSize(attachment);
+  if (known !== undefined) return `${formatBytes(known)} 明文`;
+  return `${formatBytes(attachment.sizeBytes)} 加密存储`;
+}
+
+function knownAttachmentSize(attachment: ProviderAttachmentSummary): number | undefined {
+  const provider = selectedProvider.value;
+  if (provider?.kind !== "bitwarden") return attachment.sizeBytes;
+  return knownPlaintextSizes.value.get(attachmentKey(provider.id, attachment.attachmentId));
+}
+
 function attachmentLimit(provider: ProviderAccount | undefined): number {
-  return provider?.kind === "mdbx2" ? MDBX2_ATTACHMENT_MAX_BYTES : KEEPASS_ATTACHMENT_MAX_BYTES;
+  if (provider?.kind === "mdbx2") return MDBX2_ATTACHMENT_MAX_BYTES;
+  if (provider?.kind === "bitwarden") return BITWARDEN_ATTACHMENT_MAX_BYTES;
+  return KEEPASS_ATTACHMENT_MAX_BYTES;
+}
+
+async function loadRecoveryStatus() {
+  const provider = selectedProvider.value;
+  if (!provider || provider.kind !== "bitwarden") {
+    recovery.value = undefined;
+    return;
+  }
+  recoveryBusy.value = true;
+  try {
+    recovery.value = await vaultClient.providerAttachmentRecoveryStatus(provider.id);
+  } catch (cause) {
+    recovery.value = undefined;
+    if (!error.value) error.value = errorMessage(cause);
+  } finally {
+    recoveryBusy.value = false;
+  }
+}
+
+function recoveryStageLabel(stage: string): string {
+  return ({
+    intent: "等待准备",
+    preparing: "准备加密材料",
+    prepared: "等待上传",
+    uploading: "正在上传",
+    verifying: "正在验证",
+    verified: "等待完成",
+    "deleting-old": "正在删除旧附件",
+    deleting: "正在删除",
+    "rolling-back": "正在回滚"
+  } as Record<string, string>)[stage] || "等待恢复";
 }
 
 function errorMessage(cause: unknown): string {
@@ -420,14 +501,26 @@ function transferErrorMessage(cause: unknown): string {
           </select>
         </label>
         <div v-else class="attachment-provider-summary">
-          <m3e-icon :name="selectedProvider?.kind === 'mdbx2' ? 'database' : 'key'"></m3e-icon>
-          <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : 'KeePass' }}</small></span>
+          <m3e-icon :name="selectedProvider?.kind === 'mdbx2' ? 'database' : selectedProvider?.kind === 'bitwarden' ? 'shield_lock' : 'key'"></m3e-icon>
+          <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : 'KeePass' }}</small></span>
         </div>
         <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>添加附件</m3e-button>
         <input ref="fileInput" class="attachment-file-input" type="file" aria-label="选择附件文件" @change="handleFileSelection" />
       </div>
 
       <p class="attachment-provider-help">{{ providerDescription }} 单个附件上限 {{ formatBytes(providerLimit) }}。</p>
+
+      <section v-if="recovery?.pending.length" class="attachment-recovery-panel" role="status" aria-labelledby="attachment-recovery-title">
+        <m3e-icon name="sync_problem"></m3e-icon>
+        <div>
+          <strong id="attachment-recovery-title">Bitwarden 有 {{ recovery.pending.length }} 个附件操作待恢复</strong>
+          <small>后台不会重复创建附件。请使用原文件重试；完成前不要清除浏览器站点数据。</small>
+          <ul>
+            <li v-for="record in recovery.pending" :key="record.operationId">{{ record.kind === 'delete' ? '删除' : record.kind === 'replace' ? '替换' : '添加' }} · {{ recoveryStageLabel(record.stage) }} · {{ new Date(record.updatedAt).toLocaleString() }}</li>
+          </ul>
+        </div>
+        <m3e-icon-button aria-label="刷新 Bitwarden 恢复状态" :disabled="interactionLocked" @click="loadRecoveryStatus"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
+      </section>
 
       <div v-if="pendingUpload" class="attachment-upload-panel" aria-labelledby="attachment-upload-title">
         <span class="attachment-file-icon"><m3e-icon name="upload_file"></m3e-icon></span>
@@ -458,7 +551,7 @@ function transferErrorMessage(cause: unknown): string {
           <li v-for="attachment in attachments" :key="attachment.attachmentId" class="provider-attachment-row">
             <div class="attachment-row-main">
               <span class="attachment-file-icon"><m3e-icon name="draft"></m3e-icon></span>
-              <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ formatBytes(attachment.sizeBytes) }} · {{ attachment.mediaType || '未知媒体类型' }} · 随密码源加密</small></span>
+              <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ attachmentSizeLabel(attachment) }} · {{ attachment.mediaType || '未知媒体类型' }} · 随密码源加密</small></span>
               <span class="attachment-row-actions">
                 <m3e-icon-button :aria-label="`下载 ${attachment.fileName}`" :disabled="interactionLocked" @click="downloadAttachment(attachment)"><m3e-icon :name="downloadingAttachmentId === attachment.attachmentId ? 'progress_activity' : 'download'"></m3e-icon></m3e-icon-button>
                 <m3e-icon-button :aria-label="`替换 ${attachment.fileName} 的内容`" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
@@ -479,7 +572,7 @@ function transferErrorMessage(cause: unknown): string {
             </div>
             <div v-if="pendingDelete?.attachmentId === attachment.attachmentId" class="attachment-delete-confirmation">
               <m3e-icon name="warning"></m3e-icon>
-              <span><strong>永久删除此附件？</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? '删除会写入 MDBX2，并在下次同步时传播 Tombstone。' : '删除会写入当前 KeePass 会话；请导出 KDBX 文件保存修改。' }}</small></span>
+               <span><strong>永久删除此附件？</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? '删除会写入 MDBX2，并在下次同步时传播 Tombstone。' : selectedProvider?.kind === 'bitwarden' ? '删除会先确认远端状态；响应中断时可使用同一操作标识重试。' : '删除会写入当前 KeePass 会话；请导出 KDBX 文件保存修改。' }}</small></span>
               <span class="attachment-confirm-actions">
                 <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">取消</m3e-button>
                 <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? '删除中…' : '确认删除' }}</m3e-button>
@@ -598,6 +691,46 @@ function transferErrorMessage(cause: unknown): string {
   margin: 8px 0 16px;
   color: var(--md-sys-color-on-surface-variant, var(--app-muted));
   line-height: 1.5;
+}
+
+.attachment-recovery-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 44px;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--md-sys-color-tertiary, var(--app-primary));
+  border-radius: 8px;
+  padding: 12px 12px 12px 16px;
+  margin: 0 0 12px;
+  color: var(--md-sys-color-on-tertiary-container, var(--app-text));
+  background: var(--md-sys-color-tertiary-container, var(--app-surface-high));
+}
+
+.attachment-recovery-panel > m3e-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  --m3e-icon-size: 20px;
+}
+
+.attachment-recovery-panel > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.attachment-recovery-panel small,
+.attachment-recovery-panel li {
+  overflow-wrap: anywhere;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  line-height: 1.45;
+}
+
+.attachment-recovery-panel ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
 }
 
 .attachment-file-input {
@@ -914,6 +1047,7 @@ function transferErrorMessage(cause: unknown): string {
   }
 
   .attachment-upload-panel,
+  .attachment-recovery-panel,
   .attachment-row-main,
   .attachment-transfer-panel,
   .attachment-delete-confirmation {
@@ -921,6 +1055,7 @@ function transferErrorMessage(cause: unknown): string {
   }
 
   .attachment-progress-value,
+  .attachment-recovery-panel > m3e-icon-button,
   .attachment-row-actions,
   .attachment-transfer-actions,
   .attachment-confirm-actions {
