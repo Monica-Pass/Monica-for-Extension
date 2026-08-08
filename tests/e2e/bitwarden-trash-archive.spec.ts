@@ -115,13 +115,17 @@ test("manager requires explicit confirmation before adopting an authenticated em
     await openMobileSection(manager, /^密码源/);
     await manager.getByRole("button", { name: "立即同步" }).click();
     await expect(manager.getByText("服务器返回空密码库", { exact: true })).toBeVisible();
-    const confirm = manager.getByRole("button", { name: "确认采用空库" });
-    await expect(confirm).toBeVisible();
+    const openConfirmation = manager.getByRole("button", { name: "查看并确认空库" });
+    await expect(openConfirmation).toBeVisible();
     await expectNoGradients(manager.locator(".provider-page"));
     await expectNoHorizontalOverflow(manager);
-    manager.once("dialog", (dialog) => void dialog.accept());
-    await confirm.click();
-    await expect(confirm).toHaveCount(0);
+    await openConfirmation.click();
+    const confirmation = manager.getByRole("dialog", { name: "采用服务器空密码库？" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toHaveCSS("border-radius", "16px");
+    await confirmation.getByRole("button", { name: "确认采用空库" }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(openConfirmation).toHaveCount(0);
 
     await openMobileSection(manager, /^登录项/);
     await expect(manager.getByRole("row").filter({ hasText: "Server account" })).toHaveCount(0);

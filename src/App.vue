@@ -9,6 +9,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import AppearancePanel from "./components/AppearancePanel.vue";
 import BitwardenCollectionsDialog from "./components/BitwardenCollectionsDialog.vue";
 import BitwardenFoldersDialog from "./components/BitwardenFoldersDialog.vue";
+import BitwardenProviderCard from "./components/BitwardenProviderCard.vue";
 import BitwardenSendsPanel from "./components/BitwardenSendsPanel.vue";
 import GeneratorPanel from "./components/GeneratorPanel.vue";
 import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
@@ -16,6 +17,7 @@ import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
 import Mdbx2BatchTransferDialog from "./components/Mdbx2BatchTransferDialog.vue";
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
+import ProviderConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
@@ -77,6 +79,18 @@ interface KeePassFormState {
   isDefaultSaveTarget: boolean;
 }
 
+interface PendingProviderAction {
+  kind: "bitwarden-empty-remote" | "provider-conflict";
+  providerId: string;
+  conflictId?: string;
+  resolution?: ProviderConflictResolution;
+  title: string;
+  message: string;
+  context: string;
+  confirmLabel: string;
+  tone: "attention" | "danger";
+}
+
 const vaultItems = ref<VaultItem[]>([]);
 const archivedItems = ref<VaultItem[]>([]);
 const deletedItems = ref<VaultItem[]>([]);
@@ -113,6 +127,9 @@ const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
 const bitwardenFoldersProvider = ref<ProviderAccount | undefined>();
 const bitwardenCollectionsProvider = ref<ProviderAccount | undefined>();
+const providerActionDialog = ref<PendingProviderAction | null>(null);
+const providerActionBusy = ref(false);
+const providerActionError = ref("");
 const keePassDialogOpen = ref(false);
 const keePassBusy = ref<"" | "test" | "open" | "export" | "lock" | "restore">("");
 const activeKeePassProviderId = ref("");
@@ -246,7 +263,7 @@ const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePa
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value);
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(providerActionDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -283,7 +300,8 @@ function handleDialogKeydown(event: KeyboardEvent) {
   if (!dialog) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    if (providerActionDialog.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
+    else if (keePassHistoryItem.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (attachmentDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (mdbx2BatchTransferDialogOpen.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
     else if (bitwardenCollectionsProvider.value) dialog.querySelector<HTMLElement>("[data-dialog-close]")?.click();
@@ -393,6 +411,9 @@ async function lockVault() {
   vaultEditorOpen.value = false;
   webDavDialogOpen.value = false;
   bitwardenDialogOpen.value = false;
+  providerActionDialog.value = null;
+  providerActionBusy.value = false;
+  providerActionError.value = "";
   closeBitwardenFolders();
   closeBitwardenCollections();
   mdbx2DialogOpen.value = false;
@@ -1030,39 +1051,50 @@ async function saveWebDav() {
   });
 }
 
-async function syncProvider(provider: ProviderAccount, allowEmptyRemote = false) {
+async function syncProvider(provider: ProviderAccount, allowEmptyRemote = false): Promise<boolean> {
   activeSyncProviderId.value = provider.id;
-  await runWebDavAction("sync", async () => {
-    let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
-    try {
-      result = await vaultClient.syncProvider(provider.id, allowEmptyRemote);
-      if (provider.kind === "keepass") {
-        const nextErrors = { ...keePassCardErrors.value };
-        delete nextErrors[provider.id];
-        keePassCardErrors.value = nextErrors;
+  try {
+    return await runWebDavAction("sync", async () => {
+      let result: Awaited<ReturnType<typeof vaultClient.syncProvider>>;
+      try {
+        result = await vaultClient.syncProvider(provider.id, allowEmptyRemote);
+        if (provider.kind === "keepass") {
+          const nextErrors = { ...keePassCardErrors.value };
+          delete nextErrors[provider.id];
+          keePassCardErrors.value = nextErrors;
+        }
+      } catch (error) {
+        if (provider.kind === "keepass") {
+          keePassCardErrors.value = {
+            ...keePassCardErrors.value,
+            [provider.id]: { message: errorMessage(error), code: errorCode(error) }
+          };
+        }
+        throw error;
+      } finally {
+        await refreshProviders();
       }
-    } catch (error) {
-      if (provider.kind === "keepass") {
-        keePassCardErrors.value = {
-          ...keePassCardErrors.value,
-          [provider.id]: { message: errorMessage(error), code: errorCode(error) }
-        };
-      }
-      throw error;
-    } finally {
-      await refreshProviders();
-    }
-    await refreshItems();
-    const details = result.conflicts ? `发现 ${result.conflicts} 个冲突，未覆盖远端数据。` : result.warnings[0] || "同步完成。";
-    showNotice(details);
-  });
-  activeSyncProviderId.value = "";
+      await refreshItems();
+      const details = result.conflicts ? `发现 ${result.conflicts} 个冲突，未覆盖远端数据。` : result.warnings[0] || "同步完成。";
+      showNotice(details);
+    });
+  } finally {
+    activeSyncProviderId.value = "";
+  }
 }
 
-async function confirmBitwardenEmptyRemote(provider: ProviderAccount) {
+function confirmBitwardenEmptyRemote(provider: ProviderAccount) {
   if (provider.kind !== "bitwarden") return;
-  if (!window.confirm("服务器返回了空密码库。确认服务器数据已清空，并采用空库结果吗？本地活动项目将从当前列表移除，回收站墓碑和加密源记录仍按同步结果处理。")) return;
-  await syncProvider(provider, true);
+  providerActionError.value = "";
+  providerActionDialog.value = {
+    kind: "bitwarden-empty-remote",
+    providerId: provider.id,
+    title: "采用服务器空密码库？",
+    message: "此操作会采用已认证同步返回的空结果。只有确认服务器确实被清空后才能继续。",
+    context: `“${provider.name}”的本地活动项目将按空库结果移除；未同步修改仍受冲突保护，回收站墓碑和加密来源记录按同步结果保留。`,
+    confirmLabel: "确认采用空库",
+    tone: "danger"
+  };
 }
 
 async function cancelProviderSync(provider: ProviderAccount) {
@@ -1072,10 +1104,61 @@ async function cancelProviderSync(provider: ProviderAccount) {
 
 async function resolveProviderConflict(conflict: ProviderConflict, resolution: ProviderConflictResolution) {
   const action = resolution === "keep-local" ? "保留浏览器版本并在下次同步写回" : conflict.remote ? "采用远端版本并丢弃浏览器修改" : "接受远端删除";
+  const provider = providers.value.find((candidate) => candidate.id === conflict.providerId);
+  if (provider?.kind === "bitwarden") {
+    const title = conflictTitle(conflict);
+    providerActionError.value = "";
+    providerActionDialog.value = {
+      kind: "provider-conflict",
+      providerId: conflict.providerId,
+      conflictId: conflict.id,
+      resolution,
+      title: resolution === "keep-local" ? "保留浏览器版本？" : conflict.remote ? "采用 Bitwarden 版本？" : "接受远端删除？",
+      message: resolution === "keep-local" ? "下次同步会把浏览器版本写回 Bitwarden。" : conflict.remote ? "此操作会丢弃当前浏览器修改，并采用 Bitwarden 版本。" : "此操作会接受服务器端删除结果。",
+      context: resolution === "keep-local" ? `“${title}”的 Bitwarden 版本将被替换；未知字段仍按现有保留规则处理。` : conflict.remote ? `“${title}”将使用 Bitwarden 版本；敏感字段不会在确认界面显示。` : `“${title}”将从当前活动列表移除，删除状态继续由加密墓碑记录。`,
+      confirmLabel: resolution === "keep-local" ? "确认保留浏览器版本" : conflict.remote ? "确认采用 Bitwarden 版本" : "确认接受远端删除",
+      tone: resolution === "keep-local" ? "attention" : "danger"
+    };
+    return;
+  }
   if (!window.confirm(`确定${action}“${conflictTitle(conflict)}”吗？`)) return;
+  await applyProviderConflictResolution(conflict, resolution);
+}
+
+async function applyProviderConflictResolution(conflict: ProviderConflict, resolution: ProviderConflictResolution) {
   await vaultClient.resolveProviderConflict(conflict.id, resolution);
   await Promise.all([refreshItems(), refreshProviders()]);
   showNotice("同步冲突已原子解决。");
+}
+
+function closeProviderActionDialog() {
+  if (providerActionBusy.value) return;
+  providerActionDialog.value = null;
+  providerActionError.value = "";
+}
+
+async function submitProviderAction() {
+  const action = providerActionDialog.value;
+  if (!action || providerActionBusy.value) return;
+  providerActionBusy.value = true;
+  providerActionError.value = "";
+  try {
+    if (action.kind === "bitwarden-empty-remote") {
+      const provider = providers.value.find((candidate) => candidate.id === action.providerId && candidate.kind === "bitwarden");
+      if (!provider) throw new Error("Bitwarden 密码源已不存在，请关闭对话框后刷新页面。");
+      const completed = await syncProvider(provider, true);
+      if (!completed) throw new Error(webDavError.value || "空库确认同步未完成，请检查网络后重试。");
+    } else {
+      const conflict = providerConflicts.value.find((candidate) => candidate.id === action.conflictId && candidate.providerId === action.providerId);
+      if (!conflict || !action.resolution) throw new Error("此冲突已变化，请关闭对话框并刷新最新状态。");
+      await applyProviderConflictResolution(conflict, action.resolution);
+    }
+    providerActionDialog.value = null;
+  } catch (error) {
+    providerActionError.value = errorMessage(error);
+  } finally {
+    providerActionBusy.value = false;
+  }
 }
 
 async function exportProviderDiagnostics() {
@@ -1134,13 +1217,15 @@ async function removeProvider(provider: ProviderAccount) {
   });
 }
 
-async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Promise<void>) {
+async function runWebDavAction(kind: typeof webDavBusy.value, action: () => Promise<void>): Promise<boolean> {
   webDavError.value = "";
   webDavBusy.value = kind;
   try {
     await action();
+    return true;
   } catch (error) {
     webDavError.value = errorMessage(error);
+    return false;
   } finally {
     webDavBusy.value = "";
   }
@@ -1959,17 +2044,23 @@ function errorCode(error: unknown): string | undefined {
                 <m3e-icon-button aria-label="移除 KeePass" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
               </div>
             </div></m3e-card>
-            <m3e-card v-for="provider in bitwardenProviders" :key="provider.id" variant="filled" class="motion-card source-card"><div slot="content" class="stack">
-              <div class="source-title"><span class="source-icon"><m3e-icon name="shield"></m3e-icon></span><div><h2>{{ provider.name }}</h2><p>{{ String(provider.config.email || '') }}</p></div></div>
-              <span class="state" :class="provider.lastError || conflictsFor(provider.id).length || provider.requiresEmptyRemoteConfirmation || (provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0) ? 'state-attention' : 'state-healthy'">{{ conflictsFor(provider.id).length ? `${conflictsFor(provider.id).length} 个冲突` : provider.requiresEmptyRemoteConfirmation ? '等待空库确认' : (provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0) ? '兼容性提示' : provider.lastError ? '需要处理' : provider.lastSyncAt ? '已同步' : '已连接' }}</span>
-              <p v-if="provider.lastError" class="form-error">{{ provider.lastError }}</p>
-              <div v-if="provider.requiresEmptyRemoteConfirmation" class="provider-dirty-warning" role="alert"><m3e-icon name="warning"></m3e-icon><div><strong>服务器返回空密码库</strong><p>本地已有同步基线。确认服务器确实应为空后，才会采用空库结果并移除本地活动项目。</p></div><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="confirmBitwardenEmptyRemote(provider)">确认采用空库</m3e-button></div>
-              <div v-if="(provider.compatibility?.preservedUnsupportedRecords || 0) + (provider.compatibility?.unreadableRecords || 0)" class="provider-dirty-warning" role="status"><m3e-icon name="info"></m3e-icon><div><strong>有项目以兼容模式保留</strong><p><template v-if="provider.compatibility?.preservedUnsupportedRecords">{{ provider.compatibility.preservedUnsupportedRecords }} 个未来类型仅保存原始 Cipher。</template><template v-if="provider.compatibility?.unreadableRecords">{{ provider.compatibility?.preservedUnsupportedRecords ? ' ' : '' }}{{ provider.compatibility.unreadableRecords }} 个项目暂时无法解密。</template>这些记录不会被自动填充或改写。</p></div></div>
-              <p v-if="queueFor(provider.id)" class="supporting">同步队列：{{ queueFor(provider.id)?.pending }} 项<span v-if="queueFor(provider.id)?.recovering"> · {{ queueFor(provider.id)?.recovering }} 项正在恢复远端结果</span><span v-if="queueFor(provider.id)?.failed"> · {{ queueFor(provider.id)?.failed }} 项失败 · 已尝试 {{ queueFor(provider.id)?.maxAttempts }}/5 次</span></p>
-              <div v-for="conflict in conflictsFor(provider.id)" :key="conflict.id" class="provider-conflict"><strong>{{ conflictTitle(conflict) }}</strong><p>{{ conflict.reason }}</p><small>检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}；敏感字段不在此处显示。</small><div v-if="conflict.local || conflict.remote" class="conflict-actions"><m3e-button v-if="conflict.local" variant="tonal" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'keep-local')">保留浏览器版本</m3e-button><m3e-button variant="text" :disabled="Boolean(webDavBusy)" @click="resolveProviderConflict(conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button></div></div>
-                <p class="supporting">{{ provider.lastSyncAt ? `上次同步：${new Date(provider.lastSyncAt).toLocaleString()}` : String(provider.config.vaultUrl || 'Bitwarden') }}</p><p class="provider-capability-note"><m3e-icon name="info"></m3e-icon><span>当前支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；归档、回收站、组织 Collection 和个人文件夹由管理页操作。</span></p>
-              <div class="source-actions"><m3e-button v-if="activeSyncProviderId === provider.id" variant="text" @click="cancelProviderSync(provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button><m3e-button v-else variant="tonal" :disabled="Boolean(webDavBusy)" @click="syncProvider(provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFor(provider.id)?.failed ? '重试同步' : '立即同步' }}</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenFolders(provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button><m3e-button variant="tonal" :disabled="Boolean(webDavBusy)" @click="openBitwardenCollections(provider)"><m3e-icon slot="icon" name="folder_shared"></m3e-icon>管理 Collection</m3e-button><m3e-icon-button aria-label="重新登录 Bitwarden" @click="openBitwarden(provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="移除 Bitwarden" @click="removeProvider(provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
-            </div></m3e-card>
+            <BitwardenProviderCard
+              v-for="provider in bitwardenProviders"
+              :key="provider.id"
+              :provider="provider"
+              :queue="queueFor(provider.id)"
+              :conflicts="conflictsFor(provider.id)"
+              :active-sync="activeSyncProviderId === provider.id"
+              :busy="Boolean(webDavBusy)"
+              @sync="syncProvider"
+              @cancel="cancelProviderSync"
+              @empty-remote="confirmBitwardenEmptyRemote"
+              @resolve-conflict="resolveProviderConflict"
+              @folders="openBitwardenFolders"
+              @collections="openBitwardenCollections"
+              @relogin="openBitwarden"
+              @remove="removeProvider"
+            />
             <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span><div class="source-actions"><m3e-button variant="tonal" :disabled="diagnosticBusy" @click="exportProviderDiagnostics"><m3e-icon slot="icon" name="download"></m3e-icon>{{ diagnosticBusy ? '正在导出…' : '导出脱敏诊断' }}</m3e-button></div></div></m3e-card>
           </div>
         </section>
@@ -2180,6 +2271,19 @@ function errorCode(error: unknown): string | undefined {
       <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。</span></div>
       <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
     </form></section></div>
+
+    <ProviderConfirmationDialog
+      v-if="providerActionDialog"
+      :title="providerActionDialog.title"
+      :message="providerActionDialog.message"
+      :context="providerActionDialog.context"
+      :confirm-label="providerActionDialog.confirmLabel"
+      :tone="providerActionDialog.tone"
+      :busy="providerActionBusy"
+      :error="providerActionError"
+      @close="closeProviderActionDialog"
+      @confirm="submitProviderAction"
+    />
 
     <div v-if="exportBackupDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeExportBackupDialog"><section class="editor-dialog backup-password-dialog" role="dialog" aria-modal="true" aria-labelledby="export-backup-title"><header><div><h2 id="export-backup-title">导出加密整库备份</h2><p>设置独立备份密码；恢复时需要此密码，与当前主密码互不影响。</p></div><m3e-icon-button aria-label="关闭" @click="closeExportBackupDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitExportBackup">
       <label class="field"><span>备份密码 *</span><input v-model="exportBackupForm.password" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" autofocus /></label>
