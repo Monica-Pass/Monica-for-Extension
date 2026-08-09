@@ -1544,7 +1544,7 @@ function conflictErrorMessage(cause: unknown): string {
 
 <template>
   <div class="modal-backdrop" role="presentation" @mousedown.self="closeDialog">
-    <section class="editor-dialog provider-dialog mdbx2-dialog" role="dialog" aria-modal="true" aria-labelledby="mdbx2-dialog-title">
+    <section class="editor-dialog provider-dialog mdbx2-dialog" :class="{ 'new-source-dialog': !isExisting }" role="dialog" aria-modal="true" aria-labelledby="mdbx2-dialog-title">
       <header>
         <div>
           <h2 id="mdbx2-dialog-title">{{ dialogTitle }}</h2>
@@ -2377,7 +2377,8 @@ function conflictErrorMessage(cause: unknown): string {
 </template>
 
 <style scoped>
-.mdbx2-form { gap: 16px; }
+.mdbx2-dialog { container-type: inline-size; }
+.mdbx2-form { grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); grid-auto-rows: max-content; align-content: start; gap: 16px; }
 .mdbx2-form > * { min-block-size: max-content; }
 .mdbx2-dialog > header { min-width: 0; }
 .mdbx2-dialog > header > div { min-width: 0; flex: 1 1 auto; }
@@ -2402,7 +2403,7 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-host-row.attention { border-color: var(--md-sys-color-error, #ba1a1a); color: var(--md-sys-color-error, #ba1a1a); }
 .mdbx2-mode-picker { border: 0; display: grid; gap: 8px; padding: 0; }
 .mdbx2-mode-picker legend { margin-bottom: 8px; font-weight: 700; }
-.mdbx2-mode-picker > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mdbx2-mode-picker > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 8px; }
 .mdbx2-mode-picker button { min-height: 48px; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; color: var(--app-text); background: var(--md-sys-color-surface-container-highest, var(--app-surface-high)); cursor: pointer; font: inherit; font-weight: 600; }
 .mdbx2-mode-picker button.active { border-color: var(--app-primary); color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
 .mdbx2-mode-picker button:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: 2px; }
@@ -2823,6 +2824,9 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-history-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
 .mdbx2-history-error { margin: 0 16px 12px; }
 code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+@container (max-width: 44rem) {
+  .mdbx2-dialog.new-source-dialog .provider-actions { position: static; }
+}
 @media (max-width: 700px) {
   .mdbx2-form { display: flex; align-items: stretch; flex-direction: column; }
   .mdbx2-host-row { grid-template-columns: 24px minmax(0, 1fr); }

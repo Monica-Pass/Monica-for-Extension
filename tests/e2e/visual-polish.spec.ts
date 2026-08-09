@@ -80,6 +80,49 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
   } finally { await context?.close(); }
 });
 
+test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("join-profile"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      deviceScaleFactor: 1.5,
+      viewport: { width: 800, height: 900 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const setup = await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 webdav visual password" }));
+    expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true });
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    const navigationButton = page.getByRole("button", { name: "打开导航" });
+    if (await navigationButton.isVisible()) await navigationButton.click();
+    await page.getByRole("button", { name: "密码源" }).click();
+    await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
+    await page.getByRole("dialog", { name: "打开 MDBX2 保险库" }).getByRole("button", { name: "从 WebDAV 加入" }).evaluate((button) => (button as HTMLButtonElement).click());
+
+    const dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    await expect(dialog).toBeVisible();
+    const modeButtons = dialog.locator(".mdbx2-mode-picker button");
+    const firstMode = await modeButtons.nth(0).boundingBox();
+    const secondMode = await modeButtons.nth(1).boundingBox();
+    expect(firstMode).not.toBeNull();
+    expect(secondMode).not.toBeNull();
+    expect(secondMode!.y, "large-text join modes should use separate rows").toBeGreaterThan(firstMode!.y + firstMode!.height);
+    await expectNoHorizontalOverflow(dialog);
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-webdav-join-large-text.png") });
+    const form = dialog.locator(".mdbx2-form");
+    await expectDirectChildrenSeparated(form);
+    await form.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(dialog.getByRole("button", { name: "取消" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "下载并加入" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("mdbx2-webdav-join-large-text-bottom.png") });
+  } finally { await context?.close(); }
+});
+
 test("MDBX2 conflict manager is flat explicit and usable at 375px with large text", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
@@ -352,6 +395,43 @@ async function expectRoundedAndClipped(card: Locator): Promise<void> {
 async function expectNoHorizontalOverflow(root: Locator): Promise<void> {
   const dimensions = await root.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
   expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.clientWidth);
+}
+
+async function expectDirectChildrenSeparated(root: Locator): Promise<void> {
+  const geometry = await root.evaluate((element) => {
+    const children = [...element.children].filter((child) => {
+      const style = getComputedStyle(child);
+      const rect = child.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    });
+    const items = children.map((child, index) => {
+      const rect = child.getBoundingClientRect();
+      const visibleDescendants = [child, ...child.querySelectorAll("*")].filter((node) => {
+        const style = getComputedStyle(node);
+        const box = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0;
+      });
+      const paint = visibleDescendants.reduce((bounds, node) => {
+        const box = node.getBoundingClientRect();
+        return {
+          left: Math.min(bounds.left, box.left),
+          right: Math.max(bounds.right, box.right),
+          top: Math.min(bounds.top, box.top),
+          bottom: Math.max(bounds.bottom, box.bottom)
+        };
+      }, { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+      return { index, label: `${child.tagName.toLowerCase()}.${child.className}`, rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }, paint };
+    });
+    const overflow = items.filter((item) => item.paint.left < item.rect.left - 1 || item.paint.right > item.rect.right + 1 || item.paint.top < item.rect.top - 1 || item.paint.bottom > item.rect.bottom + 1);
+    const overlaps = items.flatMap((item, index) => items.slice(index + 1).flatMap((candidate) => {
+      const width = Math.min(item.paint.right, candidate.paint.right) - Math.max(item.paint.left, candidate.paint.left);
+      const height = Math.min(item.paint.bottom, candidate.paint.bottom) - Math.max(item.paint.top, candidate.paint.top);
+      return width > 1 && height > 1 ? [`${item.label} ${JSON.stringify(item.paint)} <> ${candidate.label} ${JSON.stringify(candidate.paint)}`] : [];
+    }));
+    return { overflow, overlaps };
+  });
+  expect(geometry.overflow, JSON.stringify(geometry)).toEqual([]);
+  expect(geometry.overlaps, JSON.stringify(geometry)).toEqual([]);
 }
 
 async function expectAllRoundedAndClipped(cards: Locator): Promise<void> {
