@@ -14,6 +14,7 @@ export default defineConfig({
   ],
   base: "./",
   build: {
+    modulePreload: false,
     rollupOptions: {
       input: {
         manager: resolve(__dirname, "index.html"),

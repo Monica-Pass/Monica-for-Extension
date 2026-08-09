@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 
@@ -15,6 +15,7 @@ const packageLock = JSON.parse(packageLockBytes.toString("utf8"));
 const prefix = `monica-extension-${packageJson.version}`;
 const archiveName = `${prefix}.zip`;
 const archivePath = resolve(releaseDir, archiveName);
+const unpackedName = "monica-extension-unpacked";
 
 await verifyArtifacts(releaseDir);
 const first = await mkdtemp(join(tmpdir(), "monica-release-a-"));
@@ -41,9 +42,12 @@ async function verifyArtifacts(directory) {
   for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json", "SECURITY-EVIDENCE.json"]) {
     assert(entries[required], `ZIP is missing ${required}.`);
   }
+  verifyExtensionPages(entries);
 
   const metadata = parseJson(entries["RELEASE-METADATA.json"], "release metadata");
+  const manifest = parseJson(entries["manifest.json"], "extension manifest");
   assert(metadata.version === packageJson.version && metadata.manifestVersion === 3, "Release metadata version mismatch.");
+  assert(manifest.version === packageJson.version && manifest.manifest_version === 3, "Extension manifest version mismatch.");
   assert(metadata.archiveTimestamp === "1980-01-01T00:00:00.000Z", "Release timestamp is not fixed.");
   assert(metadata.packageLockSha256 === sha256(packageLockBytes), "Release metadata lockfile hash mismatch.");
   const declaredPaths = metadata.files.map((file) => file.path).sort();
@@ -85,6 +89,7 @@ async function verifyArtifacts(directory) {
   assert(expectedPackages.size === sbomPackages.size && [...expectedPackages].every((item) => sbomPackages.has(item)), "SBOM does not match production lockfile packages.");
   assert(expectedPackages.size === licensePackages.size && [...expectedPackages].every((item) => licensePackages.has(item)), "License inventory does not match production lockfile packages.");
   assert(licenses.packages.every((component) => component.license && component.license !== "UNKNOWN"), "License inventory contains an unknown license.");
+  await verifyUnpackedDirectory(directory, entries);
 }
 
 async function compareArtifactSets(leftDirectory, rightDirectory) {
@@ -93,6 +98,36 @@ async function compareArtifactSets(leftDirectory, rightDirectory) {
     const [left, right] = await Promise.all([readFile(resolve(leftDirectory, name)), readFile(resolve(rightDirectory, name))]);
     assert(equalBytes(left, right), `${name} is not byte-reproducible.`);
   }
+  const [leftFiles, rightFiles] = await Promise.all([listFiles(resolve(leftDirectory, unpackedName)), listFiles(resolve(rightDirectory, unpackedName))]);
+  assert(JSON.stringify(leftFiles) === JSON.stringify(rightFiles), "Unpacked release file inventories differ.");
+  for (const path of leftFiles) {
+    const [left, right] = await Promise.all([readFile(resolve(leftDirectory, unpackedName, path)), readFile(resolve(rightDirectory, unpackedName, path))]);
+    assert(equalBytes(left, right), `Unpacked release differs for ${path}.`);
+  }
+}
+
+function verifyExtensionPages(entries) {
+  for (const pageName of ["index.html", "popup.html"]) {
+    const html = new TextDecoder().decode(entries[pageName]);
+    const linkTags = html.match(/<link\b[^>]*>/gi) || [];
+    assert(!linkTags.some((tag) => /\brel\s*=\s*["']modulepreload["']/i.test(tag)), `${pageName} contains a modulepreload link.`);
+    const references = [...html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)].map((match) => match[1]);
+    for (const reference of references) {
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(reference)) continue;
+      const cleanReference = decodeURIComponent(reference.split(/[?#]/, 1)[0]);
+      assert(cleanReference && !cleanReference.includes("\\") && !cleanReference.includes("\0"), `${pageName} contains an invalid local asset reference: ${reference}`);
+      const target = posix.normalize(posix.join(posix.dirname(pageName), cleanReference.replace(/^\/+/, "")));
+      assert(target !== ".." && !target.startsWith("../") && entries[target], `${pageName} references a missing ZIP asset: ${reference}`);
+    }
+  }
+}
+
+async function verifyUnpackedDirectory(directory, entries) {
+  const unpackedDir = resolve(directory, unpackedName);
+  const actualFiles = await listFiles(unpackedDir);
+  const expectedFiles = Object.keys(entries).sort(compareText);
+  assert(JSON.stringify(actualFiles) === JSON.stringify(expectedFiles), "Unpacked release does not exactly match the ZIP inventory.");
+  for (const path of expectedFiles) assert(equalBytes(await readFile(resolve(unpackedDir, path)), entries[path]), `Unpacked release differs from ZIP for ${path}.`);
 }
 
 async function listFiles(directory) {

@@ -1,7 +1,7 @@
 {
   "name": "monica-browser-extension",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "npm@10.9.2",
   "engines": {
     "node": ">=22.14.0 <25.0.0",
@@ -31,7 +31,7 @@
     "test:security": "vitest run src/security src/runtime/sender-policy.test.ts src/passkey/request-policy.test.ts src/passkey/webauthn-core.test.ts src/content/wallet-dom.test.ts && npm run build && node scripts/security-audit.mjs",
     "test:e2e": "npm run build && playwright test",
     "capture:store-assets": "npm run build && node scripts/capture-store-assets.mjs",
-    "build": "npm run check && vite build && node scripts/build-workers.mjs",
+    "build": "npm run check && vite build && node scripts/build-workers.mjs && node scripts/verify-extension-pages.mjs",
     "build:mdbx2-host": "cargo build --locked --release --manifest-path native/mdbx2-host/Cargo.toml",
     "validate": "npm test && npm run build",
     "package:release": "npm run build && node scripts/package-release.mjs",

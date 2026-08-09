@@ -1,12 +1,20 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { zipSync } from "fflate";
 
 const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 const outputDir = resolve(argumentValue("--output-dir") || resolve(root, "release"));
+const defaultUnpackedDir = resolve(outputDir, "monica-extension-unpacked");
+const requestedUnpackedDir = argumentValue("--unpacked-dir");
+const unpackedDirs = [defaultUnpackedDir];
+if (requestedUnpackedDir) {
+  const target = resolve(root, requestedUnpackedDir);
+  assertChildDirectory(outputDir, target);
+  if (target !== defaultUnpackedDir) unpackedDirs.push(target);
+}
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const packageLockBytes = await readFile(resolve(root, "package-lock.json"));
 const packageLock = JSON.parse(packageLockBytes.toString("utf8"));
@@ -107,7 +115,25 @@ await Promise.all([
   writeFile(resolve(outputDir, licensesName), licensesBytes),
   writeFile(resolve(outputDir, evidenceName), evidenceBytes)
 ]);
-console.log(`Created ${resolve(outputDir, archiveName)} with ${packagedEntries.size} files (SHA-256 ${archiveSha256}).`);
+for (const directory of unpackedDirs) await replaceUnpackedDirectory(directory, packagedEntries);
+console.log(`Created ${resolve(outputDir, archiveName)} with ${packagedEntries.size} files (SHA-256 ${archiveSha256}) and refreshed ${unpackedDirs.length} unpacked director${unpackedDirs.length === 1 ? "y" : "ies"}.`);
+
+async function replaceUnpackedDirectory(directory, entries) {
+  assertChildDirectory(outputDir, directory);
+  await rm(directory, { recursive: true, force: true });
+  for (const [name, bytes] of [...entries.entries()].sort(([left], [right]) => compareText(left, right))) {
+    const target = resolve(directory, ...name.split("/"));
+    assertChildDirectory(directory, target, true);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, bytes);
+  }
+}
+
+function assertChildDirectory(parent, target, allowFile = false) {
+  const relativeTarget = relative(parent, target);
+  const valid = relativeTarget && relativeTarget !== ".." && !relativeTarget.startsWith(`..${sep}`) && !isAbsolute(relativeTarget);
+  if (!valid) throw new Error(`${allowFile ? "File" : "Unpacked directory"} must stay inside ${parent}: ${target}`);
+}
 
 async function readDistEntries() {
   const entries = new Map();

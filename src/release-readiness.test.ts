@@ -64,13 +64,17 @@ describe("store-facing privacy and security artifacts", () => {
 
 describe("reproducible release contract", () => {
   it("keeps deterministic packaging and independent verification in the release gate", async () => {
-    const [pkg, workflow, releaseGuide, packager, verifier] = await Promise.all([
-      readJson<{ scripts: Record<string, string> }>("package.json"),
+    const [pkg, manifest, workflow, releaseGuide, viteConfig, packager, verifier] = await Promise.all([
+      readJson<{ version: string; scripts: Record<string, string> }>("package.json"),
+      readJson<{ version: string }>("public/manifest.json"),
       read(".github/workflows/ci.yml"),
       read("docs/RELEASE.md"),
+      read("vite.config.ts"),
       read("scripts/package-release.mjs"),
       read("scripts/verify-release.mjs")
     ]);
+    expect(pkg.version).toBe(manifest.version);
+    expect(pkg.scripts.build).toContain("verify-extension-pages.mjs");
     expect(pkg.scripts["package:verify"]).toContain("verify-release.mjs");
     expect(pkg.scripts["release:check"]).toContain("package:verify");
     expect(pkg.scripts["verify:supply-chain"]).toContain("verify:lockfile");
@@ -78,6 +82,8 @@ describe("reproducible release contract", () => {
     for (const term of ["SHA-256", "CycloneDX", "1980-01-01", "逐字节相同"]) expect(releaseGuide).toContain(term);
     expect(packager).toContain("RELEASE-METADATA.json");
     expect(packager).toContain("THIRD-PARTY-LICENSES.json");
+    expect(packager).toContain("monica-extension-unpacked");
+    expect(viteConfig).toContain("modulePreload: false");
     expect(verifier).toContain("byte-reproducible");
   });
 });

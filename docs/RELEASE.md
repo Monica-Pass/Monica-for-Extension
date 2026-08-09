@@ -26,6 +26,7 @@ npm run release:check
 - `monica-extension-X.Y.Z.sbom.cdx.json`：CycloneDX 1.5 SBOM。
 - `monica-extension-X.Y.Z.third-party-licenses.json`：生产依赖版本、完整性值和许可证清单。
 - `monica-extension-X.Y.Z.security-evidence.json`：源 commit、干净工作树、工具链和嵌入证据哈希。
+- `monica-extension-unpacked/`：每次打包前完整清理并重新生成的开发者模式加载目录，内容与 ZIP 条目逐字节一致。
 
 ZIP 内额外包含：
 
@@ -43,6 +44,7 @@ ZIP 自身的哈希不能嵌入 ZIP（会形成循环依赖），因此由并列
 - 所有 ZIP 条目的 DOS 时间固定为 1980-01-01 00:00:00；ZIP 格式本身不保存时区。
 - 元数据、SBOM、许可证清单和安全证据按稳定顺序生成，不包含当前时间、绝对路径或机器信息。
 - `package:verify` 在两个独立临时目录中重新打包，并要求 ZIP、checksum、SBOM、许可证清单和安全证据逐字节相同，同时与 `release/` 中的正式产物相同。
+- `package:verify` 同时核对已解压目录的文件清单和内容，防止旧 HTML、旧哈希资源或多次构建文件混合。
 
 ## 手工校验
 

@@ -85,7 +85,7 @@ npm run package:release
 npm run package:verify
 ```
 
-构建产物位于 `dist/`，可安装 ZIP 位于 `release/`。
+构建产物位于 `dist/`，可安装 ZIP 与每次重新生成的 `release/monica-extension-unpacked/` 位于 `release/`。
 
 ## 本地安装
 
@@ -95,7 +95,9 @@ npm run package:verify
 4. 选择本项目的 `dist` 目录。
 5. 打开扩展的“选项”页面并创建主密码。
 
-也可以解压 `release/monica-extension-0.1.0.zip`，再将解压目录作为扩展加载。ZIP 的根目录直接包含 `manifest.json`。
+也可以加载 `release/monica-extension-unpacked/`，其内容由 `npm run package:release` 完整替换，并与 `release/monica-extension-<version>.zip` 字节一致。ZIP 的根目录直接包含 `manifest.json`。
+
+开发者模式下，扩展 ID 与已解压目录的绝对位置相关。升级现有安装时，应在原目录中完整替换文件后点击“重新加载”，从而保留原扩展 ID 与本地存储。发布脚本支持 `--unpacked-dir <原目录>`，用于同步刷新已经安装的旧目录。
 
 ## 安全边界
 
