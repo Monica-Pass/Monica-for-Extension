@@ -101,12 +101,16 @@ describe("visual design contract", () => {
 
   it("keeps the shared M3E shape and icon tokens stable", async () => {
     const styles = await read("src/styles.css");
+    const popupStyles = await read("src/popup/popup.css");
     expect(styles).toContain("--app-shape-card: 8px");
     expect(styles).toContain("--app-shape-field: 8px");
     expect(styles).toContain("--app-shape-dialog: 16px");
     expect(styles).toContain("--app-icon-small: 20px");
     expect(styles).toContain("--app-icon-medium: 24px");
+    expect(styles).toMatch(/m3e-icon\s*\{[^}]*--m3e-icon-size:\s*var\(--app-icon-medium\)/s);
     expect(styles).toMatch(/m3e-icon-button\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+    expect(popupStyles).toMatch(/\.popup-shell m3e-button\s*\{[^}]*--m3e-button-icon-size:\s*var\(--app-icon-medium\)/s);
+    expect(popupStyles).toMatch(/\.popup-shell m3e-icon-button\s*\{[^}]*--m3e-icon-button-icon-size:\s*var\(--app-icon-medium\)/s);
   });
 
   it("does not nest M3E cards in manager templates", async () => {

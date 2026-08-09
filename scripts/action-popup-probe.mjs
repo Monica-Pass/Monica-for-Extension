@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -34,6 +34,22 @@ try {
     ]
   });
   const worker = ownerContext.serviceWorkers()[0] || await ownerContext.waitForEvent("serviceworker");
+  const extensionId = new URL(worker.url()).host;
+  await ownerContext.route("https://popup-probe.example.test/**", (route) => route.fulfill({
+    contentType: "text/html; charset=utf-8",
+    body: '<!doctype html><html lang="zh-CN"><title>Popup Icon Probe</title><label>用户名<input autocomplete="username"></label><label>密码<input type="password" autocomplete="current-password"></label></html>'
+  }));
+  const manager = await ownerContext.newPage();
+  await manager.goto(`chrome-extension://${extensionId}/index.html`);
+  const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "popup icon probe password" }));
+  assert(setup?.ok, "Action Popup probe could not create its temporary vault.");
+  const locked = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }));
+  assert(locked?.ok, "Action Popup probe could not lock its temporary vault.");
+  await manager.close();
+  const site = await ownerContext.newPage();
+  await site.goto("https://popup-probe.example.test/login");
+  await site.locator('input[type="password"]').waitFor();
+  await site.bringToFront();
   await worker.evaluate(async () => chrome.action.openPopup());
   attachedBrowser = await connectToBrowser(debuggingPort);
   const popup = await waitForPopup(attachedBrowser);
@@ -56,8 +72,68 @@ try {
   assert(metrics.rootWidth >= 370 && metrics.shellWidth >= 370, `Action Popup content collapsed: root=${metrics.rootWidth}px shell=${metrics.shellWidth}px.`);
   assert(metrics.innerHeight >= 480 && metrics.innerHeight <= 600, `Action Popup height is outside the usable range: ${metrics.innerHeight}px.`);
   assert(metrics.scrollWidth <= metrics.clientWidth + 1, `Action Popup has horizontal overflow: client=${metrics.clientWidth}px scroll=${metrics.scrollWidth}px.`);
-  assert(metrics.text.includes("Monica") && metrics.text.includes("管理密码库"), "Action Popup did not render the expected Monica controls.");
-  console.log(`Verified real Action Popup: ${metrics.innerWidth}x${metrics.innerHeight}px, root ${metrics.rootWidth}px, no horizontal overflow.`);
+  assert(metrics.text.includes("Monica") && metrics.text.includes("密码库已锁定") && metrics.text.includes("管理密码库"), "Action Popup did not render the expected locked Monica controls.");
+  await popup.emulateMedia({ colorScheme: "dark" });
+  await popup.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+  await popup.waitForTimeout(250);
+  const scaledLayout = await popup.evaluate(() => {
+    const shell = document.querySelector(".popup-shell");
+    const containmentViolations = [".popup-header", ".site-summary", ".popup-unlock", ".popup-footer"].flatMap((selector) => {
+      const container = document.querySelector(selector);
+      if (!container) return [];
+      const containerRect = container.getBoundingClientRect();
+      return [...container.children].flatMap((child) => {
+        const style = getComputedStyle(child);
+        const rect = child.getBoundingClientRect();
+        if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return [];
+        if (rect.left >= containerRect.left - 1 && rect.right <= containerRect.right + 1 && rect.top >= containerRect.top - 1 && rect.bottom <= containerRect.bottom + 1) return [];
+        return [{
+          container: selector,
+          child: child.tagName,
+          className: child.className || "",
+          containerRect: { left: containerRect.left, right: containerRect.right, top: containerRect.top, bottom: containerRect.bottom },
+          childRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+        }];
+      });
+    });
+    return {
+      innerWidth,
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      rootFontSize: getComputedStyle(document.documentElement).fontSize,
+      shell: shell ? { clientWidth: shell.clientWidth, scrollWidth: shell.scrollWidth } : null,
+      containmentViolations
+    };
+  });
+  if (process.env.MONICA_POPUP_DIAGNOSTICS) console.log(JSON.stringify(scaledLayout, null, 2));
+  const icons = await popup.evaluate(() => [...document.querySelectorAll("m3e-icon")].map((host) => {
+    const hostRect = host.getBoundingClientRect();
+    const hostStyle = getComputedStyle(host);
+    const glyph = host.shadowRoot?.querySelector(".icon");
+    const glyphStyle = glyph ? getComputedStyle(glyph) : null;
+    return {
+      name: glyph?.textContent?.trim() || host.textContent?.trim() || "unknown",
+      hostWidth: hostRect.width,
+      hostHeight: hostRect.height,
+      hostFontSize: Number.parseFloat(hostStyle.fontSize),
+      glyphFontSize: Number.parseFloat(glyphStyle?.fontSize || hostStyle.fontSize),
+      overflow: hostStyle.overflow,
+      visible: hostRect.width > 0 && hostRect.height > 0 && hostStyle.display !== "none" && hostStyle.visibility !== "hidden"
+    };
+  }).filter((icon) => icon.visible));
+  const clippedIcons = icons.filter((icon) => icon.glyphFontSize > Math.max(icon.hostWidth, icon.hostHeight) + 0.5);
+  assert(icons.length >= 3, `Action Popup icon probe found too few visible icons: ${icons.length}.`);
+  assert(!clippedIcons.length, `Action Popup icons exceed their hosts at 200% text: ${clippedIcons.map((icon) => `${icon.name} ${icon.glyphFontSize}px in ${icon.hostWidth}x${icon.hostHeight}px`).join(", ")}.`);
+  assert(scaledLayout.scrollWidth <= scaledLayout.clientWidth + 1, `Action Popup has horizontal overflow at 200% text: client=${scaledLayout.clientWidth}px scroll=${scaledLayout.scrollWidth}px.`);
+  assert(scaledLayout.shell && scaledLayout.shell.scrollWidth <= scaledLayout.shell.clientWidth + 1, `Action Popup shell has horizontal overflow at 200% text: client=${scaledLayout.shell?.clientWidth || 0}px scroll=${scaledLayout.shell?.scrollWidth || 0}px.`);
+  assert(!scaledLayout.containmentViolations.length, `Action Popup content overlaps its sections at 200% text: ${scaledLayout.containmentViolations.map((violation) => `${violation.container} > ${violation.child}.${violation.className}`).join(", ")}.`);
+  if (process.env.MONICA_POPUP_SCREENSHOT) {
+    const screenshotPath = resolve(root, process.env.MONICA_POPUP_SCREENSHOT);
+    await mkdir(dirname(screenshotPath), { recursive: true });
+    await popup.screenshot({ path: screenshotPath, animations: "disabled" });
+    console.log(`Saved Action Popup screenshot to ${screenshotPath}.`);
+  }
+  console.log(`Verified real Action Popup: ${metrics.innerWidth}x${metrics.innerHeight}px, root ${metrics.rootWidth}px, ${icons.length} icons fit at 200% text.`);
 } finally {
   await attachedBrowser?.close().catch(() => undefined);
   await ownerContext?.close().catch(() => undefined);

@@ -28,8 +28,27 @@ body.popup-body {
   background: var(--app-bg);
 }
 
+.popup-shell > * {
+  flex-shrink: 0;
+}
+
 .popup-shell m3e-button {
+  --m3e-button-icon-size: var(--app-icon-medium);
   min-height: 44px;
+}
+
+/* M3E projects the icon slot with `font-size: inherit !important`. Keep the
+ * component icon token independent from page text scaling so the glyph stays
+ * fully visible inside its fixed 24px host at 200% text. */
+.popup-shell m3e-icon-button {
+  --m3e-icon-button-container-height: 44px;
+  --m3e-icon-button-default-leading-space: 10px;
+  --m3e-icon-button-default-trailing-space: 10px;
+  --m3e-icon-button-icon-size: var(--app-icon-medium);
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  overflow: clip;
 }
 
 :root[data-theme="dark"] .popup-shell {

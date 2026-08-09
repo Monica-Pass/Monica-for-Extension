@@ -135,6 +135,7 @@ m3e-button {
 }
 
 m3e-icon {
+  --m3e-icon-size: var(--app-icon-medium);
   display: inline-grid;
   width: var(--app-icon-medium);
   height: var(--app-icon-medium);
