@@ -119,14 +119,14 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
     ]) expect(await manager.evaluate(async (value) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: value }), item)).toMatchObject({ ok: true });
     await page.bringToFront();
     const popup = await context.newPage();
-    await popup.setViewportSize({ width: 375, height: 667 });
+    await popup.setViewportSize({ width: 390, height: 667 });
     await page.bringToFront();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
     await expect(popup.getByText("Ready parent account", { exact: true })).toBeVisible();
     await expect(popup.getByText("已保存，等待网站请求", { exact: true })).toBeVisible();
     await expect(popup.getByText("仅兼容保留，不能登录", { exact: true })).toBeVisible();
     await expect(popup.getByRole("button", { name: /Ready parent account/ })).toHaveCount(0);
-    expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 375, scroll: 375 });
+    expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 390, scroll: 390 });
     await popup.setViewportSize({ width: 500, height: 667 });
     expect(await popup.locator(".popup-shell").evaluate((element) => element.getBoundingClientRect().width)).toBe(390);
   } finally {
