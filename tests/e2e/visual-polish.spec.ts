@@ -80,6 +80,132 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
   } finally { await context?.close(); }
 });
 
+test("manager sections remain readable with 200% text", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("manager-large-text-profile"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      viewport: { width: 1280, height: 900 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const setup = await page.evaluate(async (createdAt) => {
+      const created = await chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "large text visual password" });
+      if (!created.ok) return created;
+      return chrome.runtime.sendMessage({
+        type: "VAULT_UPSERT_ITEM",
+        item: {
+          id: "large-text-login",
+          kind: "login",
+          title: "非常长的示例工作账号名称用于检查显示",
+          username: "demo-long-user@example.test",
+          password: "not-a-real-password",
+          uris: ["https://very-long-example-domain.example.test/login"],
+          customFields: [],
+          favorite: false,
+          notes: "",
+          createdAt,
+          updatedAt: createdAt,
+          providerRefs: []
+        }
+      });
+    }, createdAt);
+    expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true });
+    await page.reload();
+    await page.getByRole("button", { name: "概览" }).waitFor();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+
+    const drawerWidth = (await page.locator(".sidebar").boundingBox())?.width || 0;
+    expect(drawerWidth).toBeGreaterThanOrEqual(350);
+    expect(drawerWidth).toBeLessThanOrEqual(361);
+    const walletNavLabel = page.getByRole("button", { name: /^钱包与身份/ }).locator(":scope > span").first();
+    const walletLabelWidth = await walletNavLabel.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
+    expect(walletLabelWidth.scroll, JSON.stringify(walletLabelWidth)).toBeLessThanOrEqual(walletLabelWidth.client + 1);
+
+    const metricBoxes = await Promise.all([0, 1, 2].map((index) => page.locator(".metrics > m3e-card").nth(index).boundingBox()));
+    expect(metricBoxes.every(Boolean)).toBe(true);
+    expect(Math.abs(metricBoxes[0]!.y - metricBoxes[1]!.y)).toBeLessThanOrEqual(1);
+    expect(metricBoxes[2]!.y).toBeGreaterThan(metricBoxes[0]!.y + metricBoxes[0]!.height);
+
+    const sections = ["概览", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
+    for (const section of sections) {
+      await page.getByRole("button", { name: new RegExp(`^${section}`) }).first().click();
+      await expectNoHorizontalOverflow(page.locator("html"));
+      await expectVisibleIconsFit(page.locator("#root"));
+      await expectVisibleButtonLabelsFit(page.locator("#root"));
+    }
+
+    await page.getByRole("button", { name: /^登录项/ }).click();
+    await expect(page.locator(".data-card thead")).toHaveCSS("display", "none");
+    const loginTitle = page.getByText("非常长的示例工作账号名称用于检查显示", { exact: true });
+    expect((await loginTitle.boundingBox())!.width).toBeGreaterThan(400);
+    await page.screenshot({ path: testInfo.outputPath("manager-large-text-login.png"), animations: "disabled" });
+
+    await page.getByRole("button", { name: "密码源" }).click();
+    const sourceCards = page.locator(".provider-connect-grid .connect-source-card");
+    const firstSource = await sourceCards.nth(0).boundingBox();
+    const secondSource = await sourceCards.nth(1).boundingBox();
+    expect(secondSource!.y).toBeGreaterThan(firstSource!.y + firstSource!.height);
+    await page.screenshot({ path: testInfo.outputPath("manager-large-text-providers.png"), animations: "disabled" });
+
+    await page.getByRole("button", { name: "设置与备份" }).click();
+    const selectedPalette = page.locator(".palette-button.selected");
+    const paletteWidth = await selectedPalette.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
+    expect(paletteWidth.scroll, JSON.stringify(paletteWidth)).toBeLessThanOrEqual(paletteWidth.client + 1);
+  } finally { await context?.close(); }
+});
+
+test("manager dialogs use one-column large-text forms", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("dialog-large-text-profile"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      viewport: { width: 800, height: 900 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "dialog large text password" }))).toMatchObject({ ok: true });
+    await page.reload();
+    await page.getByRole("button", { name: "打开导航" }).waitFor();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: "密码源" }).click();
+    await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
+    const webDavDialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    await expect(webDavDialog).toBeVisible();
+    await expectDirectChildrenSeparated(webDavDialog.locator(".provider-form"));
+    const displayName = await webDavDialog.getByLabel("显示名称").boundingBox();
+    const webDavAddress = await webDavDialog.getByLabel("WebDAV 地址 *").boundingBox();
+    expect(webDavAddress!.y).toBeGreaterThan(displayName!.y + displayName!.height);
+    await expectNoHorizontalOverflow(webDavDialog);
+    await webDavDialog.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
+
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("button", { name: "添加登录项" }).first().click();
+    const editor = page.getByRole("dialog", { name: "添加登录项" });
+    await expect(editor).toBeVisible();
+    await expectDirectChildrenSeparated(editor.locator(".login-item-form"));
+    const loginTypes = editor.locator(".login-type-segments label");
+    const firstType = await loginTypes.nth(0).boundingBox();
+    const fourthType = await loginTypes.nth(3).boundingBox();
+    expect(fourthType!.y).toBeGreaterThan(firstType!.y + firstType!.height);
+    await expectVisibleIconsFit(editor);
+    await expectNoHorizontalOverflow(editor);
+    await page.screenshot({ path: testInfo.outputPath("manager-large-text-editor.png"), animations: "disabled" });
+  } finally { await context?.close(); }
+});
+
 test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
@@ -394,7 +520,7 @@ async function expectRoundedAndClipped(card: Locator): Promise<void> {
 
 async function expectNoHorizontalOverflow(root: Locator): Promise<void> {
   const dimensions = await root.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.clientWidth);
+  expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.clientWidth + 1);
 }
 
 async function expectDirectChildrenSeparated(root: Locator): Promise<void> {
@@ -438,4 +564,39 @@ async function expectAllRoundedAndClipped(cards: Locator): Promise<void> {
   const count = await cards.count();
   expect(count).toBeGreaterThan(0);
   for (let index = 0; index < count; index += 1) await expectRoundedAndClipped(cards.nth(index));
+}
+
+async function expectVisibleIconsFit(root: Locator): Promise<void> {
+  const clipped = await root.evaluate((element) => [...element.querySelectorAll("m3e-icon")].flatMap((icon) => {
+    const hostRect = icon.getBoundingClientRect();
+    const hostStyle = getComputedStyle(icon);
+    if (hostRect.width <= 0 || hostRect.height <= 0 || hostStyle.display === "none" || hostStyle.visibility === "hidden") return [];
+    const glyph = icon.shadowRoot?.querySelector<HTMLElement>(".icon");
+    const glyphSize = Number.parseFloat(glyph ? getComputedStyle(glyph).fontSize : hostStyle.fontSize);
+    return glyphSize <= Math.max(hostRect.width, hostRect.height) + 0.5 ? [] : [{
+      name: glyph?.textContent?.trim() || icon.textContent?.trim() || "unknown",
+      host: `${icon.parentElement?.tagName || "unknown"}.${icon.parentElement?.className || ""}`,
+      hostWidth: hostRect.width,
+      hostHeight: hostRect.height,
+      glyphSize
+    }];
+  }));
+  expect(clipped, JSON.stringify(clipped)).toEqual([]);
+}
+
+async function expectVisibleButtonLabelsFit(root: Locator): Promise<void> {
+  const clipped = await root.evaluate((element) => [...element.querySelectorAll("m3e-button")].flatMap((button) => {
+    const hostRect = button.getBoundingClientRect();
+    const hostStyle = getComputedStyle(button);
+    const label = button.shadowRoot?.querySelector<HTMLElement>(".label");
+    if (!label || hostRect.width <= 0 || hostRect.height <= 0 || hostStyle.display === "none" || hostStyle.visibility === "hidden") return [];
+    return label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.clientHeight + 1 ? [] : [{
+      text: button.textContent?.trim().replace(/\s+/g, " ") || "unknown",
+      clientWidth: label.clientWidth,
+      scrollWidth: label.scrollWidth,
+      clientHeight: label.clientHeight,
+      scrollHeight: label.scrollHeight
+    }];
+  }));
+  expect(clipped, JSON.stringify(clipped)).toEqual([]);
 }

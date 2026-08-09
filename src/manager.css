@@ -1,3 +1,21 @@
+#root {
+  --app-drawer-width: clamp(256px, 16rem, 360px);
+}
+
+#root m3e-icon {
+  inline-size: max(var(--m3e-icon-size, var(--app-icon-medium)), var(--app-icon-medium));
+  block-size: max(var(--m3e-icon-size, var(--app-icon-medium)), var(--app-icon-medium));
+  flex: 0 0 auto;
+}
+
+#root m3e-button {
+  --m3e-button-icon-size: var(--app-icon-small);
+}
+
+#root m3e-icon-button {
+  --m3e-icon-button-icon-size: var(--app-icon-small);
+}
+
 .vault-auth {
   align-content: center;
   background: var(--app-bg);
@@ -182,7 +200,7 @@
 }
 
 .empty-state > m3e-icon {
-  --m3e-icon-size: 52px;
+  --m3e-icon-size: 24px;
   color: var(--app-primary);
 }
 
@@ -259,6 +277,10 @@
   margin-bottom: 20px;
 }
 
+.editor-dialog header > div {
+  min-width: 0;
+}
+
 .editor-form {
   display: grid;
   gap: 16px;
@@ -273,7 +295,9 @@
 }
 
 .login-item-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 .login-type-picker {
@@ -291,7 +315,7 @@
 
 .login-type-segments {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
   gap: 4px;
   border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
   border-radius: var(--app-shape-card);
@@ -352,7 +376,9 @@
 }
 
 .special-record-fields {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 .ssh-format-hint {
@@ -505,7 +531,9 @@
 
 .provider-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
   align-items: start;
   gap: 16px;
 }
@@ -516,6 +544,7 @@
 
 .provider-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
 }
@@ -528,7 +557,7 @@
 
 .provider-connect-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
   gap: 16px;
 }
 
@@ -657,6 +686,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .provider-dialog > .provider-form {
@@ -677,6 +707,12 @@
   border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
   padding: 12px 0 0;
   background: var(--md-sys-color-surface-container-high, var(--app-surface));
+}
+
+@container (max-width: 44rem) {
+  .provider-dialog .provider-actions {
+    position: static;
+  }
 }
 
 .provider-session-summary {
@@ -948,6 +984,7 @@
 
 .editor-form footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
   padding-top: 8px;
@@ -1187,14 +1224,14 @@
 
 .generator-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
   gap: 16px;
 }
 
 .generator-options {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: 8px 16px;
   border: 1px solid var(--m3e-color-outline-variant, var(--app-outline));
   border-radius: 8px;

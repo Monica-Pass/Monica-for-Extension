@@ -1065,7 +1065,7 @@ button:focus-visible,
 }
 
 .send-empty > m3e-icon {
-  --m3e-icon-size: 44px;
+  --m3e-icon-size: 24px;
   color: var(--md-sys-color-primary, var(--app-primary));
 }
 
