@@ -166,7 +166,7 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-passkey-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     await context.route("https://bw.example.test/**", async (route) => {
       const request = route.request(); const pathname = new URL(request.url()).pathname;
-      if (pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
+      if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
       if (pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "e2e-access-token", refresh_token: "e2e-refresh-token", expires_in: 3600, Key: protectedKey });
       if (pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "e2e-user" }, Ciphers: remoteCipher ? [remoteCipher] : [] });
       if (pathname === "/api/ciphers" && request.method() === "POST") {

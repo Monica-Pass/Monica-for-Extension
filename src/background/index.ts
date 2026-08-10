@@ -576,9 +576,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID(),
         twoFactorCode: request.twoFactorCode,
         twoFactorProvider: request.twoFactorProvider,
-        rememberTwoFactor: request.rememberTwoFactor
+        rememberTwoFactor: request.rememberTwoFactor,
+        newDeviceOtp: request.newDeviceOtp
       });
       if (result.status === "two-factor-required") return { status: result.status, providers: result.providers };
+      if (result.status === "device-verification-required") return result;
       const account: ProviderAccount = {
         id: existing?.id || crypto.randomUUID(),
         kind: "bitwarden",

@@ -145,7 +145,7 @@ async function createSshServer(): Promise<SshServer> {
   server.route = async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
+    if (url.pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
     if (url.pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "ssh-access", refresh_token: "ssh-refresh", expires_in: 3600, Key: protectedKey });
     if (url.pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "ssh-user" }, Ciphers: [...server.ciphers.values()].map((cipher) => structuredClone(cipher)) });
     if (url.pathname === "/api/ciphers" && request.method() === "POST") {

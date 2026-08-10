@@ -108,7 +108,8 @@ export type PasskeyResult =
 
 export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
-  | { status: "two-factor-required"; providers: number[] };
+  | { status: "two-factor-required"; providers: number[] }
+  | { status: "device-verification-required" };
 
 export interface SavePromptProviderSummary {
   id: string;
@@ -302,6 +303,7 @@ export type ExtensionRequest =
       twoFactorCode?: string;
       twoFactorProvider?: number;
       rememberTwoFactor?: boolean;
+      newDeviceOtp?: string;
       isDefaultSaveTarget?: boolean;
     }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }

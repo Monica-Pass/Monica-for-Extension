@@ -196,7 +196,7 @@ async function createAttachmentServer(): Promise<AttachmentServer> {
     async routeBitwarden(route) {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
+      if (url.pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
       if (url.pathname === "/identity/connect/token") {
         return jsonRoute(route, { access_token: "e2e-access-token", refresh_token: "e2e-refresh-token", expires_in: 3600, Key: protectedVaultKey });
       }

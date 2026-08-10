@@ -118,7 +118,7 @@ async function createFolderServer(): Promise<FolderServer> {
   server.route = async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
+    if (url.pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
     if (url.pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "folder-access", refresh_token: "folder-refresh", expires_in: 3600, Key: protectedKey });
     if (url.pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "folder-user" }, Folders: [...server.folders.values()].map((folder) => structuredClone(folder)), Ciphers: [structuredClone(server.cipher)] });
     if (url.pathname === "/api/folders" && request.method() === "POST") {

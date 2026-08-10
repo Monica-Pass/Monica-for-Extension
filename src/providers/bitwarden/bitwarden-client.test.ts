@@ -26,7 +26,7 @@ describe("Bitwarden auth client", () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       expect(init?.redirect).toBe("error");
-      if (url.endsWith("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 100_000 });
+      if (url.includes("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 100_000 });
       if (url.endsWith("/connect/token")) {
         const form = init?.body as URLSearchParams;
         expect(form.get("password")).toBe("ij4bpg+9sHwyc9ipLMipC5BiUug2hc9KWk8nXWxhz2o=");
@@ -43,13 +43,107 @@ describe("Bitwarden auth client", () => {
     expect(result.session).toMatchObject({ apiUrl: "https://api.bitwarden.com", identityUrl: "https://identity.bitwarden.com", accessToken: "access", refreshToken: "refresh" });
   });
 
+  it("uses the current password prelogin endpoint and falls back for older self-hosted servers", async () => {
+    const currentFetcher = vi.fn().mockResolvedValue(json({ Kdf: 0, KdfIterations: 600_000 }));
+    await new BitwardenClient(currentFetcher as unknown as typeof fetch).prelogin("https://vault.bitwarden.com", EMAIL);
+    expect(String(currentFetcher.mock.calls[0][0])).toBe("https://identity.bitwarden.com/accounts/prelogin/password");
+
+    const legacyFetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/accounts/prelogin/password")) return json({ message: "not found" }, 404);
+      if (String(input).endsWith("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 100_000 });
+      throw new Error(`Unexpected URL ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const result = await new BitwardenClient(legacyFetcher).prelogin("https://vaultwarden.example.com", EMAIL);
+    expect(result.kdf).toEqual({ type: 0, iterations: 100_000 });
+    expect(legacyFetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("returns a resumable two-factor requirement without persisting the master password", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
+      if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
       return json({ error: "invalid_grant", TwoFactorProviders2: { "0": {}, "1": {} } }, 400);
     }) as unknown as typeof fetch;
     const result = await new BitwardenClient(fetcher).login({ vaultUrl: "https://self.example.com", email: EMAIL, masterPassword: PASSWORD, deviceId: "device-1" });
     expect(result).toEqual({ status: "two-factor-required", providers: [0, 1], providerData: { "0": {}, "1": {} } });
+  });
+
+  it("turns Bitwarden's invalid credential response into an actionable region-safe error", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
+      return json({
+        error: "invalid_grant",
+        error_description: "invalid_username_or_password",
+        ErrorModel: { Message: "Username or password is incorrect. Try again." },
+        access_token: "server-echo-secret"
+      }, 400);
+    }) as unknown as typeof fetch;
+
+    const error = await new BitwardenClient(fetcher).login({
+      vaultUrl: "https://vault.bitwarden.com",
+      email: EMAIL,
+      masterPassword: PASSWORD,
+      deviceId: "device-1"
+    }).catch((cause) => cause);
+
+    expect(error).toMatchObject({ name: "ProviderTransportError", code: "client", status: 400, retryable: false });
+    expect(error.message).toBe("Bitwarden 邮箱或主密码错误；请同时确认账号区域与服务器地址一致（US 或 EU）。");
+    expect(JSON.stringify(error)).not.toContain("server-echo-secret");
+  });
+
+  it("reports an invalid or expired Bitwarden two-factor code without exposing response data", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
+      return json({ error: "invalid_grant", error_description: "invalid_two_factor_token", token: "server-echo-secret" }, 400);
+    }) as unknown as typeof fetch;
+
+    const error = await new BitwardenClient(fetcher).login({
+      vaultUrl: "https://vault.bitwarden.com",
+      email: EMAIL,
+      masterPassword: PASSWORD,
+      deviceId: "device-1",
+      twoFactorCode: "123456",
+      twoFactorProvider: 0
+    }).catch((cause) => cause);
+
+    expect(error.message).toBe("Bitwarden 两步验证码错误或已过期，请获取新验证码后重试。");
+    expect(JSON.stringify(error)).not.toContain("server-echo-secret");
+  });
+
+  it("returns a resumable new-device verification requirement and submits its email OTP", async () => {
+    let submittedOtp: string | null = null;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
+      submittedOtp = (init?.body as URLSearchParams).get("newDeviceOtp");
+      return json({ ErrorModel: { Message: "new device verification required" }, DeviceVerified: false }, 400);
+    }) as unknown as typeof fetch;
+    const client = new BitwardenClient(fetcher);
+
+    await expect(client.login({
+      vaultUrl: "https://vault.bitwarden.com",
+      email: EMAIL,
+      masterPassword: PASSWORD,
+      deviceId: "device-1"
+    })).resolves.toEqual({ status: "device-verification-required" });
+    expect(submittedOtp).toBeNull();
+
+    await expect(client.login({
+      vaultUrl: "https://vault.bitwarden.com",
+      email: EMAIL,
+      masterPassword: PASSWORD,
+      deviceId: "device-1",
+      newDeviceOtp: " 654321 "
+    })).resolves.toEqual({ status: "device-verification-required" });
+    expect(submittedOtp).toBe("654321");
+  });
+
+  it("rejects oversized or control-character login codes before contacting Bitwarden", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+    const client = new BitwardenClient(fetcher);
+    const base = { vaultUrl: "https://vault.bitwarden.com", email: EMAIL, masterPassword: PASSWORD, deviceId: "device-1" };
+
+    await expect(client.login({ ...base, newDeviceOtp: "1".repeat(257) })).rejects.toThrow("新设备验证码无效");
+    await expect(client.login({ ...base, twoFactorCode: "123\n456", twoFactorProvider: 0 })).rejects.toThrow("两步验证码无效");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("continues password login with an explicit two-factor code", async () => {
@@ -59,7 +153,7 @@ describe("Bitwarden auth client", () => {
     const setupClient = new BitwardenClient();
     const protectedKey = await setupClient.protectVaultKey(vaultKey, stretched, new Uint8Array(16));
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 1 });
+      if (String(input).includes("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 1 });
       const form = init?.body as URLSearchParams;
       expect(form.get("twoFactorToken")).toBe("123456");
       expect(form.get("twoFactorProvider")).toBe("0");
@@ -80,7 +174,7 @@ describe("Bitwarden auth client", () => {
 
   it("requests an email two-factor code with the derived master password hash", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 100_000 });
+      if (String(input).includes("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 100_000 });
       expect(String(input)).toBe("https://self.example.com/api/two-factor/send-email-login");
       const body = JSON.parse(String(init?.body));
       expect(body).toEqual({ deviceIdentifier: "device-1", email: EMAIL, masterPasswordHash: "ij4bpg+9sHwyc9ipLMipC5BiUug2hc9KWk8nXWxhz2o=" });
@@ -133,7 +227,7 @@ describe("Bitwarden auth client", () => {
 
   it("does not retry token login after an ambiguous network failure", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 1 });
+      if (String(input).includes("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 1 });
       throw new TypeError("network failed token=must-not-escape");
     }) as unknown as typeof fetch;
     const client = new BitwardenClient(fetcher, { baseDelayMs: 0 });

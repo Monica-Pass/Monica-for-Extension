@@ -77,6 +77,7 @@ export const vaultClient = {
     twoFactorCode?: string;
     twoFactorProvider?: number;
     rememberTwoFactor?: boolean;
+    newDeviceOtp?: string;
     isDefaultSaveTarget?: boolean;
   }) => send<BitwardenConnectResult>({ type: "BITWARDEN_LOGIN", ...input }),
   sendBitwardenEmailCode: (vaultUrl: string, email: string, masterPassword: string, providerId?: string) =>

@@ -125,6 +125,7 @@ const bitwardenBusy = ref(false);
 const bitwardenError = ref("");
 const editingBitwardenId = ref<string | undefined>();
 const bitwardenTwoFactorProviders = ref<number[]>([]);
+const bitwardenDeviceVerificationRequired = ref(false);
 const bitwardenFoldersProvider = ref<ProviderAccount | undefined>();
 const bitwardenCollectionsProvider = ref<ProviderAccount | undefined>();
 const confirmationDialog = ref<PendingConfirmationAction | null>(null);
@@ -184,7 +185,7 @@ const PROTECTION_MODE_STORAGE_KEY = "monica.ui.protectionMode.v1";
 const MIN_BACKUP_PASSWORD_LENGTH = MIN_MASTER_PASSWORD_LENGTH;
 const form = reactive<LoginForm>(emptyLoginForm());
 const webDavForm = reactive({ name: "Monica Android WebDAV", baseUrl: "", username: "", password: "", backupPassword: "", passwordConfigured: false, backupPasswordConfigured: false, isDefaultSaveTarget: false });
-const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, isDefaultSaveTarget: false });
+const bitwardenForm = reactive({ name: "Bitwarden", vaultUrl: "https://vault.bitwarden.com", email: "", masterPassword: "", twoFactorCode: "", twoFactorProvider: 0, rememberTwoFactor: false, newDeviceOtp: "", isDefaultSaveTarget: false });
 const keePassForm = reactive<KeePassFormState>({
   sourceMode: "local-file",
   name: "KeePass",
@@ -1640,9 +1641,11 @@ function openBitwarden(provider?: ProviderAccount) {
     twoFactorCode: "",
     twoFactorProvider: 0,
     rememberTwoFactor: false,
+    newDeviceOtp: "",
     isDefaultSaveTarget: provider?.isDefaultSaveTarget || false
   });
   bitwardenTwoFactorProviders.value = [];
+  bitwardenDeviceVerificationRequired.value = false;
   bitwardenError.value = "";
   bitwardenDialogOpen.value = true;
 }
@@ -1651,12 +1654,15 @@ function closeBitwardenDialog() {
   bitwardenDialogOpen.value = false;
   bitwardenForm.masterPassword = "";
   bitwardenForm.twoFactorCode = "";
+  bitwardenForm.newDeviceOtp = "";
   bitwardenTwoFactorProviders.value = [];
+  bitwardenDeviceVerificationRequired.value = false;
   bitwardenError.value = "";
 }
 
 async function connectBitwarden() {
   if (!bitwardenForm.masterPassword) return void (bitwardenError.value = "请输入 Bitwarden 主密码。");
+  if (bitwardenDeviceVerificationRequired.value && !bitwardenForm.newDeviceOtp.trim()) return void (bitwardenError.value = "请输入 Bitwarden 新设备验证码。");
   if (bitwardenTwoFactorProviders.value.length && !bitwardenForm.twoFactorCode.trim()) return void (bitwardenError.value = "请输入两步验证代码。");
   bitwardenBusy.value = true;
   bitwardenError.value = "";
@@ -1670,9 +1676,19 @@ async function connectBitwarden() {
       twoFactorCode: bitwardenForm.twoFactorCode || undefined,
       twoFactorProvider: bitwardenTwoFactorProviders.value.length ? bitwardenForm.twoFactorProvider : undefined,
       rememberTwoFactor: bitwardenForm.rememberTwoFactor,
+      newDeviceOtp: bitwardenDeviceVerificationRequired.value ? bitwardenForm.newDeviceOtp : undefined,
       isDefaultSaveTarget: bitwardenForm.isDefaultSaveTarget
     });
+    if (result.status === "device-verification-required") {
+      const submittedCode = bitwardenDeviceVerificationRequired.value && Boolean(bitwardenForm.newDeviceOtp.trim());
+      bitwardenDeviceVerificationRequired.value = true;
+      bitwardenTwoFactorProviders.value = [];
+      bitwardenError.value = submittedCode ? "Bitwarden 新设备验证码错误或已过期，请获取新验证码后重试。" : "";
+      return;
+    }
     if (result.status === "two-factor-required") {
+      bitwardenDeviceVerificationRequired.value = false;
+      bitwardenForm.newDeviceOtp = "";
       const supported = result.providers.filter((provider) => provider === 0 || provider === 1 || provider === 3);
       if (!supported.length) {
         bitwardenError.value = "此账号只启用了 Duo/WebAuthn 等交互式两步验证；当前插件阶段支持身份验证器、邮箱和 YubiKey 代码。";
@@ -2330,11 +2346,12 @@ function errorCode(error: unknown): string | undefined {
       <label class="field"><span>服务器地址 *</span><input v-model="bitwardenForm.vaultUrl" type="url" list="bitwarden-server-list" autocomplete="url" required /><datalist id="bitwarden-server-list"><option value="https://vault.bitwarden.com">Bitwarden US</option><option value="https://vault.bitwarden.eu">Bitwarden EU</option></datalist><small>自托管请填写 Vault 根地址，例如 https://vault.example.com。</small></label>
       <label class="field"><span>邮箱 *</span><input v-model="bitwardenForm.email" type="email" autocomplete="username" required /></label>
       <label class="field"><span>主密码 *</span><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></label>
-      <template v-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
+      <label v-if="bitwardenDeviceVerificationRequired" class="field"><span>新设备验证码 *</span><input v-model="bitwardenForm.newDeviceOtp" inputmode="numeric" autocomplete="one-time-code" required autofocus /><small>Bitwarden 已向账号邮箱发送新设备验证码，验证后即可连接。</small></label>
+      <template v-else-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
        <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
       <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
       <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。</span></div>
-      <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
+      <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? '连接中…' : bitwardenDeviceVerificationRequired ? '验证新设备并连接' : bitwardenTwoFactorProviders.length ? '验证并连接' : '登录并连接' }}</m3e-button></footer>
     </form></section></div>
 
     <M3eConfirmationDialog

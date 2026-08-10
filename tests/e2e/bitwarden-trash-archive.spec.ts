@@ -173,7 +173,7 @@ async function createEmptyVaultServer(): Promise<EmptyVaultServer> {
   server.route = async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
+    if (url.pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
     if (url.pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "empty-access", refresh_token: "empty-refresh", expires_in: 3600, Key: protectedKey });
     if (url.pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "empty-user" }, Ciphers: structuredClone(server.ciphers) });
     return route.abort("failed");

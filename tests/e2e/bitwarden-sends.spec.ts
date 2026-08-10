@@ -178,7 +178,7 @@ async function createSendServer(): Promise<SendServer> {
   server.route = async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/identity/accounts/prelogin") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
+    if (url.pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: 10_000 });
     if (url.pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "send-access-token", refresh_token: "send-refresh-token", expires_in: 3600, Key: protectedKey });
     if (url.pathname === "/api/sends" && request.method() === "GET") return jsonRoute(route, { Data: [...server.sends.values()].map((send) => structuredClone(send)) });
     if (url.pathname === "/api/sends" && request.method() === "POST") {

@@ -323,7 +323,7 @@ export class RecordedBitwardenContractServer {
     if (url.host === this.objectHost()) return this.handleSignedObject(url, method, headers, init.body);
     if (url.origin !== this.vaultUrl) return json({ error: "unexpected-origin" }, 404);
 
-    if (url.pathname === "/identity/accounts/prelogin" && method === "POST") {
+    if (url.pathname === "/identity/accounts/prelogin/password" && method === "POST") {
       this.stats.prelogin += 1;
       const body = parseJson(init.body);
       if (String(body.email || "").toLowerCase() !== BITWARDEN_INTEROP_EMAIL) throw new Error("Recorded prelogin email mismatch.");

@@ -1,5 +1,5 @@
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
-import { providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
+import { ProviderTransportError, providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
 import { readBoundedJsonObject } from "../bounded-body";
 import {
   decryptBitwardenSymmetricKey,
@@ -34,7 +34,8 @@ export interface BitwardenSessionConfig extends Record<string, unknown> {
 
 export type BitwardenLoginResult =
   | { status: "authenticated"; session: BitwardenSessionConfig }
-  | { status: "two-factor-required"; providers: number[]; providerData?: Record<string, unknown> };
+  | { status: "two-factor-required"; providers: number[]; providerData?: Record<string, unknown> }
+  | { status: "device-verification-required" };
 
 export interface BitwardenClientLimits {
   maxAuthResponseBytes: number;
@@ -101,6 +102,7 @@ export interface BitwardenLoginInput {
   twoFactorCode?: string;
   twoFactorProvider?: number;
   rememberTwoFactor?: boolean;
+  newDeviceOtp?: string;
 }
 
 const CLIENT_VERSION = "2026.7.0";
@@ -121,20 +123,28 @@ export class BitwardenClient {
   async prelogin(vaultUrl: string, email: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; email: string; kdf: BitwardenKdfConfig }> {
     const urls = inferBitwardenServerUrls(vaultUrl);
     const normalizedEmail = normalizeBitwardenEmail(email);
-    const body = await this.request(`${urls.identity}/accounts/prelogin`, {
+    const requestPrelogin = (path: string) => this.request(`${urls.identity}${path}`, {
       method: "POST",
       headers: jsonHeaders(),
       body: JSON.stringify({ email: normalizedEmail }),
       signal
     }, "Bitwarden 预登录", true, async (response, requestSignal) => {
-      const body = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 预登录响应", requestSignal);
-      if (!response.ok) throw bitwardenHttpError("Bitwarden 预登录失败", response, body);
-      return body;
+      if (!response.ok) throw bitwardenHttpError("Bitwarden 预登录失败", response);
+      return this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden 预登录响应", requestSignal);
     });
+    let body: Record<string, unknown>;
+    try {
+      body = await requestPrelogin("/accounts/prelogin/password");
+    } catch (error) {
+      if (!(error instanceof ProviderTransportError) || (error.status !== 404 && error.status !== 405)) throw error;
+      body = await requestPrelogin("/accounts/prelogin");
+    }
     return { urls, email: normalizedEmail, kdf: parseKdf(body) };
   }
 
   async login(input: BitwardenLoginInput, signal?: AbortSignal): Promise<BitwardenLoginResult> {
+    const twoFactorCode = normalizeBitwardenLoginCode(input.twoFactorCode, "两步验证码");
+    const newDeviceOtp = normalizeBitwardenLoginCode(input.newDeviceOtp, "新设备验证码");
     const { urls, email, kdf } = await this.prelogin(input.vaultUrl, input.email, signal);
     const masterKey = await deriveBitwardenMasterKey(input.masterPassword, email, kdf);
     const passwordHash = await deriveBitwardenMasterPasswordHash(masterKey, input.masterPassword);
@@ -149,11 +159,12 @@ export class BitwardenClient {
       deviceType: DEVICE_TYPE,
       deviceName: "Monica Browser Extension"
     });
-    if (input.twoFactorCode && input.twoFactorProvider !== undefined) {
-      form.set("twoFactorToken", input.twoFactorCode.trim());
+    if (twoFactorCode && input.twoFactorProvider !== undefined) {
+      form.set("twoFactorToken", twoFactorCode);
       form.set("twoFactorProvider", String(input.twoFactorProvider));
       form.set("twoFactorRemember", input.rememberTwoFactor ? "1" : "0");
     }
+    if (newDeviceOtp) form.set("newDeviceOtp", newDeviceOtp);
     const body = await this.request(`${urls.identity}/connect/token`, {
       method: "POST",
       headers: tokenHeaders(email),
@@ -164,12 +175,16 @@ export class BitwardenClient {
       if (!response.ok) {
         const providers = parseTwoFactorProviders(body);
         if (providers.length) return { status: "two-factor-required", providers, providerData: recordValue(body, "twoFactorProviders2", "TwoFactorProviders2") } as const;
+        if (isBitwardenDeviceVerificationRequired(body)) return { status: "device-verification-required" } as const;
+        if (stringValue(body, "SsoOrganizationIdentifier", "ssoOrganizationIdentifier")) {
+          throw new Error("此 Bitwarden 账号要求组织 SSO 登录，当前密码登录方式无法完成。");
+        }
         if (stringValue(body, "HCaptcha_SiteKey", "hCaptcha_SiteKey")) throw new Error("Bitwarden 要求完成 CAPTCHA；请先在官方客户端登录此设备后重试。");
         throw bitwardenHttpError("Bitwarden 登录失败", response, body);
       }
       return { status: "ok", body } as const;
     });
-    if (body.status === "two-factor-required") return body;
+    if (body.status !== "ok") return body;
     const tokenBody = body.body;
     const accessToken = stringValue(tokenBody, "access_token");
     const protectedKey = stringValue(tokenBody, "Key", "key");
@@ -726,8 +741,43 @@ function commonHeaders(): Headers {
   return new Headers({ Accept: "application/json", "Bitwarden-Client-Name": "browser", "Bitwarden-Client-Version": CLIENT_VERSION, "Cache-Control": "no-store" });
 }
 
-function bitwardenHttpError(prefix: string, response: Response, _body?: Record<string, unknown>): Error {
-  return providerHttpError(prefix, response);
+function bitwardenHttpError(prefix: string, response: Response, body?: Record<string, unknown>): Error {
+  const error = providerHttpError(prefix, response);
+  const safeMessage = bitwardenSafeHttpMessage(prefix, response.status, body);
+  if (safeMessage) error.message = safeMessage;
+  return error;
+}
+
+function isBitwardenDeviceVerificationRequired(body: Record<string, unknown>): boolean {
+  const errorModel = recordValue(body, "ErrorModel", "errorModel");
+  return stringValue(errorModel || {}, "Message", "message").toLocaleLowerCase("en-US") === "new device verification required";
+}
+
+function normalizeBitwardenLoginCode(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") throw new Error(`Bitwarden ${label}无效。`);
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) throw new Error(`Bitwarden ${label}无效。`);
+  return normalized;
+}
+
+function bitwardenSafeHttpMessage(prefix: string, status: number, body?: Record<string, unknown>): string | undefined {
+  if (prefix !== "Bitwarden 登录失败" || status !== 400 || !body) return undefined;
+  const code = `${stringValue(body, "error")} ${stringValue(body, "error_description")}`.toLocaleLowerCase("en-US");
+  const errorModel = recordValue(body, "ErrorModel", "errorModel");
+  const officialMessage = stringValue(errorModel || {}, "Message", "message").toLocaleLowerCase("en-US");
+  if (code.includes("invalid_username_or_password") || officialMessage === "username or password is incorrect. try again.") {
+    return "Bitwarden 邮箱或主密码错误；请同时确认账号区域与服务器地址一致（US 或 EU）。";
+  }
+  if (
+    code.includes("invalid_two_factor")
+    || code.includes("two_factor_token_invalid")
+    || officialMessage.includes("two-step login code is invalid")
+    || officialMessage.includes("two factor token is invalid")
+  ) {
+    return "Bitwarden 两步验证码错误或已过期，请获取新验证码后重试。";
+  }
+  return undefined;
 }
 
 function isLoopbackHost(hostname: string): boolean {
