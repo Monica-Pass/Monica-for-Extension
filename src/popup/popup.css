@@ -340,9 +340,13 @@ body.popup-body {
 }
 
 .passkey-card {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
   width: 100%;
   min-height: 68px;
-  gap: 12px;
+  column-gap: 12px;
+  row-gap: 6px;
   border: 1px solid color-mix(in srgb, var(--app-muted) 22%, transparent);
   border-radius: var(--app-shape-card);
   padding: 10px 12px;
@@ -351,15 +355,23 @@ body.popup-body {
 }
 
 .passkey-state {
-  flex: 0 0 auto;
+  grid-column: 2;
+  width: 100%;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 104px;
+  max-width: none;
   color: var(--app-muted);
   font-size: 0.72rem;
   font-weight: 700;
-  text-align: right;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.passkey-state span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .passkey-state.ready {
@@ -474,7 +486,5 @@ body.popup-body {
 
 @media (max-width: 380px) {
   .popup-shell { padding: 12px; }
-  .passkey-card { display: grid; grid-template-columns: 44px minmax(0, 1fr); }
-  .passkey-state { grid-column: 2; justify-self: start; max-width: none; text-align: left; }
   .ready-badge { display: none; }
 }

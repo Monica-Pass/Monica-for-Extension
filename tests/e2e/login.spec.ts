@@ -127,6 +127,33 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
     await expect(popup.getByText("仅兼容保留，不能登录", { exact: true })).toBeVisible();
     await expect(popup.getByRole("button", { name: /Ready parent account/ })).toHaveCount(0);
     expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 390, scroll: 390 });
+    await popup.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    const scaledCard = await popup.locator(".passkey-card").last().evaluate((card) => {
+      const copy = card.querySelector<HTMLElement>(".credential-copy")!;
+      const state = card.querySelector<HTMLElement>(".passkey-state")!;
+      const cardRect = card.getBoundingClientRect();
+      const copyRect = copy.getBoundingClientRect();
+      const stateRect = state.getBoundingClientRect();
+      return {
+        display: getComputedStyle(card).display,
+        cardWidth: cardRect.width,
+        stateWidth: stateRect.width,
+        stateTop: stateRect.top,
+        copyBottom: copyRect.bottom,
+        alignedLeft: Math.abs(stateRect.left - copyRect.left),
+        clientWidth: card.clientWidth,
+        scrollWidth: card.scrollWidth,
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth
+      };
+    });
+    expect(scaledCard.display).toBe("grid");
+    expect(scaledCard.stateWidth).toBeGreaterThan(scaledCard.cardWidth * 0.55);
+    expect(scaledCard.stateTop).toBeGreaterThanOrEqual(scaledCard.copyBottom - 1);
+    expect(scaledCard.alignedLeft).toBeLessThanOrEqual(1);
+    expect(scaledCard.scrollWidth).toBeLessThanOrEqual(scaledCard.clientWidth + 1);
+    expect(scaledCard.documentScrollWidth).toBeLessThanOrEqual(scaledCard.documentClientWidth + 1);
+    await popup.screenshot({ path: testInfo.outputPath("passkey-large-text.png"), animations: "disabled" });
     await popup.setViewportSize({ width: 500, height: 667 });
     expect(await popup.locator(".popup-shell").evaluate((element) => element.getBoundingClientRect().width)).toBe(390);
   } finally {
