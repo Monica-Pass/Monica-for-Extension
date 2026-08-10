@@ -21,6 +21,7 @@ import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
+import { normalizeHost } from "./core/matching";
 import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
 import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
@@ -642,6 +643,13 @@ function filterManagerItems(items: VaultItem[]): VaultItem[] {
 function providerName(item: VaultItem): string {
   const reference = item.providerRefs[0];
   return reference ? providers.value.find((provider) => provider.id === reference.providerId)?.name || "外部密码源" : "Monica 本地库";
+}
+
+function credentialCompactSummary(item: LoginItem): string {
+  const username = item.username.trim() || "无用户名";
+  const rawUri = item.uriRules?.find((rule) => rule.matchType !== "never" && rule.uri.trim())?.uri || item.uris.find((uri) => uri.trim()) || "";
+  const host = normalizeHost(rawUri);
+  return host ? `${username} · ${host}` : username;
 }
 
 function attachmentProvidersFor(item: VaultItem): ProviderAccount[] {
@@ -1995,10 +2003,10 @@ function errorCode(error: unknown): string | undefined {
         <section v-if="activeSection === 'overview'" class="content-grid"><m3e-card variant="filled" class="motion-card"><div slot="content" class="getting-started"><span class="feature-icon"><m3e-icon name="auto_fix_high"></m3e-icon></span><div><h2>自动填充基线已连接加密核心</h2><p>Popup 只读取匹配项摘要；点击填充后由后台解密单个登录项并发送给当前网页。</p></div><m3e-button variant="tonal" @click="navigate('passwords')">管理登录项</m3e-button></div></m3e-card></section>
 
         <section v-else-if="activeSection === 'passwords'" class="content-grid">
-          <m3e-card variant="filled" class="data-card motion-card">
+          <m3e-card variant="filled" class="data-card login-data-card motion-card">
             <div slot="header" class="card-head"><h2>全部登录项</h2><p>{{ filteredCredentials.length }} 个结果</p></div>
-            <div v-if="filteredCredentials.length" class="table-wrap"><table><thead><tr><th>名称</th><th>用户名</th><th>匹配网站</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>••••••••••••</small></div></div></td><td data-label="用户名">{{ item.username || '—' }}</td><td data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+            <div v-if="filteredCredentials.length" class="table-wrap"><table class="credential-table" aria-label="登录项列表"><thead><tr><th>名称</th><th>用户名</th><th>匹配网站</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
+              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong :title="item.title">{{ item.title }}</strong><small class="credential-compact-summary" :title="credentialCompactSummary(item)">{{ credentialCompactSummary(item) }}</small></div></div></td><td class="credential-detail-cell" data-label="用户名">{{ item.username || '—' }}</td><td class="credential-detail-cell" data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td class="credential-detail-cell" data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? '没有匹配的登录项' : '加密密码库还是空的' }}</h2><p>{{ query ? '换一个关键词试试。' : '添加第一个账号后即可在 Popup 中匹配。' }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">添加登录项</m3e-button></div>
           </m3e-card>

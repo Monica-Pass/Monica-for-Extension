@@ -1345,6 +1345,131 @@ tbody tr:hover td {
   }
 }
 
+.login-data-card {
+  --m3e-filled-card-container-color: transparent;
+  --m3e-card-container-color: transparent;
+  --m3e-card-padding: 0;
+}
+
+.login-data-card .card-head {
+  padding-bottom: 8px;
+}
+
+.login-data-card .table-wrap {
+  overflow: visible;
+  padding: 0;
+}
+
+.login-data-card .credential-table,
+.login-data-card .credential-table thead,
+.login-data-card .credential-table tbody,
+.login-data-card .credential-table tr,
+.login-data-card .credential-table td {
+  display: block;
+}
+
+.login-data-card .credential-table {
+  min-width: 0;
+  border-spacing: 0;
+}
+
+.login-data-card .credential-table thead {
+  display: none;
+}
+
+.login-data-card .credential-table tbody {
+  display: grid;
+  gap: 8px;
+}
+
+.login-data-card .credential-table tbody tr {
+  min-width: 0;
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant, #cac4d0) 36%, transparent);
+  border-radius: var(--app-shape-card);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-lowest, var(--app-bg)) 84%, var(--app-surface));
+  transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
+}
+
+.login-data-card .credential-table tbody tr:hover {
+  transform: none;
+  border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--app-primary)) 42%, transparent);
+  background: color-mix(in srgb, var(--md-sys-color-secondary-container, var(--app-selected)) 28%, var(--md-sys-color-surface-container-lowest, var(--app-bg)));
+}
+
+.login-data-card .credential-table tbody td,
+.login-data-card .credential-table tbody td:first-child,
+.login-data-card .credential-table tbody td:last-child,
+.login-data-card .credential-table tbody tr:hover td {
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.login-data-card .credential-table td::before,
+.login-data-card .credential-table .credential-detail-cell {
+  display: none;
+}
+
+.login-data-card .credential-table .item-cell {
+  padding: 10px 8px 10px 12px;
+}
+
+.login-data-card .row-title {
+  min-width: 0;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.login-data-card .row-title > div {
+  min-width: 0;
+}
+
+.login-data-card .row-title strong,
+.login-data-card .credential-compact-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-data-card .credential-compact-summary {
+  margin-top: 3px;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.login-data-card .credential-table .action-cell {
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 10px 8px 0;
+  border: 0;
+}
+
+.login-data-card .credential-table .action-cell::before {
+  display: none;
+}
+
+.login-data-card .credential-table .action-cell m3e-icon-button {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  flex: 0 0 44px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

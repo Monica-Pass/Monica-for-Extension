@@ -97,7 +97,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     const setup = await page.evaluate(async (createdAt) => {
       const created = await chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "large text visual password" });
       if (!created.ok) return created;
-      return chrome.runtime.sendMessage({
+      const first = await chrome.runtime.sendMessage({
         type: "VAULT_UPSERT_ITEM",
         item: {
           id: "large-text-login",
@@ -108,6 +108,24 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
           uris: ["https://very-long-example-domain.example.test/login"],
           customFields: [],
           favorite: false,
+          notes: "",
+          createdAt,
+          updatedAt: createdAt,
+          providerRefs: []
+        }
+      });
+      if (!first.ok) return first;
+      return chrome.runtime.sendMessage({
+        type: "VAULT_UPSERT_ITEM",
+        item: {
+          id: "large-text-login-two",
+          kind: "login",
+          title: "第二个紧凑列表账号",
+          username: "second-user@example.test",
+          password: "not-a-real-password",
+          uris: ["https://accounts.example.test/sign-in"],
+          customFields: [],
+          favorite: true,
           notes: "",
           createdAt,
           updatedAt: createdAt,
@@ -141,9 +159,31 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     }
 
     await page.getByRole("button", { name: /^登录项/ }).click();
-    await expect(page.locator(".data-card thead")).toHaveCSS("display", "none");
-    const loginTitle = page.getByText("非常长的示例工作账号名称用于检查显示", { exact: true });
-    expect((await loginTitle.boundingBox())!.width).toBeGreaterThan(400);
+    const loginCard = page.locator(".login-data-card");
+    await expect(loginCard.locator("thead")).toHaveCSS("display", "none");
+    const rows = loginCard.locator("tbody tr");
+    await expect(rows).toHaveCount(2);
+    const longRow = rows.filter({ hasText: "非常长的示例工作账号名称用于检查显示" });
+    await expect(longRow.locator(".credential-compact-summary")).toHaveText("demo-long-user@example.test · very-long-example-domain.example.test");
+    const firstRow = (await rows.first().boundingBox())!;
+    const secondRow = (await rows.nth(1).boundingBox())!;
+    const firstRowLayout = await rows.first().evaluate((row) => ({
+      rowDisplay: getComputedStyle(row).display,
+      rowGrid: getComputedStyle(row).gridTemplateColumns,
+      cells: [...row.children].map((cell) => {
+        const rect = cell.getBoundingClientRect();
+        const style = getComputedStyle(cell);
+        return { className: cell.className, display: style.display, width: rect.width, height: rect.height, padding: style.padding };
+      })
+    }));
+    expect(firstRow.height, JSON.stringify(firstRowLayout, null, 2)).toBeLessThanOrEqual(128);
+    expect(secondRow.y - (firstRow.y + firstRow.height)).toBeLessThanOrEqual(10);
+    const details = await longRow.locator(".credential-detail-cell").evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell).display));
+    expect(details).toEqual(["none", "none", "none"]);
+    const actions = (await rows.first().locator(".action-cell").boundingBox())!;
+    expect(actions.y).toBeGreaterThanOrEqual(firstRow.y - 1);
+    expect(actions.y + actions.height).toBeLessThanOrEqual(firstRow.y + firstRow.height + 1);
+    await expectNoHorizontalOverflow(loginCard);
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-login.png"), animations: "disabled" });
 
     await page.getByRole("button", { name: "密码源" }).click();
@@ -648,7 +688,7 @@ for (const width of [375, 768, 1280, 1440]) {
   });
 }
 
-test("login table actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
+test("compact login list actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("table-polish-profile"), { channel: "chromium", headless: true, viewport: { width: 1280, height: 800 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -664,6 +704,11 @@ test("login table actions remain fully visible at a 1280px store viewport", asyn
     await page.getByRole("button", { name: /^登录项/ }).click();
     const tableWrap = page.locator(".table-wrap");
     await expect(tableWrap).toBeVisible();
+    await expect(page.locator(".login-data-card thead")).toHaveCSS("display", "none");
+    const row = page.locator(".login-data-card tbody tr");
+    await expect(row.locator(".credential-compact-summary")).toHaveText("demo@example.test · shop-demo.example.test");
+    expect((await row.boundingBox())!.height).toBeLessThanOrEqual(84);
+    expect(await row.locator(".credential-detail-cell").evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell).display))).toEqual(["none", "none", "none"]);
     const tableLayout = await tableWrap.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, tableWidth: element.querySelector("table")?.getBoundingClientRect().width }));
     expect(tableLayout.scrollWidth, JSON.stringify(tableLayout)).toBeLessThanOrEqual(tableLayout.clientWidth);
     const finalAction = page.getByRole("button", { name: "删除登录项" });
@@ -671,6 +716,24 @@ test("login table actions remain fully visible at a 1280px store viewport", asyn
     expect(bounds).not.toBeNull();
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1280);
     await expect(page.locator(".sidebar-brand small")).toHaveCSS("display", "block");
+    await page.setViewportSize({ width: 375, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    const mobileRow = (await row.boundingBox())!;
+    const mobileActions = (await row.locator(".action-cell").boundingBox())!;
+    expect(mobileRow.height).toBeLessThanOrEqual(144);
+    expect(mobileActions.x + mobileActions.width).toBeLessThanOrEqual(375);
+    expect(mobileActions.y + mobileActions.height).toBeLessThanOrEqual(mobileRow.y + mobileRow.height + 1);
+    await expectNoHorizontalOverflow(page.locator("html"));
+    await row.locator(".action-cell").evaluate((cell) => {
+      const buttons = [...cell.querySelectorAll("m3e-icon-button")];
+      for (const button of buttons) cell.append(button.cloneNode(true));
+    });
+    await expect(row.locator(".action-cell m3e-icon-button")).toHaveCount(4);
+    const fourActionRow = (await row.boundingBox())!;
+    const fourActions = (await row.locator(".action-cell").boundingBox())!;
+    expect(fourActionRow.height).toBeLessThanOrEqual(144);
+    expect(fourActions.x + fourActions.width).toBeLessThanOrEqual(375);
+    await expectNoHorizontalOverflow(page.locator("html"));
   } finally { await context?.close(); }
 });
 
