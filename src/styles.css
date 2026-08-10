@@ -34,8 +34,25 @@
 html,
 body,
 #root {
+  width: 100%;
+  max-width: 100%;
   min-width: 320px;
   min-height: 100vh;
+}
+
+html,
+body {
+  overflow-x: clip;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.sidebar nav::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 body {
@@ -255,12 +272,16 @@ m3e-icon-button {
 }
 
 .shell {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100vh;
   display: grid;
   grid-template-columns: var(--app-drawer-width) minmax(0, 1fr);
 }
 
 .sidebar {
+  min-width: 0;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -302,7 +323,9 @@ m3e-icon-button {
   gap: 8px;
   overflow-y: auto;
   padding: 4px 0 12px;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+  -ms-overflow-style: none;
 }
 
 .sidebar nav section {
@@ -393,6 +416,8 @@ m3e-icon-button {
 
 main {
   grid-column: 2;
+  min-width: 0;
+  max-width: 100%;
   width: min(100%, var(--app-content-max));
   padding: 16px 24px 48px;
   container: manager-content / inline-size;

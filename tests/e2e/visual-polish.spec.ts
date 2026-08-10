@@ -160,6 +160,76 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
   } finally { await context?.close(); }
 });
 
+test("manager keeps wheel scrolling without native scrollbar gutters or horizontal jitter", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("manager-scrollbar-profile"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      viewport: { width: 1100, height: 720 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "scrollbar polish password" }))).toMatchObject({ ok: true });
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    await page.getByRole("button", { name: "密码源" }).click();
+
+    const initial = await page.evaluate(() => {
+      const nav = document.querySelector<HTMLElement>(".sidebar nav")!;
+      const sidebar = document.querySelector<HTMLElement>(".sidebar")!;
+      return {
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        documentScrollbarWidth: getComputedStyle(document.documentElement).scrollbarWidth,
+        documentWebkitScrollbarWidth: getComputedStyle(document.documentElement, "::-webkit-scrollbar").width,
+        documentWebkitScrollbarHeight: getComputedStyle(document.documentElement, "::-webkit-scrollbar").height,
+        navScrollbarWidth: getComputedStyle(nav).scrollbarWidth,
+        navWebkitScrollbarWidth: getComputedStyle(nav, "::-webkit-scrollbar").width,
+        navScrollbarGutter: getComputedStyle(nav).scrollbarGutter,
+        navClientHeight: nav.clientHeight,
+        navScrollHeight: nav.scrollHeight,
+        navClientWidth: nav.clientWidth,
+        sidebarWidth: sidebar.getBoundingClientRect().width
+      };
+    });
+    expect(initial.documentScrollWidth).toBeLessThanOrEqual(initial.documentClientWidth + 1);
+    expect(initial.documentScrollbarWidth).toBe("none");
+    expect(initial.documentWebkitScrollbarWidth).toBe("0px");
+    expect(initial.documentWebkitScrollbarHeight).toBe("0px");
+    expect(initial.navScrollbarWidth).toBe("none");
+    expect(initial.navWebkitScrollbarWidth).toBe("0px");
+    expect(initial.navScrollbarGutter).toBe("auto");
+    expect(initial.navScrollHeight).toBeGreaterThan(initial.navClientHeight);
+
+    await page.mouse.move(900, 500);
+    await page.mouse.wheel(0, 900);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    const nav = page.locator(".sidebar nav");
+    await nav.hover();
+    await page.mouse.wheel(0, 900);
+    await expect.poll(() => nav.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    const finalLayout = await page.evaluate(() => {
+      const nav = document.querySelector<HTMLElement>(".sidebar nav")!;
+      const sidebar = document.querySelector<HTMLElement>(".sidebar")!;
+      return {
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        navClientWidth: nav.clientWidth,
+        sidebarWidth: sidebar.getBoundingClientRect().width
+      };
+    });
+    expect(finalLayout.documentScrollWidth).toBeLessThanOrEqual(finalLayout.documentClientWidth + 1);
+    expect(finalLayout.navClientWidth).toBe(initial.navClientWidth);
+    expect(finalLayout.sidebarWidth).toBe(initial.sidebarWidth);
+    await page.screenshot({ path: testInfo.outputPath("manager-hidden-scrollbars.png"), animations: "disabled" });
+  } finally { await context?.close(); }
+});
+
 test("mobile manager actions remain complete with 200% text", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
