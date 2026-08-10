@@ -189,6 +189,9 @@
 }
 
 .empty-state {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 340px;
   display: grid;
   place-items: center;
@@ -197,6 +200,10 @@
   padding: 40px;
   color: var(--app-muted);
   text-align: center;
+}
+
+.empty-state m3e-button {
+  max-width: 100%;
 }
 
 .empty-state > m3e-icon {
@@ -563,6 +570,14 @@
 
 .source-title {
   align-items: flex-start;
+}
+
+.source-title > div {
+  min-width: 0;
+}
+
+.source-title h2 {
+  overflow-wrap: anywhere;
 }
 
 .source-icon {
@@ -1290,6 +1305,8 @@
 .steam-page,
 .steam-account-panel,
 .steam-tab-panel {
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: 16px;
 }

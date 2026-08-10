@@ -160,6 +160,122 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
   } finally { await context?.close(); }
 });
 
+test("mobile manager actions remain complete with 200% text", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("m"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      viewport: { width: 375, height: 1000 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const setup = await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mobile large text password" }));
+    expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true });
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+
+    const sections = ["概览", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
+    const clipped: Array<{ section: string; text: string; clientWidth: number; scrollWidth: number }> = [];
+    const overflow: Array<{ section: string; selector: string; text: string; left: number; right: number; width: number; scrollWidth: number }> = [];
+    const scrollOffsets: Array<{ section: string; scrollX: number; scrollY: number }> = [];
+    for (const section of sections) {
+      await page.getByRole("button", { name: "打开导航" }).click();
+      await page.getByRole("button", { name: new RegExp(`^${section}`) }).first().click();
+      const offset = await page.evaluate(() => ({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) }));
+      if (offset.scrollX || offset.scrollY) scrollOffsets.push({ section, ...offset });
+      clipped.push(...(await visibleButtonLabelIssues(page.locator("#root"))).map((issue) => ({ section, ...issue })));
+      overflow.push(...(await visibleHorizontalOverflowIssues(page.locator("#root"))).map((issue) => ({ section, ...issue })));
+      await expectVisibleIconsFit(page.locator("#root"));
+      if (["Steam", "安全发送", "密码源", "设置与备份"].includes(section)) {
+        await page.screenshot({ path: testInfo.outputPath(`mobile-large-text-${section}.png`), animations: "disabled" });
+      }
+    }
+    expect({ clipped, overflow, scrollOffsets }, JSON.stringify({ clipped, overflow, scrollOffsets })).toEqual({ clipped: [], overflow: [], scrollOffsets: [] });
+  } finally { await context?.close(); }
+});
+
+test("mobile manager dialogs remain complete with 200% text", async ({}, testInfo) => {
+  test.slow();
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("d"), {
+      channel: "chromium",
+      headless: true,
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+      viewport: { width: 375, height: 1000 },
+      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const setup = await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "dialog mobile large text password" }));
+    expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true });
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+
+    const clipped: Array<{ surface: string; text: string; clientWidth: number; scrollWidth: number }> = [];
+    const overflow: Array<{ surface: string; selector: string; text: string; left: number; right: number; width: number; scrollWidth: number }> = [];
+    const audit = async (surface: string, root: Locator) => {
+      clipped.push(...(await visibleButtonLabelIssues(root)).map((issue) => ({ surface, ...issue })));
+      overflow.push(...(await visibleHorizontalOverflowIssues(root)).map((issue) => ({ surface, ...issue })));
+      await expectVisibleIconsFit(root);
+    };
+    const openSection = async (name: string) => {
+      await page.getByRole("button", { name: "打开导航" }).click();
+      await page.getByRole("button", { name: new RegExp(`^${name}`) }).first().click();
+    };
+
+    await openSection("密码源");
+    await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
+    let dialog = page.getByRole("dialog", { name: "打开 MDBX2 保险库" });
+    await audit("MDBX2 本机", dialog);
+    await dialog.getByRole("button", { name: "从 WebDAV 加入" }).click();
+    dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    await audit("MDBX2 WebDAV", dialog);
+    await dialog.getByRole("button", { name: "关闭 MDBX2 设置" }).click();
+
+    await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
+    dialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    await audit("Android WebDAV", dialog);
+    await dialog.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
+
+    await page.getByRole("button", { name: /连接 KeePass/ }).click();
+    dialog = page.getByRole("dialog", { name: /KeePass/ });
+    await audit("KeePass", dialog);
+    await dialog.getByRole("button", { name: "关闭 KeePass 设置" }).click();
+
+    await page.getByRole("button", { name: /连接 Bitwarden/ }).click();
+    dialog = page.getByRole("dialog", { name: "连接 Bitwarden" });
+    await audit("Bitwarden", dialog);
+    await dialog.getByRole("button", { name: "关闭" }).click();
+
+    await openSection("登录项");
+    await page.getByRole("button", { name: "添加登录项" }).first().click();
+    dialog = page.getByRole("dialog", { name: "添加登录项" });
+    await audit("登录项", dialog);
+    await dialog.getByRole("button", { name: "关闭" }).click();
+
+    for (const [section, action, dialogName, surface] of [["钱包与身份", "添加钱包项目", "添加银行卡", "钱包"], ["安全笔记", "添加安全笔记", "添加安全笔记", "笔记"], ["动态验证码", "添加验证码", "添加动态验证码", "验证码"]] as const) {
+      await openSection(section);
+      await page.getByRole("button", { name: action }).first().click();
+      dialog = page.getByRole("dialog", { name: dialogName });
+      await audit(surface, dialog);
+      await dialog.getByRole("button", { name: "关闭" }).click();
+    }
+
+    await openSection("设置与备份");
+    await page.getByRole("button", { name: "导出加密整库备份" }).click();
+    dialog = page.getByRole("dialog", { name: "导出加密整库备份" });
+    await audit("备份", dialog);
+
+    expect({ clipped, overflow }, JSON.stringify({ clipped, overflow })).toEqual({ clipped: [], overflow: [] });
+  } finally { await context?.close(); }
+});
+
 test("manager dialogs use one-column large-text forms", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
@@ -585,7 +701,12 @@ async function expectVisibleIconsFit(root: Locator): Promise<void> {
 }
 
 async function expectVisibleButtonLabelsFit(root: Locator): Promise<void> {
-  const clipped = await root.evaluate((element) => [...element.querySelectorAll("m3e-button")].flatMap((button) => {
+  const clipped = await visibleButtonLabelIssues(root);
+  expect(clipped, JSON.stringify(clipped)).toEqual([]);
+}
+
+async function visibleButtonLabelIssues(root: Locator): Promise<Array<{ text: string; clientWidth: number; scrollWidth: number; clientHeight: number; scrollHeight: number }>> {
+  return root.evaluate((element) => [...element.querySelectorAll("m3e-button")].flatMap((button) => {
     const hostRect = button.getBoundingClientRect();
     const hostStyle = getComputedStyle(button);
     const label = button.shadowRoot?.querySelector<HTMLElement>(".label");
@@ -598,5 +719,24 @@ async function expectVisibleButtonLabelsFit(root: Locator): Promise<void> {
       scrollHeight: label.scrollHeight
     }];
   }));
-  expect(clipped, JSON.stringify(clipped)).toEqual([]);
+}
+
+async function visibleHorizontalOverflowIssues(root: Locator): Promise<Array<{ selector: string; text: string; left: number; right: number; width: number; scrollWidth: number }>> {
+  return root.evaluate((element) => {
+    const viewportWidth = document.documentElement.clientWidth;
+    const candidates = element.id === "root"
+      ? [document.documentElement, element, ...element.querySelectorAll<HTMLElement>("*")]
+      : [element, ...element.querySelectorAll<HTMLElement>("*")];
+    return candidates.flatMap((candidate) => {
+      const style = getComputedStyle(candidate);
+      const rect = candidate.getBoundingClientRect();
+      if (style.display === "none" || style.visibility === "hidden" || rect.width <= 0 || rect.height <= 0) return [];
+      const intersectsViewport = rect.right > 1 && rect.left < viewportWidth - 1;
+      const outside = intersectsViewport && (rect.left < -1 || rect.right > viewportWidth + 1);
+      const ownOverflow = candidate === document.documentElement && candidate.scrollWidth > candidate.clientWidth + 1;
+      if (!outside && !ownOverflow) return [];
+      const name = candidate.id ? `#${candidate.id}` : `${candidate.tagName.toLowerCase()}.${String(candidate.className || "").trim().replace(/\s+/g, ".")}`;
+      return [{ selector: name, text: (candidate.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80), left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width), scrollWidth: candidate.scrollWidth }];
+    }).slice(0, 20);
+  });
 }

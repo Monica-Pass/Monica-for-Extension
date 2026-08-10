@@ -73,6 +73,12 @@ try {
   assert(metrics.innerHeight >= 480 && metrics.innerHeight <= 600, `Action Popup height is outside the usable range: ${metrics.innerHeight}px.`);
   assert(metrics.scrollWidth <= metrics.clientWidth + 1, `Action Popup has horizontal overflow: client=${metrics.clientWidth}px scroll=${metrics.scrollWidth}px.`);
   assert(metrics.text.includes("Monica") && metrics.text.includes("密码库已锁定") && metrics.text.includes("管理密码库"), "Action Popup did not render the expected locked Monica controls.");
+  if (process.env.MONICA_POPUP_SCREENSHOT_NORMAL) {
+    const screenshotPath = resolve(root, process.env.MONICA_POPUP_SCREENSHOT_NORMAL);
+    await mkdir(dirname(screenshotPath), { recursive: true });
+    await popup.screenshot({ path: screenshotPath, animations: "disabled" });
+    console.log(`Saved normal Action Popup screenshot to ${screenshotPath}.`);
+  }
   await popup.emulateMedia({ colorScheme: "dark" });
   await popup.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
   await popup.waitForTimeout(250);

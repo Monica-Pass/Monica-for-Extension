@@ -1278,11 +1278,11 @@ button:focus-visible,
 
   .toolbar-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .toolbar-actions m3e-button:first-child {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .send-detail {

@@ -130,6 +130,20 @@ m3e-card {
   overflow: hidden;
 }
 
+m3e-card > [slot="content"],
+m3e-card > [slot="header"],
+m3e-card > [slot="actions"],
+m3e-card > [slot="footer"],
+.stack {
+  min-width: 0;
+  max-width: 100%;
+}
+
+m3e-card > [slot="content"] {
+  inline-size: calc(100% - var(--m3e-card-padding, 20px) - var(--m3e-card-padding, 20px));
+  contain: inline-size;
+}
+
 m3e-button {
   white-space: nowrap;
 }
@@ -196,7 +210,13 @@ m3e-icon-button {
 
 .stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
+}
+
+.stack > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .field {

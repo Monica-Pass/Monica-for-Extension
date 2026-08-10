@@ -1990,7 +1990,7 @@ function errorCode(error: unknown): string | undefined {
 
         <section v-else-if="activeSection === 'steam'" class="steam-page">
           <m3e-card v-for="item in steamItems" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
-          <div v-if="!steamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>还没有 Steam 验证器</h2><p>从 Monica Android 同步，或在动态验证码中添加 Steam Guard。</p><m3e-button variant="filled" @click="openVaultCreate('totp')">添加 Steam Guard</m3e-button></div>
+          <div v-if="!steamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>还没有 Steam 验证器</h2><p>从 Monica Android 同步，或在动态验证码中添加 Steam Guard。</p><m3e-button variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
         </section>
 
         <GeneratorPanel v-else-if="activeSection === 'generator'" />
@@ -2138,13 +2138,13 @@ function errorCode(error: unknown): string | undefined {
             <p v-else-if="windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting">加密密码库记录与 Native Host 本机凭据不一致。当前保持锁定；撤销失效绑定后可重新注册。</p>
             <p v-else-if="windowsHelloStatus?.vaultEnrolled" class="supporting">每次自动锁定后需要重新完成系统验证；取消、超时和 Native Host 异常均保持锁定。</p>
             <p v-else class="supporting">注册需要当前密码库已经解锁，并会在 Windows 中创建 Monica 专用平台凭据。</p>
-            <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册 Windows Hello' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>
+            <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" aria-label="注册 Windows Hello 本机凭据" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册本机凭据' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>
             <p v-if="windowsHelloError" class="form-error" role="alert">{{ windowsHelloError }}</p>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>加密整库备份</h2>
             <p class="supporting">包含项目、密码源和设置，使用独立备份密码加密；恢复时需要此备份密码，与主密码互不影响。</p>
-            <m3e-button variant="tonal" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出加密整库备份' }}</m3e-button>
+            <m3e-button variant="tonal" aria-label="导出加密整库备份" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出备份' }}</m3e-button>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
@@ -2161,7 +2161,7 @@ function errorCode(error: unknown): string | undefined {
             <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
             <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? '正在重新加密…' : '更改主密码' }}</m3e-button>
           </div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出明文 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON / CSV</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" aria-label="导出明文 JSON" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON / CSV</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>安全边界</h2><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>持久数据使用 AES-256-GCM 加密</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>解锁密钥仅保留在浏览器会话存储</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>内容脚本无法读取完整密码库</span></div></div></m3e-card>
           <p v-if="securityError" class="form-error settings-message" role="alert">{{ securityError }}</p>
         </section>
