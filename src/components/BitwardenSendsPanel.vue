@@ -561,7 +561,7 @@ function messageOf(cause: unknown): string {
     <div v-if="editorOpen" class="send-modal-backdrop" role="presentation" @mousedown.self="closeEditor">
       <section ref="editorDialog" class="send-editor" role="dialog" aria-modal="true" aria-labelledby="send-editor-title">
         <header><div><h2 id="send-editor-title">{{ editorTitle }}</h2><p>{{ editorDescription }}</p></div><m3e-icon-button data-dialog-close aria-label="关闭安全发送编辑器" :disabled="mutationBusy" @click="closeEditor"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
-        <form @submit.prevent="submitEditor">
+        <form novalidate @submit.prevent="submitEditor">
           <label class="send-field"><span>标题 *</span><input v-model="form.name" autofocus autocomplete="off" /></label>
 
           <label v-if="editorMode === 'create-file'" class="send-field field-wide"><span>文件 *</span><span class="send-file-picker"><m3e-icon name="upload_file"></m3e-icon><span>{{ selectedFile ? `${selectedFile.name} · ${formatBytes(selectedFile.size)}` : '选择不超过 100 MiB 的文件' }}</span><input type="file" aria-label="选择安全发送文件" @change="selectFile" /></span></label>
@@ -570,8 +570,8 @@ function messageOf(cause: unknown): string {
           <label class="send-field field-wide"><span>备注</span><textarea v-model="form.notes" rows="3"></textarea></label>
 
           <fieldset class="send-fieldset field-wide"><legend>访问策略</legend>
-            <label class="send-field"><span>自动删除 *</span><input v-model="form.deletionDate" type="datetime-local" :min="minimumDate" :max="maximumDeletionDate" /></label>
-            <label class="send-field"><span>提前到期</span><input v-model="form.expirationDate" type="datetime-local" :min="minimumDate" :max="form.deletionDate || maximumDeletionDate" /></label>
+            <label class="send-field"><span>自动删除 *</span><input v-model="form.deletionDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="maximumDeletionDate" /></label>
+            <label class="send-field"><span>提前到期</span><input v-model="form.expirationDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="form.deletionDate || maximumDeletionDate" /></label>
             <label class="send-field"><span>访问次数上限</span><input v-model="form.maxAccessCount" type="number" min="1" step="1" inputmode="numeric" placeholder="不限制" /></label>
             <label class="send-field"><span>{{ editingExisting?.hasPassword ? '访问密码' : '访问密码（可选）' }}</span><span class="password-input"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" :disabled="Boolean(editingExisting?.hasPassword)" :placeholder="editingExisting?.hasPassword ? '已设置；请先在详情页移除' : ''" /><button type="button" :disabled="Boolean(editingExisting?.hasPassword)" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></span></label>
           </fieldset>

@@ -276,6 +276,13 @@ export class BitwardenSendService {
       if (!current.editable) throw new BitwardenSendError("send-not-editable", current.warning || "当前 Send 类型或验证方式暂不支持编辑。");
       if (current.authMode === "email") throw new BitwardenSendError("send-email-auth-unsupported", "邮箱验证 Send 暂时只支持查看、复制链接和删除。");
       if (current.type === "unsupported") throw new BitwardenSendError("send-type-unsupported", "当前 Send 类型无法由浏览器安全编辑。");
+      // Existing Sends can legitimately carry an already-expired deletion
+      // date. Allow a content-only edit to preserve that remote policy; any
+      // policy change still has to satisfy the normal future-date limits.
+      const currentExpiration = current.expirationDate || undefined;
+      if (input.deletionDate !== current.deletionDate || input.expirationDate !== currentExpiration) {
+        validatePolicyDates(input.deletionDate, input.expirationDate, this.now());
+      }
       seed = await decryptSendSeed(raw, vaultKey);
       sendKey = await deriveBitwardenSendKey(seed);
       const action = input.passwordAction || "preserve";
@@ -689,7 +696,6 @@ function validateUpdateInput(input: BitwardenSendUpdateInput, now: number): void
   requireText(input.name, "Send 标题", MAX_NAME_BYTES);
   optionalText(input.notes, "Send 备注", MAX_NOTES_BYTES);
   if (input.text !== undefined) requireText(input.text, "Send 内容", MAX_TEXT_BYTES);
-  validatePolicyDates(input.deletionDate, input.expirationDate, now);
   validateAccessCount(input.maxAccessCount);
   if (input.passwordAction === "set") requireText(input.password || "", "Send 访问密码", 512);
 }
