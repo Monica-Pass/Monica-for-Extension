@@ -52,6 +52,15 @@ describe("Bitwarden cryptography", () => {
     await expect(encryptBitwardenString("Bitwarden fixture 中文", key, () => iv)).resolves.toBe(vector);
   });
 
+  it("accepts the legacy type-0 CipherString shorthand with a leading separator", async () => {
+    const key: BitwardenSymmetricKey = { encKey: new Uint8Array(32), macKey: new Uint8Array(32) };
+    const iv = new Uint8Array(16);
+    const cryptoKey = await crypto.subtle.importKey("raw", key.encKey as BufferSource, { name: "AES-CBC" }, false, ["encrypt"]);
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, cryptoKey, new TextEncoder().encode("legacy fixture")));
+    const shorthand = `.${bytesToBase64(iv)}|${bytesToBase64(ciphertext)}`;
+    await expect(decryptBitwardenString(shorthand, key)).resolves.toBe("legacy fixture");
+  });
+
   it("rejects unsupported types and a modified MAC before decryption", async () => {
     expect(() => parseBitwardenCipherString("1.bad|bad")).toThrow("不支持");
     const key: BitwardenSymmetricKey = { encKey: new Uint8Array(32), macKey: new Uint8Array(32) };

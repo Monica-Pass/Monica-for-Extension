@@ -69,7 +69,10 @@ export async function stretchBitwardenMasterKey(masterKey: Uint8Array): Promise<
 export function parseBitwardenCipherString(value: string): ParsedBitwardenCipherString {
   if (!value || value.length > MAX_CIPHER_STRING_LENGTH) throw new Error("Bitwarden CipherString 为空或过大。");
   const dot = value.indexOf(".");
-  const typeValue = dot < 0 ? 0 : Number(value.slice(0, dot));
+  // A few older Bitwarden-compatible exporters omit the `0` type marker but
+  // leave its separator in place (`.iv|data`). Treat that shorthand as the
+  // unauthenticated AES-CBC-256 form; all other prefixes remain strict.
+  const typeValue = dot < 0 || dot === 0 ? 0 : Number(value.slice(0, dot));
   if (typeValue !== 0 && typeValue !== 2) throw new Error(`不支持的 Bitwarden CipherString 类型：${typeValue}`);
   const parts = (dot < 0 ? value : value.slice(dot + 1)).split("|");
   if (parts.length < (typeValue === 2 ? 3 : 2)) throw new Error("Bitwarden CipherString 结构不完整。");
