@@ -1,6 +1,7 @@
 import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type ProviderConflict, type ProviderConflictSummary, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
 import { resolveLoginOtp } from "../core/login-otp";
+import { projectSteamItem } from "../core/steam-item";
 import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
 import {
   BITWARDEN_ATTACHMENT_MAX_BYTES,
@@ -1894,16 +1895,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
 
 async function requireSteamItem(itemId: string): Promise<TotpItem> {
   const item = await service.getItem(itemId);
-  if (!item || item.kind !== "totp" || item.otpType !== "STEAM") throw new Error("Steam 验证器不存在或类型不正确。");
-  return structuredClone(item);
+  const projected = item && projectSteamItem(item as LoginItem | TotpItem);
+  if (!projected) throw new Error("Steam 验证器不存在或类型不正确。");
+  return structuredClone(projected);
 }
 
 async function runSteamOperation<T>(itemId: string, operation: (item: TotpItem) => Promise<T>): Promise<T> {
+  const source = await service.getItem(itemId);
   const item = await requireSteamItem(itemId);
   const before = JSON.stringify([item.steamAccessToken, item.steamRefreshToken, item.steamLoginSecure, item.steamRawJson]);
   const result = await operation(item);
   const after = JSON.stringify([item.steamAccessToken, item.steamRefreshToken, item.steamLoginSecure, item.steamRawJson]);
-  if (before !== after) await service.upsertItem({ ...item, updatedAt: new Date().toISOString() });
+  // A Bitwarden Steam entry is canonically a login Cipher. Its projected view
+  // must never be persisted as a second Monica TOTP item.
+  if (before !== after && source?.kind === "totp") await service.upsertItem({ ...item, updatedAt: new Date().toISOString() });
   return result;
 }
 

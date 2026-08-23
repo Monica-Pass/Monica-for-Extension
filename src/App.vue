@@ -29,6 +29,7 @@ import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { normalizeImportedVaultItem } from "./manager/import-items";
 import { parseCsvToVaultItems } from "./manager/csv-import";
+import { projectSteamItem } from "./core/steam-item";
 import { passkeyAvailability, passkeyAvailabilityLabel } from "./passkey/source-policy";
 import { presentKeePassRemoteError, type KeePassRemoteErrorPresentation } from "./providers/keepass/keepass-remote-status";
 import type { Mdbx2HostStatus, Mdbx2VaultRuntimeStatus } from "./providers/mdbx2/native-contract";
@@ -216,7 +217,10 @@ const favoriteCount = computed(() => vaultItems.value.filter((item) => item.favo
 const walletItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
 const noteItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "notes"));
 const totpItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "totp"));
-const steamItems = computed(() => totpItems.value.filter((item): item is TotpItem => item.kind === "totp" && item.otpType === "STEAM"));
+const steamItems = computed(() => vaultItems.value.flatMap((item) => {
+  const projected = item.kind === "login" ? projectSteamItem(item) : undefined;
+  return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
+}));
 const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
 const archivedCredentials = computed(() => archivedItems.value.filter(isLoginItem));
 const credentialById = computed(() => new Map([...credentials.value, ...archivedCredentials.value].map((item) => [item.id, item])));
