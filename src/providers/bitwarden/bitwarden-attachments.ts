@@ -30,6 +30,8 @@ const ATTACHMENT_MAC_BYTES = 32;
 const MAX_BITWARDEN_ATTACHMENTS_PER_CIPHER = 512;
 const MAX_OPAQUE_ID_BYTES = 4096;
 const MAX_FILE_NAME_BYTES = 4096;
+const UNREADABLE_ENCRYPTED_FILE_NAME = "Bitwarden 加密附件";
+const BITWARDEN_CIPHER_STRING_PATTERN = /^[0-9]+\.[A-Za-z0-9+/_=-]+\|[A-Za-z0-9+/_=-]+(?:\|[A-Za-z0-9+/_=-]+)?$/;
 const EMPTY_BYTES: Uint8Array = new Uint8Array(0);
 const SYNTHETIC_PADDING_PLAINTEXT = new Uint8Array(AES_BLOCK_BYTES).fill(AES_BLOCK_BYTES);
 
@@ -665,7 +667,10 @@ async function decryptAttachmentFileName(value: string | undefined, key: Bitward
   try {
     fileName = await decryptBitwardenString(value, key);
   } catch {
-    throw attachmentError("bitwarden-attachment-name-invalid", "Bitwarden 附件文件名无法解密。");
+    // Older Monica/Bitwarden records can contain plaintext attachment names. A value that
+    // still has CipherString syntax must never be exposed when its key is unavailable or
+    // invalid, but the attachment body remains useful for content-validated Steam recovery.
+    fileName = BITWARDEN_CIPHER_STRING_PATTERN.test(value) ? UNREADABLE_ENCRYPTED_FILE_NAME : value;
   }
   const bytes = new TextEncoder().encode(fileName).length;
   if (!fileName || bytes > MAX_FILE_NAME_BYTES || /[\u0000-\u001f\u007f]/.test(fileName)) {

@@ -132,6 +132,42 @@ describe("Bitwarden authenticated attachment download", () => {
     expect(second.items.map((item) => item.fileName)).toEqual(["three.txt"]);
   });
 
+  it("preserves legacy plaintext attachment names used by older Monica records", async () => {
+    const fixture = await attachmentFixture({ fileName: "legacy.maFile" });
+    const attachment = (fixture.rawCipher.Attachments as Array<Record<string, unknown>>)[0];
+    attachment.FileName = "legacy.maFile";
+    const service = new BitwardenAttachmentDownloadService({
+      fetcher: attachmentFetcher(fixture.body),
+      transportPolicy: fastTransport()
+    });
+
+    const page = await service.listAttachments(context(fixture));
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].fileName).toBe("legacy.maFile");
+    const begun = await service.beginDownload(context(fixture));
+    expect(begun.fileName).toBe("legacy.maFile");
+    await expect(readAll(service, begun.readHandle, 64)).resolves.toEqual(fixture.plaintext);
+  });
+
+  it("keeps an unreadable CipherString downloadable without exposing it as a file name", async () => {
+    const fixture = await attachmentFixture();
+    const attachment = (fixture.rawCipher.Attachments as Array<Record<string, unknown>>)[0];
+    const unreadableName = "2.AQIDBAUGBwgJCgsMDQ4PEA==|ERITFBUWFxgZGhscHR4fIA==|ISIjJCUmJygpKissLS4vMA==";
+    attachment.FileName = unreadableName;
+    const service = new BitwardenAttachmentDownloadService({
+      fetcher: attachmentFetcher(fixture.body),
+      transportPolicy: fastTransport()
+    });
+
+    const page = await service.listAttachments(context(fixture));
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].fileName).toBe("Bitwarden 加密附件");
+    expect(JSON.stringify(page)).not.toContain(unreadableName);
+    const begun = await service.beginDownload(context(fixture));
+    expect(begun.fileName).toBe("Bitwarden 加密附件");
+    await expect(readAll(service, begun.readHandle, 64)).resolves.toEqual(fixture.plaintext);
+  });
+
   it("rejects oversized metadata and counts streamed bytes instead of trusting Content-Length", async () => {
     const fixture = await attachmentFixture({ independentAttachmentKey: false });
     const rawAttachment = (fixture.rawCipher.Attachments as Array<Record<string, unknown>>)[0];
