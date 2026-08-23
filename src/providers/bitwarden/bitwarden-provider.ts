@@ -7,13 +7,18 @@ import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
 import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
+import { BitwardenAttachmentDownloadService } from "./bitwarden-attachments";
+import { isSteamMaFileLogin, isSteamMaFileName, parseSteamMaFile, STEAM_MAFILE_MAX_BYTES } from "./bitwarden-steam-mafile";
+import { PROVIDER_ATTACHMENT_CHUNK_BYTES, type ProviderAttachmentSummary } from "../attachments/attachment-contract";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
   private readonly client: BitwardenClient;
+  private readonly attachmentDownloads: BitwardenAttachmentDownloadService;
 
   constructor(fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {
     this.client = new BitwardenClient(fetcher);
+    this.attachmentDownloads = new BitwardenAttachmentDownloadService({ fetcher });
   }
 
   async testConnection(account: ProviderAccount, signal?: AbortSignal): Promise<void> {
@@ -87,6 +92,25 @@ export class BitwardenProvider implements ProviderAdapter {
           continue;
         }
         const decoded = await decodeBitwardenCipher(rawCipher, account.id, ownerKey);
+        const steamCarrier = decoded.items.find((item): item is LoginItem => item.kind === "login" && isSteamMaFileLogin(item));
+        if (steamCarrier) {
+          try {
+            const hydrated = await hydrateBitwardenSteamMaFile(
+              this.attachmentDownloads,
+              account.id,
+              steamCarrier,
+              rawCipher,
+              session,
+              organizations.keys,
+              context.signal
+            );
+            session = hydrated.session;
+            const index = decoded.items.indexOf(steamCarrier);
+            decoded.items[index] = { ...steamCarrier, ...hydrated.fields };
+          } catch (error) {
+            warnings.push(`Bitwarden Steam 项目 ${steamCarrier.title} 的 maFile 附件读取失败：${errorMessage(error)}`);
+          }
+        }
         remoteItems.push(...decoded.items);
         if (decoded.warning) {
           warnings.push(decoded.warning);
@@ -453,6 +477,62 @@ export class BitwardenProvider implements ProviderAdapter {
       : [canonical];
     return { session: response.session, item: canonical, items, raw: response.payload };
   }
+}
+
+async function hydrateBitwardenSteamMaFile(
+  downloads: BitwardenAttachmentDownloadService,
+  providerId: string,
+  item: LoginItem,
+  rawCipher: Record<string, unknown>,
+  initialSession: BitwardenSessionConfig,
+  organizationKeys: ReadonlyMap<string, BitwardenSymmetricKey>,
+  signal?: AbortSignal
+): Promise<{ fields: Partial<LoginItem>; session: BitwardenSessionConfig }> {
+  let cursor: string | undefined;
+  const attachments: ProviderAttachmentSummary[] = [];
+  do {
+    const page = await downloads.listAttachments({ providerId, itemId: item.id, session: initialSession, rawCipher, organizationKeys }, { pageSize: 50, cursor });
+    attachments.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  const candidates = attachments
+    .filter((attachment) => attachment.sizeBytes > 0 && attachment.sizeBytes <= STEAM_MAFILE_MAX_BYTES)
+    .sort((left, right) => Number(isSteamMaFileName(right.fileName)) - Number(isSteamMaFileName(left.fileName)) || right.sizeBytes - left.sizeBytes);
+  if (!candidates.length) throw new Error("已标记 Steam 项目，但没有可读取的 maFile 附件。");
+
+  let session = initialSession;
+  let lastError: unknown;
+  for (const attachment of candidates) {
+    let readHandle = "";
+    const chunks: Uint8Array[] = [];
+    try {
+      const started = await downloads.beginDownload({ providerId, itemId: item.id, session, rawCipher, organizationKeys, attachmentId: attachment.attachmentId, signal });
+      session = started.session;
+      readHandle = started.readHandle;
+      let offset = 0;
+      while (offset < started.sizeBytes) {
+        const chunk = downloads.readChunk(providerId, readHandle, offset, Math.min(PROVIDER_ATTACHMENT_CHUNK_BYTES, started.sizeBytes - offset));
+        chunks.push(chunk.bytes);
+        offset = chunk.nextOffset;
+        if (chunk.eof) break;
+      }
+      const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+      let writeOffset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, writeOffset); writeOffset += chunk.length; chunk.fill(0); }
+      try {
+        const json = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return { fields: parseSteamMaFile(json, attachment.fileName), session };
+      } finally {
+        bytes.fill(0);
+      }
+    } catch (error) {
+      lastError = error;
+    } finally {
+      for (const chunk of chunks) chunk.fill(0);
+      if (readHandle) downloads.release(providerId, readHandle);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Steam maFile 附件无法解析。");
 }
 
 function withCreatedReference(local: VaultItem, created: VaultItem, providerId: string): VaultItem {

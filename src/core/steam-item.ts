@@ -2,12 +2,26 @@ import type { LoginItem, TotpItem } from "./model";
 import { parseTotpParameters } from "./totp";
 
 /**
- * Android stores Steam Guard in a Bitwarden login's Login.Totp field as
- * `steam://<shared secret>`. Keep the login as the canonical persisted item,
- * but expose a TotpItem-shaped view to Steam UI and network operations.
+ * Android's full external Steam account uses a marked Bitwarden login plus a
+ * maFile attachment. Standalone and historical Steam OTP entries can still use
+ * Login.Totp = `steam://<shared secret>`. Both remain canonical login Ciphers;
+ * this helper only exposes a TotpItem-shaped runtime view.
  */
 export function projectSteamLogin(item: LoginItem): TotpItem | undefined {
   const encoded = item.totpSecret?.trim();
+  if (item.steamSharedSecretBase64) {
+    return {
+      ...item,
+      kind: "totp",
+      secret: item.steamSharedSecretBase64,
+      issuer: "Steam",
+      accountName: item.steamAccountName || item.username || undefined,
+      otpType: "STEAM",
+      algorithm: "SHA1",
+      digits: 5,
+      period: 30
+    } as TotpItem;
+  }
   if (!encoded || !/^steam:\/\//i.test(encoded)) return undefined;
   try {
     const parameters = parseTotpParameters(encoded);
