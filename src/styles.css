@@ -439,9 +439,20 @@ main {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  flex: 1 1 auto;
   gap: 12px;
 }
+
+.appbar-create,
+.appbar-filter {
+  flex: 0 0 auto;
+  --m3e-button-container-height: 44px;
+  --m3e-button-label-text-font-size: .88rem;
+}
+
+.appbar-filter { position: relative; }
+.filter-count { margin-inline-start: 4px; font-size: .75rem; font-weight: 700; }
 
 .search {
   width: clamp(260px, 34vw, 520px);
@@ -761,6 +772,28 @@ main {
   font-size: .82rem;
   cursor: pointer;
 }
+
+.filter-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: 16px;
+  background: var(--md-sys-color-surface-container, var(--app-surface));
+  color: var(--md-sys-color-on-surface, var(--app-text));
+  box-shadow: 0 18px 48px rgb(0 0 0 / 28%);
+}
+
+.filter-dialog > header,
+.filter-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; }
+.filter-dialog > header { border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
+.filter-dialog > header h2 { margin: 0; font-size: 1.25rem; }
+.filter-dialog > header p { margin: 4px 0 0; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .85rem; }
+.filter-dialog-body { display: grid; gap: 10px; padding: 18px 20px; overflow-y: auto; }
+.filter-dialog-body .filter-caption:not(:first-child) { margin-top: 10px; }
+.filter-dialog > footer { justify-content: flex-end; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 
 .folder-filter {
   min-height: 40px;

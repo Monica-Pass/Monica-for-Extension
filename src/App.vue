@@ -110,6 +110,7 @@ const loading = ref(true);
 const authBusy = ref(false);
 const authError = ref("");
 const mobileNavOpen = ref(false);
+const filterDialogOpen = ref(false);
 const editorOpen = ref(false);
 const vaultEditorOpen = ref(false);
 const vaultEditorItem = ref<VaultItem | undefined>();
@@ -705,6 +706,12 @@ function matchesManagerFilters(item: VaultItem): boolean {
 function providerName(item: VaultItem): string {
   const reference = item.providerRefs[0];
   return reference ? providers.value.find((provider) => provider.id === reference.providerId)?.name || "外部密码源" : "Monica 本地库";
+}
+
+function providerDisplayName(provider: ProviderAccount): string {
+  if (provider.kind !== "bitwarden") return provider.name;
+  const email = typeof provider.config.email === "string" ? provider.config.email.trim() : "";
+  return email ? `${provider.name} · ${email}` : provider.name;
 }
 
 function credentialCompactSummary(item: LoginItem): string {
@@ -2046,16 +2053,14 @@ function errorCode(error: unknown): string | undefined {
       <main id="main-content" tabindex="-1">
         <m3e-app-bar size="small" class="page-appbar">
           <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
-          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label></div>
+          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon>筛选<span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
         </m3e-app-bar>
 
         <div class="page-heading">
           <div><h1>{{ sectionTitle(activeSection) }}</h1><p>{{ sectionDescription(activeSection) }}</p></div>
-          <m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="primary-action" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>添加登录项</m3e-button>
-          <m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="primary-action" variant="filled" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>{{ activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'totp' ? '添加验证码' : '添加安全笔记' }}</m3e-button>
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
-        <div v-if="filterableSection" class="manager-filters" aria-label="快捷筛选">
+        <div v-if="filterableSection && false" class="manager-filters" aria-label="快捷筛选">
           <span class="filter-caption">密码源</span>
           <div class="filter-chip-row" role="group" aria-label="密码源">
             <button type="button" :class="{ selected: databaseSourceFilter === 'all' }" :aria-pressed="databaseSourceFilter === 'all'" @click="databaseSourceFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部</button>
@@ -2080,6 +2085,8 @@ function errorCode(error: unknown): string | undefined {
           </div>
           <button v-if="hasActiveManagerFilter" type="button" class="filter-reset" @click="databaseSourceFilter = 'all'; folderFilter = 'all'; activeQuickFilters = []">清除筛选</button>
         </div>
+
+        <div v-if="filterDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="filterDialogOpen = false"><section class="filter-dialog" role="dialog" aria-modal="true" aria-labelledby="filter-dialog-title"><header><div><h2 id="filter-dialog-title">筛选密码库</h2><p>按密码源、Android 分类和快捷条件组合筛选。</p></div><m3e-icon-button aria-label="关闭筛选" @click="filterDialogOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><div class="filter-dialog-body"><span class="filter-caption">密码源</span><div class="filter-chip-row" role="group" aria-label="密码源"><button type="button" :class="{ selected: databaseSourceFilter === 'all' }" :aria-pressed="databaseSourceFilter === 'all'" @click="databaseSourceFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部</button><button type="button" :class="{ selected: databaseSourceFilter === 'local' }" :aria-pressed="databaseSourceFilter === 'local'" @click="databaseSourceFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>Monica 本地库</button><button v-for="source in databaseSources" :key="source.id" type="button" :class="{ selected: databaseSourceFilter === source.id }" :aria-pressed="databaseSourceFilter === source.id" @click="databaseSourceFilter = source.id"><m3e-icon :name="source.kind === 'bitwarden' ? 'cloud_sync' : source.kind === 'mdbx2' ? 'storage' : 'key'"></m3e-icon>{{ providerDisplayName(source) }}</button></div><span class="filter-caption">分类</span><div class="filter-chip-row" role="group" aria-label="Android 分类"><button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部分类</button><button type="button" :class="{ selected: folderFilter === 'uncategorized' }" :aria-pressed="folderFilter === 'uncategorized'" @click="folderFilter = 'uncategorized'"><m3e-icon name="folder_off"></m3e-icon>未分类</button><button v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" :aria-pressed="folderFilter === folder.key" @click="folderFilter = folder.key"><m3e-icon name="folder"></m3e-icon>{{ folder.label }}</button></div><span class="filter-caption">快捷筛选</span><div class="filter-chip-row filter-dialog-quick" role="group" aria-label="快捷筛选条件"><button type="button" :class="{ selected: hasAndroidFilter('favorite') }" :aria-pressed="hasAndroidFilter('favorite')" @click="toggleAndroidQuickFilter('favorite')"><m3e-icon name="star"></m3e-icon>收藏</button><button type="button" :class="{ selected: hasAndroidFilter('two-fa') }" :aria-pressed="hasAndroidFilter('two-fa')" @click="toggleAndroidQuickFilter('two-fa')"><m3e-icon name="security"></m3e-icon>验证码</button><button type="button" :class="{ selected: hasAndroidFilter('notes') }" :aria-pressed="hasAndroidFilter('notes')" @click="toggleAndroidQuickFilter('notes')"><m3e-icon name="description"></m3e-icon>笔记</button><button type="button" :class="{ selected: hasAndroidFilter('passkey') }" :aria-pressed="hasAndroidFilter('passkey')" @click="toggleAndroidQuickFilter('passkey')"><m3e-icon name="key_vertical"></m3e-icon>Passkey</button><button type="button" :class="{ selected: hasAndroidFilter('uncategorized') }" :aria-pressed="hasAndroidFilter('uncategorized')" @click="toggleAndroidQuickFilter('uncategorized')"><m3e-icon name="folder_off"></m3e-icon>未分类</button><button type="button" :class="{ selected: hasAndroidFilter('local-only') }" :aria-pressed="hasAndroidFilter('local-only')" @click="toggleAndroidQuickFilter('local-only')"><m3e-icon name="key"></m3e-icon>仅本地</button><button type="button" :class="{ selected: hasAndroidFilter('attachments') }" :aria-pressed="hasAndroidFilter('attachments')" @click="toggleAndroidQuickFilter('attachments')"><m3e-icon name="attach_file"></m3e-icon>附件</button></div></div><footer><m3e-button variant="text" @click="databaseSourceFilter = 'all'; folderFilter = 'all'; activeQuickFilters = []">清除筛选</m3e-button><m3e-button variant="filled" @click="filterDialogOpen = false">完成</m3e-button></footer></section></div>
 
         <section v-if="activeSection === 'overview'" class="metrics">
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="password"></m3e-icon><p>登录项</p><strong>{{ credentials.length }}</strong><small>加密缓存中的有效项</small></div></m3e-card>
