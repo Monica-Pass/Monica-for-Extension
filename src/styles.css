@@ -607,8 +607,14 @@ main {
 .settings-page .settings-disclosure > summary > m3e-icon:not(.settings-disclosure-chevron) {
   grid-column: 1;
   grid-row: 1;
-  width: 40px;
-  height: 40px;
+  width: 40px !important;
+  min-width: 40px;
+  max-width: 40px;
+  height: 40px !important;
+  min-height: 40px;
+  max-height: 40px;
+  aspect-ratio: 1;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   border-radius: 8px;
@@ -641,8 +647,14 @@ main {
 .settings-page .settings-entry-icon {
   grid-column: 1;
   grid-row: 1;
-  width: 40px;
-  height: 40px;
+  width: 40px !important;
+  min-width: 40px;
+  max-width: 40px;
+  height: 40px !important;
+  min-height: 40px;
+  max-height: 40px;
+  aspect-ratio: 1;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   border-radius: 8px;
