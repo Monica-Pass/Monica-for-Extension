@@ -469,6 +469,7 @@ function bitwardenSystemValue(fields: Map<string, string>, ...names: string[]): 
 function bitwardenLoginType(fields: Map<string, string>, sshKeyData?: string): LoginItem["loginType"] {
   if (sshKeyData) return "SSH_KEY";
   const value = bitwardenSystemValue(fields, "monica_login_type").trim().toUpperCase();
+  if (value === "STEAM_MAFILE") return value;
   return value === "PASSWORD" || value === "SSO" || value === "WIFI" || value === "SSH_KEY" || value === "BARCODE"
     ? value
     : undefined;

@@ -7,10 +7,13 @@ export const STEAM_MAFILE_MARKER_VALUE = "steam_mafile_v1";
 export const STEAM_MAFILE_MAX_BYTES = 1024 * 1024;
 
 export function isSteamMaFileLogin(item: LoginItem): boolean {
-  return item.customFields.some((field) =>
-    field.name.trim().toLocaleLowerCase() === STEAM_MAFILE_MARKER_FIELD.toLocaleLowerCase()
-      && field.value.trim().toLocaleLowerCase() === STEAM_MAFILE_MARKER_VALUE
-  );
+  if (item.loginType?.trim().toLocaleUpperCase() === "STEAM_MAFILE") return true;
+  return item.customFields.some((field) => {
+    const name = field.name.trim().toLocaleLowerCase();
+    const value = field.value.trim().toLocaleLowerCase();
+    return (name === STEAM_MAFILE_MARKER_FIELD.toLocaleLowerCase() && value === STEAM_MAFILE_MARKER_VALUE)
+      || ((name === "steam_type" || name === "steam_type_marker" || name === "monica_steam_type") && value.includes("steam_mafile"));
+  });
 }
 
 export function isSteamMaFileName(fileName: string): boolean {

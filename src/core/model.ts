@@ -90,7 +90,7 @@ export interface LoginItem extends VaultItemBase {
   bitwardenCustomFieldsVersion?: 1;
   /** Derived encrypted marker for truthful SSH UI and format-preserving writes. */
   bitwardenSshKeyMode?: "native" | "fallback";
-  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE";
+  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE" | "STEAM_MAFILE";
   ssoProvider?: string;
   ssoRefEntryId?: number;
   appPackageName?: string;
