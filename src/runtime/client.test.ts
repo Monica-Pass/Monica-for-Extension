@@ -13,12 +13,14 @@ describe("extension runtime client", () => {
     await vaultClient.listDeletedItems();
     await vaultClient.restoreItem("item-1");
     await vaultClient.syncProvider("provider-1", true);
+    await vaultClient.syncAllBitwarden();
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
       { type: "VAULT_LIST_ARCHIVED_ITEMS" },
       { type: "VAULT_LIST_DELETED_ITEMS" },
       { type: "VAULT_RESTORE_ITEM", itemId: "item-1" },
-      { type: "PROVIDER_SYNC", providerId: "provider-1", allowEmptyRemote: true }
+      { type: "PROVIDER_SYNC", providerId: "provider-1", allowEmptyRemote: true },
+      { type: "BITWARDEN_SYNC_ALL" }
     ]);
   });
 

@@ -189,6 +189,7 @@ export const vaultClient = {
     providerId,
     ...(allowEmptyRemote ? { allowEmptyRemote: true as const } : {})
   }),
+  syncAllBitwarden: () => send<Array<{ providerId: string; ok: boolean; conflicts: number; warnings: number }>>({ type: "BITWARDEN_SYNC_ALL" }),
   cancelProviderSync: (providerId: string) => send<{ cancelled: boolean }>({ type: "PROVIDER_SYNC_CANCEL", providerId }),
   removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
 };

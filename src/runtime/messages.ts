@@ -402,6 +402,7 @@ export type ExtensionRequest =
   | { type: "KEEPASS_EXPORT_FILE"; providerId: string }
   | { type: "KEEPASS_LOCK"; providerId?: string }
   | { type: "PROVIDER_SYNC"; providerId: string; allowEmptyRemote?: true }
+  | { type: "BITWARDEN_SYNC_ALL" }
   | { type: "PROVIDER_SYNC_CANCEL"; providerId: string }
   | { type: "PROVIDER_REMOVE"; providerId: string };
 

@@ -123,6 +123,7 @@ const formError = ref("");
 const notice = ref("");
 const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove" | "logout">("");
 const activeSyncProviderId = ref("");
+const syncingAllBitwarden = ref(false);
 const diagnosticBusy = ref(false);
 const webDavError = ref("");
 const editingWebDavId = ref<string | undefined>();
@@ -248,6 +249,7 @@ const filteredSectionItems = computed(() => {
 });
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
+const syncableBitwardenProviders = computed(() => bitwardenProviders.value.filter((provider) => provider.enabled && provider.config.authenticated === true));
 const keePassProviders = computed(() => providers.value.filter((provider) => provider.kind === "keepass"));
 const editingKeePassProvider = computed(() => providers.value.find((provider) => provider.id === editingKeePassId.value && provider.kind === "keepass"));
 const mdbx2Providers = computed(() => providers.value.filter((provider) => provider.kind === "mdbx2"));
@@ -1197,6 +1199,27 @@ async function syncProvider(provider: ProviderAccount, allowEmptyRemote = false)
   }
 }
 
+async function syncAllBitwarden(): Promise<void> {
+  if (syncingAllBitwarden.value || syncableBitwardenProviders.value.length < 2) return;
+  syncingAllBitwarden.value = true;
+  webDavError.value = "";
+  try {
+    const results = await vaultClient.syncAllBitwarden();
+    await Promise.all([refreshProviders(), refreshItems()]);
+    const succeeded = results.filter((result) => result.ok).length;
+    const failed = results.length - succeeded;
+    const conflicts = results.reduce((total, result) => total + result.conflicts, 0);
+    const parts = [`${succeeded} 个账户已同步`];
+    if (failed) parts.push(`${failed} 个失败`);
+    if (conflicts) parts.push(`${conflicts} 个冲突`);
+    showNotice(parts.join(" · "));
+  } catch (error) {
+    webDavError.value = errorMessage(error);
+  } finally {
+    syncingAllBitwarden.value = false;
+  }
+}
+
 function confirmBitwardenEmptyRemote(provider: ProviderAccount) {
   if (provider.kind !== "bitwarden") return;
   confirmationError.value = "";
@@ -2077,7 +2100,7 @@ function errorCode(error: unknown): string | undefined {
       <main id="main-content" :class="{ 'settings-main': activeSection === 'settings' }" tabindex="-1">
         <m3e-app-bar size="small" class="page-appbar">
           <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
-          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" :aria-label="activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'notes' ? '添加安全笔记' : '添加验证码'" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon>筛选<span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
+          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'providers' && syncableBitwardenProviders.length > 1" variant="tonal" :disabled="syncingAllBitwarden || Boolean(activeSyncProviderId)" @click="syncAllBitwarden"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ syncingAllBitwarden ? '正在同步' : '同步全部' }}</m3e-button><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" :aria-label="activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'notes' ? '添加安全笔记' : '添加验证码'" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon>筛选<span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
         </m3e-app-bar>
 
         <div class="page-heading">

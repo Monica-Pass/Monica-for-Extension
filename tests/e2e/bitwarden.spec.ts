@@ -75,13 +75,23 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
                 enabled: true,
                 isDefaultSaveTarget: false,
                 config: {
+                  authenticated: true,
                   email: "very.long.account.address.for.layout@example.test",
-                  vaultUrl: "https://vault.example.test/a/very/long/private/path?access_token=never-render-url-token"
+                  vaultUrl: "https://vault.example.test/a/very/long/private/path?access_token=never-render-url-token",
+                  accountState: { organizations: [{ id: "org-1" }], policies: [] }
                 },
                 lastSyncAt: now,
                 lastError: queueCleared ? undefined : "连接超时，请检查服务器状态。",
                 requiresEmptyRemoteConfirmation: !emptyConfirmed,
                 compatibility: { preservedUnsupportedRecords: 2, unreadableRecords: 1 }
+              }, {
+                id: "bitwarden-secondary",
+                kind: "bitwarden",
+                name: "Bitwarden 备用库",
+                enabled: true,
+                isDefaultSaveTarget: false,
+                config: { authenticated: true, email: "secondary@example.test", vaultUrl: "https://secondary.example.test" },
+                lastSyncAt: now
               }]
             };
           }
@@ -110,6 +120,13 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
             return { ok: true, data: { warnings: [], conflicts: conflicts.length } };
           }
           if (message.type === "PROVIDER_SYNC_CANCEL" && message.providerId === providerId) return { ok: true, data: { cancelled: true } };
+          if (message.type === "BITWARDEN_SYNC_ALL") return {
+            ok: true,
+            data: [
+              { providerId, ok: false, conflicts: 0, warnings: 0 },
+              { providerId: "bitwarden-secondary", ok: true, conflicts: 0, warnings: 0 }
+            ]
+          };
           return originalSend(message);
         }
       });
@@ -127,7 +144,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
     await expect(card).not.toContainText("never-render-url-token");
     await expect(card.getByText("4 个冲突", { exact: true })).toBeVisible();
     await expect(card.getByText("5 待同步 · 1 恢复中 · 2 失败", { exact: true })).toBeVisible();
-    await expect(card.getByText("个人文件夹 + 组织 Collection", { exact: true })).toBeVisible();
+    await expect(card.getByText("1 个", { exact: true })).toBeVisible();
     await expect(card.getByText("连接超时，请检查服务器状态。", { exact: true })).toHaveCount(1);
     await expect(card.getByText("兼容模式保留 3 个项目", { exact: true })).toBeVisible();
     await expect(card.getByText("第三个账号", { exact: true })).toHaveCount(0);
@@ -137,6 +154,11 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
     await expectNoGradients(card);
     await expectMinimumTargets(card.locator("m3e-button, m3e-icon-button"));
     await expectSecretsAbsent(page);
+
+    await page.getByRole("button", { name: "同步全部" }).click();
+    await expect(page.getByText("1 个账户已同步 · 1 个失败", { exact: true })).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("private server detail");
+    await expectNoHorizontalOverflow(page.locator("html"));
 
     const conflictToggle = card.locator(".bitwarden-conflict-toggle");
     await expect(conflictToggle).toContainText("查看其余 2 个冲突");

@@ -26,6 +26,7 @@ import { BitwardenAttachmentMutationService } from "../providers/bitwarden/bitwa
 import { resolveBitwardenOrganizationKeys } from "../providers/bitwarden/bitwarden-organization";
 import type { BitwardenSymmetricKey } from "../providers/bitwarden/bitwarden-crypto";
 import { BitwardenProvider } from "../providers/bitwarden/bitwarden-provider";
+import { syncBitwardenAccountsIsolated } from "../providers/bitwarden/bitwarden-multi-account-sync";
 import { BitwardenDurableSyncCoordinator } from "../providers/bitwarden/bitwarden-durable-sync";
 import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutationResult } from "../providers/bitwarden/bitwarden-folders";
 import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
@@ -1830,6 +1831,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         clearKeePassPendingPersistence();
       }
       return undefined;
+    case "BITWARDEN_SYNC_ALL": {
+      assertManagerPage(sender);
+      const accounts = await service.listProviders();
+      return syncBitwardenAccountsIsolated(accounts, async (account) =>
+        await handleRequest({ type: "PROVIDER_SYNC", providerId: account.id }, sender) as { conflicts: number; warnings: string[] }
+      );
+    }
     case "PROVIDER_SYNC": {
       assertManagerPage(sender);
       if (request.allowEmptyRemote === true) assertManagerPage(sender);
