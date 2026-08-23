@@ -1494,7 +1494,8 @@ tbody tr:hover td {
     grid-template-columns: 56px minmax(0, 1fr);
   }
 
-  .getting-started > m3e-button {
+  .getting-started > m3e-button,
+  .getting-started-actions {
     grid-column: 1 / -1;
     justify-self: start;
   }

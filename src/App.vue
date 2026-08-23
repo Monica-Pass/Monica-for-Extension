@@ -2119,7 +2119,7 @@ function errorCode(error: unknown): string | undefined {
         <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="encrypted"></m3e-icon><p>安全状态</p><strong class="metric-word">已解锁</strong><small>15 分钟无操作自动锁定 · 关闭浏览器后自动锁定</small></div></m3e-card>
         </section>
 
-        <section v-if="activeSection === 'overview'" class="content-grid"><m3e-card variant="filled" class="motion-card"><div slot="content" class="getting-started"><span class="feature-icon"><m3e-icon name="auto_fix_high"></m3e-icon></span><div><h2>自动填充基线已连接加密核心</h2><p>Popup 只读取匹配项摘要；点击填充后由后台解密单个登录项并发送给当前网页。</p></div><m3e-button variant="tonal" @click="navigate('passwords')">管理登录项</m3e-button></div></m3e-card></section>
+        <section v-if="activeSection === 'overview'" class="content-grid"><m3e-card variant="filled" class="motion-card"><div slot="content" class="getting-started"><span class="feature-icon"><m3e-icon name="auto_fix_high"></m3e-icon></span><div><h2>自动填充基线已连接加密核心</h2><p>Popup 只读取匹配项摘要；点击填充后由后台解密单个登录项并发送给当前网页。</p></div><div class="getting-started-actions"><m3e-button variant="tonal" @click="navigate('passwords')">管理登录项</m3e-button><m3e-button variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>添加登录项</m3e-button></div></div></m3e-card></section>
 
         <section v-else-if="activeSection === 'passwords'" class="content-grid">
           <m3e-card variant="filled" class="data-card login-data-card motion-card">

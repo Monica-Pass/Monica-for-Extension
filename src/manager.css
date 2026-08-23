@@ -151,6 +151,14 @@
   align-items: center;
 }
 
+.getting-started-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .feature-icon {
   width: 56px;
   height: 56px;
@@ -1109,6 +1117,11 @@
 
   .getting-started m3e-button {
     grid-column: 1 / -1;
+  }
+
+  .getting-started-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .modal-backdrop {
