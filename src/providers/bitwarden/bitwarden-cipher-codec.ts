@@ -111,13 +111,12 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       const metadataPasskey = decodeAndroidPasskeyMetadata(base, reference, notes);
       if (metadataPasskey) passkeys.push(metadataPasskey);
     }
-    // Monica Android represents an independent authenticator as a Login cipher with
-    // an empty password, then projects the same cipher into its validator list.
-    // Keep the Login projection for lossless Bitwarden write-back and expose the
-    // validator projection so the extension's TOTP page and autofill binding can
-    // discover it as a first-class item.
-    const standaloneTotp = !password && totpSecret ? decodeStandaloneTotp(loginItem, totpSecret, reference) : undefined;
-    return { items: [loginItem, ...(standaloneTotp ? [standaloneTotp] : []), ...passkeys] };
+    // Bitwarden stores authenticators on Login.Totp for both ordinary credentials
+    // and Monica Android's passwordless standalone validator carriers. Keep the
+    // parent Login for lossless write-back, and always project a parseable value
+    // into the validator list so the manager and autofill UI can discover it.
+    const projectedTotp = totpSecret ? decodeStandaloneTotp(loginItem, totpSecret, reference) : undefined;
+    return { items: [loginItem, ...(projectedTotp ? [projectedTotp] : []), ...passkeys] };
   }
 
   if (type === 2) {

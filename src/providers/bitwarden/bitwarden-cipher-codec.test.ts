@@ -47,7 +47,7 @@ describe("Bitwarden Cipher codec", () => {
     };
 
     const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
-    expect(decoded.items).toHaveLength(2);
+    expect(decoded.items).toHaveLength(3);
     expect(decoded.items[0]).toMatchObject({
       kind: "login",
       username: "joy@example.com",
@@ -61,7 +61,8 @@ describe("Bitwarden Cipher codec", () => {
       customFields: [{ name: "Recovery", value: "code", protected: true }],
       bitwardenCustomFieldsVersion: 1
     });
-    expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
+    expect(decoded.items[1]).toMatchObject({ kind: "totp", secret: "JBSWY3DPEHPK3PXP", issuer: "GitHub", accountName: "joy@example.com" });
+    expect(decoded.items[2]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
   });
 
   it("projects an Android standalone validator Login into a first-class TOTP item", async () => {

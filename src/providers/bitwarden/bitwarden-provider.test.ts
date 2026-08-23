@@ -11,6 +11,47 @@ const OLD_REVISION = "2026-07-15T03:00:00.000Z";
 const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 
 describe("Bitwarden provider", () => {
+  it("imports notes authenticators and passkeys from one sync response", async () => {
+    const login = await loginCipher("remote-secret", OLD_REVISION, [await fidoCredential("credential-mixed", 3)]);
+    (login.Login as Record<string, unknown>).Totp = await encryptBitwardenString(
+      "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example",
+      KEY
+    );
+    const standalone = {
+      ...(await loginCipher("", OLD_REVISION)),
+      Id: "cipher-authenticator",
+      Name: await encryptBitwardenString("Standalone authenticator", KEY),
+      Login: {
+        Username: await encryptBitwardenString("standalone@example.com", KEY),
+        Password: null,
+        Totp: await encryptBitwardenString("otpauth://totp/Standalone:joy?secret=KRSXG5DSNFXGOIDB&issuer=Standalone", KEY),
+        Uris: [],
+        Fido2Credentials: []
+      }
+    };
+    const note = {
+      Id: "cipher-note",
+      Type: 2,
+      Name: await encryptBitwardenString("Imported secure note", KEY),
+      Notes: await encryptBitwardenString("private note body", KEY),
+      Favorite: false,
+      RevisionDate: OLD_REVISION,
+      CreationDate: OLD_REVISION,
+      SecureNote: { Type: 0 }
+    };
+    const fetcher = vi.fn(async () => json({ Profile: { Id: "user" }, Ciphers: [login, standalone, note] })) as unknown as typeof fetch;
+
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [] });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.items.filter((item) => item.kind === "secure-note")).toEqual([expect.objectContaining({ title: "Imported secure note", content: "private note body" })]);
+    expect(result.items.filter((item) => item.kind === "totp")).toEqual([
+      expect.objectContaining({ issuer: "Example", accountName: "alice" }),
+      expect.objectContaining({ issuer: "Standalone", accountName: "joy" })
+    ]);
+    expect(result.items.filter((item) => item.kind === "passkey")).toEqual([expect.objectContaining({ credentialId: "credential-mixed", sourceMode: "bitwarden" })]);
+  });
+
   it("imports and updates a personal login Cipher", async () => {
     let remote = await loginCipher("remote-secret", OLD_REVISION);
     let putCount = 0;
