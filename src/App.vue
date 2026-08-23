@@ -2159,7 +2159,7 @@ function errorCode(error: unknown): string | undefined {
           </div>
         </section>
 
-        <section v-else class="settings-grid">
+        <section v-else class="settings-grid settings-page">
           <AppearancePanel class="motion-card" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
             <details class="settings-disclosure hello-disclosure">
@@ -2176,9 +2176,11 @@ function errorCode(error: unknown): string | undefined {
               </div>
             </details>
           </div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
-            <h2>加密整库备份</h2>
-            <p class="supporting">备份项目、密码源和设置，使用独立密码加密。</p>
+          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content">
+            <details class="settings-disclosure backup-disclosure">
+              <summary><span><strong>加密整库备份</strong><small>导出或恢复完整密码库</small></span><m3e-icon name="encrypted" aria-hidden="true"></m3e-icon><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+              <div class="settings-disclosure-content">
+            <p class="supporting">使用独立密码加密备份。</p>
             <m3e-button variant="tonal" aria-label="导出加密整库备份" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出备份' }}</m3e-button>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
@@ -2187,6 +2189,8 @@ function errorCode(error: unknown): string | undefined {
               <label class="field"><span>恢复前的当前主密码</span><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /><small>{{ restoreCurrentPasswordHint }}</small></label>
               <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? '正在验证并恢复…' : '验证并替换当前密码库' }}</m3e-button>
             </template>
+              </div>
+            </details>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <button class="settings-entry" type="button" @click="passwordChangeDialogOpen = true"><span><strong>更改保护方式</strong><small>留空使用设备密钥；填写则使用 Argon2id。</small></span><m3e-icon name="chevron_right" aria-hidden="true"></m3e-icon></button>
@@ -2205,8 +2209,8 @@ function errorCode(error: unknown): string | undefined {
             </div>
             </Teleport>
           </div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" aria-label="导出明文 JSON" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON / CSV</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>安全边界</h2><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>持久数据使用 AES-256-GCM 加密</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>解锁密钥仅保留在浏览器会话存储</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>内容脚本无法读取完整密码库</span></div></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><details class="settings-disclosure"><summary><span><strong>明文手动迁移</strong><small>导出项目或导入 JSON / CSV</small></span><m3e-icon name="swap_vert" aria-hidden="true"></m3e-icon><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary><div class="settings-disclosure-content"><p class="supporting">明文文件不包含密码源，请保存到可信位置。</p><m3e-button variant="tonal" aria-label="导出明文 JSON" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON / CSV</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></details></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><details class="settings-disclosure"><summary><span><strong>安全边界</strong><small>AES-256-GCM · 会话级解锁</small></span><m3e-icon name="security" aria-hidden="true"></m3e-icon><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary><div class="settings-disclosure-content"><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>持久数据使用 AES-256-GCM 加密</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>解锁密钥仅保留在浏览器会话存储</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>内容脚本无法读取完整密码库</span></div></div></details></div></m3e-card>
           <p v-if="securityError" class="form-error settings-message" role="alert">{{ securityError }}</p>
         </section>
       </main>

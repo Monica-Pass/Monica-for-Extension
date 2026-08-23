@@ -152,6 +152,7 @@ test("shared provider and Windows Hello actions use secret-free retry-safe M3E c
     await openMobileSection(manager, "设置与备份");
     const helloCard = manager.locator(".windows-hello-card");
     await expectNoGradients(helloCard);
+    await helloCard.locator("summary").click();
     const enrollButton = helloCard.getByRole("button", { name: "注册 Windows Hello" });
     await expect(enrollButton).toBeEnabled();
     await enrollButton.click();

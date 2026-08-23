@@ -563,6 +563,52 @@ main {
   gap: 12px;
 }
 
+.settings-page {
+  grid-template-columns: minmax(0, 900px);
+  max-width: 920px;
+}
+
+.settings-page > m3e-card {
+  width: 100%;
+}
+
+.settings-page > .settings-list-card {
+  --m3e-card-padding: 0;
+}
+
+.settings-page .settings-disclosure > summary {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  min-height: 72px;
+  padding: 8px 16px;
+}
+
+.settings-page .settings-disclosure > summary > span {
+  grid-column: 2;
+}
+
+.settings-page .settings-disclosure > summary > m3e-icon:not(.settings-disclosure-chevron) {
+  grid-column: 1;
+  grid-row: 1;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+  --m3e-icon-size: 20px;
+}
+
+.settings-page .settings-disclosure > summary .settings-disclosure-chevron {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.settings-page .settings-disclosure-content {
+  padding: 16px;
+}
+
 .settings-disclosure { min-width: 0; }
 .settings-disclosure > summary { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px; cursor: pointer; list-style: none; }
 .settings-disclosure > summary::-webkit-details-marker { display: none; }
