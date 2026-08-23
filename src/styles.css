@@ -576,6 +576,10 @@ main {
   --m3e-card-padding: 0;
 }
 
+.settings-page > .windows-hello-card {
+  --m3e-card-padding: 0;
+}
+
 .settings-page .settings-disclosure > summary {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) 24px;
@@ -607,6 +611,39 @@ main {
 
 .settings-page .settings-disclosure-content {
   padding: 16px;
+}
+
+.settings-page .settings-entry {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  min-height: 72px;
+  padding: 8px 16px;
+}
+
+.settings-page .settings-entry > span:not(.settings-entry-icon) {
+  grid-column: 2;
+}
+
+.settings-page .settings-entry-icon {
+  grid-column: 1;
+  grid-row: 1;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--md-sys-color-on-primary-container, var(--app-text));
+  background: var(--md-sys-color-primary-container, var(--app-selected));
+}
+
+.settings-page .settings-entry-icon m3e-icon,
+.settings-page .settings-entry-chevron {
+  --m3e-icon-size: 20px;
+}
+
+.settings-page .settings-entry-chevron {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .settings-disclosure { min-width: 0; }

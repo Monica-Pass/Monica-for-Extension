@@ -2193,7 +2193,7 @@ function errorCode(error: unknown): string | undefined {
             </details>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
-            <button class="settings-entry" type="button" @click="passwordChangeDialogOpen = true"><span><strong>更改保护方式</strong><small>留空使用设备密钥；填写则使用 Argon2id。</small></span><m3e-icon name="chevron_right" aria-hidden="true"></m3e-icon></button>
+            <button class="settings-entry" type="button" @click="passwordChangeDialogOpen = true"><span class="settings-entry-icon"><m3e-icon name="key_vertical" aria-hidden="true"></m3e-icon></span><span><strong>更改保护方式</strong><small>留空使用设备密钥；填写则使用 Argon2id。</small></span><m3e-icon class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon></button>
             <Teleport to="body">
             <div v-if="passwordChangeDialogOpen" class="settings-modal" role="presentation" @click.self="passwordChangeDialogOpen = false">
               <section class="settings-modal-panel" role="dialog" aria-modal="true" aria-labelledby="password-change-title">
