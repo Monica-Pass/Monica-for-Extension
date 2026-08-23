@@ -5,41 +5,74 @@ const schemes: SchemePreference[] = ["auto", "light", "dark"];
 const schemeLabels: Record<SchemePreference, string> = { auto: "跟随系统", light: "浅色", dark: "深色" };
 const paletteLabels: Record<ThemePaletteId, string> = { monica: "Monica", ocean: "海洋", forest: "森林", sakura: "樱花", amber: "琥珀" };
 
-function updateScheme(event: Event) {
-  setScheme((event.target as HTMLSelectElement).value as SchemePreference);
-}
-
 function updatePalette(value: ThemePaletteId) {
   setPalette(value);
 }
 </script>
 
 <template>
-  <m3e-card variant="filled">
-    <div slot="content" class="stack">
-      <h2>外观</h2>
-      <label class="field">
-        <span>显示模式</span>
-        <select :value="schemePreference" @change="updateScheme">
-          <option v-for="item in schemes" :key="item" :value="item">{{ schemeLabels[item] }}</option>
-        </select>
-      </label>
-      <div class="field">
-        <span>配色</span>
-        <div class="palette-grid">
+  <m3e-card variant="filled" class="appearance-card">
+    <details slot="content" class="appearance-disclosure">
+      <summary>
+        <span class="appearance-summary-icon"><m3e-icon name="palette"></m3e-icon></span>
+        <span class="appearance-summary-copy"><strong>外观</strong><small>{{ schemeLabels[schemePreference] }} · {{ paletteLabels[paletteId] }}</small></span>
+        <m3e-icon class="appearance-chevron" name="expand_more" aria-hidden="true"></m3e-icon>
+      </summary>
+      <div class="appearance-controls">
+        <fieldset>
+          <legend>显示模式</legend>
+          <div class="scheme-control" role="group" aria-label="显示模式">
+            <button v-for="item in schemes" :key="item" type="button" :class="{ selected: item === schemePreference }" :aria-pressed="item === schemePreference" @click="setScheme(item)">{{ schemeLabels[item] }}</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>配色</legend>
+          <div class="palette-grid">
           <button
             v-for="item in palettes"
             :key="item.id"
             class="palette-button"
             :class="{ selected: item.id === paletteId }"
             type="button"
+            :aria-pressed="item.id === paletteId"
             @click="updatePalette(item.id)"
           >
             <span class="swatch" :style="{ '--swatch': item.color, '--accent': item.accent }"></span>
-            {{ paletteLabels[item.id] }}
+            <span>{{ paletteLabels[item.id] }}</span>
           </button>
         </div>
+        </fieldset>
       </div>
-    </div>
+    </details>
   </m3e-card>
 </template>
+
+<style scoped>
+.appearance-card { --m3e-card-padding: 0; }
+.appearance-disclosure { min-width: 0; }
+.appearance-disclosure > summary { min-height: 72px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 8px 16px; cursor: pointer; list-style: none; }
+.appearance-disclosure > summary::-webkit-details-marker { display: none; }
+.appearance-disclosure > summary:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container, var(--app-selected)) 28%, transparent); }
+.appearance-disclosure > summary:focus-visible { outline: 3px solid var(--md-sys-color-primary, var(--app-primary)); outline-offset: -3px; }
+.appearance-summary-icon { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--md-sys-color-on-primary-container, var(--app-text)); background: var(--md-sys-color-primary-container, var(--app-selected)); }
+.appearance-summary-icon m3e-icon, .appearance-chevron { --m3e-icon-size: 20px; }
+.appearance-summary-copy { min-width: 0; display: grid; gap: 2px; }
+.appearance-summary-copy strong, .appearance-summary-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appearance-summary-copy strong { font-size: 1rem; }
+.appearance-summary-copy small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .82rem; }
+.appearance-chevron { transition: transform var(--motion-fast) var(--motion-ease); }
+.appearance-disclosure[open] .appearance-chevron { transform: rotate(180deg); }
+.appearance-controls { display: grid; gap: 16px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 16px; }
+.appearance-controls fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
+.appearance-controls legend { margin-bottom: 8px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .82rem; font-weight: 600; }
+.scheme-control { min-height: 44px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; overflow: hidden; }
+.scheme-control button { min-width: 0; min-height: 44px; border: 0; border-right: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 0 8px; color: var(--md-sys-color-on-surface, var(--app-text)); background: transparent; font: inherit; cursor: pointer; }
+.scheme-control button:last-child { border-right: 0; }
+.scheme-control button.selected { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); font-weight: 600; }
+.palette-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.palette-button { min-width: 0; min-height: 48px; grid-template-columns: 24px minmax(0, 1fr); padding: 0 8px; }
+.palette-button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-button:hover { transform: none; }
+@media (max-width: 560px) { .palette-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .appearance-chevron { transition: none; } }
+</style>

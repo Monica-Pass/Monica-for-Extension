@@ -194,6 +194,12 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-providers.png"), animations: "disabled" });
 
     await page.getByRole("button", { name: "设置与备份" }).click();
+    const appearance = page.locator(".appearance-disclosure");
+    await expect(appearance).not.toHaveAttribute("open", "");
+    await expect(appearance.locator(".appearance-summary-copy small")).toContainText("Monica");
+    await page.screenshot({ path: testInfo.outputPath("manager-large-text-appearance-collapsed.png"), animations: "disabled" });
+    await appearance.locator("summary").click();
+    await expect(appearance).toHaveAttribute("open", "");
     const selectedPalette = page.locator(".palette-button.selected");
     const paletteWidth = await selectedPalette.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(paletteWidth.scroll, JSON.stringify(paletteWidth)).toBeLessThanOrEqual(paletteWidth.client + 1);
