@@ -2,6 +2,7 @@ import { argon2id } from "hash-wasm";
 import type { VaultState } from "../core/model";
 import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState, validProviderMutationReceipt } from "../core/migrations";
 import { normalizeSitePolicy } from "../autofill/site-policy";
+import { normalizeBlockedFieldSignatures } from "../autofill/field-policy";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
@@ -164,7 +165,8 @@ function validSitePolicySettings(settings: VaultState["settings"]): boolean {
   try {
     const normalized = normalizeSitePolicy({ blockedHosts: settings.autofillBlockedHosts, saveBlockedHosts: settings.saveBlockedHosts });
     return JSON.stringify(normalized.blockedHosts) === JSON.stringify(settings.autofillBlockedHosts)
-      && JSON.stringify(normalized.saveBlockedHosts) === JSON.stringify(settings.saveBlockedHosts);
+      && JSON.stringify(normalized.saveBlockedHosts) === JSON.stringify(settings.saveBlockedHosts)
+      && JSON.stringify(normalizeBlockedFieldSignatures(settings.autofillBlockedFieldSignatures)) === JSON.stringify(settings.autofillBlockedFieldSignatures);
   } catch {
     return false;
   }

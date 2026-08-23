@@ -11,7 +11,7 @@ const MONICA_UI_HOST_IDS = new Set(["monica-save-prompt-host", "monica-passkey-p
 interface CaptureOptions {
   rootDocument?: Document;
   pageLocation?: Location;
-  onCandidate: (candidate: CredentialCaptureInput) => void | Promise<void>;
+  onCandidate: (candidate: CredentialCaptureInput, root: ParentNode) => void | Promise<void>;
   onUsernameContext?: (username: string) => void | Promise<void>;
   now?: () => number;
   usernameContextTtlMs?: number;
@@ -60,7 +60,7 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
     const candidate = captureCredentialInput(root, rootDocument, pageLocation, recentUsername());
     if (candidate) {
       usernameContext = undefined;
-      void options.onCandidate(candidate);
+      void options.onCandidate(candidate, root);
     } else if (usernameContext && !usernameContext.published) {
       usernameContext.published = true;
       void options.onUsernameContext?.(usernameContext.value);

@@ -1,6 +1,8 @@
 import type { CredentialCaptureInput, ExtensionResponse, PasskeyPromptContext, PasskeyRequest, PasskeyResult, SavePromptContext, WalletFillPayload } from "../runtime/messages";
 import { installCredentialCapture } from "./content-lifecycle";
-import { fillCredential, scanPage, type FillCredentialInput } from "./dom";
+import { fillCredential, scanPageWithFieldContext, type FillCredentialInput } from "./dom";
+import { createCurrentFieldContext } from "./field-signature";
+import { createFieldContextsForRoot } from "./field-signature";
 import { renderSavePrompt } from "./save-prompt";
 import { fillWallet } from "./wallet-dom";
 import { closePasskeyPrompt, renderPasskeyPrompt } from "./passkey-prompt";
@@ -8,8 +10,12 @@ import { closePasskeyPrompt, renderPasskeyPrompt } from "./passkey-prompt";
 chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload; expectedOrigin?: string; candidateId?: string }, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("")) || sender.tab !== undefined) return false;
   if (message?.type === "MONICA_SCAN_PAGE") {
-    sendResponse(scanPage());
-    return false;
+    void scanPageWithFieldContext().then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.type === "MONICA_GET_FIELD_CONTEXT") {
+    void createCurrentFieldContext().then((context) => sendResponse({ ok: true, context })).catch(() => sendResponse({ ok: false }));
+    return true;
   }
   if (message?.type === "MONICA_FILL_CREDENTIAL") {
     if (message.expectedOrigin !== location.origin) return void sendResponse({ ok: false, error: "页面来源已变化，已阻止填充。" });
@@ -197,9 +203,10 @@ function isBoundedBridgeRequest(request: unknown): request is PasskeyRequest {
   }
 }
 
-async function submitCandidate(candidate: CredentialCaptureInput): Promise<void> {
+async function submitCandidate(candidate: CredentialCaptureInput, root: ParentNode): Promise<void> {
   try {
-    const context = await sendRuntime<SavePromptContext>({ type: "CREDENTIAL_CAPTURE", candidate });
+    const contexts = await createFieldContextsForRoot(root);
+    const context = await sendRuntime<SavePromptContext>({ type: "CREDENTIAL_CAPTURE", candidate: { ...candidate, fieldSignatures: [...new Set(contexts.map((field) => field.signature))] } });
     if (window.top === window) showPrompt(context);
   } catch (error) {
     // Locked vaults and unsupported pages fail closed without retaining the password in page state.

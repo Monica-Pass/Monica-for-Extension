@@ -19,7 +19,7 @@ describe("vault schema migrations", () => {
 
     const migrated = migrateVaultState(legacy);
     expect(migrated).toMatchObject({ schemaVersion: 2, sourceRecords: [], providerMutationReceipts: [], settings: {
-      protectionMode: "master-password", autofillBlockedHosts: [], saveBlockedHosts: []
+      protectionMode: "master-password", autofillBlockedHosts: [], saveBlockedHosts: [], autofillBlockedFieldSignatures: []
     } });
     expect(migrated.items[0]).toMatchObject({
       kind: "login",
@@ -40,6 +40,17 @@ describe("vault schema migrations", () => {
     } });
     expect(migrated.settings.autofillBlockedHosts).toEqual(["login.example.com"]);
     expect(migrated.settings.saveBlockedHosts).toEqual(["save.example.net"]);
+    expect(migrateVaultState(migrated)).toEqual(migrated);
+  });
+
+  it("normalizes encrypted field exclusions idempotently", () => {
+    const current = createEmptyVaultState("2026-08-23T00:00:00.000Z");
+    const signature = "a".repeat(64);
+    const migrated = migrateVaultState({ ...current, settings: {
+      ...current.settings,
+      autofillBlockedFieldSignatures: [{ signature, hostname: "Login.Example.com.", frameScope: "top-level", role: "username", hints: ["username"], blockedAt: "2026-08-23T00:00:00.000Z" }]
+    } });
+    expect(migrated.settings.autofillBlockedFieldSignatures).toEqual([{ signature, hostname: "login.example.com", frameScope: "top-level", role: "username", hints: ["username"], blockedAt: "2026-08-23T00:00:00.000Z" }]);
     expect(migrateVaultState(migrated)).toEqual(migrated);
   });
 

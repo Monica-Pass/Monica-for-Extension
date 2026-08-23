@@ -3,6 +3,7 @@ import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provi
 import { bytesToBase64 } from "../security/encoding";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
 import type { AutofillSitePolicy } from "../autofill/site-policy";
+import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import type { BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassGroupMutationResult, KeePassGroupPage, KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult, KeePassOpenInput, KeePassRemoteManagerStatus, KeePassRemoteOpenInput, KeePassRemoteProbeResult, KeePassSessionSummary, KeePassWebDavTestInput, LoginMatchSummary, Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus, Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, Mdbx2WebDavSettingsInput, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamPendingLogin, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, VaultItem, VaultStatusResponse, VaultWindowsHelloStatus, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentRecoveryStatus, ProviderAttachmentTransferRequest, ProviderAttachmentTransferResult, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult } from "./messages";
 
@@ -43,13 +44,18 @@ export const vaultClient = {
   upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
   restoreItem: (itemId: string) => send<VaultItem>({ type: "VAULT_RESTORE_ITEM", itemId }),
-  matchLogins: (pageUrl: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl }),
+  matchLogins: (pageUrl: string, fieldSignature?: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl, fieldSignature }),
   matchPasskeys: (pageUrl: string) => send<PasskeyMatchSummary[]>({ type: "VAULT_MATCH_PASSKEYS", pageUrl }),
   fillLogin: (itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) => send<{ filledUsername: boolean; filledPassword: boolean; filledTotp: boolean; filledCustomFields: number }>({ type: "VAULT_FILL_LOGIN", itemId, tabId, frameId, documentId, expectedOrigin }),
-  listWalletItems: (kinds: WalletFillKind[], pageUrl: string) => send<WalletMatchSummary[]>({ type: "VAULT_LIST_WALLET_ITEMS", kinds, pageUrl }),
+  listWalletItems: (kinds: WalletFillKind[], pageUrl: string, fieldSignature?: string) => send<WalletMatchSummary[]>({ type: "VAULT_LIST_WALLET_ITEMS", kinds, pageUrl, fieldSignature }),
   fillWallet: (itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) => send<WalletFillResult>({ type: "VAULT_FILL_WALLET", itemId, tabId, frameId, documentId, expectedOrigin }),
   getAutofillSitePolicy: () => send<AutofillSitePolicy>({ type: "AUTOFILL_SITE_POLICY_GET" }),
   setAutofillSitePolicy: (policy: AutofillSitePolicy) => send<AutofillSitePolicy>({ type: "AUTOFILL_SITE_POLICY_SET", policy }),
+  listAutofillBlockedFields: () => send<BlockedFieldSignatureRecord[]>({ type: "AUTOFILL_FIELD_POLICY_LIST" }),
+  isAutofillFieldBlocked: (signature: string) => send<boolean>({ type: "AUTOFILL_FIELD_POLICY_STATUS", signature }),
+  setCurrentAutofillFieldBlocked: (blocked: boolean, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) =>
+    send<BlockedFieldSignatureRecord | null>({ type: "AUTOFILL_FIELD_POLICY_SET_CURRENT", blocked, tabId, frameId, documentId, expectedOrigin }),
+  removeAutofillBlockedField: (signature: string) => send<boolean>({ type: "AUTOFILL_FIELD_POLICY_REMOVE", signature }),
   listSteamConfirmations: (itemId: string) => send<SteamConfirmation[]>({ type: "STEAM_LIST_CONFIRMATIONS", itemId }),
   respondSteamConfirmation: (itemId: string, confirmation: SteamConfirmation, accept: boolean) => send<boolean>({ type: "STEAM_RESPOND_CONFIRMATION", itemId, confirmation, accept }),
   listSteamPendingLogins: (itemId: string) => send<SteamPendingLogin[]>({ type: "STEAM_LIST_PENDING_LOGINS", itemId }),

@@ -72,6 +72,8 @@ import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from ".
 import { IndexedDbVaultStorage } from "../security/vault-storage";
 import { ChromeVaultDeviceKeyStore } from "../security/vault-device-key";
 import { isAutofillBlocked, isSaveBlocked, type AutofillSitePolicy } from "../autofill/site-policy";
+import { normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
+import type { AutofillFieldContext } from "../content/field-signature";
 import { configureSessionStorageAccess } from "./startup";
 
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
@@ -403,6 +405,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_MATCH_LOGINS": {
       assertExtensionPage(sender);
       if (await autofillBlocked(request.pageUrl)) return [];
+      if (request.fieldSignature && await service.isAutofillFieldSignatureBlocked(request.fieldSignature)) return [];
       const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
       return matches.map(toMatchSummary);
     }
@@ -423,6 +426,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_LIST_WALLET_ITEMS": {
       assertExtensionPage(sender);
       if (await autofillBlocked(request.pageUrl)) return [];
+      if (request.fieldSignature && await service.isAutofillFieldSignatureBlocked(request.fieldSignature)) return [];
       return listWalletItems(request.kinds);
     }
     case "VAULT_FILL_WALLET": {
@@ -435,6 +439,24 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "AUTOFILL_SITE_POLICY_SET":
       assertManagerPage(sender);
       return service.setAutofillSitePolicy(request.policy);
+    case "AUTOFILL_FIELD_POLICY_LIST":
+      assertManagerPage(sender);
+      return service.listAutofillBlockedFieldSignatures();
+    case "AUTOFILL_FIELD_POLICY_STATUS":
+      assertExtensionPage(sender);
+      return service.isAutofillFieldSignatureBlocked(request.signature);
+    case "AUTOFILL_FIELD_POLICY_SET_CURRENT": {
+      assertExtensionPage(sender);
+      const target = await resolveSensitiveFillTarget(request.tabId, request.frameId ?? 0, request.documentId, request.expectedOrigin);
+      const record = await currentFieldRecord(request.tabId, target);
+      if (!record) throw new Error("当前没有可管理的自动填充字段。");
+      if (request.blocked) return service.addAutofillBlockedFieldSignature(record);
+      await service.removeAutofillBlockedFieldSignature(record.signature);
+      return null;
+    }
+    case "AUTOFILL_FIELD_POLICY_REMOVE":
+      assertManagerPage(sender);
+      return service.removeAutofillBlockedFieldSignature(request.signature);
     case "STEAM_LIST_CONFIRMATIONS": {
       assertExtensionPage(sender);
       return runSteamOperation(request.itemId, listSteamConfirmations);
@@ -2055,6 +2077,7 @@ async function captureCredentialCandidate(input: CredentialCaptureInput, sender:
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定；请先解锁 Monica，再重新提交登录表单。");
   if (await savePromptBlocked(source.url)) throw new Error("此网站已禁止显示密码保存提示。");
+  if (await anyAutofillFieldSignatureBlocked(input.fieldSignatures)) throw new Error("此表单包含已排除的自动填充字段，已禁止保存提示。");
   const submittedUsername = String(input.username || "").trim();
   const remembered = submittedUsername ? undefined : await loadCredentialUsername(source);
   let candidate: CredentialCaptureInput;
@@ -2123,6 +2146,10 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
   if (await savePromptBlocked(pending.pageUrl)) {
     pendingCredentialCaptures.delete(candidateId);
     throw new Error("此网站已禁止保存密码。");
+  }
+  if (await anyAutofillFieldSignatureBlocked(pending.fieldSignatures)) {
+    pendingCredentialCaptures.delete(candidateId);
+    throw new Error("此表单包含已排除的自动填充字段，已禁止保存密码。");
   }
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，保存候选未写入。");
 
@@ -2207,13 +2234,24 @@ function validateCredentialCapture(input: CredentialCaptureInput, senderUrl: str
   const username = String(input.username || "").trim().slice(0, 1024);
   const password = String(input.password || "");
   if (!password || password.length > 8192) throw new Error("捕获的密码为空或过长。");
+  const fieldSignatures = Array.isArray(input.fieldSignatures) ? [...new Set(input.fieldSignatures)] : [];
+  if (fieldSignatures.length > 128 || fieldSignatures.some((signature) => typeof signature !== "string" || !/^[0-9a-f]{64}$/.test(signature))) throw new Error("表单字段签名无效或过多。");
   return {
     username,
     password,
     pageUrl: page.toString(),
     pageTitle: String(input.pageTitle || "").trim().slice(0, 200),
-    captureKind: input.captureKind === "password-change" ? "password-change" : "login"
+    captureKind: input.captureKind === "password-change" ? "password-change" : "login",
+    fieldSignatures
   };
+}
+
+async function anyAutofillFieldSignatureBlocked(signatures: unknown): Promise<boolean> {
+  if (!Array.isArray(signatures)) return false;
+  for (const signature of signatures.slice(0, 128)) {
+    if (typeof signature === "string" && await service.isAutofillFieldSignatureBlocked(signature)) return true;
+  }
+  return false;
 }
 
 function assertWebPageSender(sender: chrome.runtime.MessageSender): { tabId: number; frameId: number; documentId: string; url: string; origin: string } {
@@ -2643,6 +2681,7 @@ interface SensitiveFillTarget {
   url: string;
   origin: string;
   documentId: string;
+  frameId: number;
 }
 
 async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId?: string, expectedOrigin?: string): Promise<SensitiveFillTarget> {
@@ -2655,12 +2694,28 @@ async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId
   const origin = new URL(target.url).origin;
   if (expectedOrigin && origin !== expectedOrigin) throw new Error("页面来源已变化，已阻止敏感信息填充。");
   if (!isSecureSensitivePageUrl(target.url)) throw new Error("已阻止向不安全的 HTTP 页面填充敏感信息。");
-  return { url: target.url, origin, documentId: target.documentId };
+  return { url: target.url, origin, documentId: target.documentId, frameId };
+}
+
+async function currentFieldRecord(tabId: number, target: SensitiveFillTarget): Promise<BlockedFieldSignatureRecord | undefined> {
+  const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_GET_FIELD_CONTEXT" }, { documentId: target.documentId }) as { ok?: boolean; context?: AutofillFieldContext };
+  if (!response?.ok || !response.context) return undefined;
+  const record = normalizeBlockedFieldSignature({ ...response.context, blockedAt: new Date().toISOString() });
+  if (record.hostname !== new URL(target.url).hostname.toLowerCase() || record.frameScope !== (target.frameId === 0 ? "top-level" : "frame")) {
+    throw new Error("页面字段上下文已变化，请重新打开 Monica。");
+  }
+  return record;
+}
+
+async function assertCurrentFieldAllowed(tabId: number, target: SensitiveFillTarget): Promise<void> {
+  const record = await currentFieldRecord(tabId, target);
+  if (record && await service.isAutofillFieldSignatureBlocked(record.signature)) throw new Error("当前字段已禁止使用 Monica 自动填充。");
 }
 
 async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) {
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
   if (await autofillBlocked(target.url)) throw new Error("此网站已禁止使用 Monica 自动填充。");
+  await assertCurrentFieldAllowed(tabId, target);
   const item = await service.getItem(itemId);
   if (!item || !isLoginItem(item) || item.deletedAt || item.archivedAt) throw new Error("登录项不存在、已归档或已被删除。");
   if (loginMatchScore(item, target.url) <= 0) throw new Error("登录项与目标页面不匹配，已阻止填充。");
@@ -2692,6 +2747,7 @@ async function listWalletItems(requestedKinds: WalletFillKind[]): Promise<Wallet
 async function fillWalletItem(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string): Promise<WalletFillResult> {
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
   if (await autofillBlocked(target.url)) throw new Error("此网站已禁止使用 Monica 自动填充。");
+  await assertCurrentFieldAllowed(tabId, target);
   const item = await service.getItem(itemId);
   if (!item || !isWalletItem(item)) throw new Error("证件或支付项目不存在或已被删除。");
   const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", expectedOrigin: target.origin, wallet: walletPayload(item) }, { documentId: target.documentId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };

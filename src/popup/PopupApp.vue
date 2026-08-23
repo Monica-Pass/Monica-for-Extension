@@ -9,6 +9,7 @@ import { activeScheme, themeColor, useThemePreferences } from "../lib/theme";
 import { vaultClient } from "../runtime/client";
 import type { LoginMatchSummary, PasskeyMatchSummary, WalletFillKind, WalletMatchSummary } from "../runtime/messages";
 import type { VaultLifecycleStatus } from "../security/secure-vault-service";
+import type { AutofillFieldContext } from "../content/field-signature";
 
 interface PageScan {
   ok: boolean;
@@ -23,6 +24,7 @@ interface PageScan {
   hasFocusedLoginField: boolean;
   frameId: number;
   documentId: string;
+  currentField?: AutofillFieldContext;
 }
 
 const loading = ref(true);
@@ -40,6 +42,8 @@ const selectedFrameId = ref(0);
 const matches = ref<LoginMatchSummary[]>([]);
 const passkeys = ref<PasskeyMatchSummary[]>([]);
 const walletItems = ref<WalletMatchSummary[]>([]);
+const currentFieldBlocked = ref(false);
+const fieldPolicyBusy = ref(false);
 
 useThemePreferences();
 const scan = computed(() => scans.value.find((candidate) => candidate.frameId === selectedFrameId.value) || scans.value[0] || null);
@@ -101,14 +105,34 @@ async function unlock() {
 
 async function loadMatches() {
   const allowFill = isSensitivePageAllowed(scan.value?.url || tabUrl.value);
+  currentFieldBlocked.value = Boolean(scan.value?.currentField?.signature && await vaultClient.isAutofillFieldBlocked(scan.value.currentField.signature));
   const [loginMatches, passkeyMatches, walletMatches] = await Promise.all([
-    allowFill ? vaultClient.matchLogins(scan.value?.url || tabUrl.value) : Promise.resolve([]),
+    allowFill && !currentFieldBlocked.value ? vaultClient.matchLogins(scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([]),
     vaultClient.matchPasskeys(tabUrl.value),
-    allowFill ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value) : Promise.resolve([])
+    allowFill && !currentFieldBlocked.value ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([])
   ]);
   matches.value = loginMatches;
   passkeys.value = passkeyMatches;
   walletItems.value = walletMatches;
+}
+
+async function setCurrentFieldBlocked(blocked: boolean) {
+  if (!tabId.value || !scan.value?.currentField) return;
+  fieldPolicyBusy.value = true;
+  status.value = "";
+  try {
+    await vaultClient.setCurrentAutofillFieldBlocked(blocked, tabId.value, selectedFrameId.value, scan.value.documentId, scan.value.origin);
+    await initialize();
+    status.value = blocked ? "已禁止此字段自动填充" : "已恢复此字段自动填充";
+  } catch (cause) {
+    status.value = errorMessage(cause, "字段排除设置失败。");
+  } finally {
+    fieldPolicyBusy.value = false;
+  }
+}
+
+function fieldRoleLabel() {
+  return ({ username: "用户名字段", "current-password": "密码字段", "new-password": "新密码字段", totp: "验证码字段", wallet: "证件或支付字段" } as const)[scan.value?.currentField?.role || "username"];
 }
 
 function passkeyState(item: PasskeyMatchSummary) {
@@ -208,6 +232,8 @@ function isSensitivePageAllowed(raw: string): boolean {
       <template v-else>
         <label v-if="fillTargets.length > 1" class="frame-picker"><span>填充目标</span><select :value="selectedFrameId" @change="selectTarget"><option v-for="target in fillTargets" :key="target.frameId" :value="target.frameId">{{ target.frameId === 0 ? '主页面' : `嵌入框：${normalizeHost(target.url)}` }}{{ target.hasTotpField && !target.hasPasswordField ? '（验证码）' : '' }}</option></select></label>
         <div v-if="!fillPageAllowed" class="inline-warning danger-warning"><m3e-icon name="gpp_bad"></m3e-icon><span>当前页面不是安全 HTTPS，已禁用密码、证件与支付信息填充。</span></div>
+        <div v-else-if="currentFieldBlocked" class="field-policy-row"><span><m3e-icon name="block"></m3e-icon><span><strong>此字段已排除</strong><small>{{ fieldRoleLabel() }}</small></span></span><button type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(false)">恢复填充</button></div>
+        <button v-else-if="scan?.currentField" class="field-policy-action" type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(true)"><m3e-icon name="do_not_disturb_on"></m3e-icon><span>此字段不再填充</span></button>
         <div v-else-if="!scan?.hasPasswordField && !scan?.hasTotpField && !scan?.hasUsernameField && !scan?.walletKinds.length && !passkeys.length" class="inline-warning"><m3e-icon name="info"></m3e-icon><span>当前目标暂未检测到可安全填充的字段。</span></div>
         <section v-if="matches.length" class="match-section"><div class="section-title"><h2>匹配的登录项</h2><span>{{ matches.length }}</span></div><div class="match-list">
           <button v-for="item in matches" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : item.hasTotp && scan?.hasTotpField ? 'timer' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || '无用户名' }}{{ item.hasTotp ? ' · 含验证码' : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? '填充中' : '填充' }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>

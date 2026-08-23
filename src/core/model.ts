@@ -401,6 +401,8 @@ export interface ProviderDiagnosticExport {
   diagnostics: ProviderDiagnostic[];
 }
 
+import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
+
 export interface VaultState {
   magic: "MONICA_EXTENSION_VAULT";
   schemaVersion: 2;
@@ -419,6 +421,7 @@ export interface VaultState {
     protectionMode: "master-password" | "device-key";
     autofillBlockedHosts: string[];
     saveBlockedHosts: string[];
+    autofillBlockedFieldSignatures: BlockedFieldSignatureRecord[];
     windowsHello?: WindowsHelloBinding;
   };
 }
@@ -458,7 +461,8 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
       defaultProviderId: localProviderId,
       protectionMode: "master-password",
       autofillBlockedHosts: [],
-      saveBlockedHosts: []
+      saveBlockedHosts: [],
+      autofillBlockedFieldSignatures: []
     }
   };
 }

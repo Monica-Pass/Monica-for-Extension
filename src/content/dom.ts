@@ -2,6 +2,7 @@ import type { WalletFillKind } from "../runtime/messages";
 import { queryComposedAll } from "./composed-dom";
 import { inputHints, loginFieldRole, loginFieldScope, normalizeHint } from "./login-field-role";
 import { scanWalletKinds } from "./wallet-dom";
+import { createCurrentFieldContext, type AutofillFieldContext } from "./field-signature";
 
 export interface PageScan {
   ok: true;
@@ -14,6 +15,11 @@ export interface PageScan {
   hasTotpField: boolean;
   hasFocusedLoginField: boolean;
   walletKinds: WalletFillKind[];
+  currentField?: AutofillFieldContext;
+}
+
+export async function scanPageWithFieldContext(rootDocument: Document = document, pageLocation: Location = location): Promise<PageScan> {
+  return { ...scanPage(rootDocument, pageLocation), currentField: await createCurrentFieldContext(rootDocument, pageLocation) };
 }
 
 export interface FillCredentialInput {

@@ -1,4 +1,5 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
+import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult } from "../providers/attachments/attachment-contract";
 import type { ProviderAttachmentTransferRequest, ProviderAttachmentTransferResult } from "../providers/attachments/attachment-transfer";
 import type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, Mdbx2WindowsHelloStatus } from "../providers/mdbx2/native-contract";
@@ -147,6 +148,7 @@ export interface CredentialCaptureInput {
   pageUrl: string;
   pageTitle: string;
   captureKind: "login" | "password-change";
+  fieldSignatures?: string[];
 }
 
 export interface VaultWindowsHelloStatus {
@@ -262,13 +264,17 @@ export type ExtensionRequest =
   | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_RESTORE_ITEM"; itemId: string }
-  | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
+  | { type: "VAULT_MATCH_LOGINS"; pageUrl: string; fieldSignature?: string }
   | { type: "VAULT_MATCH_PASSKEYS"; pageUrl: string }
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
-  | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[]; pageUrl: string }
+  | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[]; pageUrl: string; fieldSignature?: string }
   | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
   | { type: "AUTOFILL_SITE_POLICY_GET" }
   | { type: "AUTOFILL_SITE_POLICY_SET"; policy: AutofillSitePolicy }
+  | { type: "AUTOFILL_FIELD_POLICY_LIST" }
+  | { type: "AUTOFILL_FIELD_POLICY_STATUS"; signature: string }
+  | { type: "AUTOFILL_FIELD_POLICY_SET_CURRENT"; blocked: boolean; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
+  | { type: "AUTOFILL_FIELD_POLICY_REMOVE"; signature: string }
   | { type: "STEAM_LIST_CONFIRMATIONS"; itemId: string }
   | { type: "STEAM_RESPOND_CONFIRMATION"; itemId: string; confirmation: SteamConfirmation; accept: boolean }
   | { type: "STEAM_LIST_PENDING_LOGINS"; itemId: string }

@@ -10,6 +10,7 @@ import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore, type VaultDeviceKeyStore } from "./vault-device-key";
 import { normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
+import { addBlockedFieldSignature, normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
 
@@ -434,6 +435,41 @@ export class SecureVaultService {
       state.updatedAt = new Date(this.now()).toISOString();
       await this.persist(state, key, envelope.kdf);
       return structuredClone(policy);
+    });
+  }
+
+  async listAutofillBlockedFieldSignatures(): Promise<BlockedFieldSignatureRecord[]> {
+    const state = await this.readState();
+    return structuredClone(state.settings.autofillBlockedFieldSignatures);
+  }
+
+  async isAutofillFieldSignatureBlocked(signature: string): Promise<boolean> {
+    if (!/^[0-9a-f]{64}$/.test(signature)) return false;
+    const state = await this.readState();
+    return state.settings.autofillBlockedFieldSignatures.some((record) => record.signature === signature);
+  }
+
+  async addAutofillBlockedFieldSignature(input: BlockedFieldSignatureRecord): Promise<BlockedFieldSignatureRecord> {
+    const record = normalizeBlockedFieldSignature(input);
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      state.settings.autofillBlockedFieldSignatures = addBlockedFieldSignature(state.settings.autofillBlockedFieldSignatures, record);
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return structuredClone(record);
+    });
+  }
+
+  async removeAutofillBlockedFieldSignature(signature: string): Promise<boolean> {
+    if (!/^[0-9a-f]{64}$/.test(signature)) throw new Error("字段签名格式无效。");
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const next = state.settings.autofillBlockedFieldSignatures.filter((record) => record.signature !== signature);
+      if (next.length === state.settings.autofillBlockedFieldSignatures.length) return false;
+      state.settings.autofillBlockedFieldSignatures = next;
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return true;
     });
   }
 

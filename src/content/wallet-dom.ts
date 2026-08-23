@@ -107,10 +107,14 @@ export function fillWallet(payload: WalletFillPayload, rootDocument: Document = 
 function findWalletFields(rootDocument: Document): WalletField[] {
   return queryComposedAll<WalletControl>(rootDocument, "input,select,textarea").flatMap((element) => {
     if (!visibleControl(element)) return [];
-    const autocomplete = element.autocomplete.toLowerCase().split(/\s+/).reverse().find((token) => AUTOCOMPLETE_FIELDS[token]);
-    const name = autocomplete ? AUTOCOMPLETE_FIELDS[autocomplete] : heuristicField(element);
+    const name = walletFieldName(element);
     return name ? [{ element, name, kinds: FIELD_KINDS[name] }] : [];
   });
+}
+
+export function walletFieldName(element: WalletControl): WalletFieldName | undefined {
+  const autocomplete = element.autocomplete.toLowerCase().split(/\s+/).reverse().find((token) => AUTOCOMPLETE_FIELDS[token]);
+  return autocomplete ? AUTOCOMPLETE_FIELDS[autocomplete] : heuristicField(element);
 }
 
 function heuristicField(element: WalletControl): WalletFieldName | undefined {

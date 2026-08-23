@@ -1096,6 +1096,24 @@ describe("encrypted vault", () => {
     await service.lock();
     await expect(service.getAutofillSitePolicy()).rejects.toBeInstanceOf(VaultLockedError);
   });
+
+  it("keeps field exclusions encrypted, bounded and unavailable while locked", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("field policy password");
+    const blocked = await service.addAutofillBlockedFieldSignature({
+      signature: "a".repeat(64), hostname: "Login.Example.com.", frameScope: "top-level", role: "username",
+      hints: ["username"], blockedAt: "2026-08-23T00:00:00.000Z"
+    });
+    expect(blocked).toEqual(expect.objectContaining({ hostname: "login.example.com", signature: "a".repeat(64) }));
+    expect(await service.isAutofillFieldSignatureBlocked("a".repeat(64))).toBe(true);
+    expect(JSON.stringify(storage.envelope)).not.toContain("login.example.com");
+    expect(JSON.stringify(storage.envelope)).not.toContain("a".repeat(64));
+    await service.removeAutofillBlockedFieldSignature("a".repeat(64));
+    expect(await service.listAutofillBlockedFieldSignatures()).toEqual([]);
+    await service.lock();
+    await expect(service.listAutofillBlockedFieldSignatures()).rejects.toBeInstanceOf(VaultLockedError);
+  });
 });
 
 class FlakyMemoryVaultStorage extends MemoryVaultStorage {

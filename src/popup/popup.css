@@ -369,6 +369,19 @@ body.popup-body {
   text-align: left;
 }
 
+.field-policy-row,
+.field-policy-row > span,
+.field-policy-action { display: flex; align-items: center; }
+.field-policy-row { min-height: 52px; justify-content: space-between; gap: 8px; border-radius: 8px; padding: 4px 6px 4px 12px; background: var(--md-sys-color-surface-container, var(--app-surface)); }
+.field-policy-row > span { min-width: 0; gap: 8px; }
+.field-policy-row strong, .field-policy-row small { display: block; }
+.field-policy-row small { color: var(--app-muted); font-size: .75rem; }
+.field-policy-row button, .field-policy-action { min-height: 44px; border: 0; border-radius: 22px; color: var(--popup-action-color); background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
+.field-policy-row button { padding: 0 12px; white-space: nowrap; }
+.field-policy-action { width: 100%; justify-content: center; gap: 8px; padding: 0 12px; }
+.field-policy-action:hover, .field-policy-row button:hover { background: color-mix(in srgb, var(--app-selected) 60%, transparent); }
+.field-policy-action:disabled, .field-policy-row button:disabled { opacity: .55; cursor: wait; }
+
 .passkey-state span {
   min-width: 0;
   overflow-wrap: anywhere;
