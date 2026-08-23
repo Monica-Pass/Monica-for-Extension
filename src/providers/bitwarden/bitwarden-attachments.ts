@@ -11,7 +11,7 @@ import {
   type ProviderAttachmentSummary
 } from "../attachments/attachment-contract";
 import { paginateProviderAttachments } from "../attachments/attachment-pagination";
-import { providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
+import { ProviderTransportError, providerHttpError, resilientFetch, type ProviderTransportPolicy } from "../provider-transport";
 import {
   BitwardenClient,
   type BitwardenAttachmentDownloadInfo,
@@ -172,8 +172,19 @@ export class BitwardenAttachmentDownloadService {
       attachmentKey = reconciled.key
         ? await decryptBitwardenSymmetricKey(reconciled.key, cipherKey)
         : cloneKey(cipherKey);
-      const signedUrl = validateSignedDownloadUrl(download.info.url);
-      plaintext = await this.downloadAuthenticatedPlaintext(signedUrl, attachmentKey, input.signal, download.session.accessToken, download.session.apiUrl);
+      const signedUrl = validateSignedDownloadUrl(download.info.url, download.session.apiUrl);
+      let lastError: unknown;
+      for (const candidateUrl of attachmentDownloadCandidates(signedUrl, download.session.apiUrl)) {
+        try {
+          plaintext = await this.downloadAuthenticatedPlaintext(candidateUrl, attachmentKey, input.signal, download.session.accessToken, download.session.apiUrl);
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!(error instanceof ProviderTransportError) || error.status !== 404) throw error;
+        }
+      }
+      if (!plaintext) throw lastError instanceof Error ? lastError : new Error("Bitwarden 附件下载失败。");
       if (plaintext.sizeBytes > this.limits.maxPlaintextBytes) {
         throw attachmentError("bitwarden-attachment-too-large", "Bitwarden 附件明文超过 100 MiB 安全上限。");
       }
@@ -663,10 +674,10 @@ async function decryptAttachmentFileName(value: string | undefined, key: Bitward
   return fileName;
 }
 
-function validateSignedDownloadUrl(raw: string): string {
+function validateSignedDownloadUrl(raw: string, apiUrl?: string): string {
   let parsed: URL;
   try {
-    parsed = new URL(raw);
+    parsed = new URL(raw, apiUrl);
   } catch {
     throw attachmentError("bitwarden-attachment-url-invalid", "Bitwarden 附件签名地址无效。");
   }
@@ -681,6 +692,27 @@ function validateSignedDownloadUrl(raw: string): string {
 
 function sameOrigin(left: string, right: string): boolean {
   try { return new URL(left).origin === new URL(right).origin; } catch { return false; }
+}
+
+/**
+ * Vaultwarden installations hosted below a reverse-proxy prefix can return an
+ * object URL without that prefix. Keep the signed URL first, then retry only
+ * the safe same-origin prefixed variant when the object server responds 404.
+ */
+function attachmentDownloadCandidates(signedUrl: string, apiUrl?: string): string[] {
+  if (!apiUrl || !sameOrigin(signedUrl, apiUrl)) return [signedUrl];
+  try {
+    const signed = new URL(signedUrl);
+    const api = new URL(apiUrl);
+    const apiDirectory = api.pathname.endsWith("/") ? api.pathname.slice(0, -1) : api.pathname.substring(0, api.pathname.lastIndexOf("/"));
+    if (!apiDirectory || apiDirectory === "/" || signed.pathname.startsWith(`${apiDirectory}/`)) return [signedUrl];
+    const prefixed = new URL(signedUrl);
+    prefixed.pathname = `${apiDirectory}${signed.pathname.startsWith("/") ? signed.pathname : `/${signed.pathname}`}`;
+    const candidate = prefixed.toString();
+    return candidate === signedUrl ? [signedUrl] : [signedUrl, candidate];
+  } catch {
+    return [signedUrl];
+  }
 }
 
 function validateLimits(input: BitwardenAttachmentDownloadLimits): BitwardenAttachmentDownloadLimits {
