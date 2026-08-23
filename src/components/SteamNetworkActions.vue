@@ -5,6 +5,7 @@ import { resolveSteamSellerReceive, type SteamBatchPriceMode } from "../provider
 import { vaultClient } from "../runtime/client";
 import type { SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMiniProfileBackground, SteamPendingLogin } from "../runtime/messages";
 import TotpCodeCell from "./TotpCodeCell.vue";
+import { parseSteamQrChallenge } from "../core/steam-qr";
 
 type SteamTab = "approvals" | "inventory" | "market" | "devices";
 type InventoryItem = SteamInventoryPage["items"][number];
@@ -45,6 +46,7 @@ const profileLoaded = ref(false);
 const revokeTarget = ref<SteamAuthorizedDevice>();
 const revokeAccountName = ref(props.item.accountName || "");
 const revokePassword = ref("");
+const qrBusy = ref(false);
 
 const needle = computed(() => (props.query || "").trim().toLocaleLowerCase());
 const selectedGame = computed(() => inventoryOverview.value?.games.find((game) => gameKey(game.appId, game.contextId) === selectedGameKey.value));
@@ -104,6 +106,22 @@ async function respondLogin(login: SteamPendingLogin, approve: boolean) {
     notice.value = approve ? "登录请求已批准。" : "登录请求已拒绝。";
   } catch (cause) { setError(cause, "Steam 登录操作失败。"); }
   finally { busy.value = ""; }
+}
+
+async function approveQrLogin() {
+  const raw = window.prompt("粘贴 Steam 登录二维码链接");
+  if (!raw?.trim()) return;
+  const challenge = parseSteamQrChallenge(raw);
+  if (!challenge) return void (error.value = "无法识别 Steam 登录二维码链接。");
+  if (!window.confirm(`批准 Steam 登录请求（客户端 ${challenge.clientId}）吗？`)) return;
+  qrBusy.value = true;
+  clearFeedback();
+  try {
+    if (!await vaultClient.respondSteamLogin(props.item.id, challenge, true)) throw new Error("Steam 没有接受该登录操作。");
+    notice.value = "二维码登录请求已批准。";
+    if (approvalsLoaded.value) await loadApprovals();
+  } catch (cause) { setError(cause, "Steam 二维码登录操作失败。"); }
+  finally { qrBusy.value = false; }
 }
 
 async function loadDevices() {
@@ -307,7 +325,7 @@ function formatDeviceTime(seconds?: number): string {
     </div>
 
     <section v-if="activeTab === 'approvals'" class="steam-tab-panel" role="tabpanel">
-      <div class="steam-panel-toolbar"><div><h3>待批准操作</h3><small>{{ confirmations.length }} 项交易确认 · {{ pendingLogins.length }} 项登录请求</small></div><m3e-icon-button aria-label="刷新待批准操作" :disabled="Boolean(busy)" @click="loadApprovals"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
+      <div class="steam-panel-toolbar"><div><h3>待批准操作</h3><small>{{ confirmations.length }} 项交易确认 · {{ pendingLogins.length }} 项登录请求</small></div><span class="steam-row-actions"><m3e-button variant="text" :disabled="Boolean(busy) || qrBusy" @click="approveQrLogin"><m3e-icon slot="icon" name="qr_code_scanner"></m3e-icon>粘贴二维码</m3e-button><m3e-icon-button aria-label="刷新待批准操作" :disabled="Boolean(busy) || qrBusy" @click="loadApprovals"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></span></div>
       <div v-if="busy === 'approvals'" class="steam-loading" aria-live="polite">正在读取 Steam 待批准操作…</div>
       <div v-else class="steam-split-list">
         <section><h4>交易确认</h4><ul v-if="filteredConfirmations.length" class="steam-item-list"><li v-for="confirmation in filteredConfirmations" :key="confirmation.id"><span class="steam-list-icon"><m3e-icon name="receipt_long"></m3e-icon></span><span class="steam-list-copy"><strong>{{ confirmation.headline || 'Steam 交易' }}</strong><small>{{ confirmation.summary || '待确认操作' }}</small></span><span class="steam-row-actions"><m3e-button variant="tonal" :disabled="Boolean(busy)" @click="respondConfirmation(confirmation, true)">允许</m3e-button><m3e-button variant="text" :disabled="Boolean(busy)" @click="respondConfirmation(confirmation, false)">取消</m3e-button></span></li></ul><p v-else class="steam-empty">暂无匹配的交易确认</p></section>
