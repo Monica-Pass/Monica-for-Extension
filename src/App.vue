@@ -1755,7 +1755,7 @@ function closeBitwardenDialog() {
 async function connectBitwarden() {
   if (!bitwardenForm.masterPassword) return void (bitwardenError.value = "请输入 Bitwarden 主密码。");
   if (bitwardenDeviceVerificationRequired.value && !bitwardenForm.newDeviceOtp.trim()) return void (bitwardenError.value = "请输入 Bitwarden 新设备验证码。");
-  if (bitwardenTwoFactorProviders.value.length && bitwardenForm.twoFactorProvider !== 5 && !bitwardenForm.twoFactorCode.trim()) return void (bitwardenError.value = "请输入两步验证代码。");
+  if (bitwardenTwoFactorProviders.value.length && ![2, 4, 5].includes(bitwardenForm.twoFactorProvider) && !bitwardenForm.twoFactorCode.trim()) return void (bitwardenError.value = "请输入两步验证代码。");
   bitwardenBusy.value = true;
   bitwardenError.value = "";
   try {
@@ -1789,18 +1789,15 @@ async function connectBitwarden() {
     if (result.status === "two-factor-required") {
       bitwardenDeviceVerificationRequired.value = false;
       bitwardenForm.newDeviceOtp = "";
-      const supported = result.providers.filter((provider) => provider === 0 || provider === 1 || provider === 3 || provider === 5);
+      const supported = result.providers.filter((provider) => provider === 0 || provider === 1 || provider === 2 || provider === 3 || provider === 4 || provider === 5);
       if (!supported.length) {
         bitwardenError.value = "此账号只启用了当前浏览器无法完成的两步验证方式。";
         return;
       }
       bitwardenTwoFactorProviders.value = supported;
-      const rawWebAuthnData = result.providerData?.["5"];
-      bitwardenTwoFactorProviderData.value = rawWebAuthnData && typeof rawWebAuthnData === "object" && !Array.isArray(rawWebAuthnData)
-        ? rawWebAuthnData as Record<string, unknown>
-        : result.providerData;
+      bitwardenTwoFactorProviderData.value = result.providerData;
       bitwardenForm.twoFactorProvider = supported.includes(0) ? 0 : supported[0];
-      showNotice(bitwardenForm.twoFactorProvider === 5 ? "Bitwarden 需要 WebAuthn 验证，请继续完成硬件密钥或 Passkey 验证。" : "Bitwarden 需要两步验证，请输入代码后继续。");
+      showNotice(bitwardenForm.twoFactorProvider === 5 ? "Bitwarden 需要 WebAuthn 验证，请继续完成硬件密钥或 Passkey 验证。" : bitwardenForm.twoFactorProvider === 2 || bitwardenForm.twoFactorProvider === 4 ? "Bitwarden 需要 Duo 验证，请在安全窗口中批准登录。" : "Bitwarden 需要两步验证，请输入代码后继续。");
       return;
     }
     await refreshProviders();
@@ -2497,7 +2494,7 @@ function errorCode(error: unknown): string | undefined {
       <label class="field"><span>主密码 *</span><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></label>
       <label class="field"><span>组织 SSO 标识（可选）</span><input v-model="bitwardenForm.ssoOrganizationIdentifier" autocomplete="off" placeholder="仅企业 SSO 账户填写" /><small>填写后将通过 Bitwarden 官方 OAuth 窗口登录，回调只在后台校验。</small></label>
       <label v-if="bitwardenDeviceVerificationRequired" class="field"><span>新设备验证码 *</span><input v-model="bitwardenForm.newDeviceOtp" inputmode="numeric" autocomplete="one-time-code" required autofocus /><small>Bitwarden 已向账号邮箱发送新设备验证码，验证后即可连接。</small></label>
-      <template v-else-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label v-if="bitwardenForm.twoFactorProvider !== 5" class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><div v-else class="boundary-row"><m3e-icon name="key"></m3e-icon><span>点击连接后会打开 Bitwarden WebAuthn 验证页面，验证结果只在后台转交给登录接口。</span></div><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
+      <template v-else-if="bitwardenTwoFactorProviders.length"><label class="field"><span>两步验证方式</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label v-if="![2, 4, 5].includes(bitwardenForm.twoFactorProvider)" class="field"><span>验证码 *</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><div v-else class="boundary-row"><m3e-icon name="key"></m3e-icon><span>点击连接后会打开 Bitwarden 安全验证页面，验证结果只在后台转交给登录接口。</span></div><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">发送邮箱验证码</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>让 Bitwarden 记住此设备</span></label></template>
        <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>设为新项目的默认保存目标</span></label>
       <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
       <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。</span></div>
