@@ -792,6 +792,22 @@ main {
 .filter-dialog > header h2 { margin: 0; font-size: 1.25rem; }
 .filter-dialog > header p { margin: 4px 0 0; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .85rem; }
 .filter-dialog-body { display: grid; gap: 10px; padding: 18px 20px; overflow-y: auto; }
+.filter-dialog .filter-chip-row {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  overflow: visible;
+  max-width: 100%;
+}
+.filter-dialog .filter-chip-row button {
+  max-width: 100%;
+}
+.filter-dialog .filter-chip-row .filter-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .filter-dialog-body .filter-caption:not(:first-child) { margin-top: 10px; }
 .filter-dialog > footer { justify-content: flex-end; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 
