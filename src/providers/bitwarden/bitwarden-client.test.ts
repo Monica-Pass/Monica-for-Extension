@@ -67,6 +67,24 @@ describe("Bitwarden auth client", () => {
     expect(result).toEqual({ status: "two-factor-required", providers: [0, 1], providerData: { "0": {}, "1": {} } });
   });
 
+  it("returns the organization identifier when password login requires SSO", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });
+      return json({ error: "invalid_grant", SsoOrganizationIdentifier: "acme" }, 400);
+    }) as unknown as typeof fetch;
+    await expect(new BitwardenClient(fetcher).login({ vaultUrl: "https://self.example.com", email: EMAIL, masterPassword: PASSWORD, deviceId: "device-1" }))
+      .resolves.toEqual({ status: "sso-required", organizationIdentifier: "acme" });
+  });
+
+  it("prevalidates SSO through the official domainHint endpoint", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("https://self.example.com/identity/sso/prevalidate?domainHint=acme%20corp");
+      return json({ token: "prevalidated-token" });
+    }) as unknown as typeof fetch;
+    await expect(new BitwardenClient(fetcher).prevalidateSso("https://self.example.com", " acme corp "))
+      .resolves.toEqual({ urls: { vault: "https://self.example.com", api: "https://self.example.com/api", identity: "https://self.example.com/identity" }, token: "prevalidated-token" });
+  });
+
   it("turns Bitwarden's invalid credential response into an actionable region-safe error", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });

@@ -78,6 +78,7 @@ export const vaultClient = {
     twoFactorProvider?: number;
     rememberTwoFactor?: boolean;
     newDeviceOtp?: string;
+    ssoOrganizationIdentifier?: string;
     isDefaultSaveTarget?: boolean;
   }) => send<BitwardenConnectResult>({ type: "BITWARDEN_LOGIN", ...input }),
   logoutBitwarden: (providerId: string) => send<void>({ type: "BITWARDEN_LOGOUT", providerId }),

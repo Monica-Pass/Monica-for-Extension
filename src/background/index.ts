@@ -571,18 +571,21 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
-      const result = await bitwardenClient.login({
-        vaultUrl: request.vaultUrl,
-        email: request.email,
-        masterPassword: request.masterPassword,
-        deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID(),
-        twoFactorCode: request.twoFactorCode,
-        twoFactorProvider: request.twoFactorProvider,
-        rememberTwoFactor: request.rememberTwoFactor,
-        newDeviceOtp: request.newDeviceOtp
-      });
+      const result = request.ssoOrganizationIdentifier?.trim()
+        ? await loginBitwardenWithSso(request, existing?.config.deviceId)
+        : await bitwardenClient.login({
+            vaultUrl: request.vaultUrl,
+            email: request.email,
+            masterPassword: request.masterPassword,
+            deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID(),
+            twoFactorCode: request.twoFactorCode,
+            twoFactorProvider: request.twoFactorProvider,
+            rememberTwoFactor: request.rememberTwoFactor,
+            newDeviceOtp: request.newDeviceOtp
+          });
       if (result.status === "two-factor-required") return { status: result.status, providers: result.providers };
       if (result.status === "device-verification-required") return result;
+      if (result.status === "sso-required") return result;
       const account: ProviderAccount = {
         id: existing?.id || crypto.randomUUID(),
         kind: "bitwarden",
@@ -3328,6 +3331,67 @@ function toProviderConflictSummary(conflict: ProviderConflict): ProviderConflict
     ...(conflict.remote ? { remote: { title: conflict.remote.title } } : {}),
     detectedAt: conflict.detectedAt
   };
+}
+
+async function loginBitwardenWithSso(
+  request: Extract<ExtensionRequest, { type: "BITWARDEN_LOGIN" }>,
+  existingDeviceId: unknown
+) {
+  if (!chrome.identity?.launchWebAuthFlow || !chrome.identity.getRedirectURL) {
+    throw new Error("当前浏览器不支持 Bitwarden SSO 登录流程。");
+  }
+  const organizationIdentifier = request.ssoOrganizationIdentifier?.trim();
+  if (!organizationIdentifier) throw new Error("请输入组织 SSO 标识。");
+  const deviceId = typeof existingDeviceId === "string" && existingDeviceId ? existingDeviceId : crypto.randomUUID();
+  const prevalidated = await bitwardenClient.prevalidateSso(request.vaultUrl, organizationIdentifier);
+  const verifier = base64UrlBytes(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64UrlBytes(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const state = base64UrlBytes(crypto.getRandomValues(new Uint8Array(24)));
+  const redirectUri = chrome.identity.getRedirectURL("sso-callback");
+  const authorize = new URL(`${prevalidated.urls.identity}/connect/authorize`);
+  authorize.searchParams.set("client_id", "browser");
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", "api offline_access");
+  authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  authorize.searchParams.set("response_mode", "query");
+  authorize.searchParams.set("domain_hint", organizationIdentifier);
+  authorize.searchParams.set("ssoToken", prevalidated.token);
+  const callbackUrl = await launchWebAuthFlow(authorize.toString());
+  const callback = new URL(callbackUrl);
+  if (callback.origin !== new URL(redirectUri).origin || callback.pathname !== new URL(redirectUri).pathname) {
+    throw new Error("Bitwarden SSO 回调地址无效。");
+  }
+  if (callback.searchParams.get("state") !== state) throw new Error("Bitwarden SSO 状态校验失败。");
+  const code = callback.searchParams.get("code");
+  if (!code) throw new Error("Bitwarden SSO 未返回授权码。");
+  return bitwardenClient.loginSso({
+    vaultUrl: request.vaultUrl,
+    email: request.email,
+    masterPassword: request.masterPassword,
+    deviceId,
+    code,
+    codeVerifier: verifier,
+    redirectUri,
+    organizationIdentifier
+  });
+}
+
+function launchWebAuthFlow(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
+      const runtimeError = chrome.runtime.lastError;
+      if (runtimeError) return reject(new Error("Bitwarden SSO 登录窗口未完成。"));
+      if (!redirectUrl) return reject(new Error("Bitwarden SSO 未返回回调地址。"));
+      resolve(redirectUrl);
+    });
+  });
+}
+
+function base64UrlBytes(bytes: Uint8Array): string {
+  return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function toMatchSummary(item: LoginItem): LoginMatchSummary {

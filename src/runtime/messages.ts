@@ -109,7 +109,8 @@ export type PasskeyResult =
 export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
   | { status: "two-factor-required"; providers: number[] }
-  | { status: "device-verification-required" };
+  | { status: "device-verification-required" }
+  | { status: "sso-required"; organizationIdentifier: string };
 
 export interface SavePromptProviderSummary {
   id: string;
@@ -304,6 +305,7 @@ export type ExtensionRequest =
       twoFactorProvider?: number;
       rememberTwoFactor?: boolean;
       newDeviceOtp?: string;
+      ssoOrganizationIdentifier?: string;
       isDefaultSaveTarget?: boolean;
     }
   | { type: "BITWARDEN_LOGOUT"; providerId: string }

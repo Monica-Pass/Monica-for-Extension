@@ -35,7 +35,8 @@ export interface BitwardenSessionConfig extends Record<string, unknown> {
 export type BitwardenLoginResult =
   | { status: "authenticated"; session: BitwardenSessionConfig }
   | { status: "two-factor-required"; providers: number[]; providerData?: Record<string, unknown> }
-  | { status: "device-verification-required" };
+  | { status: "device-verification-required" }
+  | { status: "sso-required"; organizationIdentifier: string };
 
 export interface BitwardenClientLimits {
   maxAuthResponseBytes: number;
@@ -103,6 +104,13 @@ export interface BitwardenLoginInput {
   twoFactorProvider?: number;
   rememberTwoFactor?: boolean;
   newDeviceOtp?: string;
+}
+
+export interface BitwardenSsoLoginInput extends Omit<BitwardenLoginInput, "twoFactorCode" | "twoFactorProvider" | "rememberTwoFactor" | "newDeviceOtp"> {
+  code: string;
+  codeVerifier: string;
+  redirectUri: string;
+  organizationIdentifier: string;
 }
 
 const CLIENT_VERSION = "2026.7.0";
@@ -181,9 +189,8 @@ export class BitwardenClient {
         const providers = parseTwoFactorProviders(body);
         if (providers.length) return { status: "two-factor-required", providers, providerData: recordValue(body, "twoFactorProviders2", "TwoFactorProviders2") } as const;
         if (isBitwardenDeviceVerificationRequired(body)) return { status: "device-verification-required" } as const;
-        if (stringValue(body, "SsoOrganizationIdentifier", "ssoOrganizationIdentifier")) {
-          throw new Error("此 Bitwarden 账号要求组织 SSO 登录，当前密码登录方式无法完成。");
-        }
+        const ssoOrganizationIdentifier = stringValue(body, "SsoOrganizationIdentifier", "ssoOrganizationIdentifier");
+        if (ssoOrganizationIdentifier) return { status: "sso-required", organizationIdentifier: ssoOrganizationIdentifier } as const;
         if (stringValue(body, "HCaptcha_SiteKey", "hCaptcha_SiteKey")) throw new Error("Bitwarden 要求完成 CAPTCHA；请先在官方客户端登录此设备后重试。");
         throw bitwardenHttpError("Bitwarden 登录失败", response, body);
       }
@@ -248,6 +255,83 @@ export class BitwardenClient {
 
   async sync(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
     return this.authorizedJson(session, "/sync?excludeDomains=true", { method: "GET", signal }, "同步 Bitwarden 密码库失败");
+  }
+
+  async prevalidateSso(vaultUrl: string, organizationIdentifier: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; token: string }> {
+    const urls = inferBitwardenServerUrls(vaultUrl);
+    const identifier = normalizeSsoIdentifier(organizationIdentifier);
+    const body = await this.request(`${urls.identity}/sso/prevalidate?domainHint=${encodeURIComponent(identifier)}`, {
+      method: "GET",
+      headers: commonHeaders(),
+      signal
+    }, "Bitwarden SSO 预验证", false, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden SSO 预验证响应", requestSignal);
+      if (!response.ok) throw bitwardenHttpError("Bitwarden SSO 预验证失败", response, payload);
+      const token = stringValue(payload, "Token", "token");
+      if (!token) throw new Error("Bitwarden SSO 预验证响应缺少令牌。");
+      return payload;
+    });
+    return { urls, token: stringValue(body, "Token", "token") };
+  }
+
+  async loginSso(input: BitwardenSsoLoginInput, signal?: AbortSignal): Promise<BitwardenLoginResult> {
+    const code = normalizeSsoValue(input.code, "SSO 授权码");
+    const verifier = normalizeSsoValue(input.codeVerifier, "SSO code verifier");
+    const redirectUri = normalizeSsoValue(input.redirectUri, "SSO 回调地址");
+    const organizationIdentifier = normalizeSsoIdentifier(input.organizationIdentifier);
+    const { urls, email, kdf } = await this.prelogin(input.vaultUrl, input.email, signal);
+    const form = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: "browser",
+      username: email,
+      scope: "api offline_access",
+      deviceIdentifier: input.deviceId,
+      deviceType: DEVICE_TYPE,
+      deviceName: "Monica Browser Extension",
+      code,
+      code_verifier: verifier,
+      redirect_uri: redirectUri,
+      domainHint: organizationIdentifier
+    });
+    const body = await this.request(`${urls.identity}/connect/token`, {
+      method: "POST",
+      headers: tokenHeaders(email),
+      body: form,
+      signal
+    }, "Bitwarden SSO 登录", false, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxAuthResponseBytes, "Bitwarden SSO 登录响应", requestSignal);
+      if (!response.ok) {
+        const providers = parseTwoFactorProviders(payload);
+        if (providers.length) return { status: "two-factor-required", providers, providerData: recordValue(payload, "twoFactorProviders2", "TwoFactorProviders2") } as const;
+        throw bitwardenHttpError("Bitwarden SSO 登录失败", response, payload);
+      }
+      return { status: "ok", body: payload } as const;
+    });
+    if (body.status !== "ok") return body;
+    const tokenBody = body.body;
+    const accessToken = stringValue(tokenBody, "access_token");
+    const protectedKey = stringValue(tokenBody, "Key", "key");
+    if (!accessToken || !protectedKey) throw new Error("Bitwarden SSO 登录响应缺少访问令牌或受保护密钥。");
+    const masterKey = await deriveBitwardenMasterKey(input.masterPassword, email, kdf);
+    const stretchedKey = await stretchBitwardenMasterKey(masterKey);
+    const vaultKey = await decryptBitwardenSymmetricKey(protectedKey, stretchedKey);
+    const expiresIn = numberValue(tokenBody, "expires_in") || 3600;
+    return {
+      status: "authenticated",
+      session: {
+        vaultUrl: urls.vault,
+        apiUrl: urls.api,
+        identityUrl: urls.identity,
+        email,
+        deviceId: input.deviceId,
+        accessToken,
+        refreshToken: stringValue(tokenBody, "refresh_token") || undefined,
+        expiresAt: Date.now() + expiresIn * 1000,
+        kdf,
+        vaultKeyEnc: bytesToBase64(vaultKey.encKey),
+        vaultKeyMac: bytesToBase64(vaultKey.macKey)
+      }
+    };
   }
 
   listFolders(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
@@ -788,6 +872,17 @@ function normalizeBitwardenLoginCode(value: unknown, label: string): string | un
   if (typeof value !== "string") throw new Error(`Bitwarden ${label}无效。`);
   const normalized = value.trim();
   if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) throw new Error(`Bitwarden ${label}无效。`);
+  return normalized;
+}
+
+function normalizeSsoIdentifier(value: unknown): string {
+  return normalizeSsoValue(value, "组织 SSO 标识");
+}
+
+function normalizeSsoValue(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`Bitwarden ${label}无效。`);
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 512 || /[\u0000-\u001f\u007f]/.test(normalized)) throw new Error(`Bitwarden ${label}无效。`);
   return normalized;
 }
 
