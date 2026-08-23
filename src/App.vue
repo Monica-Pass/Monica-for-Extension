@@ -104,6 +104,7 @@ const activeSection = ref<Section>("overview");
 const query = ref("");
 type AndroidQuickFilter = "favorite" | "two-fa" | "notes" | "passkey" | "uncategorized" | "local-only" | "attachments";
 const activeQuickFilters = ref<AndroidQuickFilter[]>([]);
+const databaseSourceFilter = ref("all");
 const folderFilter = ref("all");
 const loading = ref(true);
 const authBusy = ref(false);
@@ -231,6 +232,7 @@ const databaseFolders = computed(() => {
   }
   return [...categories.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN"));
 });
+const databaseSources = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
 const filterableSection = computed(() => ["passwords", "wallet", "notes", "totp", "steam", "passkeys", "archive", "trash"].includes(activeSection.value));
 const filteredSteamItems = computed(() => steamItems.value.filter(matchesManagerFilters));
 const archivedCredentials = computed(() => archivedItems.value.filter(isLoginItem));
@@ -679,12 +681,13 @@ function hasAndroidFilter(filter: AndroidQuickFilter): boolean {
   return activeQuickFilters.value.includes(filter);
 }
 
-const hasActiveManagerFilter = computed(() => folderFilter.value !== "all" || activeQuickFilters.value.length > 0);
+const hasActiveManagerFilter = computed(() => databaseSourceFilter.value !== "all" || folderFilter.value !== "all" || activeQuickFilters.value.length > 0);
 
 function matchesManagerFilters(item: VaultItem): boolean {
   const needle = query.value.trim().toLocaleLowerCase();
   if (needle && !itemSearchText(item).toLocaleLowerCase().includes(needle)) return false;
-  if (folderFilter.value === "local" && !isLocalItem(item)) return false;
+  if (databaseSourceFilter.value === "local" && !isLocalItem(item)) return false;
+  if (databaseSourceFilter.value !== "all" && databaseSourceFilter.value !== "local" && !item.providerRefs.some((reference) => reference.providerId === databaseSourceFilter.value)) return false;
   if (folderFilter.value === "uncategorized" && itemCategoryKey(item) !== "uncategorized") return false;
   if (folderFilter.value.startsWith("id:") || folderFilter.value.startsWith("name:")) {
     if (itemCategoryKey(item) !== folderFilter.value) return false;
@@ -2053,10 +2056,15 @@ function errorCode(error: unknown): string | undefined {
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
         <div v-if="filterableSection" class="manager-filters" aria-label="快捷筛选">
-          <span class="filter-caption">密码源与分类</span>
-          <div class="filter-chip-row" role="group" aria-label="密码源与分类">
-            <button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部</button>
-            <button type="button" :class="{ selected: folderFilter === 'local' }" :aria-pressed="folderFilter === 'local'" @click="folderFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>Monica 本地库</button>
+          <span class="filter-caption">密码源</span>
+          <div class="filter-chip-row" role="group" aria-label="密码源">
+            <button type="button" :class="{ selected: databaseSourceFilter === 'all' }" :aria-pressed="databaseSourceFilter === 'all'" @click="databaseSourceFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部</button>
+            <button type="button" :class="{ selected: databaseSourceFilter === 'local' }" :aria-pressed="databaseSourceFilter === 'local'" @click="databaseSourceFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>Monica 本地库</button>
+            <button v-for="source in databaseSources" :key="source.id" type="button" :class="{ selected: databaseSourceFilter === source.id }" :aria-pressed="databaseSourceFilter === source.id" @click="databaseSourceFilter = source.id"><m3e-icon :name="source.kind === 'bitwarden' ? 'cloud_sync' : source.kind === 'mdbx2' ? 'storage' : 'key'"></m3e-icon>{{ source.name }}</button>
+          </div>
+          <span class="filter-caption filter-caption-category">分类</span>
+          <div class="filter-chip-row" role="group" aria-label="Android 分类">
+            <button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部分类</button>
             <button type="button" :class="{ selected: folderFilter === 'uncategorized' }" :aria-pressed="folderFilter === 'uncategorized'" @click="folderFilter = 'uncategorized'"><m3e-icon name="folder_off"></m3e-icon>未分类</button>
             <button v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" :aria-pressed="folderFilter === folder.key" @click="folderFilter = folder.key"><m3e-icon name="folder"></m3e-icon>{{ folder.label }}</button>
           </div>
@@ -2070,7 +2078,7 @@ function errorCode(error: unknown): string | undefined {
             <button type="button" :class="{ selected: hasAndroidFilter('local-only') }" :aria-pressed="hasAndroidFilter('local-only')" @click="toggleAndroidQuickFilter('local-only')"><m3e-icon name="key"></m3e-icon>仅本地</button>
             <button type="button" :class="{ selected: hasAndroidFilter('attachments') }" :aria-pressed="hasAndroidFilter('attachments')" @click="toggleAndroidQuickFilter('attachments')"><m3e-icon name="attach_file"></m3e-icon>附件</button>
           </div>
-          <button v-if="hasActiveManagerFilter" type="button" class="filter-reset" @click="folderFilter = 'all'; activeQuickFilters = []">清除筛选</button>
+          <button v-if="hasActiveManagerFilter" type="button" class="filter-reset" @click="databaseSourceFilter = 'all'; folderFilter = 'all'; activeQuickFilters = []">清除筛选</button>
         </div>
 
         <section v-if="activeSection === 'overview'" class="metrics">
