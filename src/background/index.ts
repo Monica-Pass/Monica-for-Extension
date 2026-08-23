@@ -613,6 +613,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
       if (!account || account.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
+      if (typeof account.config.refreshToken === "string" && account.config.refreshToken) {
+        try {
+          await bitwardenClient.revoke(readBitwardenSession(account));
+        } catch {
+          // Local logout must still complete when the identity server is unavailable.
+        }
+      }
       const config = { ...account.config };
       for (const key of ["accessToken", "refreshToken", "expiresAt", "vaultKeyEnc", "vaultKeyMac"]) delete config[key];
       clearBitwardenAttachmentSessions(account.id);

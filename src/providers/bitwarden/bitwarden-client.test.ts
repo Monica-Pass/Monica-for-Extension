@@ -85,6 +85,16 @@ describe("Bitwarden auth client", () => {
       .resolves.toEqual({ urls: { vault: "https://self.example.com", api: "https://self.example.com/api", identity: "https://self.example.com/identity" }, token: "prevalidated-token" });
   });
 
+  it("revokes refresh tokens without retrying or exposing the token", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://self.example.com/identity/connect/revoke");
+      expect((init?.body as URLSearchParams).get("token")).toBe("refresh-secret");
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(new BitwardenClient(fetcher).revoke(activeSession())).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("turns Bitwarden's invalid credential response into an actionable region-safe error", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/accounts/prelogin")) return json({ kdf: 0, kdfIterations: 1 });

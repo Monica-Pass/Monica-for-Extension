@@ -257,6 +257,19 @@ export class BitwardenClient {
     return this.authorizedJson(session, "/sync?excludeDomains=true", { method: "GET", signal }, "同步 Bitwarden 密码库失败");
   }
 
+  async revoke(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<void> {
+    if (!session.refreshToken) return;
+    const form = new URLSearchParams({ token: session.refreshToken, token_type_hint: "refresh_token", client_id: "browser" });
+    await this.request(`${session.identityUrl}/connect/revoke`, {
+      method: "POST",
+      headers: tokenHeaders(session.email, false),
+      body: form,
+      signal
+    }, "撤销 Bitwarden 会话", true, async (response) => {
+      if (!response.ok && response.status !== 404) throw bitwardenHttpError("撤销 Bitwarden 会话失败", response);
+    });
+  }
+
   async prevalidateSso(vaultUrl: string, organizationIdentifier: string, signal?: AbortSignal): Promise<{ urls: BitwardenServerUrls; token: string }> {
     const urls = inferBitwardenServerUrls(vaultUrl);
     const identifier = normalizeSsoIdentifier(organizationIdentifier);
