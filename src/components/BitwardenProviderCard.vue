@@ -46,6 +46,12 @@ const queueFailed = computed(() => Math.max(0, props.queue?.failed || 0));
 const queueRecovering = computed(() => Math.max(0, props.queue?.recovering || 0));
 const queueHasActivity = computed(() => queuePending.value > 0 || queueFailed.value > 0 || queueRecovering.value > 0);
 const authenticated = computed(() => props.provider.config.authenticated === true);
+const accountState = computed(() => {
+  const value = props.provider.config.accountState;
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+});
+const organizationCount = computed(() => Array.isArray(accountState.value?.organizations) ? accountState.value?.organizations.length : 0);
+const policyCount = computed(() => Array.isArray(accountState.value?.policies) ? accountState.value?.policies.length : 0);
 
 const stateClass = computed(() => {
   if (!authenticated.value) return "state-attention";
@@ -140,7 +146,8 @@ function toggleConflicts() {
       <div class="bitwarden-status-grid" aria-label="Bitwarden 状态摘要">
         <div><span>最近同步</span><strong>{{ lastSyncLabel }}</strong><small>{{ props.provider.lastSyncAt ? '已收到服务器确认' : '连接成功后首次同步' }}</small></div>
         <div><span>本地队列</span><strong>{{ queueLabel() }}</strong><small>{{ queue?.maxAttempts ? `最高已尝试 ${queue.maxAttempts} 次` : '后台加密队列' }}</small></div>
-        <div><span>路由权限</span><strong>个人文件夹 + 组织 Collection</strong><small>只读或缺失权限的目标会被禁用</small></div>
+        <div><span>组织</span><strong>{{ organizationCount }} 个</strong><small>Collection 路由按权限处理</small></div>
+        <div><span>策略</span><strong>{{ policyCount }} 个</strong><small>仅保存非敏感摘要</small></div>
       </div>
 
       <div v-if="errors.length" class="bitwarden-error-panel" role="alert">

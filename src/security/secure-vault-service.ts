@@ -1125,12 +1125,25 @@ function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
     };
   }
   if (provider.kind === "bitwarden") {
+    const state = provider.config.accountState;
+    const accountState = state && typeof state === "object" && !Array.isArray(state) ? state as Record<string, unknown> : undefined;
+    const safeList = (value: unknown) => Array.isArray(value)
+      ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+        .map((entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => ["id", "name", "type", "role", "collections", "enabled"].includes(key))))
+      : [];
     return {
       ...safe,
       config: {
         vaultUrl: stringConfig(provider, "vaultUrl"),
         email: stringConfig(provider, "email"),
-        authenticated: Boolean(stringConfig(provider, "accessToken"))
+        authenticated: Boolean(stringConfig(provider, "accessToken")),
+        accountState: accountState ? {
+          userId: typeof accountState.userId === "string" ? accountState.userId : undefined,
+          organizations: safeList(accountState.organizations),
+          policies: safeList(accountState.policies),
+          serverRevision: typeof accountState.serverRevision === "string" ? accountState.serverRevision : undefined,
+          syncedAt: typeof accountState.syncedAt === "string" ? accountState.syncedAt : undefined
+        } : undefined
       }
     };
   }

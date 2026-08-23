@@ -2,7 +2,7 @@ import type { LoginItem, PendingMutation, ProviderAccount, ProviderMutationRecei
 import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
 import { bitwardenSshComparableData, decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, mergeBitwardenSshLocalMetadata, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
-import { resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
+import { bitwardenOrganizationRecords, resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
@@ -48,7 +48,7 @@ export class BitwardenProvider implements ProviderAdapter {
     if (!rawCiphers.length && hasExistingBaseline && !context.allowEmptyRemote) {
       return {
         items: context.localItems,
-        accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: session, requiresEmptyRemoteConfirmation: true },
+        accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: bitwardenAccountConfig(session, synced.payload), requiresEmptyRemoteConfirmation: true },
         conflicts: [{ itemId: account.id, reason: "Bitwarden 返回空密码库，但本地存在已同步项目。" }],
         warnings: ["Bitwarden 返回空密码库，未删除本地缓存；请确认服务器状态后重试。"],
         sourceRecords: await bitwardenSourceRecords(rawCiphers, account.id)
@@ -59,7 +59,7 @@ export class BitwardenProvider implements ProviderAdapter {
         items: context.localItems,
         accountPatch: {
           lastError: "Bitwarden 空密码库确认已暂停：浏览器仍有未同步修改。",
-          config: session,
+          config: bitwardenAccountConfig(session, synced.payload),
           requiresEmptyRemoteConfirmation: true
         },
         conflicts: unsynchronizedForEmptyRemote.map((local) => ({
@@ -389,7 +389,7 @@ export class BitwardenProvider implements ProviderAdapter {
     return {
       items: merged,
       accountPatch: {
-        config: session,
+        config: bitwardenAccountConfig(session, synced.payload),
         lastSyncAt: context.now,
         lastError: conflicts.length ? `发现 ${conflicts.length} 个 Bitwarden 同步冲突。` : undefined,
         requiresEmptyRemoteConfirmation: false,
@@ -744,6 +744,35 @@ function stringValue(raw: Record<string, unknown>, ...names: string[]): string {
 function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[] {
   const result = value(raw, ...names);
   return Array.isArray(result) ? result : [];
+}
+
+/** Persist only non-sensitive account metadata from the latest sync response. */
+function bitwardenAccountConfig(session: BitwardenSessionConfig, payload: Record<string, unknown>): Record<string, unknown> {
+  const profile = record(value(payload, "Profile", "profile"));
+  const organizations = bitwardenOrganizationRecords(payload).map((organization) => ({
+    id: stringValue(organization, "Id", "id"),
+    name: stringValue(organization, "Name", "name") || undefined,
+    type: stringValue(organization, "Type", "type") || undefined,
+    role: stringValue(organization, "KeyConnectorUrl", "keyConnectorUrl") ? "key-connector" : stringValue(organization, "Role", "role") || undefined,
+    collections: arrayValue(organization, "Collections", "collections").length
+  })).filter((organization) => organization.id);
+  const policySources = [value(payload, "Policies", "policies"), value(profile, "Policies", "policies")];
+  const policies = policySources.flatMap((source) => Array.isArray(source) ? source : []).map((entry) => record(entry)).map((policy) => ({
+    id: stringValue(policy, "Id", "id"),
+    name: stringValue(policy, "Name", "name") || undefined,
+    type: stringValue(policy, "Type", "type") || undefined,
+    enabled: typeof value(policy, "Enabled", "enabled") === "boolean" ? value(policy, "Enabled", "enabled") : undefined
+  })).filter((policy) => policy.id);
+  return {
+    ...session,
+    accountState: {
+      userId: stringValue(profile, "Id", "id") || undefined,
+      organizations,
+      policies,
+      serverRevision: stringValue(payload, "RevisionDate", "revisionDate", "ServerRevision", "serverRevision") || undefined,
+      syncedAt: new Date().toISOString()
+    }
+  };
 }
 
 function record(value: unknown): Record<string, unknown> {
