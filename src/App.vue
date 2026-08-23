@@ -2156,7 +2156,10 @@ function errorCode(error: unknown): string | undefined {
         <section v-else class="settings-grid">
           <AppearancePanel class="motion-card" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
-            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows Hello 保护设备密钥；私钥不离开本机。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
+            <details class="settings-disclosure hello-disclosure">
+              <summary><span><strong>Windows Hello</strong><small>{{ windowsHelloStatus?.native.available ? '设备可用' : '设备不可用' }} · {{ windowsHelloStatus?.protectionMode === 'device-key' ? '设备密钥' : '主密码' }}</small></span><m3e-icon name="fingerprint" aria-hidden="true"></m3e-icon><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+              <div class="settings-disclosure-content">
+            <p class="supporting">使用 Windows Hello 保护设备密钥；私钥不离开本机。</p>
             <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? '设备可用' : '设备不可用' }}</strong><small>平台验证器</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? windowsHelloStatus.bindingConsistent ? '已注册' : '绑定异常' : '未注册' }}</strong><small>当前密码库</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? '设备密钥' : windowsHelloStatus.protectionMode === 'master-password' ? '主密码' : '未知' }}</strong><small>保护方式</small></span></div>
             <p v-if="windowsHelloStatus?.protectionMode === 'master-password'" class="supporting">当前使用主密码保护。转换为设备密钥后才能使用 Windows Hello 免输入解锁。</p>
             <p v-else-if="windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting">加密密码库记录与 Native Host 本机凭据不一致。当前保持锁定；撤销失效绑定后可重新注册。</p>
@@ -2164,6 +2167,8 @@ function errorCode(error: unknown): string | undefined {
             <p v-else class="supporting">解锁密码库后即可注册本机凭据。</p>
             <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" aria-label="注册 Windows Hello 本机凭据" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册本机凭据' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>
             <p v-if="windowsHelloError" class="form-error" role="alert">{{ windowsHelloError }}</p>
+              </div>
+            </details>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>加密整库备份</h2>

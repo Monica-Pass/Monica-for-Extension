@@ -570,7 +570,11 @@ main {
 .settings-disclosure > summary strong { font-size: 1.15rem; }
 .settings-disclosure > summary small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
 .settings-disclosure > summary m3e-icon { --m3e-icon-size: 20px; transition: transform var(--motion-fast) var(--motion-ease); }
-.settings-disclosure[open] > summary m3e-icon { transform: rotate(180deg); }
+.settings-disclosure[open] > summary .settings-disclosure-chevron { transform: rotate(180deg); }
+.settings-disclosure > summary .settings-disclosure-chevron { margin-left: auto; }
+.hello-disclosure > summary { min-height: 64px; }
+.hello-disclosure > summary > m3e-icon { color: var(--app-primary); --m3e-icon-size: 24px; }
+.hello-disclosure > summary .settings-disclosure-chevron { --m3e-icon-size: 20px; }
 .settings-disclosure-content { display: grid; gap: 12px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 16px 4px 4px; }
 
 .metric-card {
