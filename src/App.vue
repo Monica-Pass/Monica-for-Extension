@@ -7,6 +7,7 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import AppearancePanel from "./components/AppearancePanel.vue";
+import AutofillSitePolicyDialog from "./components/AutofillSitePolicyDialog.vue";
 import BitwardenCollectionsDialog from "./components/BitwardenCollectionsDialog.vue";
 import BitwardenFoldersDialog from "./components/BitwardenFoldersDialog.vue";
 import BitwardenProviderCard from "./components/BitwardenProviderCard.vue";
@@ -168,6 +169,8 @@ const activeMdbx2ProviderId = ref("");
 const securityBusy = ref<"" | "password" | "export" | "restore">("");
 const securityError = ref("");
 const passwordChangeDialogOpen = ref(false);
+const autofillSitePolicyDialogOpen = ref(false);
+const autofillSitePolicy = ref<{ blockedHosts: string[]; saveBlockedHosts: string[] }>({ blockedHosts: [], saveBlockedHosts: [] });
 const selectedEncryptedBackup = ref<EncryptedVaultBackup | null>(null);
 const selectedEncryptedBackupName = ref("");
 const exportBackupDialogOpen = ref(false);
@@ -287,7 +290,7 @@ const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePa
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -359,7 +362,7 @@ async function initialize() {
   loading.value = true;
   try {
     lifecycle.value = await vaultClient.status();
-    if (lifecycle.value === "unlocked") await Promise.all([refreshItems(), refreshProviders(), refreshWindowsHelloStatus()]);
+    if (lifecycle.value === "unlocked") await Promise.all([refreshItems(), refreshProviders(), refreshWindowsHelloStatus(), refreshAutofillSitePolicy()]);
     else if (lifecycle.value === "locked") await refreshWindowsHelloStatus();
   } catch (error) {
     authError.value = errorMessage(error);
@@ -454,6 +457,15 @@ async function lockVault() {
   mdbx2RuntimeStatuses.value = {};
   mdbx2SyncStatuses.value = {};
   void refreshWindowsHelloStatus();
+}
+
+async function refreshAutofillSitePolicy() {
+  autofillSitePolicy.value = await vaultClient.getAutofillSitePolicy();
+}
+
+async function openAutofillSitePolicyDialog() {
+  await refreshAutofillSitePolicy();
+  autofillSitePolicyDialogOpen.value = true;
 }
 
 async function refreshWindowsHelloStatus() {
@@ -646,7 +658,7 @@ function navigate(section: Section) {
   activeSection.value = section;
   mobileNavOpen.value = false;
   if (section === "providers") void refreshProviders();
-  if (section === "settings") void refreshWindowsHelloStatus();
+  if (section === "settings") void Promise.all([refreshWindowsHelloStatus(), refreshAutofillSitePolicy()]);
 }
 
 function sectionTitle(section: Section): string {
@@ -2298,6 +2310,14 @@ function errorCode(error: unknown): string | undefined {
 
         <section v-else class="settings-grid settings-page">
           <AppearancePanel class="motion-card" />
+          <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
+            <button class="settings-entry" type="button" @click="openAutofillSitePolicyDialog">
+              <span class="settings-entry-icon"><m3e-icon name="domain_disabled" aria-hidden="true"></m3e-icon></span>
+              <span><strong>自动填充排除项</strong><small>自动填充 {{ autofillSitePolicy.blockedHosts.length }} 个 · 保存提示 {{ autofillSitePolicy.saveBlockedHosts.length }} 个</small></span>
+              <m3e-icon class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon>
+            </button>
+          </div></m3e-card>
+          <AutofillSitePolicyDialog :open="autofillSitePolicyDialogOpen" @close="autofillSitePolicyDialogOpen = false" @saved="refreshAutofillSitePolicy" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
             <details class="settings-disclosure hello-disclosure">
               <summary><span><strong>Windows Hello</strong><small>{{ windowsHelloStatus?.native.available ? '设备可用' : '设备不可用' }} · {{ windowsHelloStatus?.protectionMode === 'device-key' ? '设备密钥' : '主密码' }}</small></span><span class="settings-entry-icon"><m3e-icon name="fingerprint" aria-hidden="true"></m3e-icon></span><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>

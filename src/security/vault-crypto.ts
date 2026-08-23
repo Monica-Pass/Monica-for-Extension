@@ -1,6 +1,7 @@
 import { argon2id } from "hash-wasm";
 import type { VaultState } from "../core/model";
 import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState, validProviderMutationReceipt } from "../core/migrations";
+import { normalizeSitePolicy } from "../autofill/site-policy";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 
 const AAD = new TextEncoder().encode("monica-extension-vault-envelope-v1");
@@ -148,6 +149,7 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     typeof state.settings.defaultProviderId !== "string" ||
     (state.settings.protectionMode !== "master-password" && state.settings.protectionMode !== "device-key") ||
     (state.settings.windowsHello !== undefined && !validWindowsHelloBinding(state.settings.windowsHello)) ||
+    !validSitePolicySettings(state.settings) ||
     !Number.isInteger(state.settings.autoLockMinutes) ||
     state.settings.autoLockMinutes < 1 ||
     state.settings.autoLockMinutes > 1440 ||
@@ -156,6 +158,16 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     throw new Error("Vault payload is invalid or unsupported");
   }
   return state;
+}
+
+function validSitePolicySettings(settings: VaultState["settings"]): boolean {
+  try {
+    const normalized = normalizeSitePolicy({ blockedHosts: settings.autofillBlockedHosts, saveBlockedHosts: settings.saveBlockedHosts });
+    return JSON.stringify(normalized.blockedHosts) === JSON.stringify(settings.autofillBlockedHosts)
+      && JSON.stringify(normalized.saveBlockedHosts) === JSON.stringify(settings.saveBlockedHosts);
+  } catch {
+    return false;
+  }
 }
 
 function validWindowsHelloBinding(value: unknown): boolean {

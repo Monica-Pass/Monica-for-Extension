@@ -417,6 +417,8 @@ export interface VaultState {
     autoLockMinutes: number;
     defaultProviderId: string;
     protectionMode: "master-password" | "device-key";
+    autofillBlockedHosts: string[];
+    saveBlockedHosts: string[];
     windowsHello?: WindowsHelloBinding;
   };
 }
@@ -454,7 +456,9 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
     settings: {
       autoLockMinutes: 15,
       defaultProviderId: localProviderId,
-      protectionMode: "master-password"
+      protectionMode: "master-password",
+      autofillBlockedHosts: [],
+      saveBlockedHosts: []
     }
   };
 }

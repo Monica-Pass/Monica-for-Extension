@@ -1,4 +1,5 @@
 import type { LoginItem, LoginUriMatchType, ProviderMutationReceipt, ProviderSourceRecord, VaultItem, VaultState, WindowsHelloBinding } from "./model";
+import { normalizeSitePolicy } from "../autofill/site-policy";
 
 const URI_MATCH_TYPES = new Set<LoginUriMatchType>(["base-domain", "domain", "starts-with", "exact", "regex", "never"]);
 const LEGACY_MDBX_MESSAGE = "此密码源使用 Monica Extension 已停用的 MDBX1 实现。请使用 Monica Android 或桌面端升级为 MDBX2 后重新连接。";
@@ -13,11 +14,7 @@ export function migrateVaultState(input: unknown): VaultState {
   const items = Array.isArray(raw.items) ? raw.items.map(migrateItem) : raw.items;
   let providers = Array.isArray(raw.providers) ? raw.providers.map(migrateProvider) : raw.providers;
   let settings = raw.settings && typeof raw.settings === "object" && !Array.isArray(raw.settings)
-    ? {
-        ...(raw.settings as Record<string, unknown>),
-        protectionMode: normalizeProtectionMode((raw.settings as Record<string, unknown>).protectionMode),
-        windowsHello: normalizeWindowsHelloBinding((raw.settings as Record<string, unknown>).windowsHello)
-      }
+    ? normalizeSettings(raw.settings as Record<string, unknown>)
     : raw.settings;
   ({ providers, settings } = normalizeDefaultProvider(providers, settings));
   const sourceRecords = Array.isArray(raw.sourceRecords) ? raw.sourceRecords.filter(validSourceRecord).map((record) => ({ ...record })) : [];
@@ -35,6 +32,20 @@ export function migrateVaultState(input: unknown): VaultState {
     providerDiagnostics: Array.isArray(raw.providerDiagnostics) ? raw.providerDiagnostics : [],
     sourceRecords
   } as VaultState;
+}
+
+function normalizeSettings(raw: Record<string, unknown>): Record<string, unknown> {
+  const policy = normalizeSitePolicy({
+    blockedHosts: raw.autofillBlockedHosts === undefined ? [] : raw.autofillBlockedHosts as string[],
+    saveBlockedHosts: raw.saveBlockedHosts === undefined ? [] : raw.saveBlockedHosts as string[]
+  });
+  return {
+    ...raw,
+    protectionMode: normalizeProtectionMode(raw.protectionMode),
+    windowsHello: normalizeWindowsHelloBinding(raw.windowsHello),
+    autofillBlockedHosts: policy.blockedHosts,
+    saveBlockedHosts: policy.saveBlockedHosts
+  };
 }
 
 function migrateProvider(value: unknown): unknown {

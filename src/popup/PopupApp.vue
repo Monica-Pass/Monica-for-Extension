@@ -104,7 +104,7 @@ async function loadMatches() {
   const [loginMatches, passkeyMatches, walletMatches] = await Promise.all([
     allowFill ? vaultClient.matchLogins(scan.value?.url || tabUrl.value) : Promise.resolve([]),
     vaultClient.matchPasskeys(tabUrl.value),
-    allowFill ? vaultClient.listWalletItems(scan.value?.walletKinds || []) : Promise.resolve([])
+    allowFill ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value) : Promise.resolve([])
   ]);
   matches.value = loginMatches;
   passkeys.value = passkeyMatches;

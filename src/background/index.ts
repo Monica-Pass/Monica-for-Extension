@@ -71,6 +71,7 @@ import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
 import { ChromeVaultDeviceKeyStore } from "../security/vault-device-key";
+import { isAutofillBlocked, isSaveBlocked, type AutofillSitePolicy } from "../autofill/site-policy";
 import { configureSessionStorageAccess } from "./startup";
 
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
@@ -86,6 +87,18 @@ const windowsHelloNativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRu
 const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);
 const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);
 providers.register(mdbx2Provider);
+
+async function currentAutofillSitePolicy(): Promise<AutofillSitePolicy> {
+  return service.getAutofillSitePolicy();
+}
+
+async function autofillBlocked(pageUrl: string): Promise<boolean> {
+  return isAutofillBlocked(pageUrl, await currentAutofillSitePolicy());
+}
+
+async function savePromptBlocked(pageUrl: string): Promise<boolean> {
+  return isSaveBlocked(pageUrl, await currentAutofillSitePolicy());
+}
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
 const keePassWorkingCopies = new IndexedDbKeePassWorkingCopyStorage();
@@ -389,6 +402,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.restoreItem(request.itemId);
     case "VAULT_MATCH_LOGINS": {
       assertExtensionPage(sender);
+      if (await autofillBlocked(request.pageUrl)) return [];
       const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
       return matches.map(toMatchSummary);
     }
@@ -396,6 +410,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       const page = new URL(request.pageUrl);
       if (!isSecureSensitivePageUrl(page.toString())) return [];
+      if (await autofillBlocked(page.toString())) return [];
       const pageHost = normalizeRpId(page.hostname);
       return (await service.listItems())
         .filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyMatchesPageHost(item, pageHost))
@@ -407,12 +422,19 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_LIST_WALLET_ITEMS": {
       assertExtensionPage(sender);
+      if (await autofillBlocked(request.pageUrl)) return [];
       return listWalletItems(request.kinds);
     }
     case "VAULT_FILL_WALLET": {
       assertExtensionPage(sender);
       return fillWalletItem(request.itemId, request.tabId, request.frameId, request.documentId, request.expectedOrigin);
     }
+    case "AUTOFILL_SITE_POLICY_GET":
+      assertManagerPage(sender);
+      return service.getAutofillSitePolicy();
+    case "AUTOFILL_SITE_POLICY_SET":
+      assertManagerPage(sender);
+      return service.setAutofillSitePolicy(request.policy);
     case "STEAM_LIST_CONFIRMATIONS": {
       assertExtensionPage(sender);
       return runSteamOperation(request.itemId, listSteamConfirmations);
@@ -1983,6 +2005,7 @@ function usernameContextStorageKey(source: { tabId: number; frameId: number; ori
 async function rememberCredentialUsername(usernameInput: string, sender: chrome.runtime.MessageSender): Promise<void> {
   const source = assertWebPageSender(sender);
   if (!isSecureSensitivePageUrl(source.url) || (await service.status()) !== "unlocked") return;
+  if (await savePromptBlocked(source.url)) return;
   const username = String(usernameInput || "").trim().slice(0, 1024);
   if (!username) return;
   const context: PendingUsernameContext = {
@@ -2031,6 +2054,7 @@ async function clearPendingUsernameContexts(): Promise<void> {
 async function captureCredentialCandidate(input: CredentialCaptureInput, sender: chrome.runtime.MessageSender): Promise<SavePromptContext> {
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定；请先解锁 Monica，再重新提交登录表单。");
+  if (await savePromptBlocked(source.url)) throw new Error("此网站已禁止显示密码保存提示。");
   const submittedUsername = String(input.username || "").trim();
   const remembered = submittedUsername ? undefined : await loadCredentialUsername(source);
   let candidate: CredentialCaptureInput;
@@ -2081,6 +2105,7 @@ async function captureCredentialCandidate(input: CredentialCaptureInput, sender:
 
 async function pendingCredentialCandidate(sender: chrome.runtime.MessageSender): Promise<SavePromptContext | null> {
   const source = assertWebPageSender(sender);
+  if (await savePromptBlocked(source.url)) return null;
   purgeExpiredCaptures();
   const pending = [...pendingCredentialCaptures.values()]
     .filter((candidate) => candidate.tabId === source.tabId && candidate.sourceOrigin === source.origin)
@@ -2095,6 +2120,10 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
   purgeExpiredCaptures();
   const pending = pendingCredentialCaptures.get(candidateId);
   if (!pending || pending.tabId !== source.tabId || (source.frameId !== pending.frameId && source.frameId !== 0)) throw new Error("保存候选已过期，请重新提交表单。");
+  if (await savePromptBlocked(pending.pageUrl)) {
+    pendingCredentialCaptures.delete(candidateId);
+    throw new Error("此网站已禁止保存密码。");
+  }
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，保存候选未写入。");
 
   let saved: LoginItem;
@@ -2432,6 +2461,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   request = validatePasskeyRequest(request);
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
+  if (await autofillBlocked(source.url)) throw new Error("此网站已禁止使用 Monica 自动填充和 Passkey。");
   const rpId = validateRpId(source.origin, request.rpId);
   const state = await service.readState();
   const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
@@ -2470,6 +2500,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
 
 async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, providerId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
   const source = assertWebPageSender(sender);
+  if (await autofillBlocked(source.url)) throw new Error("此网站已禁止使用 Monica 自动填充和 Passkey。");
   if (cancellingPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
   if (processingPasskeyRequests.has(candidateId)) throw new Error("Passkey 请求正在处理中。");
   processingPasskeyRequests.add(candidateId);
@@ -2629,6 +2660,7 @@ async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId
 
 async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) {
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
+  if (await autofillBlocked(target.url)) throw new Error("此网站已禁止使用 Monica 自动填充。");
   const item = await service.getItem(itemId);
   if (!item || !isLoginItem(item) || item.deletedAt || item.archivedAt) throw new Error("登录项不存在、已归档或已被删除。");
   if (loginMatchScore(item, target.url) <= 0) throw new Error("登录项与目标页面不匹配，已阻止填充。");
@@ -2659,6 +2691,7 @@ async function listWalletItems(requestedKinds: WalletFillKind[]): Promise<Wallet
 
 async function fillWalletItem(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string): Promise<WalletFillResult> {
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
+  if (await autofillBlocked(target.url)) throw new Error("此网站已禁止使用 Monica 自动填充。");
   const item = await service.getItem(itemId);
   if (!item || !isWalletItem(item)) throw new Error("证件或支付项目不存在或已被删除。");
   const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_FILL_WALLET", expectedOrigin: target.origin, wallet: walletPayload(item) }, { documentId: target.documentId }) as { ok?: boolean; error?: string; filledCount?: number; filledFields?: WalletFillResult["filledFields"] };

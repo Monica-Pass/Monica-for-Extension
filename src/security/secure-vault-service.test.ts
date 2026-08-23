@@ -1083,6 +1083,19 @@ describe("encrypted vault", () => {
     await expect(service.applyProviderSync("big-source", [], undefined, [], [oversized])).rejects.toThrow("超过单条");
     expect(await service.getProviderSourceRecords("big-source")).toEqual([]);
   });
+
+  it("keeps autofill site exclusions encrypted and unavailable while locked", async () => {
+    const storage = new MemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("site policy password");
+    await expect(service.setAutofillSitePolicy({ blockedHosts: ["Private.Example.com"], saveBlockedHosts: ["save.example.net"] }))
+      .resolves.toEqual({ blockedHosts: ["private.example.com"], saveBlockedHosts: ["save.example.net"] });
+    expect(JSON.stringify(storage.envelope)).not.toContain("private.example.com");
+    expect(JSON.stringify(storage.envelope)).not.toContain("save.example.net");
+    expect(await service.getAutofillSitePolicy()).toEqual({ blockedHosts: ["private.example.com"], saveBlockedHosts: ["save.example.net"] });
+    await service.lock();
+    await expect(service.getAutofillSitePolicy()).rejects.toBeInstanceOf(VaultLockedError);
+  });
 });
 
 class FlakyMemoryVaultStorage extends MemoryVaultStorage {

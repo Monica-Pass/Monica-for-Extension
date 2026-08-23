@@ -9,6 +9,7 @@ import { bytesToBase64, randomBytes } from "./encoding";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore, type VaultDeviceKeyStore } from "./vault-device-key";
+import { normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
 
@@ -413,6 +414,26 @@ export class SecureVaultService {
     const state = await decryptVaultState(envelope, key);
     await this.touchSession(state.settings.autoLockMinutes);
     return state;
+    });
+  }
+
+  async getAutofillSitePolicy(): Promise<AutofillSitePolicy> {
+    const state = await this.readState();
+    return {
+      blockedHosts: [...state.settings.autofillBlockedHosts],
+      saveBlockedHosts: [...state.settings.saveBlockedHosts]
+    };
+  }
+
+  async setAutofillSitePolicy(input: AutofillSitePolicy): Promise<AutofillSitePolicy> {
+    const policy = normalizeSitePolicy(input);
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      state.settings.autofillBlockedHosts = policy.blockedHosts;
+      state.settings.saveBlockedHosts = policy.saveBlockedHosts;
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return structuredClone(policy);
     });
   }
 

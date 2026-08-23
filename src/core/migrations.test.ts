@@ -18,7 +18,9 @@ describe("vault schema migrations", () => {
     delete legacy.providerMutationReceipts;
 
     const migrated = migrateVaultState(legacy);
-    expect(migrated).toMatchObject({ schemaVersion: 2, sourceRecords: [], providerMutationReceipts: [], settings: { protectionMode: "master-password" } });
+    expect(migrated).toMatchObject({ schemaVersion: 2, sourceRecords: [], providerMutationReceipts: [], settings: {
+      protectionMode: "master-password", autofillBlockedHosts: [], saveBlockedHosts: []
+    } });
     expect(migrated.items[0]).toMatchObject({
       kind: "login",
       uriRules: [
@@ -26,6 +28,18 @@ describe("vault schema migrations", () => {
         { uri: "https://login.example.com", matchType: "base-domain" }
       ]
     });
+    expect(migrateVaultState(migrated)).toEqual(migrated);
+  });
+
+  it("normalizes encrypted site-policy settings idempotently", () => {
+    const current = createEmptyVaultState("2026-08-23T00:00:00.000Z");
+    const migrated = migrateVaultState({ ...current, settings: {
+      ...current.settings,
+      autofillBlockedHosts: ["Login.Example.com.", "login.example.com"],
+      saveBlockedHosts: ["save.example.net"]
+    } });
+    expect(migrated.settings.autofillBlockedHosts).toEqual(["login.example.com"]);
+    expect(migrated.settings.saveBlockedHosts).toEqual(["save.example.net"]);
     expect(migrateVaultState(migrated)).toEqual(migrated);
   });
 

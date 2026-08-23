@@ -14,6 +14,7 @@ import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provi
 import type { SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground } from "../providers/steam/steam-market";
 import type { SteamAuthorizedDevice } from "../providers/steam/steam-network";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/secure-vault-service";
+import type { AutofillSitePolicy } from "../autofill/site-policy";
 
 export interface LoginMatchSummary {
   id: string;
@@ -264,8 +265,10 @@ export type ExtensionRequest =
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string }
   | { type: "VAULT_MATCH_PASSKEYS"; pageUrl: string }
   | { type: "VAULT_FILL_LOGIN"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
-  | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[] }
+  | { type: "VAULT_LIST_WALLET_ITEMS"; kinds: WalletFillKind[]; pageUrl: string }
   | { type: "VAULT_FILL_WALLET"; itemId: string; tabId: number; frameId?: number; documentId?: string; expectedOrigin?: string }
+  | { type: "AUTOFILL_SITE_POLICY_GET" }
+  | { type: "AUTOFILL_SITE_POLICY_SET"; policy: AutofillSitePolicy }
   | { type: "STEAM_LIST_CONFIRMATIONS"; itemId: string }
   | { type: "STEAM_RESPOND_CONFIRMATION"; itemId: string; confirmation: SteamConfirmation; accept: boolean }
   | { type: "STEAM_LIST_PENDING_LOGINS"; itemId: string }
