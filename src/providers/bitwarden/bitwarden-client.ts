@@ -136,8 +136,13 @@ export class BitwardenClient {
     try {
       body = await requestPrelogin("/accounts/prelogin/password");
     } catch (error) {
-      if (!(error instanceof ProviderTransportError) || (error.status !== 404 && error.status !== 405)) throw error;
-      body = await requestPrelogin("/accounts/prelogin");
+      if (!(error instanceof ProviderTransportError)) throw error;
+      if (error.status !== 404 && error.status !== 405) throw bitwardenPreloginTransportError(error, urls.identity);
+      try {
+        body = await requestPrelogin("/accounts/prelogin");
+      } catch (fallbackError) {
+        throw bitwardenPreloginTransportError(fallbackError, urls.identity);
+      }
     }
     return { urls, email: normalizedEmail, kdf: parseKdf(body) };
   }
@@ -746,6 +751,15 @@ function bitwardenHttpError(prefix: string, response: Response, body?: Record<st
   const safeMessage = bitwardenSafeHttpMessage(prefix, response.status, body);
   if (safeMessage) error.message = safeMessage;
   return error;
+}
+
+function bitwardenPreloginTransportError(error: unknown, identityUrl: string): Error {
+  if (!(error instanceof ProviderTransportError) || (error.code !== "network" && error.code !== "timeout")) return error instanceof Error ? error : new Error("Bitwarden 预登录请求失败。");
+  let host = identityUrl;
+  try { host = new URL(identityUrl).host; } catch { /* URL validation already happens before requests. */ }
+  return new Error(error.code === "timeout"
+    ? `无法连接 Bitwarden 服务器（${host}）。请检查 HTTPS 证书、反向代理和网络代理。`
+    : `Bitwarden 服务器（${host}）的 HTTPS/TLS 请求失败。请检查证书、反向代理是否转发 /identity，并确认浏览器可以直接打开服务器地址。`);
 }
 
 function isBitwardenDeviceVerificationRequired(body: Record<string, unknown>): boolean {
