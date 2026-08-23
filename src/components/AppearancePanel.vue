@@ -20,7 +20,8 @@ function updatePalette(value: ThemePaletteId) {
         <span class="appearance-summary-copy"><strong>外观</strong><small>{{ schemeLabels[schemePreference] }} · {{ paletteLabels[paletteId] }}</small></span>
         <m3e-icon class="appearance-chevron" name="chevron_right" aria-hidden="true"></m3e-icon>
       </button>
-      <dialog v-if="dialogOpen" open class="appearance-dialog" aria-labelledby="appearance-dialog-title">
+      <div v-if="dialogOpen" class="appearance-modal" role="presentation" @click.self="dialogOpen = false">
+      <section class="appearance-dialog" role="dialog" aria-modal="true" aria-labelledby="appearance-dialog-title">
         <div class="appearance-dialog-header">
           <div><h2 id="appearance-dialog-title">外观</h2><p>为 Monica 选择显示模式和配色方案。</p></div>
           <button class="appearance-close" type="button" aria-label="关闭外观设置" @click="dialogOpen = false"><m3e-icon name="close"></m3e-icon></button>
@@ -52,7 +53,8 @@ function updatePalette(value: ThemePaletteId) {
         </div>
         </fieldset>
       </div>
-      </dialog>
+      </section>
+      </div>
     </div>
   </m3e-card>
 </template>
@@ -88,8 +90,8 @@ function updatePalette(value: ThemePaletteId) {
 .swatch m3e-icon { position: relative; z-index: 1; color: var(--md-sys-color-on-primary-container, var(--app-text)); --m3e-icon-size: 12px; }
 .palette-button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-button:hover { transform: none; }
-.appearance-dialog { width: min(520px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 32px)); margin: auto; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 16px; padding: 0; color: var(--md-sys-color-on-surface, var(--app-text)); background: var(--md-sys-color-surface-container, var(--app-surface)); box-shadow: 0 24px 48px rgb(0 0 0 / 32%); }
-.appearance-dialog::backdrop { background: rgb(0 0 0 / 48%); }
+.appearance-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
+.appearance-dialog { width: min(520px, 100%); max-height: min(720px, 100%); overflow: auto; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 16px; padding: 0; color: var(--md-sys-color-on-surface, var(--app-text)); background: var(--md-sys-color-surface-container, var(--app-surface)); box-shadow: 0 24px 48px rgb(0 0 0 / 32%); }
 .appearance-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 20px 12px; }
 .appearance-dialog-header h2, .appearance-dialog-header p { margin: 0; }
 .appearance-dialog-header h2 { font-size: 1.25rem; }

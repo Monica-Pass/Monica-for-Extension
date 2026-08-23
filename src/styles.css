@@ -550,6 +550,12 @@ main {
 .source-grid,
 .settings-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  align-items: start;
+}
+
+.settings-grid > m3e-card {
+  align-self: start;
+  --m3e-card-padding: 18px;
 }
 
 .metric-card {
