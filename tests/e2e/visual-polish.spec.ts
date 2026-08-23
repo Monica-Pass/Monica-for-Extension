@@ -199,7 +199,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     await expect(appearance.locator(".appearance-summary-copy small")).toContainText("Monica");
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-appearance-collapsed.png"), animations: "disabled" });
     await appearance.locator(".appearance-trigger").click();
-    await expect(appearance.locator(".appearance-dialog")).toBeVisible();
+    await expect(page.locator(".appearance-dialog")).toBeVisible();
     const selectedPalette = page.locator(".palette-button.selected");
     const paletteWidth = await selectedPalette.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(paletteWidth.scroll, JSON.stringify(paletteWidth)).toBeLessThanOrEqual(paletteWidth.client + 1);
