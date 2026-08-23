@@ -589,9 +589,15 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         name: request.name.trim() || "Bitwarden",
         enabled: true,
         isDefaultSaveTarget: Boolean(request.isDefaultSaveTarget),
-        config: result.session,
-        lastSyncAt: undefined,
-        lastError: undefined
+        config: {
+          ...result.session,
+          ...(existing?.config.accountState && typeof existing.config.accountState === "object" && !Array.isArray(existing.config.accountState)
+            ? { accountState: existing.config.accountState }
+            : {})
+        },
+        lastSyncAt: existing?.lastSyncAt,
+        lastError: undefined,
+        compatibility: existing?.compatibility
       };
       await service.upsertProvider(account);
       return { status: "authenticated", providerId: account.id };
