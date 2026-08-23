@@ -278,7 +278,7 @@ export class BitwardenClient {
     const code = normalizeSsoValue(input.code, "SSO 授权码");
     const verifier = normalizeSsoValue(input.codeVerifier, "SSO code verifier");
     const redirectUri = normalizeSsoValue(input.redirectUri, "SSO 回调地址");
-    const organizationIdentifier = normalizeSsoIdentifier(input.organizationIdentifier);
+    normalizeSsoIdentifier(input.organizationIdentifier);
     const { urls, email, kdf } = await this.prelogin(input.vaultUrl, input.email, signal);
     const form = new URLSearchParams({
       grant_type: "authorization_code",
@@ -290,8 +290,7 @@ export class BitwardenClient {
       deviceName: "Monica Browser Extension",
       code,
       code_verifier: verifier,
-      redirect_uri: redirectUri,
-      domainHint: organizationIdentifier
+      redirect_uri: redirectUri
     });
     const body = await this.request(`${urls.identity}/connect/token`, {
       method: "POST",
