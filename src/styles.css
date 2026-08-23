@@ -576,6 +576,20 @@ main {
 .hello-disclosure > summary > m3e-icon { color: var(--app-primary); --m3e-icon-size: 24px; }
 .hello-disclosure > summary .settings-disclosure-chevron { --m3e-icon-size: 20px; }
 .settings-disclosure-content { display: grid; gap: 12px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 16px 4px 4px; }
+.settings-entry { width: 100%; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; padding: 0 4px; color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.settings-entry > span { min-width: 0; display: grid; gap: 4px; }
+.settings-entry strong { font-size: 1.15rem; }
+.settings-entry small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
+.settings-entry m3e-icon { --m3e-icon-size: 20px; }
+.settings-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
+.settings-modal-panel { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 16px; color: var(--md-sys-color-on-surface, var(--app-text)); background: var(--md-sys-color-surface-container, var(--app-surface)); box-shadow: 0 24px 48px rgb(0 0 0 / 32%); }
+.settings-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 20px 12px; }
+.settings-modal-header h2, .settings-modal-header p { margin: 0; }
+.settings-modal-header p { margin-top: 4px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
+.settings-modal-close { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; color: inherit; background: transparent; cursor: pointer; }
+.settings-modal-close:hover { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.settings-modal-close m3e-icon { --m3e-icon-size: 20px; }
+.settings-modal-content { display: grid; gap: 12px; padding: 16px 20px 20px; }
 
 .metric-card {
   --m3e-filled-card-container-color: color-mix(in srgb, var(--md-sys-color-tertiary-container, var(--app-selected)) 36%, var(--md-sys-color-surface-container, var(--app-surface)));
