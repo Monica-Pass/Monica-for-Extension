@@ -541,7 +541,7 @@ async function hydrateBitwardenSteamMaFile(
       for (const chunk of chunks) { bytes.set(chunk, writeOffset); writeOffset += chunk.length; chunk.fill(0); }
       try {
         const json = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        return { fields: parseSteamMaFile(json, attachment.fileName), session };
+        return { fields: await parseSteamMaFile(json, attachment.fileName), session };
       } finally {
         bytes.fill(0);
       }

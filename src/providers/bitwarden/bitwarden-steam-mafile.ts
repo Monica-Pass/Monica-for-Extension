@@ -20,34 +20,44 @@ export function isSteamMaFileName(fileName: string): boolean {
   return fileName.trim().toLocaleLowerCase().endsWith(".mafile");
 }
 
-export function parseSteamMaFile(rawJson: string, fileName = ""): Partial<LoginItem> {
+export async function parseSteamMaFile(rawJson: string, fileName = ""): Promise<Partial<LoginItem>> {
   const root = parseObject(rawJson);
   const session = objectValue(root, "Session", "session") || {};
   const steamLoginSecure = stringValue(session, "SteamLoginSecure", "steamLoginSecure")
     || stringValue(root, "steamLoginSecure", "steam_login_secure");
-  const steamId = firstSteamId(root, session)
-    || steamLoginSecure.split("||", 1)[0]
+  const embeddedSteamId = firstSteamId(root, session)
+    || validSteamId(steamLoginSecure.split("||", 1)[0])
     || steamIdFromFileName(fileName);
   const accountName = stringValue(root, "account_name", "accountName", "AccountName")
     || stringValue(session, "AccountName", "account_name")
-    || steamId
+    || embeddedSteamId
     || fileName.replace(/\.mafile$/i, "")
     || "Steam";
   const sharedSecret = sharedSecretValue(root);
   if (!sharedSecret) throw new Error("Steam maFile 缺少 shared_secret。");
   const normalizedSharedSecret = normalizeSharedSecret(sharedSecret.value, sharedSecret.encoding);
+  const identitySecret = stringValue(root, "identity_secret", "identitySecret");
+  const tokenGid = stringValue(root, "token_gid", "tokenGid");
+  const revocationCode = stringValue(root, "revocation_code", "revocationCode");
+  const localSteamId = validLocalSteamId(stringValue(root, "monica_local_steamid", "monicaLocalSteamId"));
+  const missingSteamId = booleanValue(root, "monica_missing_steamid", "monicaMissingSteamId");
+  const steamId = embeddedSteamId || localSteamId || (missingSteamId
+    ? await generateLocalSteamId(accountName, normalizedSharedSecret, identitySecret, tokenGid, revocationCode)
+    : "");
+  if (!steamId) throw new Error("Steam maFile 缺少 SteamID。");
   const accessToken = stringValue(root, "access_token", "accessToken", "oauth_token", "OAuthToken")
     || stringValue(session, "AccessToken", "access_token", "OAuthToken", "oauth_token")
     || steamLoginSecure.split("||").slice(1).join("||");
 
   return {
     steamAccountName: accountName,
+    steamDisplayName: stringValue(root, "monica_display_name", "monicaDisplayName") || accountName,
     steamSharedSecretBase64: normalizedSharedSecret,
     steamId: steamId || undefined,
     steamDeviceId: stringValue(root, "device_id", "deviceId") || stringValue(session, "DeviceID", "device_id", "deviceId") || undefined,
-    steamIdentitySecret: stringValue(root, "identity_secret", "identitySecret") || undefined,
-    steamRevocationCode: stringValue(root, "revocation_code", "revocationCode") || undefined,
-    steamTokenGid: stringValue(root, "token_gid", "tokenGid") || undefined,
+    steamIdentitySecret: identitySecret || undefined,
+    steamRevocationCode: revocationCode || undefined,
+    steamTokenGid: tokenGid || undefined,
     steamAccessToken: accessToken || undefined,
     steamRefreshToken: stringValue(root, "refresh_token", "refreshToken") || stringValue(session, "RefreshToken", "refresh_token") || undefined,
     steamLoginSecure: steamLoginSecure || undefined,
@@ -113,11 +123,39 @@ function stringValue(raw: Record<string, unknown>, ...names: string[]): string {
 
 function firstSteamId(root: Record<string, unknown>, session: Record<string, unknown>): string {
   const names = ["steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64", "SteamID64", "sbeamid"];
-  return stringValue(root, ...names) || stringValue(session, ...names);
+  return validSteamId(stringValue(root, ...names)) || validSteamId(stringValue(session, ...names));
 }
 
 function steamIdFromFileName(fileName: string): string {
   return fileName.match(/(?<!\d)(7656119\d{10})(?!\d)/)?.[0] || "";
+}
+
+function validSteamId(value: string): string {
+  return /^7656119\d{10}$/.test(value) ? value : "";
+}
+
+function validLocalSteamId(value: string): string {
+  return /^monica-missing-steamid-[0-9a-f]{16,64}$/.test(value) ? value : "";
+}
+
+function booleanValue(raw: Record<string, unknown>, ...names: string[]): boolean {
+  for (const name of names) {
+    const value = raw[name];
+    if (value === true || value === 1 || (typeof value === "string" && /^(true|1)$/i.test(value.trim()))) return true;
+  }
+  return false;
+}
+
+async function generateLocalSteamId(
+  accountName: string,
+  sharedSecret: string,
+  identitySecret: string,
+  tokenGid: string,
+  revocationCode: string
+): Promise<string> {
+  const material = [accountName, sharedSecret, identitySecret, tokenGid, revocationCode].join("|");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material)));
+  return `monica-missing-steamid-${Array.from(digest.subarray(0, 12), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function decodeUriComponent(value: string): string {

@@ -15,7 +15,7 @@ export function projectSteamLogin(item: LoginItem): TotpItem | undefined {
       kind: "totp",
       secret: item.steamSharedSecretBase64,
       issuer: "Steam",
-      accountName: item.steamAccountName || item.username || undefined,
+      accountName: item.steamDisplayName || item.steamAccountName || item.username || undefined,
       otpType: "STEAM",
       algorithm: "SHA1",
       digits: 5,

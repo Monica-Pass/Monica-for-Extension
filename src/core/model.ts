@@ -111,6 +111,7 @@ export interface LoginItem extends VaultItemBase {
   customIconUpdatedAt?: number;
   /** Android Bitwarden Steam carrier metadata, decrypted from its marked maFile attachment. */
   steamAccountName?: string;
+  steamDisplayName?: string;
   steamDeviceId?: string;
   steamSharedSecretBase64?: string;
   steamId?: string;
