@@ -27,6 +27,7 @@ const emit = defineEmits<{
   folders: [provider: ProviderAccount];
   collections: [provider: ProviderAccount];
   relogin: [provider: ProviderAccount];
+  logout: [provider: ProviderAccount];
   remove: [provider: ProviderAccount];
 }>();
 
@@ -44,8 +45,10 @@ const queuePending = computed(() => Math.max(0, props.queue?.pending || 0));
 const queueFailed = computed(() => Math.max(0, props.queue?.failed || 0));
 const queueRecovering = computed(() => Math.max(0, props.queue?.recovering || 0));
 const queueHasActivity = computed(() => queuePending.value > 0 || queueFailed.value > 0 || queueRecovering.value > 0);
+const authenticated = computed(() => props.provider.config.authenticated === true);
 
 const stateClass = computed(() => {
+  if (!authenticated.value) return "state-attention";
   if (props.activeSync) return "state-local-only";
   if (conflictCount.value > 0) return "state-conflict";
   if (props.provider.requiresEmptyRemoteConfirmation) return "state-attention";
@@ -55,6 +58,7 @@ const stateClass = computed(() => {
 });
 
 const stateLabel = computed(() => {
+  if (!authenticated.value) return "已退出";
   if (props.activeSync) return "正在同步";
   if (conflictCount.value > 0) return `${conflictCount.value} 个冲突`;
   if (props.provider.requiresEmptyRemoteConfirmation) return "等待空库确认";
@@ -185,7 +189,7 @@ function toggleConflicts() {
       <div class="bitwarden-source-actions">
         <div class="source-actions-primary">
           <m3e-button v-if="activeSync" variant="text" type="button" @click="emit('cancel', provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
-          <m3e-button v-else variant="filled" type="button" :disabled="busy" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFailed ? '重试同步' : '立即同步' }}</m3e-button>
+          <m3e-button v-else variant="filled" type="button" :disabled="busy || !authenticated" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFailed ? '重试同步' : '立即同步' }}</m3e-button>
         </div>
         <div class="source-actions-routing" aria-label="Bitwarden 路由管理">
           <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('folders', provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button>
@@ -193,6 +197,7 @@ function toggleConflicts() {
         </div>
         <div class="source-actions-account" aria-label="Bitwarden 账号操作">
           <m3e-icon-button aria-label="重新登录 Bitwarden" :disabled="activeSync" @click="emit('relogin', provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button>
+          <m3e-icon-button v-if="authenticated" aria-label="退出 Bitwarden 账户" :disabled="activeSync" @click="emit('logout', provider)"><m3e-icon name="lock"></m3e-icon></m3e-icon-button>
           <m3e-icon-button aria-label="移除 Bitwarden" :disabled="activeSync" @click="emit('remove', provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
         </div>
       </div>

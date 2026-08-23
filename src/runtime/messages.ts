@@ -306,6 +306,7 @@ export type ExtensionRequest =
       newDeviceOtp?: string;
       isDefaultSaveTarget?: boolean;
     }
+  | { type: "BITWARDEN_LOGOUT"; providerId: string }
   | { type: "BITWARDEN_SEND_EMAIL_CODE"; providerId?: string; vaultUrl: string; email: string; masterPassword: string }
   | { type: "BITWARDEN_FOLDER_LIST"; providerId: string; pageSize?: number; cursor?: string }
   | { type: "BITWARDEN_FOLDER_CREATE"; providerId: string; name: string }

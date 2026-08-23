@@ -596,6 +596,17 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       await service.upsertProvider(account);
       return { status: "authenticated", providerId: account.id };
     }
+    case "BITWARDEN_LOGOUT": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
+      const config = { ...account.config };
+      for (const key of ["accessToken", "refreshToken", "expiresAt", "vaultKeyEnc", "vaultKeyMac"]) delete config[key];
+      clearBitwardenAttachmentSessions(account.id);
+      providerAttachmentUploads.clear(account.id);
+      await service.upsertProvider({ ...account, config, lastError: undefined });
+      return undefined;
+    }
     case "BITWARDEN_SEND_EMAIL_CODE": {
       assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;

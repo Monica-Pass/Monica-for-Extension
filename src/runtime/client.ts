@@ -80,6 +80,7 @@ export const vaultClient = {
     newDeviceOtp?: string;
     isDefaultSaveTarget?: boolean;
   }) => send<BitwardenConnectResult>({ type: "BITWARDEN_LOGIN", ...input }),
+  logoutBitwarden: (providerId: string) => send<void>({ type: "BITWARDEN_LOGOUT", providerId }),
   sendBitwardenEmailCode: (vaultUrl: string, email: string, masterPassword: string, providerId?: string) =>
     send<void>({ type: "BITWARDEN_SEND_EMAIL_CODE", vaultUrl, email, masterPassword, providerId }),
   listBitwardenFolders: (providerId: string, input: { pageSize?: number; cursor?: string } = {}) => send<BitwardenFolderPage>({ type: "BITWARDEN_FOLDER_LIST", providerId, ...input }),

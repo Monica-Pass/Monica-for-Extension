@@ -121,7 +121,7 @@ const specialQrDataUrl = ref("");
 const specialQrError = ref("");
 const formError = ref("");
 const notice = ref("");
-const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove">("");
+const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove" | "logout">("");
 const activeSyncProviderId = ref("");
 const diagnosticBusy = ref(false);
 const webDavError = ref("");
@@ -1321,6 +1321,16 @@ function removeProvider(provider: ProviderAccount) {
   };
 }
 
+async function logoutBitwarden(provider: ProviderAccount) {
+  if (provider.kind !== "bitwarden") return;
+  if (!window.confirm(`退出“${provider.name}”吗？已同步的本地项目会保留，访问令牌和本地 Vault 密钥会立即清除。`)) return;
+  await runWebDavAction("logout", async () => {
+    await vaultClient.logoutBitwarden(provider.id);
+    await refreshProviders();
+    showNotice(`${provider.name} 已退出；本地缓存仍保留，重新登录后可继续同步。`);
+  });
+}
+
 async function applyProviderRemoval(provider: ProviderAccount) {
   const completed = await runWebDavAction("remove", async () => {
     await vaultClient.removeProvider(provider.id);
@@ -2242,6 +2252,7 @@ function errorCode(error: unknown): string | undefined {
               @folders="openBitwardenFolders"
               @collections="openBitwardenCollections"
               @relogin="openBitwarden"
+              @logout="logoutBitwarden"
               @remove="removeProvider"
             />
             <m3e-card variant="filled" class="motion-card source-card"><div slot="content" class="stack"><div class="source-title"><span class="source-icon"><m3e-icon name="database"></m3e-icon></span><div><h2>Monica 本地库</h2><p>加密 IndexedDB 信封</p></div></div><p class="supporting">{{ externalProviders.length ? '可与外部密码源并存。' : '当前唯一的密码源。' }}</p><span class="state state-healthy">已连接</span><div class="source-actions"><m3e-button variant="tonal" :disabled="diagnosticBusy" @click="exportProviderDiagnostics"><m3e-icon slot="icon" name="download"></m3e-icon>{{ diagnosticBusy ? '正在导出…' : '导出脱敏诊断' }}</m3e-button></div></div></m3e-card>
