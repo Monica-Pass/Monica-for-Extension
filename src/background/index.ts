@@ -2764,7 +2764,7 @@ function walletPayload(item: WalletItem): WalletFillPayload {
     licenseNumber: item.licenseNumber || (item.documentType === "DRIVER_LICENSE" ? item.documentNumber : undefined),
     ssn: item.ssn || (item.documentType === "SOCIAL_SECURITY" ? item.documentNumber : undefined), email: item.email, phone: item.phone,
     streetAddress: item.address?.streetAddress, apartment: item.address?.apartment, city: item.address?.city,
-    stateProvince: item.address?.stateProvince, postalCode: item.address?.postalCode, country: item.address?.country
+    stateProvince: item.address?.stateProvince, postalCode: item.address?.postalCode, country: item.address?.country, company: item.company
   } };
   if (item.kind === "billing-address") return { kind: item.kind, fields: {
     fullName: item.fullName, company: item.company, streetAddress: item.streetAddress, apartment: item.apartment, city: item.city,

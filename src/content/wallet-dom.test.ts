@@ -63,6 +63,13 @@ describe("wallet DOM filling", () => {
     expect(fillWallet({ kind: "identity", fields: { firstName: "Joy", lastName: "Lin", documentNumber: "310000000000000000", birthDate: "2000-01-01", streetAddress: "Monica 路 1 号", stateProvince: "上海", city: "上海", postalCode: "200000", country: "中国", phone: "13800000000", email: "joy@example.com" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 11 });
   });
 
+  it("allows an identity record to fill organization fields", () => {
+    const dom = page('<label>公司名称<input name="organization"></label>');
+    expect(scanWalletKinds(dom.window.document)).toContain("identity");
+    expect(fillWallet({ kind: "identity", fields: { company: "Monica Labs" } }, dom.window.document)).toMatchObject({ ok: true, filledCount: 1 });
+    expect(dom.window.document.querySelector<HTMLInputElement>('input[name="organization"]')!.value).toBe("Monica Labs");
+  });
+
   it("recognizes Chinese and legacy bank-account labels", () => {
     const dom = page('<label>银行名称<input></label><label>账户名称<input></label><label>账户持有人<input></label><label>银行账号<input></label><label>路由号码<input></label><label>国际银行账号<input></label><label>SWIFT代码<input></label><label>币种<input></label>');
     expect(scanWalletKinds(dom.window.document)).toEqual(["card", "payment-account"]);

@@ -40,7 +40,7 @@ const FIELD_KINDS: Record<WalletFieldName, WalletFillKind[]> = {
   fullName: ["identity", "billing-address"], firstName: ["identity"], middleName: ["identity"], lastName: ["identity"],
   birthDate: ["identity"], nationality: ["identity"], documentNumber: ["identity"], documentType: ["identity"],
   documentIssuedDate: ["identity"], documentExpiryDate: ["identity"], documentIssuedBy: ["identity"],
-  passportNumber: ["identity"], licenseNumber: ["identity"], ssn: ["identity"], company: ["billing-address"],
+  passportNumber: ["identity"], licenseNumber: ["identity"], ssn: ["identity"], company: ["identity", "billing-address"],
   streetAddress: ["identity", "billing-address"], apartment: ["identity", "billing-address"], city: ["identity", "billing-address"],
   stateProvince: ["identity", "billing-address"], postalCode: ["identity", "billing-address"], country: ["identity", "billing-address"],
   phone: ["identity", "billing-address", "payment-account"], email: ["identity", "billing-address", "payment-account"],
