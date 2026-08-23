@@ -571,6 +571,10 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const existing = request.providerId ? await service.getProvider(request.providerId) : undefined;
       if (existing && existing.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
+      if (request.twoFactorProvider === 5 && !request.twoFactorProviderData) throw new Error("Bitwarden WebAuthn 验证数据已过期，请重新开始登录。");
+      const webAuthnToken = request.twoFactorProvider === 5 && request.twoFactorProviderData
+        ? await completeBitwardenWebAuthn(request.vaultUrl, request.twoFactorProviderData)
+        : undefined;
       const result = request.ssoOrganizationIdentifier?.trim()
         ? await loginBitwardenWithSso(request, existing?.config.deviceId)
         : await bitwardenClient.login({
@@ -578,12 +582,12 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
             email: request.email,
             masterPassword: request.masterPassword,
             deviceId: typeof existing?.config.deviceId === "string" ? existing.config.deviceId : crypto.randomUUID(),
-            twoFactorCode: request.twoFactorCode,
+            twoFactorCode: webAuthnToken || request.twoFactorCode,
             twoFactorProvider: request.twoFactorProvider,
             rememberTwoFactor: request.rememberTwoFactor,
             newDeviceOtp: request.newDeviceOtp
           });
-      if (result.status === "two-factor-required") return { status: result.status, providers: result.providers };
+      if (result.status === "two-factor-required") return { status: result.status, providers: result.providers, providerData: result.providerData };
       if (result.status === "device-verification-required") return result;
       if (result.status === "sso-required") return result;
       const account: ProviderAccount = {
@@ -3377,6 +3381,39 @@ async function loginBitwardenWithSso(
     redirectUri,
     organizationIdentifier
   });
+}
+
+async function completeBitwardenWebAuthn(vaultUrl: string, providerData: Record<string, unknown>): Promise<string> {
+  if (!chrome.identity?.launchWebAuthFlow || !chrome.identity.getRedirectURL) {
+    throw new Error("当前浏览器不支持 Bitwarden WebAuthn 两步验证。");
+  }
+  const redirectUri = chrome.identity.getRedirectURL("webauthn-callback");
+  const parent = encodeURIComponent(redirectUri);
+  const base = new URL(vaultUrl);
+  base.pathname = "/";
+  base.search = "";
+  base.hash = "";
+  const connectorData = {
+    data: JSON.stringify(providerData),
+    headerText: "Bitwarden WebAuthn",
+    btnText: "验证 WebAuthn",
+    btnReturnText: "返回",
+    mobile: true
+  };
+  const encodedData = bytesToBase64(new TextEncoder().encode(JSON.stringify(connectorData)));
+  const connector = new URL("/webauthn-mobile-connector.html", base);
+  connector.searchParams.set("data", encodedData);
+  connector.searchParams.set("parent", parent);
+  connector.searchParams.set("client", "browser");
+  connector.searchParams.set("v", "2");
+  connector.searchParams.set("deeplinkScheme", "https");
+  const callbackUrl = await launchWebAuthFlow(connector.toString());
+  const callback = new URL(callbackUrl);
+  const expected = new URL(redirectUri);
+  if (callback.origin !== expected.origin || callback.pathname !== expected.pathname) throw new Error("Bitwarden WebAuthn 回调地址无效。");
+  const token = callback.searchParams.get("data")?.trim();
+  if (!token || token.length > 256 * 1024) throw new Error("Bitwarden WebAuthn 未返回有效验证结果。");
+  return token;
 }
 
 function launchWebAuthFlow(url: string): Promise<string> {

@@ -76,6 +76,7 @@ export const vaultClient = {
     masterPassword: string;
     twoFactorCode?: string;
     twoFactorProvider?: number;
+    twoFactorProviderData?: Record<string, unknown>;
     rememberTwoFactor?: boolean;
     newDeviceOtp?: string;
     ssoOrganizationIdentifier?: string;

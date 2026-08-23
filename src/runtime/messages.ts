@@ -108,7 +108,7 @@ export type PasskeyResult =
 
 export type BitwardenConnectResult =
   | { status: "authenticated"; providerId: string }
-  | { status: "two-factor-required"; providers: number[] }
+  | { status: "two-factor-required"; providers: number[]; providerData?: Record<string, unknown> }
   | { status: "device-verification-required" }
   | { status: "sso-required"; organizationIdentifier: string };
 
@@ -303,6 +303,7 @@ export type ExtensionRequest =
       masterPassword: string;
       twoFactorCode?: string;
       twoFactorProvider?: number;
+      twoFactorProviderData?: Record<string, unknown>;
       rememberTwoFactor?: boolean;
       newDeviceOtp?: string;
       ssoOrganizationIdentifier?: string;
