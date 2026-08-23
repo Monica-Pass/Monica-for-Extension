@@ -703,7 +703,7 @@ async function decodeFido2Credentials(
 ): Promise<PasskeyItem[]> {
   return Promise.all(arrayValue(login, "Fido2Credentials", "fido2Credentials").map(async (entry, index) => {
     const fido = record(entry);
-    const decrypted = await decryptRecordFields(fido, key, ["CredentialId", "KeyAlgorithm", "KeyValue", "RpId", "RpName", "Counter", "UserHandle", "UserName", "UserDisplayName", "Discoverable", "CreationDate"]);
+    const decrypted = await decryptFidoRecordFields(fido, key, ["CredentialId", "KeyAlgorithm", "KeyValue", "RpId", "RpName", "Counter", "UserHandle", "UserName", "UserDisplayName", "Discoverable", "CreationDate"]);
     const credentialId = decrypted.CredentialId || `unknown-${index}`;
     const algorithm = normalizePasskeyAlgorithm(decrypted.KeyAlgorithm);
     return {
@@ -809,6 +809,21 @@ function recordValue(raw: Record<string, unknown>, ...names: string[]): Record<s
 function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[] {
   const result = value(raw, ...names);
   return Array.isArray(result) ? result : [];
+}
+
+/** Some self-hosted Bitwarden versions return FIDO2 enum/scalar fields in plaintext. */
+async function decryptFidoRecordFields(raw: Record<string, unknown>, key: BitwardenSymmetricKey, names: string[]): Promise<Record<string, string>> {
+  const pairs = await Promise.all(names.map(async (name) => {
+    const value = stringValue(raw, name, lowerFirst(name));
+    if (!value) return [name, ""] as const;
+    if (!looksLikeCipherString(value)) return [name, value] as const;
+    return [name, await decryptBitwardenString(value, key)] as const;
+  }));
+  return Object.fromEntries(pairs);
+}
+
+function looksLikeCipherString(value: string): boolean {
+  return /^(?:0|2)\.[^|]+\|[^|]+(?:\|[^|]+)?$/.test(value) || /^\.[^|]+\|[^|]+$/.test(value);
 }
 
 function stringArrayValue(raw: Record<string, unknown>, ...names: string[]): string[] | undefined {

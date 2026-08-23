@@ -139,6 +139,39 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
   });
 
+  it("accepts plaintext FIDO2 scalar fields returned by self-hosted servers", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const decoded = await decodeBitwardenCipher({
+      Id: "cipher-plaintext-fido",
+      Type: 1,
+      Name: await enc("Self-hosted passkey"),
+      Notes: null,
+      Login: {
+        Username: null,
+        Password: null,
+        Fido2Credentials: [{
+          CredentialId: "plain-credential",
+          KeyAlgorithm: "ECDSA",
+          KeyValue: "plain-private-key",
+          RpId: "example.com",
+          RpName: "Example",
+          Counter: 3,
+          UserHandle: "plain-user",
+          UserName: "joy",
+          UserDisplayName: "Joy",
+          Discoverable: true,
+          CreationDate: REVISION
+        }]
+      }
+    }, "provider-1", KEY);
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({
+      credentialId: "plain-credential",
+      algorithm: -7,
+      signCount: 3,
+      rpId: "example.com"
+    });
+  });
+
   it("writes the local archive timestamp into the Bitwarden Cipher", async () => {
     const archivedAt = "2026-07-15T04:00:00.000Z";
     const item: LoginItem = {

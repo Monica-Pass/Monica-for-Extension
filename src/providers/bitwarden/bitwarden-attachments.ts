@@ -173,7 +173,7 @@ export class BitwardenAttachmentDownloadService {
         ? await decryptBitwardenSymmetricKey(reconciled.key, cipherKey)
         : cloneKey(cipherKey);
       const signedUrl = validateSignedDownloadUrl(download.info.url);
-      plaintext = await this.downloadAuthenticatedPlaintext(signedUrl, attachmentKey, input.signal);
+      plaintext = await this.downloadAuthenticatedPlaintext(signedUrl, attachmentKey, input.signal, download.session.accessToken, download.session.apiUrl);
       if (plaintext.sizeBytes > this.limits.maxPlaintextBytes) {
         throw attachmentError("bitwarden-attachment-too-large", "Bitwarden 附件明文超过 100 MiB 安全上限。");
       }
@@ -305,11 +305,15 @@ export class BitwardenAttachmentDownloadService {
   private async downloadAuthenticatedPlaintext(
     signedUrl: string,
     key: BitwardenSymmetricKey,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    accessToken?: string,
+    apiUrl?: string
   ): Promise<{ chunks: Uint8Array[]; sizeBytes: number }> {
+    const headers = new Headers({ Accept: "application/octet-stream", "Cache-Control": "no-store" });
+    if (accessToken && apiUrl && sameOrigin(signedUrl, apiUrl)) headers.set("Authorization", `Bearer ${accessToken}`);
     return resilientFetch(signedUrl, {
       method: "GET",
-      headers: new Headers({ Accept: "application/octet-stream", "Cache-Control": "no-store" }),
+      headers,
       cache: "no-store",
       credentials: "omit",
       redirect: "error",
@@ -673,6 +677,10 @@ function validateSignedDownloadUrl(raw: string): string {
     throw attachmentError("bitwarden-attachment-url-invalid", "Bitwarden 附件签名地址必须使用 HTTPS。");
   }
   return parsed.toString();
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  try { return new URL(left).origin === new URL(right).origin; } catch { return false; }
 }
 
 function validateLimits(input: BitwardenAttachmentDownloadLimits): BitwardenAttachmentDownloadLimits {
