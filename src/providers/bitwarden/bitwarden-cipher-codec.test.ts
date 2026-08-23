@@ -212,6 +212,27 @@ describe("Bitwarden Cipher codec", () => {
     expect(editable.type).toBe(1);
   });
 
+  it("round-trips Monica Android Markdown and note tags through encrypted fields", async () => {
+    const raw = {
+      Id: "markdown-note", Type: 2, Name: await encryptBitwardenString("指南", KEY),
+      Notes: await encryptBitwardenString("# 标题", KEY), Favorite: false, RevisionDate: REVISION, CreationDate: REVISION,
+      Fields: [
+        { Type: 0, Name: await encryptBitwardenString("monica_note_markdown", KEY), Value: await encryptBitwardenString("true", KEY) },
+        { Type: 0, Name: await encryptBitwardenString("monica_note_tags", KEY), Value: await encryptBitwardenString('["工作","重要"]', KEY) },
+        { Type: 0, Name: await encryptBitwardenString("Owner", KEY), Value: await encryptBitwardenString("Joy", KEY) }
+      ]
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const note = decoded.items[0] as SecureNoteItem;
+    expect(note).toMatchObject({ isMarkdown: true, tags: ["工作", "重要"], customFields: [{ name: "Owner", value: "Joy" }] });
+    const encoded = await encodeBitwardenCipher({ ...note, isMarkdown: false, tags: ["更新"] }, KEY, raw);
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+    const plain = await Promise.all(fields.map(async (field) => [
+      await decryptBitwardenString(String(field.name), KEY), await decryptBitwardenString(String(field.value), KEY)
+    ]));
+    expect(plain).toEqual(expect.arrayContaining([["monica_note_markdown", "false"], ["monica_note_tags", '["更新"]'], ["Owner", "Joy"]]));
+  });
+
   it("imports Monica Android metadata-only Passkeys without marking them usable", async () => {
     const raw = {
       Id: "android-passkey-reference",

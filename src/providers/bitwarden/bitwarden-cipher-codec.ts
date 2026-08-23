@@ -15,6 +15,7 @@ const RESERVED_PASSWORD_FIELD_NAMES = new Set([
   "monica_ssh_algorithm", "monica_ssh_key_size", "monica_ssh_public_key",
   "monica_ssh_private_key", "monica_ssh_fingerprint", "monica_ssh_comment", "monica_ssh_format"
 ]);
+const RESERVED_NOTE_FIELD_NAMES = new Set(["monica_note_markdown", "monica_note_tags"]);
 
 interface PlainBitwardenCustomField {
   raw: unknown;
@@ -122,10 +123,12 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
 
   if (type === 2) {
     const decodedFields = await decodeBitwardenCustomFields(arrayValue(raw, "Fields", "fields"), key);
+    const noteSystem = bitwardenSystemFieldMap(decodedFields);
+    const tags = parseNoteTags(noteSystem.get("monica_note_tags"));
     const customFields = decodedFields
-      .filter(isEditableBitwardenUserField)
+      .filter((field) => isEditableBitwardenUserField(field) && !RESERVED_NOTE_FIELD_NAMES.has(field.name))
       .map((field) => ({ name: field.name, value: field.value, protected: field.type === BITWARDEN_HIDDEN_FIELD }));
-    return { items: [{ ...base, kind: "secure-note", content: notes, customFields } satisfies SecureNoteItem] };
+    return { items: [{ ...base, kind: "secure-note", content: notes, customFields, ...(noteSystem.has("monica_note_markdown") ? { isMarkdown: noteSystem.get("monica_note_markdown") === "true" } : {}), ...(tags ? { tags } : {}) } satisfies SecureNoteItem] };
   }
 
   if (type === 3) {
@@ -425,19 +428,38 @@ async function mergeSecureNoteFieldsPreservingUnknown(
 ): Promise<unknown[] | null> {
   const encoded = await Promise.all((item.customFields || [])
     .filter((field) => field.name.trim())
+    .filter((field) => !RESERVED_NOTE_FIELD_NAMES.has(field.name))
     .map(async (field) => ({
       type: field.protected ? BITWARDEN_HIDDEN_FIELD : BITWARDEN_TEXT_FIELD,
       name: await encryptOptional(field.name, encryptionKey),
       value: await encryptOptional(field.value, encryptionKey),
       linkedId: null
     })));
-  if (!remoteFields.length) return encoded.length ? encoded : null;
+  const metadata = [
+    item.isMarkdown === undefined ? undefined : { type: BITWARDEN_TEXT_FIELD, name: await encryptBitwardenString("monica_note_markdown", encryptionKey), value: await encryptBitwardenString(String(item.isMarkdown), encryptionKey), linkedId: null },
+    item.tags === undefined ? undefined : { type: BITWARDEN_TEXT_FIELD, name: await encryptBitwardenString("monica_note_tags", encryptionKey), value: await encryptBitwardenString(JSON.stringify(item.tags.slice(0, 64)), encryptionKey), linkedId: null }
+  ].filter(Boolean);
+  if (!remoteFields.length) {
+    const initial = [...metadata, ...encoded];
+    return initial.length ? initial : null;
+  }
   const remotePlain = await decodeBitwardenCustomFields(remoteFields, encryptionKey);
   const preserved = remotePlain
-    .filter((field) => !isEditableBitwardenUserField(field))
+    .filter((field) => !isEditableBitwardenUserField(field) || RESERVED_NOTE_FIELD_NAMES.has(field.name))
+    .filter((field) => !RESERVED_NOTE_FIELD_NAMES.has(field.name))
     .map((field) => field.raw);
-  const merged = [...preserved, ...encoded];
+  const merged = [...preserved, ...metadata, ...encoded];
   return merged.length ? merged : null;
+}
+
+function parseNoteTags(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return undefined;
+    const tags = parsed.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0 && tag.length <= 128).map((tag) => tag.trim());
+    return [...new Set(tags)].slice(0, 64);
+  } catch { return undefined; }
 }
 
 /** Android-compatible remote-first merge by complete value and exact occurrence count. */
