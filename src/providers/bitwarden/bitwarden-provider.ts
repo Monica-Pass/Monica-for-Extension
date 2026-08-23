@@ -614,7 +614,7 @@ function hasProviderReference(item: VaultItem, providerId: string): boolean {
 }
 
 function baseCipherId(remoteId?: string): string | undefined {
-  return remoteId?.split("#fido2:")[0] || undefined;
+  return remoteId?.replace(/#(?:fido2|totp):.*$/, "") || undefined;
 }
 
 function groupByCipher(items: VaultItem[], providerId: string): Map<string, VaultItem[]> {
