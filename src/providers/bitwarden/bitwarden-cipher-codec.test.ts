@@ -101,6 +101,16 @@ describe("Bitwarden Cipher codec", () => {
     expect(organization.items[0].providerRefs[0]).toMatchObject({ remoteCollectionIds: [] });
   });
 
+  it("projects the Bitwarden folder name into the shared Android category field", async () => {
+    const raw = {
+      Id: "foldered-login", Type: 1, Name: await encryptBitwardenString("Foldered", KEY),
+      FolderId: "folder-1", RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Username: null, Password: null, Uris: [] }
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY, "工作账号");
+    expect(decoded.items[0]).toMatchObject({ categoryName: "工作账号", providerRefs: [{ remoteFolderId: "folder-1" }] });
+  });
+
   it("retains a non-ES256 FIDO2 algorithm for the passkey availability policy to reject", async () => {
     const enc = (value: string) => encryptBitwardenString(value, KEY);
     const decoded = await decodeBitwardenCipher({

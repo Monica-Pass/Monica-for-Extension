@@ -11,6 +11,29 @@ const OLD_REVISION = "2026-07-15T03:00:00.000Z";
 const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 
 describe("Bitwarden provider", () => {
+  it("routes a new Android category to an existing encrypted Bitwarden folder", async () => {
+    let written: Record<string, unknown> | undefined;
+    let folderPostCount = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/folders") && init?.method === "POST") { folderPostCount += 1; return json({ Id: "unexpected-folder" }); }
+      if (url.endsWith("/folders")) return json({ Data: [{ Id: "folder-work", Name: await encryptBitwardenString("工作账号", KEY) }] });
+      if (url.endsWith("/ciphers") && init?.method === "POST") {
+        written = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return json({ ...written, Id: "created-foldered", RevisionDate: OLD_REVISION, CreationDate: OLD_REVISION });
+      }
+      throw new Error(`Unexpected ${init?.method} ${url}`);
+    }) as unknown as typeof fetch;
+    const item: LoginItem = {
+      id: "category-login", kind: "login", title: "工作项目", username: "alice", password: "secret", uris: [],
+      customFields: [], favorite: false, notes: "", categoryName: "工作账号", createdAt: OLD_REVISION, updatedAt: OLD_REVISION, providerRefs: []
+    };
+    const created = await new BitwardenProvider(fetcher).create(account(), item);
+    expect(written).toMatchObject({ folderId: "folder-work" });
+    expect(created.providerRefs).toEqual([expect.objectContaining({ providerId: "provider-1", remoteFolderId: "folder-work" })]);
+    expect(folderPostCount).toBe(0);
+  });
+
   it("imports notes authenticators and passkeys from one sync response", async () => {
     const login = await loginCipher("remote-secret", OLD_REVISION, [await fidoCredential("credential-mixed", 3)]);
     (login.Login as Record<string, unknown>).Totp = await encryptBitwardenString(
@@ -39,12 +62,14 @@ describe("Bitwarden provider", () => {
       CreationDate: OLD_REVISION,
       SecureNote: { Type: 0 }
     };
-    const fetcher = vi.fn(async () => json({ Profile: { Id: "user" }, Ciphers: [login, standalone, note] })) as unknown as typeof fetch;
+    (login as Record<string, unknown>).FolderId = "folder-work";
+    const fetcher = vi.fn(async () => json({ Profile: { Id: "user" }, Folders: [{ Id: "folder-work", Name: await encryptBitwardenString("工作账号", KEY) }], Ciphers: [login, standalone, note] })) as unknown as typeof fetch;
 
     const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [] });
 
     expect(result.warnings).toEqual([]);
     expect(result.items.filter((item) => item.kind === "secure-note")).toEqual([expect.objectContaining({ title: "Imported secure note", content: "private note body" })]);
+    expect(result.items.find((item) => item.kind === "login")).toMatchObject({ categoryName: "工作账号", providerRefs: [{ remoteFolderId: "folder-work" }] });
     expect(result.items.filter((item) => item.kind === "totp")).toEqual([
       expect.objectContaining({ issuer: "Example", accountName: "alice" }),
       expect.objectContaining({ issuer: "Standalone", accountName: "joy" })

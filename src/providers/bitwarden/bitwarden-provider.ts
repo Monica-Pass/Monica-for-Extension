@@ -3,7 +3,7 @@ import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext
 import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client";
 import { bitwardenSshComparableData, decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, mergeBitwardenSshLocalMetadata, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { bitwardenOrganizationRecords, resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
-import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { generateOtpUri } from "../../core/totp";
 import { parametersFromItem } from "../../core/login-otp";
 import { bytesToBase64 } from "../../security/encoding";
@@ -75,6 +75,7 @@ export class BitwardenProvider implements ProviderAdapter {
     }
 
     const vaultKey = this.client.vaultKey(session);
+    const resolvedFolderNames = await bitwardenFolderNames(synced.payload, vaultKey);
     const organizations = await resolveBitwardenOrganizationKeys(synced.payload, vaultKey);
     const remoteItems: VaultItem[] = [];
     const rawByCipherId = new Map<string, Record<string, unknown>>();
@@ -93,7 +94,8 @@ export class BitwardenProvider implements ProviderAdapter {
           if (cipherId) skippedCipherIds.add(cipherId);
           continue;
         }
-        const decoded = await decodeBitwardenCipher(rawCipher, account.id, ownerKey);
+        const folderId = stringValue(rawCipher, "FolderId", "folderId");
+        const decoded = await decodeBitwardenCipher(rawCipher, account.id, ownerKey, resolvedFolderNames.get(folderId));
         const steamCarrier = decoded.items.find((item): item is LoginItem => item.kind === "login" && isSteamMaFileLogin(item));
         if (steamCarrier) {
           try {
@@ -418,7 +420,10 @@ export class BitwardenProvider implements ProviderAdapter {
   }
 
   async update(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<VaultItem> {
-    const session = readSession(account);
+    let session = readSession(account);
+    const routed = await this.ensureCategoryFolder(session, account.id, item, signal);
+    session = routed.session;
+    item = routed.item;
     const reference = providerReference(item, account.id);
     const cipherId = baseCipherId(reference?.remoteId);
     if (!cipherId) throw new Error("Bitwarden 项目缺少远端 Cipher ID。");
@@ -436,11 +441,12 @@ export class BitwardenProvider implements ProviderAdapter {
     const payload = payloadItem.kind === "passkey" ? await encodeBitwardenPasskeyCipher(payloadItem, cipherKey, raw) : await encodeBitwardenCipher(payloadItem, cipherKey, raw);
     const response = await this.client.updateCipher(current.session, cipherId, payload, signal);
     const decoded = await decodeBitwardenCipher(response.payload, account.id, ownerKey);
-    return item.kind === "passkey"
+    const result = item.kind === "passkey"
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId) || item
       : item.kind === "totp"
         ? decoded.items.find((candidate) => candidate.kind === "totp") || item
         : decoded.items.find((candidate) => candidate.kind === item.kind) || item;
+    return { ...result, categoryName: item.categoryName, providerRefs: item.providerRefs } as VaultItem;
   }
 
   async remove(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<void> {
@@ -474,6 +480,9 @@ export class BitwardenProvider implements ProviderAdapter {
   }
 
   private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[]; raw: Record<string, unknown> }> {
+    const routed = await this.ensureCategoryFolder(session, providerId, item, signal);
+    session = routed.session;
+    item = routed.item;
     const vaultKey = this.client.vaultKey(session);
     const payloadItem = item.kind === "totp" ? createLoginFromTotp(item) : item;
     const payload = payloadItem.kind === "passkey" ? await encodeBitwardenPasskeyCipher(payloadItem, vaultKey) : await encodeBitwardenCipher(payloadItem, vaultKey);
@@ -497,6 +506,37 @@ export class BitwardenProvider implements ProviderAdapter {
       : [canonical];
     return { session: response.session, item: canonical, items, raw: response.payload };
   }
+
+  private async ensureCategoryFolder(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem }> {
+    const category = item.categoryName?.trim();
+    if (!category) return { session, item };
+    const vaultKey = this.client.vaultKey(session);
+    const listed = await this.client.listFolders(session, signal);
+    session = listed.session;
+    for (const entry of arrayValue(listed.payload, "Data", "data", "Folders", "folders")) {
+      const folder = record(entry);
+      const id = stringValue(folder, "Id", "id");
+      if (!id) continue;
+      try {
+        const name = (await decryptBitwardenString(stringValue(folder, "Name", "name"), vaultKey)).trim();
+        if (name === category) return { session, item: withFolderReference(item, providerId, id) };
+      } catch { /* Keep searching; malformed folder metadata must not block unrelated writes. */ }
+    }
+    const created = await this.client.createFolder(session, { name: await encryptBitwardenString(category, vaultKey) }, signal);
+    const createdId = stringValue(created.payload, "Id", "id");
+    if (!createdId) throw new Error("Bitwarden 文件夹创建响应缺少 ID。");
+    return { session: created.session, item: withFolderReference(item, providerId, createdId) };
+  }
+}
+
+function withFolderReference(item: VaultItem, providerId: string, folderId: string): VaultItem {
+  const matched = item.providerRefs.some((reference) => reference.providerId === providerId);
+  return {
+    ...item,
+    providerRefs: matched
+      ? item.providerRefs.map((reference) => reference.providerId === providerId ? { ...reference, remoteFolderId: folderId } : reference)
+      : [...item.providerRefs, { providerId, remoteFolderId: folderId }]
+  } as VaultItem;
 }
 
 async function hydrateBitwardenSteamMaFile(
@@ -831,6 +871,24 @@ function record(value: unknown): Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Bitwarden 操作失败。";
+}
+
+async function bitwardenFolderNames(payload: Record<string, unknown>, key: BitwardenSymmetricKey): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  for (const entry of arrayValue(payload, "Folders", "folders")) {
+    const folder = record(entry);
+    const id = stringValue(folder, "Id", "id");
+    if (!id) continue;
+    const encryptedName = stringValue(folder, "Name", "name");
+    if (!encryptedName) continue;
+    try {
+      const name = (await decryptBitwardenString(encryptedName, key)).trim();
+      if (name) result.set(id, name.slice(0, 256));
+    } catch {
+      // A folder name is presentation metadata; retain the ID and ignore an unreadable label.
+    }
+  }
+  return result;
 }
 
 function requireBitwardenMutationRevision(response: Record<string, unknown>, previousRevision: string | undefined, operation: string): string {

@@ -30,7 +30,7 @@ export interface DecodedBitwardenCipher {
   unsupported?: boolean;
 }
 
-export async function decodeBitwardenCipher(raw: Record<string, unknown>, providerId: string, vaultKey: BitwardenSymmetricKey): Promise<DecodedBitwardenCipher> {
+export async function decodeBitwardenCipher(raw: Record<string, unknown>, providerId: string, vaultKey: BitwardenSymmetricKey, remoteFolderName?: string): Promise<DecodedBitwardenCipher> {
   const cipherId = stringValue(raw, "Id", "id");
   if (!cipherId) return { items: [], warning: "Bitwarden Cipher 缺少 ID，已跳过。" };
   const key = await resolveBitwardenCipherKey(raw, vaultKey);
@@ -58,7 +58,8 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
     updatedAt: revision,
     deletedAt: optionalDateValue(value(raw, "DeletedDate", "deletedDate")),
     archivedAt: optionalDateValue(value(raw, "ArchivedDate", "archivedDate")),
-    providerRefs: [reference]
+    providerRefs: [reference],
+    ...(remoteFolderName ? { categoryName: remoteFolderName } : {})
   };
 
   if (type === 1) {
