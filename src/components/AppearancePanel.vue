@@ -47,7 +47,7 @@ function updatePalette(value: ThemePaletteId) {
             @click="updatePalette(item.id)"
           >
             <span class="swatch" :style="{ '--swatch': item.color, '--secondary': item.darkColor, '--accent': item.accent }" aria-hidden="true">
-              <m3e-icon name="palette"></m3e-icon>
+              <span></span><span></span><span></span>
             </span>
             <span class="palette-label">{{ paletteLabels[item.id] }}</span>
           </button>
@@ -86,10 +86,11 @@ function updatePalette(value: ThemePaletteId) {
 .palette-button::after { content: ""; width: 20px; height: 20px; border: 2px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 50%; }
 .palette-button.selected::after { border: 6px solid var(--md-sys-color-primary, var(--app-primary)); }
 .palette-label { overflow: visible; text-overflow: clip; white-space: nowrap; }
-.swatch { position: relative; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 24px; background: var(--swatch); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-text) 16%, transparent); overflow: visible; }
-.swatch::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--secondary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-text) 20%, transparent); }
-.swatch::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; border: 2px solid var(--md-sys-color-surface-container-high, var(--app-surface-high)); border-radius: 50%; background: var(--accent); }
-.swatch m3e-icon { position: relative; z-index: 1; color: var(--md-sys-color-on-primary-container, var(--app-text)); --m3e-icon-size: 12px; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; display: flex; flex: 0 0 24px; overflow: hidden; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-text) 20%, transparent); }
+.swatch > span { flex: 1 1 33.333%; height: 100%; }
+.swatch > span:first-child { background: var(--swatch); }
+.swatch > span:nth-child(2) { background: var(--secondary); }
+.swatch > span:last-child { background: var(--accent); }
 .palette-button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-button:hover { transform: none; }
 .appearance-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
