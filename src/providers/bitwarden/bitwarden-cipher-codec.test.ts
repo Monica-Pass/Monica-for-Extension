@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem } from "../../core/model";
+import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem, TotpItem } from "../../core/model";
 import { resolveLoginOtp } from "../../core/login-otp";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "./bitwarden-cipher-codec";
 import { decryptBitwardenString, encryptBitwardenBytes, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
@@ -62,6 +62,33 @@ describe("Bitwarden Cipher codec", () => {
       bitwardenCustomFieldsVersion: 1
     });
     expect(decoded.items[1]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
+  });
+
+  it("projects an Android standalone validator Login into a first-class TOTP item", async () => {
+    const raw = {
+      Id: "cipher-standalone-totp",
+      Type: 1,
+      Name: await encryptBitwardenString("GitHub authenticator", KEY),
+      Notes: await encryptBitwardenString("", KEY),
+      Favorite: false,
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: {
+        Username: await encryptBitwardenString("joy@example.com", KEY),
+        Password: null,
+        Totp: await encryptBitwardenString("otpauth://totp/GitHub:joy?secret=JBSWY3DPEHPK3PXP&issuer=GitHub", KEY),
+        Uris: []
+      }
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    expect(decoded.items.map((item) => item.kind)).toEqual(["login", "totp"]);
+    expect(decoded.items[1] as TotpItem).toMatchObject({
+      title: "GitHub authenticator",
+      issuer: "GitHub",
+      accountName: "joy",
+      secret: "JBSWY3DPEHPK3PXP",
+      otpType: "TOTP"
+    });
   });
 
   it("tracks Collection routing only for organization Ciphers", async () => {

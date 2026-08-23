@@ -1,5 +1,6 @@
-import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureCustomField, SecureNoteItem, VaultItem } from "../../core/model";
+import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { parseTotpParameters } from "../../core/totp";
 
 export const BITWARDEN_CUSTOM_FIELDS_VERSION = 1 as const;
 
@@ -105,7 +106,13 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       sshKeyData
     };
     const passkeys = await decodeFido2Credentials(login, base, reference, key);
-    return { items: [loginItem, ...passkeys] };
+    // Monica Android represents an independent authenticator as a Login cipher with
+    // an empty password, then projects the same cipher into its validator list.
+    // Keep the Login projection for lossless Bitwarden write-back and expose the
+    // validator projection so the extension's TOTP page and autofill binding can
+    // discover it as a first-class item.
+    const standaloneTotp = !password && totpSecret ? decodeStandaloneTotp(loginItem, totpSecret, reference) : undefined;
+    return { items: [loginItem, ...(standaloneTotp ? [standaloneTotp] : []), ...passkeys] };
   }
 
   if (type === 2) {
@@ -810,6 +817,40 @@ function recordValue(raw: Record<string, unknown>, ...names: string[]): Record<s
 function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[] {
   const result = value(raw, ...names);
   return Array.isArray(result) ? result : [];
+}
+
+function decodeStandaloneTotp(login: LoginItem, rawSecret: string, reference: ProviderReference): TotpItem | undefined {
+  let parameters;
+  try {
+    parameters = parseTotpParameters(rawSecret);
+  } catch {
+    // Keep the parent Login usable even when a legacy/custom OTP payload is not
+    // understood by this build; it remains available through login.totpSecret.
+    return undefined;
+  }
+  const secret = parameters.secret || rawSecret;
+  const otpType = parameters.otpType || "TOTP";
+  return {
+    id: `${login.id}:totp`,
+    kind: "totp",
+    title: login.title,
+    favorite: login.favorite,
+    notes: login.notes,
+    createdAt: login.createdAt,
+    updatedAt: login.updatedAt,
+    providerRefs: [{ ...reference, remoteId: `${reference.remoteId}#totp` }],
+    secret,
+    issuer: parameters.issuer || login.title,
+    accountName: parameters.accountName || login.username,
+    otpType,
+    counter: parameters.counter,
+    pin: parameters.pin,
+    pinLength: parameters.pinLength,
+    algorithm: parameters.algorithm,
+    digits: parameters.digits,
+    period: parameters.period,
+    steamSharedSecretBase64: parameters.secretEncoding === "base64" ? parameters.secret : undefined
+  };
 }
 
 /** Some self-hosted Bitwarden versions return FIDO2 enum/scalar fields in plaintext. */
