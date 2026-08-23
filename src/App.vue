@@ -102,6 +102,8 @@ const providerConflicts = ref<ProviderConflictSummary[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
 const query = ref("");
+const quickFilter = ref<"all" | "favorites" | "recent" | "local">("all");
+const folderFilter = ref("all");
 const loading = ref(true);
 const authBusy = ref(false);
 const authError = ref("");
@@ -207,11 +209,7 @@ const keePassForm = reactive<KeePassFormState>({
 useThemePreferences();
 
 const credentials = computed(() => vaultItems.value.filter(isLoginItem));
-const filteredCredentials = computed(() => {
-  const needle = query.value.trim().toLowerCase();
-  if (!needle) return credentials.value;
-  return credentials.value.filter((item) => `${item.title} ${item.username} ${item.uris.join(" ")} ${item.notes}`.toLowerCase().includes(needle));
-});
+const filteredCredentials = computed(() => credentials.value.filter(matchesManagerFilters));
 const uniqueHosts = computed(() => new Set(credentials.value.flatMap((item) => item.uris)).size);
 const favoriteCount = computed(() => vaultItems.value.filter((item) => item.favorite).length);
 const walletItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
@@ -222,6 +220,9 @@ const steamItems = computed(() => vaultItems.value.flatMap((item) => {
   return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
 }));
 const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
+const databaseFolders = computed(() => [...new Set(vaultItems.value.map(itemFolderLabel))].sort((left, right) => left.localeCompare(right, "zh-CN")));
+const filterableSection = computed(() => ["passwords", "wallet", "notes", "totp", "steam", "passkeys", "archive", "trash"].includes(activeSection.value));
+const filteredSteamItems = computed(() => steamItems.value.filter(matchesManagerFilters));
 const archivedCredentials = computed(() => archivedItems.value.filter(isLoginItem));
 const credentialById = computed(() => new Map([...credentials.value, ...archivedCredentials.value].map((item) => [item.id, item])));
 const filteredArchiveItems = computed(() => filterManagerItems(archivedItems.value));
@@ -229,7 +230,7 @@ const filteredDeletedItems = computed(() => filterManagerItems(deletedItems.valu
 const filteredSectionItems = computed(() => {
   if (activeSection.value !== "wallet" && activeSection.value !== "notes" && activeSection.value !== "totp" && activeSection.value !== "passkeys") return [];
   const needle = query.value.trim().toLocaleLowerCase();
-  return vaultItems.value.filter((item) => itemSection(item) === activeSection.value && (!needle || itemSearchText(item).toLocaleLowerCase().includes(needle)));
+  return vaultItems.value.filter((item) => itemSection(item) === activeSection.value && matchesManagerFilters(item));
 });
 const webDavProviders = computed(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
 const bitwardenProviders = computed(() => providers.value.filter((provider) => provider.kind === "bitwarden"));
@@ -641,8 +642,24 @@ function sectionDescription(section: Section): string {
 }
 
 function filterManagerItems(items: VaultItem[]): VaultItem[] {
+  return items.filter(matchesManagerFilters);
+}
+
+function itemFolderLabel(item: VaultItem): string {
+  return item.categoryName?.trim() || item.keepassGroupPath?.trim() || "未分类";
+}
+
+function matchesManagerFilters(item: VaultItem): boolean {
   const needle = query.value.trim().toLocaleLowerCase();
-  return items.filter((item) => !needle || itemSearchText(item).toLocaleLowerCase().includes(needle));
+  if (needle && !itemSearchText(item).toLocaleLowerCase().includes(needle)) return false;
+  if (folderFilter.value !== "all" && itemFolderLabel(item) !== folderFilter.value) return false;
+  if (quickFilter.value === "favorites" && !item.favorite) return false;
+  if (quickFilter.value === "local" && item.providerRefs.some((reference) => reference.providerId !== "local")) return false;
+  if (quickFilter.value === "recent") {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    if (Date.parse(item.updatedAt) < cutoff) return false;
+  }
+  return true;
 }
 
 function providerName(item: VaultItem): string {
@@ -1998,6 +2015,16 @@ function errorCode(error: unknown): string | undefined {
           <m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="primary-action" variant="filled" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>{{ activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'totp' ? '添加验证码' : '添加安全笔记' }}</m3e-button>
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
+        <div v-if="filterableSection" class="manager-filters" aria-label="快捷筛选">
+          <span class="filter-caption">快捷筛选</span>
+          <div class="filter-segment" role="group" aria-label="快捷筛选条件">
+            <button type="button" :class="{ selected: quickFilter === 'all' }" :aria-pressed="quickFilter === 'all'" @click="quickFilter = 'all'">全部</button>
+            <button type="button" :class="{ selected: quickFilter === 'favorites' }" :aria-pressed="quickFilter === 'favorites'" @click="quickFilter = 'favorites'"><m3e-icon name="star"></m3e-icon>收藏</button>
+            <button type="button" :class="{ selected: quickFilter === 'recent' }" :aria-pressed="quickFilter === 'recent'" @click="quickFilter = 'recent'"><m3e-icon name="schedule"></m3e-icon>最近</button>
+            <button type="button" :class="{ selected: quickFilter === 'local' }" :aria-pressed="quickFilter === 'local'" @click="quickFilter = 'local'"><m3e-icon name="database"></m3e-icon>本地库</button>
+          </div>
+          <label class="folder-filter"><m3e-icon name="folder"></m3e-icon><span class="visually-hidden">数据库文件夹</span><select v-model="folderFilter" aria-label="数据库文件夹"><option value="all">全部文件夹</option><option v-for="folder in databaseFolders" :key="folder" :value="folder">{{ folder }}</option></select></label>
+        </div>
 
         <section v-if="activeSection === 'overview'" class="metrics">
           <m3e-card variant="filled" class="motion-card metric-card"><div slot="content" class="metric"><m3e-icon name="password"></m3e-icon><p>登录项</p><strong>{{ credentials.length }}</strong><small>加密缓存中的有效项</small></div></m3e-card>
@@ -2019,8 +2046,8 @@ function errorCode(error: unknown): string | undefined {
         </section>
 
         <section v-else-if="activeSection === 'steam'" class="steam-page">
-          <m3e-card v-for="item in steamItems" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
-          <div v-if="!steamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>还没有 Steam 验证器</h2><p>从 Monica Android 同步，或在动态验证码中添加 Steam Guard。</p><m3e-button variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
+          <m3e-card v-for="item in filteredSteamItems" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
+          <div v-if="!filteredSteamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>{{ query || folderFilter !== 'all' || quickFilter !== 'all' ? '没有匹配的 Steam 项目' : '还没有 Steam 验证器' }}</h2><p>{{ query || folderFilter !== 'all' || quickFilter !== 'all' ? '调整快捷筛选条件。' : '从 Monica Android 同步，或在动态验证码中添加 Steam Guard。' }}</p><m3e-button v-if="!query && folderFilter === 'all' && quickFilter === 'all'" variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
         </section>
 
         <GeneratorPanel v-else-if="activeSection === 'generator'" />

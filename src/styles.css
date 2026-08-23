@@ -702,6 +702,65 @@ main {
   gap: 16px;
 }
 
+.manager-filters {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -4px 0 16px;
+}
+
+.filter-caption {
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.filter-segment {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
+  border-radius: 8px;
+}
+
+.filter-segment button {
+  min-width: 64px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-right: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  padding: 0 10px;
+  color: var(--md-sys-color-on-surface, var(--app-text));
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.filter-segment button:last-child { border-right: 0; }
+.filter-segment button.selected { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); font-weight: 600; }
+.filter-segment button m3e-icon { --m3e-icon-size: 18px; }
+
+.folder-filter {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  background: var(--md-sys-color-surface-container-low, var(--app-surface));
+}
+
+.folder-filter m3e-icon { --m3e-icon-size: 18px; }
+.folder-filter select { min-width: 130px; border: 0; outline: 0; color: var(--md-sys-color-on-surface, var(--app-text)); background: transparent; font: inherit; cursor: pointer; }
+
 .content-grid.with-detail {
   grid-template-columns: minmax(0, 1fr) 380px;
 }
