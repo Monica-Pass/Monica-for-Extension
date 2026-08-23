@@ -122,6 +122,13 @@ export interface LoginItem extends VaultItemBase {
   steamIdentitySecret?: string;
   steamTokenGid?: string;
   steamRawJson?: string;
+  /** Android password_history.json entries, encrypted with the containing Monica vault. */
+  passwordHistory?: PasswordHistoryRecord[];
+}
+
+export interface PasswordHistoryRecord {
+  password: string;
+  lastUsedAt: string;
 }
 
 export interface SecureNoteItem extends VaultItemBase {

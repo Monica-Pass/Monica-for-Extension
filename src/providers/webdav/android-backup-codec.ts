@@ -28,6 +28,7 @@ export interface AndroidBackupDocument {
   items: VaultItem[];
   records: Map<string, AndroidBackupRecord>;
   warnings: string[];
+  passwordHistoryRaw?: unknown[];
 }
 
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
@@ -50,12 +51,13 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
       warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
     }
   }
+  const passwordHistoryRaw = readAndroidPasswordHistory(entries, items, records, warnings);
   restoreAndroidOtpBindings(items);
   for (const item of items) {
     const record = records.get(item.id);
     if (record) record.item = cloneVaultItem(item);
   }
-  return { entries, items, records, warnings };
+  return { entries, items, records, warnings, passwordHistoryRaw };
 }
 
 function restoreAndroidOtpBindings(items: VaultItem[]): void {
@@ -94,6 +96,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
     ensureProviderReference(item, providerId, remotePath);
   }
+  writeAndroidPasswordHistory(document, items, entries);
   validateUncompressedZipEntries(entries);
   const output = zipSync(entries, { level: 6 });
   inspectZipArchive(output);
@@ -347,6 +350,76 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
     } satisfies PaymentAccountItem;
   }
   return null;
+}
+
+function readAndroidPasswordHistory(
+  entries: Record<string, Uint8Array>,
+  items: VaultItem[],
+  records: Map<string, AndroidBackupRecord>,
+  warnings: string[]
+): unknown[] {
+  const path = Object.keys(entries).find((entry) => entry.toLowerCase() === "password_history.json");
+  if (!path) return [];
+  let raw: unknown;
+  try { raw = JSON.parse(strFromU8(entries[path])); }
+  catch {
+    warnings.push("password_history.json: 无法解析，原始条目已保留。");
+    return [];
+  }
+  if (!Array.isArray(raw) || raw.length > 100_000) {
+    warnings.push("password_history.json: 历史列表格式无效或过大，原始条目已保留。");
+    return [];
+  }
+  const loginsByEntryId = new Map<number, LoginItem>();
+  for (const item of items) {
+    if (item.kind !== "login") continue;
+    const record = records.get(item.id);
+    const entryId = record ? optionalNumber(record.raw.id) : undefined;
+    if (entryId !== undefined) loginsByEntryId.set(entryId, item);
+  }
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const value = entry as Record<string, unknown>;
+    const entryId = optionalNumber(value.entryId);
+    const password = typeof value.password === "string" ? value.password : undefined;
+    const lastUsedAt = dateValue(value.lastUsedAt, "");
+    const login = entryId === undefined ? undefined : loginsByEntryId.get(entryId);
+    if (!login || password === undefined || !lastUsedAt) continue;
+    const history = login.passwordHistory || [];
+    if (history.length < 1_000) login.passwordHistory = [...history, { password, lastUsedAt }];
+  }
+  return raw;
+}
+
+function writeAndroidPasswordHistory(document: AndroidBackupDocument, items: VaultItem[], entries: Record<string, Uint8Array>): void {
+  const original = document.passwordHistoryRaw || [];
+  const replacements = new Map<number, LoginItem["passwordHistory"]>();
+  for (const item of items) {
+    if (item.kind !== "login") continue;
+    const record = document.records.get(item.id);
+    const entryId = record ? optionalNumber(record.raw.id) : numericId(item);
+    if (entryId === undefined) continue;
+    const previous = record?.item.kind === "login" ? record.item : undefined;
+    let history = [...(item.passwordHistory || [])].slice(-1_000);
+    if (previous && item.password !== previous.password && previous.password && !history.some((entry) => entry.password === previous.password)) {
+      history.push({ password: previous.password, lastUsedAt: previous.updatedAt });
+    }
+    if (JSON.stringify(history) !== JSON.stringify(previous?.passwordHistory || [])) replacements.set(entryId, history);
+  }
+  if (!replacements.size) return;
+  const retained = original.filter((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return true;
+    const entryId = optionalNumber((entry as Record<string, unknown>).entryId);
+    return entryId === undefined || !replacements.has(entryId);
+  });
+  for (const [entryId, history] of replacements) {
+    const matchingRaw = original.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry) && optionalNumber((entry as Record<string, unknown>).entryId) === entryId);
+    for (const value of history || []) {
+      const previousRaw = matchingRaw.find((entry) => entry.password === value.password && dateValue(entry.lastUsedAt, "") === value.lastUsedAt);
+      retained.push({ ...(previousRaw || {}), entryId, password: value.password, lastUsedAt: Date.parse(value.lastUsedAt) || Date.now() });
+    }
+  }
+  entries["password_history.json"] = strToU8(JSON.stringify(retained));
 }
 
 export function vaultItemToAndroidRecord(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem): Record<string, unknown> | null {

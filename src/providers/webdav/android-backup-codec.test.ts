@@ -676,4 +676,28 @@ describe("Android backup ZIP codec", () => {
     expect(output[newPath]).toBeDefined();
     expect(JSON.parse(strFromU8(output[newPath]))).toMatchObject({ categoryName: "Personal Vault", password: "old-password" });
   });
+
+  it("reads Android password history and appends the previous password on change", () => {
+    const loginPath = "folders/_root/passwords/password_42_1700000000000.json";
+    const loginRaw = { id: 42, title: "Account", username: "joy", password: "current", website: "https://example.com", notes: "", isFavorite: false, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000 };
+    const historyRaw = [
+      { entryId: 42, password: "older", lastUsedAt: 1_699_000_000_000, future: { keep: true } },
+      { entryId: 999, password: "unmatched", lastUsedAt: 1_698_000_000_000, unknownOwner: true }
+    ];
+    const originalHistoryBytes = strToU8(JSON.stringify(historyRaw));
+    const document = readAndroidBackup(zipSync({ [loginPath]: strToU8(JSON.stringify(loginRaw)), "password_history.json": originalHistoryBytes }), "provider-history");
+    const login = document.items[0];
+    expect(login).toMatchObject({ kind: "login", passwordHistory: [{ password: "older", lastUsedAt: new Date(1_699_000_000_000).toISOString() }] });
+    const unchanged = unzipSync(writeAndroidBackup(document, document.items, "provider-history"));
+    expect(unchanged["password_history.json"]).toEqual(originalHistoryBytes);
+
+    const changed = document.items.map((item) => item.kind === "login" ? { ...item, password: "new-password", updatedAt: "2026-08-24T00:00:00.000Z" } : item);
+    const output = unzipSync(writeAndroidBackup(document, changed, "provider-history"));
+    const history = JSON.parse(strFromU8(output["password_history.json"])) as Array<Record<string, unknown>>;
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ entryId: 42, password: "older", future: { keep: true } }),
+      expect.objectContaining({ entryId: 42, password: "current", lastUsedAt: 1_700_000_001_000 }),
+      expect.objectContaining({ entryId: 999, password: "unmatched", unknownOwner: true })
+    ]));
+  });
 });
