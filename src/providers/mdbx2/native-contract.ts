@@ -1141,11 +1141,11 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
   };
 }
 
-export function mdbx2NativeConnectionError(error: unknown): Mdbx2NativeHostError {
+export function mdbx2NativeConnectionError(error: unknown, hostLabel = "Monica MDBX2"): Mdbx2NativeHostError {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "Native Host 连接失败。";
   const normalized = message.toLocaleLowerCase();
   if (normalized.includes("native messaging host not found") || normalized.includes("specified native messaging host not found")) {
-    return new Mdbx2NativeHostError("native-host-not-installed", "尚未安装 Monica MDBX2 Native Host。", false);
+    return new Mdbx2NativeHostError("native-host-not-installed", `尚未安装 ${hostLabel} Native Host。`, false);
   }
   if (normalized.includes("forbidden") || normalized.includes("not allowed")) {
     return new Mdbx2NativeHostError("native-host-forbidden", "Native Host 未授权当前 Monica 插件 ID。", false);

@@ -157,7 +157,8 @@ export class Mdbx2NativeClient {
   constructor(
     private readonly runtime: Mdbx2NativeRuntime,
     private readonly createRequestId: () => string = () => crypto.randomUUID(),
-    private readonly hostName: string = MDBX2_NATIVE_HOST_NAME
+    private readonly hostName: string = MDBX2_NATIVE_HOST_NAME,
+    private readonly hostLabel = "Monica MDBX2"
   ) {}
 
   async hello(timeoutMs = 5_000): Promise<Mdbx2HostCapabilities> {
@@ -1021,7 +1022,7 @@ export class Mdbx2NativeClient {
         capabilities
       };
     } catch (error) {
-      const nativeError = error instanceof Mdbx2NativeHostError ? error : mdbx2NativeConnectionError(error);
+      const nativeError = error instanceof Mdbx2NativeHostError ? error : mdbx2NativeConnectionError(error, this.hostLabel);
       return {
         availability: nativeError.code === "native-host-not-installed"
           ? "not-installed"
@@ -1055,7 +1056,7 @@ export class Mdbx2NativeClient {
       } catch (error) {
         clearTimeout(timeoutId);
         this.pending.delete(requestId);
-        reject(mdbx2NativeConnectionError(error));
+        reject(mdbx2NativeConnectionError(error, this.hostLabel));
         this.close();
       }
     });
@@ -1081,7 +1082,7 @@ export class Mdbx2NativeClient {
       this.port = port;
       return port;
     } catch (error) {
-      throw mdbx2NativeConnectionError(error);
+      throw mdbx2NativeConnectionError(error, this.hostLabel);
     }
   }
 
@@ -1110,7 +1111,7 @@ export class Mdbx2NativeClient {
       port.onMessage.removeListener(this.onMessage);
       port.onDisconnect.removeListener(this.onDisconnect);
     }
-    this.rejectPending(mdbx2NativeConnectionError(message || "Native Host 连接已断开。"));
+    this.rejectPending(mdbx2NativeConnectionError(message || "Native Host 连接已断开。", this.hostLabel));
   };
 
   private rejectPending(error: Error): void {
