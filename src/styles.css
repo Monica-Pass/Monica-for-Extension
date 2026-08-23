@@ -581,6 +581,7 @@ main {
 
 .settings-page > m3e-card {
   width: 100%;
+  --m3e-card-padding: 0;
 }
 
 .settings-page > .settings-list-card {
@@ -595,6 +596,7 @@ main {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) 24px;
   min-height: 72px;
+  align-items: center;
   padding: 8px 16px;
 }
 
@@ -628,6 +630,7 @@ main {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) 24px;
   min-height: 72px;
+  align-items: center;
   padding: 8px 16px;
 }
 
