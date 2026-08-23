@@ -12,7 +12,7 @@ import type {
 } from "../core/model";
 import { generateOtpUri, parseOtpUris } from "../core/totp";
 import { createOtpQrDataUrl, decodeOtpQrImage } from "../core/otp-qr";
-import { exportSteamMaFile, parseSteamMaFile } from "../core/steam-mafile";
+import { exportSteamMaFile, parseSteamMaFileBundle } from "../core/steam-mafile";
 import { itemKindLabel } from "../manager/item-metadata";
 
 export type EditableVaultKind =
@@ -697,10 +697,14 @@ async function exportOtpQr() {
 }
 
 async function importMaFile(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
+  const files = [...((event.target as HTMLInputElement).files || [])];
+  const file = files[0];
   if (!file) return;
   try {
-    const value = parseSteamMaFile(await file.text(), file.name);
+    const contents = await Promise.all(files.map(async (entry) => ({ name: entry.name, content: await entry.text() })));
+    const maFileContent = contents.find((entry) => /\.mafile(?:\.json)?$/i.test(entry.name))?.content || contents.find((entry) => !/manifest\.json$/i.test(entry.name))?.content || "";
+    const password = maFileContent.trim().startsWith("{") ? "" : (window.prompt("请输入 Android 加密 maFile 密码") || "");
+    const value = await parseSteamMaFileBundle(contents, password);
     Object.assign(fields, {
       title: fields.title || value.accountName,
       accountName: value.accountName,
@@ -1256,6 +1260,7 @@ function exportMaFile() {
                 ><input
                   type="file"
                   accept="application/json,.maFile,.json"
+                  multiple
                   @change="importMaFile" /></label
               ><m3e-button variant="tonal" type="button" @click="exportMaFile"
                 ><m3e-icon slot="icon" name="download"></m3e-icon>导出

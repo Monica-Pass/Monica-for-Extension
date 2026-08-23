@@ -14,6 +14,11 @@ export interface SteamMaFileData {
   rawJson: string;
 }
 
+export interface SteamMaFileBundleEntry {
+  name: string;
+  content: string;
+}
+
 export function parseSteamMaFile(content: string, fileName = ""): SteamMaFileData {
   let root: Record<string, unknown>;
   try { root = JSON.parse(content.trim()) as Record<string, unknown>; }
@@ -38,6 +43,40 @@ export function parseSteamMaFile(content: string, fileName = ""): SteamMaFileDat
     steamLoginSecure,
     rawJson: JSON.stringify(root)
   };
+}
+
+/** Parse a plain or Android encrypted maFile from a selected maFile/manifest pair. */
+export async function parseSteamMaFileBundle(entries: readonly SteamMaFileBundleEntry[], password = ""): Promise<SteamMaFileData> {
+  const maFile = entries.find((entry) => /\.mafile(?:\.json)?$/i.test(entry.name))
+    || entries.find((entry) => entry.name.toLowerCase().endsWith(".json") && !/manifest\.json$/i.test(entry.name));
+  if (!maFile) throw new Error("未选择 maFile 文件。");
+  const trimmed = maFile.content.trim();
+  if (trimmed.startsWith("{")) return parseSteamMaFile(trimmed, maFile.name);
+  const manifestEntry = entries.find((entry) => /(?:^|[\\/])manifest\.json$/i.test(entry.name));
+  if (!manifestEntry) throw new Error("加密 maFile 需要同时选择 manifest.json。");
+  if (!password) throw new Error("加密 maFile 需要输入密码。");
+  const manifest = parseManifest(manifestEntry.content);
+  const fileName = maFile.name.replace(/^.*[\\/]/, "");
+  const metadata = manifest.find((entry) => entry.filename === fileName) || (manifest.length === 1 ? manifest[0] : undefined);
+  if (!metadata?.salt || !metadata.iv) throw new Error("manifest.json 中没有匹配 maFile 的加密参数。");
+  const plaintext = await decryptSteamMaFileText(trimmed, password, metadata.salt, metadata.iv);
+  return parseSteamMaFile(plaintext, fileName);
+}
+
+export async function decryptSteamMaFileText(encryptedBase64: string, password: string, saltBase64: string, ivBase64: string): Promise<string> {
+  if (!password) throw new Error("加密 maFile 需要输入密码。");
+  const salt = decodeBase64Bytes(saltBase64);
+  const iv = decodeBase64Bytes(ivBase64);
+  const ciphertext = decodeBase64Bytes(encryptedBase64.trim());
+  if (salt.length === 0 || iv.length !== 16 || ciphertext.length === 0) throw new Error("加密 maFile 的 manifest 参数无效。");
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt as BufferSource, iterations: 50_000, hash: "SHA-1" }, baseKey, { name: "AES-CBC", length: 256 }, false, ["decrypt"]);
+  try {
+    const plaintext = await crypto.subtle.decrypt({ name: "AES-CBC", iv: iv as BufferSource }, key, ciphertext as BufferSource);
+    return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
+  } catch {
+    throw new Error("无法解密 maFile，请检查密码和 manifest.json。");
+  }
 }
 
 export function exportSteamMaFile(item: TotpItem): string {
@@ -69,6 +108,23 @@ function normalizeSharedSecret(input: string): string {
 function decodeBase32(value: string): Uint8Array { const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"; const bytes: number[] = []; let buffer = 0; let bits = 0; for (const character of value.toUpperCase().replace(/[\s=-]/g, "")) { const index = alphabet.indexOf(character); if (index < 0) return new Uint8Array(); buffer = (buffer << 5) | index; bits += 5; if (bits >= 8) { bits -= 8; bytes.push((buffer >>> bits) & 255); } } return Uint8Array.from(bytes); }
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); }
 function padBase64(value: string): string { const normalized = value.replace(/-/g, "+").replace(/_/g, "/"); return normalized + "=".repeat((4 - normalized.length % 4) % 4); }
+function decodeBase64Bytes(value: string): Uint8Array {
+  try { const binary = atob(padBase64(value.replace(/\s+/g, ""))); return Uint8Array.from(binary, (character) => character.charCodeAt(0)); }
+  catch { return new Uint8Array(); }
+}
+function parseManifest(content: string): Array<{ filename: string; salt?: string; iv?: string }> {
+  let root: Record<string, unknown>;
+  try { root = JSON.parse(content) as Record<string, unknown>; } catch { throw new Error("manifest.json 不是有效 JSON。"); }
+  const values = Array.isArray(root.entries) ? root.entries : [];
+  return values.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const object = entry as Record<string, unknown>;
+    const filename = text(object.filename ?? object.Filename);
+    const salt = text(object.encryption_salt ?? object.Salt ?? object.salt);
+    const iv = text(object.encryption_iv ?? object.IV ?? object.iv);
+    return filename ? [{ filename, salt: salt || undefined, iv: iv || undefined }] : [];
+  });
+}
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function first(value: Record<string, unknown>, ...keys: string[]): unknown { for (const key of keys) if (value[key] != null) return value[key]; return undefined; }
 function text(value: unknown): string { return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim(); }
