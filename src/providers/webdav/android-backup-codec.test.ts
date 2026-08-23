@@ -1,9 +1,9 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { PasskeyItem } from "../../core/model";
+import type { PasskeyItem, SecureNoteItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { readAndroidBackup, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, readAndroidBackup, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -649,5 +649,31 @@ describe("Android backup ZIP codec", () => {
 
     expect(raw.password).toBe("in-place-secret");
     expect(raw.futureAndroidField).toEqual({ preserve: true });
+  });
+
+  it("uses Monica Android category folder keys for new records", () => {
+    expect(androidFolderKey("  工作 / 重要  ")).toBe("工作___重要");
+    expect(androidFolderKey("___")).toBe("_root");
+    const document = readAndroidBackup(zipSync({ "future/keep.bin": Uint8Array.of(1) }), "provider-category");
+    const now = "2026-08-24T00:00:00.000Z";
+    const note = {
+      id: "new-note", kind: "secure-note", title: "分类笔记", content: "正文", favorite: false, notes: "",
+      categoryName: "工作 / 重要", createdAt: now, updatedAt: now, providerRefs: [{ providerId: "provider-category" }]
+    } satisfies SecureNoteItem;
+    const output = unzipSync(writeAndroidBackup(document, [note], "provider-category"));
+    expect(Object.keys(output).some((path) => /^folders\/工作___重要\/notes\/note_[^/]+_1787529600000\.json$/.test(path))).toBe(true);
+    expect(output["future/keep.bin"]).toEqual(Uint8Array.of(1));
+  });
+
+  it("moves an edited record between Android category folders without duplicating it", () => {
+    const fixture = currentAndroidRecordsFixture();
+    const document = readAndroidBackup(fixture.zip, "provider-category-move");
+    const changed = document.items.map((item) => item.kind === "login" ? { ...item, categoryName: "Personal Vault" } : item);
+    const output = unzipSync(writeAndroidBackup(document, changed, "provider-category-move"));
+    const oldPath = fixture.paths.password;
+    const newPath = oldPath.replace("folders/Work/", "folders/Personal_Vault/");
+    expect(output[oldPath]).toBeUndefined();
+    expect(output[newPath]).toBeDefined();
+    expect(JSON.parse(strFromU8(output[newPath]))).toMatchObject({ categoryName: "Personal Vault", password: "old-password" });
   });
 });

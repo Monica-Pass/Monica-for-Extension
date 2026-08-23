@@ -87,7 +87,10 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
     if (existing && sameWritableItem(item, existing.item)) continue;
     const target = serializeAndroidItem(item, existing?.raw, existing?.item, options);
     if (!target) continue;
-    const remotePath = existing?.path || providerPath(item, target.id);
+    const remotePath = existing
+      ? existingPathForCategory(item, existing)
+      : providerPath(item, target.id);
+    if (existing && remotePath !== existing.path) delete entries[existing.path];
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
     ensureProviderReference(item, providerId, remotePath);
   }
@@ -620,8 +623,28 @@ function providerPath(item: VaultItem, id: number | string): string {
   };
   const [folder, prefix] = mapping[item.kind];
   const safeId = String(id).replace(/\//g, "_");
-  if (item.kind === "passkey") return `folders/_root/${folder}/${prefix}_${safeId}.json`;
-  return `folders/_root/${folder}/${prefix}_${safeId}_${millis}.json`;
+  const folderKey = androidFolderKey(item.categoryName);
+  if (item.kind === "passkey") return `folders/${folderKey}/${folder}/${prefix}_${safeId}.json`;
+  return `folders/${folderKey}/${folder}/${prefix}_${safeId}_${millis}.json`;
+}
+
+function existingPathForCategory(item: VaultItem, existing: AndroidBackupRecord): string {
+  if (item.categoryName === existing.item.categoryName) return existing.path;
+  const match = existing.path.match(/^folders\/[^/]+\/([^/]+)\/([^/]+)$/i);
+  return match ? `folders/${androidFolderKey(item.categoryName)}/${match[1]}/${match[2]}` : existing.path;
+}
+
+/** Byte-for-byte equivalent of Monica Android WebDavHelper.toFolderKey. */
+export function androidFolderKey(categoryName?: string): string {
+  const normalized = categoryName?.trim() || "";
+  if (!normalized) return "_root";
+  let result = "";
+  for (const character of normalized) {
+    result += /[\p{L}\p{N}]/u.test(character) || character === "-" || character === "_"
+      ? character
+      : /\s/u.test(character) ? "_" : "_";
+  }
+  return result.replace(/^_+|_+$/g, "") || "_root";
 }
 
 function ensureProviderReference(item: VaultItem, providerId: string, remoteId: string) {
