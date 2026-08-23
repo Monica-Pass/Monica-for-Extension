@@ -551,11 +551,16 @@ main {
 .settings-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   align-items: start;
+  gap: 12px;
 }
 
 .settings-grid > m3e-card {
   align-self: start;
-  --m3e-card-padding: 18px;
+  --m3e-card-padding: 16px;
+}
+
+.settings-grid > m3e-card .stack {
+  gap: 12px;
 }
 
 .metric-card {

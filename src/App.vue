@@ -2156,18 +2156,18 @@ function errorCode(error: unknown): string | undefined {
         <section v-else class="settings-grid">
           <AppearancePanel class="motion-card" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
-            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows 平台验证器保护本机设备密钥解锁。私钥留在 Windows Hello；设备密钥模式不保存主密码，请保留加密整库备份。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
+            <div class="settings-card-heading"><div><h2>Windows Hello</h2><p class="supporting">使用 Windows Hello 保护设备密钥；私钥不离开本机。</p></div><m3e-icon name="fingerprint"></m3e-icon></div>
             <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? '设备可用' : '设备不可用' }}</strong><small>平台验证器</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? windowsHelloStatus.bindingConsistent ? '已注册' : '绑定异常' : '未注册' }}</strong><small>当前密码库</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? '设备密钥' : windowsHelloStatus.protectionMode === 'master-password' ? '主密码' : '未知' }}</strong><small>保护方式</small></span></div>
             <p v-if="windowsHelloStatus?.protectionMode === 'master-password'" class="supporting">当前使用主密码保护。转换为设备密钥后才能使用 Windows Hello 免输入解锁。</p>
             <p v-else-if="windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting">加密密码库记录与 Native Host 本机凭据不一致。当前保持锁定；撤销失效绑定后可重新注册。</p>
             <p v-else-if="windowsHelloStatus?.vaultEnrolled" class="supporting">每次自动锁定后需要重新完成系统验证；取消、超时和 Native Host 异常均保持锁定。</p>
-            <p v-else class="supporting">注册需要当前密码库已经解锁，并会在 Windows 中创建 Monica 专用平台凭据。</p>
+            <p v-else class="supporting">解锁密码库后即可注册本机凭据。</p>
             <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" aria-label="注册 Windows Hello 本机凭据" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? '正在注册…' : '注册本机凭据' }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? '正在撤销…' : '撤销本机绑定' }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新状态</m3e-button></div>
             <p v-if="windowsHelloError" class="form-error" role="alert">{{ windowsHelloError }}</p>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>加密整库备份</h2>
-            <p class="supporting">包含项目、密码源和设置，使用独立备份密码加密；恢复时需要此备份密码，与主密码互不影响。</p>
+            <p class="supporting">备份项目、密码源和设置，使用独立密码加密。</p>
             <m3e-button variant="tonal" aria-label="导出加密整库备份" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? '正在导出…' : '导出备份' }}</m3e-button>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
@@ -2179,7 +2179,7 @@ function errorCode(error: unknown): string | undefined {
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <h2>更改保护方式</h2>
-            <p class="supporting">新主密码留空时改用本机设备密钥；设置主密码时使用新的 Argon2id 盐重新加密。</p>
+            <p class="supporting">留空使用设备密钥；填写则使用 Argon2id。</p>
             <label class="field"><span>当前主密码（设备密钥模式留空）</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
             <label class="field"><span>新主密码（可选）</span><input v-model="passwordChange.newPassword" type="password" :minlength="passwordChange.newPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
             <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
