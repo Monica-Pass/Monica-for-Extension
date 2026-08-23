@@ -46,8 +46,17 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByRole("button", { name: "添加安全笔记" }).click();
     await manager.getByLabel("名称 *").fill("Private Note");
     await manager.getByLabel("笔记内容 *").fill("Recovery instructions stored safely.");
+    await manager.getByRole("button", { name: "添加字段" }).click();
+    await manager.getByLabel("自定义字段 1 名称").fill("Recovery code");
+    await manager.getByLabel("自定义字段 1 值").fill("ABCD");
+    await manager.getByLabel("自定义字段 1 类型").selectOption("HIDDEN");
     await manager.getByRole("button", { name: "加密保存" }).click();
     await expect(manager.getByText("Private Note", { exact: true })).toBeVisible();
+    await manager.getByRole("button", { name: "编辑安全笔记" }).click();
+    await expect(manager.getByLabel("自定义字段 1 名称")).toHaveValue("Recovery code");
+    await expect(manager.getByLabel("自定义字段 1 值")).toHaveValue("ABCD");
+    await expect(manager.getByLabel("自定义字段 1 类型")).toHaveValue("HIDDEN");
+    await manager.getByRole("button", { name: "取消" }).click();
 
     await manager.getByRole("button", { name: /动态验证码/ }).click();
     await manager.getByRole("button", { name: "添加验证码" }).click();

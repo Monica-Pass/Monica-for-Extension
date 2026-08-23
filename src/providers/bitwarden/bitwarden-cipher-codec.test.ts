@@ -167,6 +167,41 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
   });
 
+  it("round-trips Secure Note custom fields without dropping unknown fields", async () => {
+    const raw = {
+      Id: "secure-note-fields",
+      Type: 2,
+      Name: await encryptBitwardenString("Recovery note", KEY),
+      Notes: await encryptBitwardenString("private body", KEY),
+      Favorite: false,
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      SecureNote: { Type: 0 },
+      Fields: [
+        { Type: 1, Name: await encryptBitwardenString("Recovery code", KEY), Value: await encryptBitwardenString("ABCD", KEY) },
+        { Type: 2, Name: await encryptBitwardenString("Future boolean", KEY), Value: await encryptBitwardenString("true", KEY), Future: "preserve" }
+      ]
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const note = decoded.items[0] as SecureNoteItem;
+    expect(note).toMatchObject({
+      kind: "secure-note",
+      customFields: [{ name: "Recovery code", value: "ABCD", protected: true }]
+    });
+
+    const encoded = await encodeBitwardenCipher({
+      ...note,
+      customFields: [{ name: "Recovery code", value: "WXYZ", protected: true }]
+    }, KEY, raw);
+    const fields = encoded.fields as Array<Record<string, unknown>>;
+    expect(fields.some((field) => field.Future === "preserve")).toBe(true);
+    const editable = fields.find((field) => !field.Future)!;
+    await expect(decryptBitwardenString(String(editable.name), KEY)).resolves.toBe("Recovery code");
+    await expect(decryptBitwardenString(String(editable.value), KEY)).resolves.toBe("WXYZ");
+    expect(editable.type).toBe(1);
+  });
+
   it("imports Monica Android metadata-only Passkeys without marking them usable", async () => {
     const raw = {
       Id: "android-passkey-reference",

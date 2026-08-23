@@ -78,7 +78,8 @@ export function monicaItemDataToVaultItem(
         kind: "secure-note",
         content: firstString(data, "content") || options.fallbackNotes || "",
         tags: stringArray(data.tags),
-        isMarkdown: Boolean(data.isMarkdown)
+        isMarkdown: Boolean(data.isMarkdown),
+        customFields: parseSecureCustomFields(data.customFields)
       } satisfies SecureNoteItem;
     case "TOTP": {
       const totp = { ...base, ...decodeTotp(data) } satisfies TotpItem;
@@ -271,7 +272,8 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
       return {
         content: item.content,
         ...(item.tags?.length ? { tags: item.tags } : {}),
-        ...(item.isMarkdown ? { isMarkdown: true } : {})
+        ...(item.isMarkdown ? { isMarkdown: true } : {}),
+        ...((item.customFields?.length || 0) > 0 ? { customFields: serializeSecureCustomFields(item.customFields) } : {})
       };
     case "totp":
       return {

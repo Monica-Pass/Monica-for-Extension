@@ -128,6 +128,7 @@ export interface SecureNoteItem extends VaultItemBase {
   content: string;
   tags?: string[];
   isMarkdown?: boolean;
+  customFields?: SecureCustomField[];
 }
 
 export interface TotpItem extends VaultItemBase {

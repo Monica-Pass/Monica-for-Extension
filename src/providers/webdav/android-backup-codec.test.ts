@@ -280,7 +280,16 @@ function currentAndroidRecordsFixture() {
     isDefault: true,
     customFields: [{ label: "branch", value: "001", type: "TEXT" }]
   };
-  const noteData = { content: "old content", tags: ["android", "work"], isMarkdown: true };
+  const noteData = {
+    content: "old content",
+    tags: ["android", "work"],
+    isMarkdown: true,
+    customFields: [
+      { label: "Recovery code", value: "ABCD", type: "HIDDEN" },
+      { label: "Pinned", value: "true", type: "BOOLEAN" }
+    ],
+    futureNoteField: { preserve: true }
+  };
   const passkey = {
     credentialId: "current-passkey",
     rpId: "example.com",
@@ -527,7 +536,14 @@ describe("Android backup ZIP codec", () => {
     expect(document.items.find((item) => item.kind === "identity")).toMatchObject({ additionalInfo: "info", company: "Monica", ssn: "SSN", passportNumber: "P1234567", licenseNumber: "DL123", address3: "Building A", customFields: [{ name: "visa", value: "valid", fieldType: "HIDDEN" }] });
     expect(document.items.find((item) => item.kind === "billing-address")).toMatchObject({ isDefault: true, customFields: [{ name: "gate", value: "east", fieldType: "TEXT" }] });
     expect(document.items.find((item) => item.kind === "payment-account")).toMatchObject({ linkedCardLast4: "1111", billingAddress: '{"streetAddress":"1 Main St"}', paymentNotes: "payment-only-note", isDefault: true, customFields: [{ name: "branch", value: "001", fieldType: "TEXT" }] });
-    expect(document.items.find((item) => item.kind === "secure-note")).toMatchObject({ tags: ["android", "work"], isMarkdown: true });
+    expect(document.items.find((item) => item.kind === "secure-note")).toMatchObject({
+      tags: ["android", "work"],
+      isMarkdown: true,
+      customFields: [
+        { name: "Recovery code", value: "ABCD", protected: true, fieldType: "HIDDEN" },
+        { name: "Pinned", value: "true", protected: false, fieldType: "BOOLEAN" }
+      ]
+    });
     expect(document.items.find((item) => item.kind === "passkey")).toMatchObject({
       lastUsedAt: new Date(1_700_000_001_000).toISOString(),
       useCount: 9,
@@ -545,7 +561,14 @@ describe("Android backup ZIP codec", () => {
       if (item.kind === "identity") return { ...item, documentNumber: "P7654321" };
       if (item.kind === "billing-address") return { ...item, city: "Hangzhou" };
       if (item.kind === "payment-account") return { ...item, provider: "New Monica Bank" };
-      if (item.kind === "secure-note") return { ...item, content: "new content" };
+      if (item.kind === "secure-note") return {
+        ...item,
+        content: "new content",
+        customFields: [
+          { name: "Recovery code", value: "WXYZ", protected: true, fieldType: "HIDDEN" as const },
+          { name: "Pinned", value: "false", protected: false, fieldType: "BOOLEAN" as const }
+        ]
+      };
       return { ...item, notes: "new passkey note" };
     });
     const output = unzipSync(writeAndroidBackup(document, changed, "provider-current"));
@@ -563,7 +586,14 @@ describe("Android backup ZIP codec", () => {
     expect({ ...written.payment, itemData: undefined }).toEqual({ ...fixture.raws.payment, itemData: undefined });
     expect(JSON.parse(written.payment.itemData)).toEqual({ ...fixture.nested.paymentData, provider: "New Monica Bank" });
     expect({ ...written.note, itemData: undefined }).toEqual({ ...fixture.raws.note, itemData: undefined });
-    expect(JSON.parse(written.note.itemData)).toEqual({ ...fixture.nested.noteData, content: "new content" });
+    expect(JSON.parse(written.note.itemData)).toEqual({
+      ...fixture.nested.noteData,
+      content: "new content",
+      customFields: [
+        { label: "Recovery code", value: "WXYZ", type: "HIDDEN" },
+        { label: "Pinned", value: "false", type: "BOOLEAN" }
+      ]
+    });
     expect(written.passkey).toEqual({ ...fixture.raws.passkey, notes: "new passkey note" });
   });
 

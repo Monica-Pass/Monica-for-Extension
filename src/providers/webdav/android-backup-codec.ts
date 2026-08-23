@@ -147,7 +147,14 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
 
   if (kindFolder === "notes") {
     const data = parseNestedJson(raw.itemData);
-    return { ...base, kind: "secure-note", content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes), tags: parseStringArray(data.tags) || [], isMarkdown: Boolean(data.isMarkdown) } satisfies SecureNoteItem;
+    return {
+      ...base,
+      kind: "secure-note",
+      content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes),
+      tags: parseStringArray(data.tags) || [],
+      isMarkdown: Boolean(data.isMarkdown),
+      customFields: parseSecureCustomFields(data.customFields)
+    } satisfies SecureNoteItem;
   }
 
   if (kindFolder === "authenticators") {
@@ -433,6 +440,7 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setNested(updates, "content", item.content, item.content, previous?.content);
       setNested(updates, "tags", item.tags || [], item.tags || [], previous?.tags || []);
       setNested(updates, "isMarkdown", Boolean(item.isMarkdown), Boolean(item.isMarkdown), Boolean(previous?.isMarkdown));
+      setNested(updates, "customFields", serializeSecureCustomFields(item.customFields), item.customFields || [], previous?.customFields || []);
       applyNested(updates);
       return { id, raw };
     }

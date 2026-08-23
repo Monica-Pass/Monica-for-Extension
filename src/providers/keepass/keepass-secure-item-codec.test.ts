@@ -233,6 +233,25 @@ describe("keePassSecureItemToVaultItem", () => {
       cardType: "PREPAID"
     });
   });
+
+  it("round-trips Android note custom fields through protected MonicaItemData", () => {
+    const original = note({
+      customFields: [
+        { name: "Recovery code", value: "ABCD", protected: true, fieldType: "HIDDEN" },
+        { name: "Pinned", value: "true", protected: false, fieldType: "BOOLEAN" }
+      ]
+    });
+
+    const written = buildKeePassSecureItemFields({ item: original })!;
+    const payload = JSON.parse(keePassFieldText(written.get("MonicaItemData")));
+    expect(payload.customFields).toEqual([
+      { label: "Recovery code", value: "ABCD", type: "HIDDEN" },
+      { label: "Pinned", value: "true", type: "BOOLEAN" }
+    ]);
+
+    const restored = keePassSecureItemToVaultItem(readKeePassSecureItemFields(written)!, base()) as SecureNoteItem;
+    expect(restored.customFields).toEqual(original.customFields);
+  });
 });
 
 describe("buildKeePassSecureItemFields", () => {

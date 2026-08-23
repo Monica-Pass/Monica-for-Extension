@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CardItem, LoginItem, PasskeyItem, TotpItem, VaultItem } from "../../core/model";
+import type { CardItem, LoginItem, PasskeyItem, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import type { Mdbx2ObjectRecord } from "./native-contract";
 import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
 
@@ -92,6 +92,42 @@ describe("MDBX2 Android item codec", () => {
     expect(JSON.parse(payload.item_data)).toMatchObject({
       cardNumber: "5555555555554444",
       future_wallet_field: { version: 4 }
+    });
+  });
+
+  it("round-trips Android note custom fields while preserving future item data", () => {
+    const record: Mdbx2ObjectRecord = {
+      objectId: "11111111-1111-4111-8111-111111111111",
+      collectionId: "22222222-2222-4222-8222-222222222222",
+      objectTypeId: "note",
+      title: "Recovery",
+      payloadSchemaVersion: 1,
+      deleted: false,
+      payloadJson: JSON.stringify({
+        kind: "note",
+        monica_entry_id: "note:9",
+        item_data: JSON.stringify({
+          content: "private body",
+          isMarkdown: true,
+          customFields: [{ label: "Recovery code", value: "ABCD", type: "HIDDEN" }],
+          future_note_field: { preserve: true }
+        })
+      })
+    };
+    const decoded = decodeMdbx2Object(record, META, "mdbx-provider");
+    const note = decoded.item as SecureNoteItem;
+    expect(note.customFields).toEqual([{ name: "Recovery code", value: "ABCD", protected: true, fieldType: "HIDDEN" }]);
+
+    const encoded = encodeMdbx2Object({
+      ...note,
+      customFields: [{ name: "Recovery code", value: "WXYZ", protected: true, fieldType: "HIDDEN" }]
+    }, decoded.payload, decoded.item)!;
+    const payload = JSON.parse(encoded.payloadJson) as { item_data: string };
+    expect(JSON.parse(payload.item_data)).toEqual({
+      content: "private body",
+      isMarkdown: true,
+      customFields: [{ label: "Recovery code", value: "WXYZ", type: "HIDDEN" }],
+      future_note_field: { preserve: true }
     });
   });
 

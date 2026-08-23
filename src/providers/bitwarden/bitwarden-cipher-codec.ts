@@ -120,7 +120,11 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
   }
 
   if (type === 2) {
-    return { items: [{ ...base, kind: "secure-note", content: notes } satisfies SecureNoteItem] };
+    const decodedFields = await decodeBitwardenCustomFields(arrayValue(raw, "Fields", "fields"), key);
+    const customFields = decodedFields
+      .filter(isEditableBitwardenUserField)
+      .map((field) => ({ name: field.name, value: field.value, protected: field.type === BITWARDEN_HIDDEN_FIELD }));
+    return { items: [{ ...base, kind: "secure-note", content: notes, customFields } satisfies SecureNoteItem] };
   }
 
   if (type === 3) {
@@ -282,6 +286,7 @@ export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: Bitw
   } else if (item.kind === "secure-note") {
     base.notes = await encryptOptional(item.content, encryptionKey);
     base.secureNote = recordValue(preserved, "SecureNote", "secureNote") || { type: 0 };
+    base.fields = await mergeSecureNoteFieldsPreservingUnknown(item, arrayValue(preserved, "Fields", "fields"), encryptionKey);
   }
   return base;
 }
@@ -408,6 +413,28 @@ async function mergeCipherFieldsPreservingUnknown(
       preserved.push(field.raw);
     }
   }
+  const merged = [...preserved, ...encoded];
+  return merged.length ? merged : null;
+}
+
+async function mergeSecureNoteFieldsPreservingUnknown(
+  item: SecureNoteItem,
+  remoteFields: unknown[],
+  encryptionKey: BitwardenSymmetricKey
+): Promise<unknown[] | null> {
+  const encoded = await Promise.all((item.customFields || [])
+    .filter((field) => field.name.trim())
+    .map(async (field) => ({
+      type: field.protected ? BITWARDEN_HIDDEN_FIELD : BITWARDEN_TEXT_FIELD,
+      name: await encryptOptional(field.name, encryptionKey),
+      value: await encryptOptional(field.value, encryptionKey),
+      linkedId: null
+    })));
+  if (!remoteFields.length) return encoded.length ? encoded : null;
+  const remotePlain = await decodeBitwardenCustomFields(remoteFields, encryptionKey);
+  const preserved = remotePlain
+    .filter((field) => !isEditableBitwardenUserField(field))
+    .map((field) => field.raw);
   const merged = [...preserved, ...encoded];
   return merged.length ? merged : null;
 }

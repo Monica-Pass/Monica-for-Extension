@@ -169,6 +169,7 @@ function initialize() {
         content: props.item.content,
         tags: (props.item.tags || []).join(", "),
         isMarkdown: Boolean(props.item.isMarkdown),
+        customFields: cloneCustomFields(props.item.customFields),
       });
       break;
     case "totp":
@@ -361,6 +362,7 @@ function buildItem(title: string): VaultItem {
           .map((tag) => tag.trim())
           .filter(Boolean),
         isMarkdown: fields.isMarkdown,
+        customFields: cleanCustomFields(),
       } satisfies SecureNoteItem;
     case "totp":
       return {
@@ -1318,7 +1320,8 @@ function exportMaFile() {
             kind === 'card' ||
             kind === 'identity' ||
             kind === 'billing-address' ||
-            kind === 'payment-account'
+            kind === 'payment-account' ||
+            kind === 'secure-note'
           "
           class="editor-fieldset field-wide"
         >
