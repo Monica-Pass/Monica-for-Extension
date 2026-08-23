@@ -1311,7 +1311,7 @@ function boundedMutationIds(input: string[]): Set<string> {
 }
 
 function baseProviderRemoteId(remoteId: string): string {
-  return remoteId.replace(/#(?:fido2|totp):.*$/, "");
+  return remoteId.replace(/#(?:fido2:.*|totp)$/, "");
 }
 
 function queueImportedProviderMutations(
