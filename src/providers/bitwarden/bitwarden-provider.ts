@@ -4,6 +4,8 @@ import { BitwardenClient, type BitwardenSessionConfig } from "./bitwarden-client
 import { bitwardenSshComparableData, decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, mergeBitwardenSshLocalMetadata, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { bitwardenOrganizationRecords, resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
 import type { BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { generateOtpUri } from "../../core/totp";
+import { parametersFromItem } from "../../core/login-otp";
 import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
 import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
@@ -302,7 +304,14 @@ export class BitwardenProvider implements ProviderAdapter {
         continue;
       }
       try {
-        const primary = changes.find((item) => item.kind !== "passkey");
+        const changedTotp = changes.find((item): item is Extract<VaultItem, { kind: "totp" }> => item.kind === "totp");
+        let primary = changes.find((item): item is Extract<VaultItem, { kind: "login" }> => item.kind === "login");
+        if (!primary && changedTotp) {
+          const remoteLogin = remotes.find((item): item is LoginItem => item.kind === "login");
+          if (remoteLogin) primary = projectTotpIntoLogin(remoteLogin, changedTotp);
+        } else if (primary && changedTotp) {
+          primary = projectTotpIntoLogin(primary, changedTotp);
+        }
         const trashedRemotely = Boolean(stringValue(raw, "DeletedDate", "deletedDate"));
         if (primary?.deletedAt) {
           // Monica's local delete is a recycle-bin tombstone, so the remote copy has to land in
@@ -420,12 +429,18 @@ export class BitwardenProvider implements ProviderAdapter {
     const organizations = await resolveBitwardenOrganizationKeys(current.payload, vaultKey);
     const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
     const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
-    const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, cipherKey, raw) : await encodeBitwardenCipher(item, cipherKey, raw);
+    const decodedCurrent = await decodeBitwardenCipher(raw, account.id, ownerKey);
+    const payloadItem = item.kind === "totp"
+      ? projectTotpIntoLogin(decodedCurrent.items.find((candidate): candidate is LoginItem => candidate.kind === "login") || createLoginFromTotp(item), item)
+      : item;
+    const payload = payloadItem.kind === "passkey" ? await encodeBitwardenPasskeyCipher(payloadItem, cipherKey, raw) : await encodeBitwardenCipher(payloadItem, cipherKey, raw);
     const response = await this.client.updateCipher(current.session, cipherId, payload, signal);
     const decoded = await decodeBitwardenCipher(response.payload, account.id, ownerKey);
     return item.kind === "passkey"
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId) || item
-      : decoded.items.find((candidate) => candidate.kind === item.kind) || item;
+      : item.kind === "totp"
+        ? decoded.items.find((candidate) => candidate.kind === "totp") || item
+        : decoded.items.find((candidate) => candidate.kind === item.kind) || item;
   }
 
   async remove(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<void> {
@@ -460,13 +475,16 @@ export class BitwardenProvider implements ProviderAdapter {
 
   private async createWithSession(session: BitwardenSessionConfig, providerId: string, item: VaultItem, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; item: VaultItem; items: VaultItem[]; raw: Record<string, unknown> }> {
     const vaultKey = this.client.vaultKey(session);
-    const payload = item.kind === "passkey" ? await encodeBitwardenPasskeyCipher(item, vaultKey) : await encodeBitwardenCipher(item, vaultKey);
+    const payloadItem = item.kind === "totp" ? createLoginFromTotp(item) : item;
+    const payload = payloadItem.kind === "passkey" ? await encodeBitwardenPasskeyCipher(payloadItem, vaultKey) : await encodeBitwardenCipher(payloadItem, vaultKey);
     const response = await this.client.createCipher(session, payload, signal);
     requireBitwardenMutationRevision(response.payload, undefined, "创建");
     const decoded = await decodeBitwardenCipher(response.payload, providerId, vaultKey);
     const created = item.kind === "passkey"
       ? decoded.items.find((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId)
-      : decoded.items.find((candidate) => candidate.kind === item.kind);
+      : item.kind === "totp"
+        ? decoded.items.find((candidate) => candidate.kind === "totp")
+        : decoded.items.find((candidate) => candidate.kind === item.kind);
     if (!created) throw new Error("Bitwarden 创建响应无法映射回 Monica 项目。");
     // Bitwarden assigns the cipher ID, not Monica's item ID. Keep the latter
     // stable so an edit made while this request was in flight still targets the
@@ -474,6 +492,8 @@ export class BitwardenProvider implements ProviderAdapter {
     const canonical = withCreatedReference(item, created, providerId);
     const items = item.kind === "passkey"
       ? decoded.items.map((candidate) => candidate.kind === "passkey" && candidate.credentialId === item.credentialId ? canonical : candidate)
+      : item.kind === "totp"
+        ? decoded.items.map((candidate) => candidate.kind === "totp" ? canonical : candidate)
       : [canonical];
     return { session: response.session, item: canonical, items, raw: response.payload };
   }
@@ -635,6 +655,36 @@ function itemChanged(item: VaultItem, providerId: string): boolean {
 function findEquivalent(local: VaultItem, remotes: VaultItem[]): VaultItem | undefined {
   if (local.kind === "passkey") return remotes.find((remote) => remote.kind === "passkey" && remote.credentialId === local.credentialId);
   return remotes.find((remote) => remote.kind === local.kind);
+}
+
+function projectTotpIntoLogin(login: LoginItem, totp: Extract<VaultItem, { kind: "totp" }>): LoginItem {
+  const parameters = parametersFromItem(totp);
+  return {
+    ...login,
+    totpSecret: generateOtpUri(parameters, [totp.issuer, totp.accountName].filter(Boolean).join(":")),
+    updatedAt: totp.updatedAt,
+    deletedAt: totp.deletedAt,
+    archivedAt: totp.archivedAt
+  };
+}
+
+function createLoginFromTotp(totp: Extract<VaultItem, { kind: "totp" }>): LoginItem {
+  return {
+    id: totp.id,
+    kind: "login",
+    title: totp.title,
+    favorite: totp.favorite,
+    notes: totp.notes,
+    createdAt: totp.createdAt,
+    updatedAt: totp.updatedAt,
+    username: totp.accountName || "",
+    password: "",
+    uris: [],
+    uriRules: [],
+    totpSecret: generateOtpUri(parametersFromItem(totp), [totp.issuer, totp.accountName].filter(Boolean).join(":")),
+    customFields: [],
+    providerRefs: totp.providerRefs.map((reference) => ({ ...reference, remoteId: undefined }))
+  };
 }
 
 /**

@@ -105,7 +105,12 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       loginType,
       sshKeyData
     };
-    const passkeys = await decodeFido2Credentials(login, base, reference, key);
+    const hasAndroidPasskeyMetadata = notes.includes("[Monica Passkey Metadata]");
+    const passkeys = await decodeFido2Credentials(login, base, reference, key, hasAndroidPasskeyMetadata);
+    if (!passkeys.length && hasAndroidPasskeyMetadata) {
+      const metadataPasskey = decodeAndroidPasskeyMetadata(base, reference, notes);
+      if (metadataPasskey) passkeys.push(metadataPasskey);
+    }
     // Monica Android represents an independent authenticator as a Login cipher with
     // an empty password, then projects the same cipher into its validator list.
     // Keep the Login projection for lossless Bitwarden write-back and expose the
@@ -707,7 +712,8 @@ async function decodeFido2Credentials(
   login: Record<string, unknown>,
   base: { id: string; title: string; favorite: boolean; notes: string; createdAt: string; updatedAt: string },
   cipherReference: ProviderReference,
-  key: BitwardenSymmetricKey
+  key: BitwardenSymmetricKey,
+  androidMetadata: boolean
 ): Promise<PasskeyItem[]> {
   return Promise.all(arrayValue(login, "Fido2Credentials", "fido2Credentials").map(async (entry, index) => {
     const fido = record(entry);
@@ -731,7 +737,7 @@ async function decodeFido2Credentials(
       privateKeyPkcs8: decrypted.KeyValue || undefined,
       signCount: Number(decrypted.Counter) || 0,
       discoverable: decrypted.Discoverable.toLowerCase() !== "false",
-      sourceMode: "bitwarden",
+      sourceMode: decrypted.KeyValue ? "bitwarden" : androidMetadata ? "android-metadata-only" : "bitwarden",
       createdAt: dateValue(decrypted.CreationDate, base.createdAt),
       providerRefs: [{ ...cipherReference, remoteId: `${cipherReference.remoteId}#fido2:${credentialId}` }]
     } satisfies PasskeyItem;
@@ -817,6 +823,46 @@ function recordValue(raw: Record<string, unknown>, ...names: string[]): Record<s
 function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[] {
   const result = value(raw, ...names);
   return Array.isArray(result) ? result : [];
+}
+
+function decodeAndroidPasskeyMetadata(
+  base: { id: string; title: string; favorite: boolean; notes: string; createdAt: string; updatedAt: string },
+  reference: ProviderReference,
+  notes: string
+): PasskeyItem | undefined {
+  const marker = notes.indexOf("[Monica Passkey Metadata]");
+  if (marker < 0) return undefined;
+  const values = new Map<string, string>();
+  for (const line of notes.slice(marker).split(/\r?\n/).slice(1)) {
+    const separator = line.indexOf(": ");
+    if (separator > 0) values.set(line.slice(0, separator).trim(), line.slice(separator + 2).trim());
+  }
+  const credentialId = values.get("credentialId") || `${reference.remoteId}#metadata`;
+  const rpId = values.get("rpId") || "";
+  const rpName = values.get("rpName") || base.title.replace(/\s*\[Passkey\]\s*$/i, "");
+  const userName = values.get("userName") || "";
+  const userDisplayName = values.get("userDisplayName") || userName;
+  const userHandle = values.get("userId") || "";
+  const algorithm = Number(values.get("publicKeyAlgorithm"));
+  return {
+    ...base,
+    id: `${base.id}:passkey:${credentialId}`,
+    kind: "passkey",
+    title: rpName || base.title,
+    credentialId,
+    rpId,
+    rpName,
+    userHandle,
+    userName,
+    userDisplayName,
+    algorithm: Number.isSafeInteger(algorithm) ? algorithm : -7,
+    keyAlgorithm: "ANDROID_METADATA",
+    publicKey: "",
+    signCount: Number(values.get("signCount")) || 0,
+    discoverable: true,
+    sourceMode: "android-metadata-only",
+    providerRefs: [{ ...reference, remoteId: `${reference.remoteId}#fido2:${credentialId}` }]
+  };
 }
 
 function decodeStandaloneTotp(login: LoginItem, rawSecret: string, reference: ProviderReference): TotpItem | undefined {

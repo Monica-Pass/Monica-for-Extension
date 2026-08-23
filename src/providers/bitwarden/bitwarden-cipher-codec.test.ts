@@ -166,6 +166,26 @@ describe("Bitwarden Cipher codec", () => {
     await expect(decryptBitwardenString((encoded.login as Record<string, string>).username, KEY)).resolves.toBe("user");
   });
 
+  it("imports Monica Android metadata-only Passkeys without marking them usable", async () => {
+    const raw = {
+      Id: "android-passkey-reference",
+      Type: 1,
+      Name: await encryptBitwardenString("GitHub [Passkey]", KEY),
+      Notes: await encryptBitwardenString("[Monica Passkey Metadata]\ncredentialId: android-credential\nrpId: github.com\nrpName: GitHub\nuserId: android-user\nuserDisplayName: Joy", KEY),
+      Favorite: false,
+      RevisionDate: REVISION,
+      CreationDate: REVISION,
+      Login: { Username: await encryptBitwardenString("joy", KEY), Password: null, Uris: [] }
+    };
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({
+      credentialId: "android-credential",
+      rpId: "github.com",
+      sourceMode: "android-metadata-only"
+    });
+    expect(decoded.items.find((item) => item.kind === "passkey")).not.toHaveProperty("privateKeyPkcs8");
+  });
+
   it("accepts plaintext FIDO2 scalar fields returned by self-hosted servers", async () => {
     const enc = (value: string) => encryptBitwardenString(value, KEY);
     const decoded = await decodeBitwardenCipher({
