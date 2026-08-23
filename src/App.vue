@@ -2050,7 +2050,7 @@ function errorCode(error: unknown): string | undefined {
         </div>
       </aside>
 
-      <main id="main-content" tabindex="-1">
+      <main id="main-content" :class="{ 'settings-main': activeSection === 'settings' }" tabindex="-1">
         <m3e-app-bar size="small" class="page-appbar">
           <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
           <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon>筛选<span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
