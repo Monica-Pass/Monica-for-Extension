@@ -203,6 +203,13 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     const selectedPalette = page.locator(".palette-button.selected");
     const paletteWidth = await selectedPalette.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(paletteWidth.scroll, JSON.stringify(paletteWidth)).toBeLessThanOrEqual(paletteWidth.client + 1);
+    const swatchColors = await selectedPalette.locator(".swatch").evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      secondary: getComputedStyle(element, "::before").backgroundColor,
+      accent: getComputedStyle(element, "::after").backgroundColor
+    }));
+    expect(new Set(Object.values(swatchColors)).size).toBeGreaterThanOrEqual(3);
+    await expect(selectedPalette.locator(".swatch m3e-icon")).toBeVisible();
   } finally { await context?.close(); }
 });
 

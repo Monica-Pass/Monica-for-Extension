@@ -37,7 +37,9 @@ function updatePalette(value: ThemePaletteId) {
             :aria-pressed="item.id === paletteId"
             @click="updatePalette(item.id)"
           >
-            <span class="swatch" :style="{ '--swatch': item.color, '--accent': item.accent }"></span>
+            <span class="swatch" :style="{ '--swatch': item.color, '--secondary': item.darkColor, '--accent': item.accent }" aria-hidden="true">
+              <m3e-icon name="palette"></m3e-icon>
+            </span>
             <span>{{ paletteLabels[item.id] }}</span>
           </button>
         </div>
@@ -71,6 +73,10 @@ function updatePalette(value: ThemePaletteId) {
 .scheme-control button.selected { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); font-weight: 600; }
 .palette-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .palette-button { min-width: 0; min-height: 48px; grid-template-columns: 24px minmax(0, 1fr); padding: 0 8px; }
+.swatch { position: relative; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 24px; background: var(--swatch); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-text) 16%, transparent); overflow: visible; }
+.swatch::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--secondary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-text) 20%, transparent); }
+.swatch::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; border: 2px solid var(--md-sys-color-surface-container-high, var(--app-surface-high)); border-radius: 50%; background: var(--accent); }
+.swatch m3e-icon { position: relative; z-index: 1; color: var(--md-sys-color-on-primary-container, var(--app-text)); --m3e-icon-size: 12px; }
 .palette-button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-button:hover { transform: none; }
 @media (max-width: 560px) { .palette-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
