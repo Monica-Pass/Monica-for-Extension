@@ -102,7 +102,8 @@ const providerConflicts = ref<ProviderConflictSummary[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const activeSection = ref<Section>("overview");
 const query = ref("");
-const quickFilter = ref<"all" | "favorites" | "recent" | "local">("all");
+type AndroidQuickFilter = "favorite" | "two-fa" | "notes" | "passkey" | "uncategorized" | "local-only" | "attachments";
+const activeQuickFilters = ref<AndroidQuickFilter[]>([]);
 const folderFilter = ref("all");
 const loading = ref(true);
 const authBusy = ref(false);
@@ -220,7 +221,16 @@ const steamItems = computed(() => vaultItems.value.flatMap((item) => {
   return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
 }));
 const passkeyItems = computed(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
-const databaseFolders = computed(() => [...new Set(vaultItems.value.map(itemFolderLabel))].sort((left, right) => left.localeCompare(right, "zh-CN")));
+const databaseFolders = computed(() => {
+  const categories = new Map<string, { key: string; label: string }>();
+  for (const item of vaultItems.value) {
+    const label = item.categoryName?.trim();
+    if (!label) continue;
+    const key = item.categoryId === undefined ? `name:${label}` : `id:${item.categoryId}`;
+    categories.set(key, { key, label });
+  }
+  return [...categories.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN"));
+});
 const filterableSection = computed(() => ["passwords", "wallet", "notes", "totp", "steam", "passkeys", "archive", "trash"].includes(activeSection.value));
 const filteredSteamItems = computed(() => steamItems.value.filter(matchesManagerFilters));
 const archivedCredentials = computed(() => archivedItems.value.filter(isLoginItem));
@@ -646,19 +656,46 @@ function filterManagerItems(items: VaultItem[]): VaultItem[] {
 }
 
 function itemFolderLabel(item: VaultItem): string {
-  return item.categoryName?.trim() || item.keepassGroupPath?.trim() || "未分类";
+  return item.categoryName?.trim() || "未分类";
 }
+
+function itemCategoryKey(item: VaultItem): string {
+  const label = item.categoryName?.trim();
+  if (!label) return "uncategorized";
+  return item.categoryId === undefined ? `name:${label}` : `id:${item.categoryId}`;
+}
+
+function isLocalItem(item: VaultItem): boolean {
+  return item.providerRefs.length === 0 || item.providerRefs.every((reference) => reference.providerId === "local");
+}
+
+function toggleAndroidQuickFilter(filter: AndroidQuickFilter): void {
+  activeQuickFilters.value = activeQuickFilters.value.includes(filter)
+    ? activeQuickFilters.value.filter((value) => value !== filter)
+    : [...activeQuickFilters.value, filter];
+}
+
+function hasAndroidFilter(filter: AndroidQuickFilter): boolean {
+  return activeQuickFilters.value.includes(filter);
+}
+
+const hasActiveManagerFilter = computed(() => folderFilter.value !== "all" || activeQuickFilters.value.length > 0);
 
 function matchesManagerFilters(item: VaultItem): boolean {
   const needle = query.value.trim().toLocaleLowerCase();
   if (needle && !itemSearchText(item).toLocaleLowerCase().includes(needle)) return false;
-  if (folderFilter.value !== "all" && itemFolderLabel(item) !== folderFilter.value) return false;
-  if (quickFilter.value === "favorites" && !item.favorite) return false;
-  if (quickFilter.value === "local" && item.providerRefs.some((reference) => reference.providerId !== "local")) return false;
-  if (quickFilter.value === "recent") {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    if (Date.parse(item.updatedAt) < cutoff) return false;
+  if (folderFilter.value === "local" && !isLocalItem(item)) return false;
+  if (folderFilter.value === "uncategorized" && itemCategoryKey(item) !== "uncategorized") return false;
+  if (folderFilter.value.startsWith("id:") || folderFilter.value.startsWith("name:")) {
+    if (itemCategoryKey(item) !== folderFilter.value) return false;
   }
+  if (hasAndroidFilter("favorite") && !item.favorite) return false;
+  if (hasAndroidFilter("two-fa") && itemSection(item) !== "totp") return false;
+  if (hasAndroidFilter("notes") && itemSection(item) !== "notes") return false;
+  if (hasAndroidFilter("passkey") && itemSection(item) !== "passkeys") return false;
+  if (hasAndroidFilter("uncategorized") && itemCategoryKey(item) !== "uncategorized") return false;
+  if (hasAndroidFilter("local-only") && !isLocalItem(item)) return false;
+  if (hasAndroidFilter("attachments") && !(item.imagePaths?.length || item.boundNoteId !== undefined)) return false;
   return true;
 }
 
@@ -2016,14 +2053,24 @@ function errorCode(error: unknown): string | undefined {
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
         <div v-if="filterableSection" class="manager-filters" aria-label="快捷筛选">
-          <span class="filter-caption">快捷筛选</span>
-          <div class="filter-segment" role="group" aria-label="快捷筛选条件">
-            <button type="button" :class="{ selected: quickFilter === 'all' }" :aria-pressed="quickFilter === 'all'" @click="quickFilter = 'all'">全部</button>
-            <button type="button" :class="{ selected: quickFilter === 'favorites' }" :aria-pressed="quickFilter === 'favorites'" @click="quickFilter = 'favorites'"><m3e-icon name="star"></m3e-icon>收藏</button>
-            <button type="button" :class="{ selected: quickFilter === 'recent' }" :aria-pressed="quickFilter === 'recent'" @click="quickFilter = 'recent'"><m3e-icon name="schedule"></m3e-icon>最近</button>
-            <button type="button" :class="{ selected: quickFilter === 'local' }" :aria-pressed="quickFilter === 'local'" @click="quickFilter = 'local'"><m3e-icon name="database"></m3e-icon>本地库</button>
+          <span class="filter-caption">密码源与分类</span>
+          <div class="filter-chip-row" role="group" aria-label="密码源与分类">
+            <button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>全部</button>
+            <button type="button" :class="{ selected: folderFilter === 'local' }" :aria-pressed="folderFilter === 'local'" @click="folderFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>Monica 本地库</button>
+            <button type="button" :class="{ selected: folderFilter === 'uncategorized' }" :aria-pressed="folderFilter === 'uncategorized'" @click="folderFilter = 'uncategorized'"><m3e-icon name="folder_off"></m3e-icon>未分类</button>
+            <button v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" :aria-pressed="folderFilter === folder.key" @click="folderFilter = folder.key"><m3e-icon name="folder"></m3e-icon>{{ folder.label }}</button>
           </div>
-          <label class="folder-filter"><m3e-icon name="folder"></m3e-icon><span class="visually-hidden">数据库文件夹</span><select v-model="folderFilter" aria-label="数据库文件夹"><option value="all">全部文件夹</option><option v-for="folder in databaseFolders" :key="folder" :value="folder">{{ folder }}</option></select></label>
+          <span class="filter-caption filter-caption-quick">快捷筛选</span>
+          <div class="filter-chip-row" role="group" aria-label="快捷筛选条件">
+            <button type="button" :class="{ selected: hasAndroidFilter('favorite') }" :aria-pressed="hasAndroidFilter('favorite')" @click="toggleAndroidQuickFilter('favorite')"><m3e-icon name="star"></m3e-icon>收藏</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('two-fa') }" :aria-pressed="hasAndroidFilter('two-fa')" @click="toggleAndroidQuickFilter('two-fa')"><m3e-icon name="security"></m3e-icon>验证码</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('notes') }" :aria-pressed="hasAndroidFilter('notes')" @click="toggleAndroidQuickFilter('notes')"><m3e-icon name="description"></m3e-icon>笔记</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('passkey') }" :aria-pressed="hasAndroidFilter('passkey')" @click="toggleAndroidQuickFilter('passkey')"><m3e-icon name="key_vertical"></m3e-icon>Passkey</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('uncategorized') }" :aria-pressed="hasAndroidFilter('uncategorized')" @click="toggleAndroidQuickFilter('uncategorized')"><m3e-icon name="folder_off"></m3e-icon>未分类</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('local-only') }" :aria-pressed="hasAndroidFilter('local-only')" @click="toggleAndroidQuickFilter('local-only')"><m3e-icon name="key"></m3e-icon>仅本地</button>
+            <button type="button" :class="{ selected: hasAndroidFilter('attachments') }" :aria-pressed="hasAndroidFilter('attachments')" @click="toggleAndroidQuickFilter('attachments')"><m3e-icon name="attach_file"></m3e-icon>附件</button>
+          </div>
+          <button v-if="hasActiveManagerFilter" type="button" class="filter-reset" @click="folderFilter = 'all'; activeQuickFilters = []">清除筛选</button>
         </div>
 
         <section v-if="activeSection === 'overview'" class="metrics">
@@ -2047,7 +2094,7 @@ function errorCode(error: unknown): string | undefined {
 
         <section v-else-if="activeSection === 'steam'" class="steam-page">
           <m3e-card v-for="item in filteredSteamItems" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
-          <div v-if="!filteredSteamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>{{ query || folderFilter !== 'all' || quickFilter !== 'all' ? '没有匹配的 Steam 项目' : '还没有 Steam 验证器' }}</h2><p>{{ query || folderFilter !== 'all' || quickFilter !== 'all' ? '调整快捷筛选条件。' : '从 Monica Android 同步，或在动态验证码中添加 Steam Guard。' }}</p><m3e-button v-if="!query && folderFilter === 'all' && quickFilter === 'all'" variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
+          <div v-if="!filteredSteamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? '没有匹配的 Steam 项目' : '还没有 Steam 验证器' }}</h2><p>{{ query || hasActiveManagerFilter ? '调整分类或快捷筛选条件。' : '从 Monica Android 同步，或在动态验证码中添加 Steam Guard。' }}</p><m3e-button v-if="!query && !hasActiveManagerFilter" variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
         </section>
 
         <GeneratorPanel v-else-if="activeSection === 'generator'" />

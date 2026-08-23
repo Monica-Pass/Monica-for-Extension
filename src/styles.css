@@ -717,34 +717,50 @@ main {
   font-weight: 600;
 }
 
-.filter-segment {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: stretch;
-  overflow: hidden;
-  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
-  border-radius: 8px;
+.filter-chip-row {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
 }
 
-.filter-segment button {
-  min-width: 64px;
-  min-height: 40px;
+.filter-chip-row::-webkit-scrollbar { display: none; }
+
+.filter-chip-row button {
+  min-height: 36px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  border: 0;
-  border-right: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
-  padding: 0 10px;
+  gap: 6px;
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  border-radius: 18px;
+  padding: 0 13px;
   color: var(--md-sys-color-on-surface, var(--app-text));
-  background: transparent;
+  background: var(--md-sys-color-surface-container-low, var(--app-surface));
   font: inherit;
+  font-size: .84rem;
   cursor: pointer;
 }
 
-.filter-segment button:last-child { border-right: 0; }
-.filter-segment button.selected { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); font-weight: 600; }
-.filter-segment button m3e-icon { --m3e-icon-size: 18px; }
+.filter-chip-row button.selected { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); border-color: transparent; font-weight: 600; }
+.filter-chip-row button m3e-icon { --m3e-icon-size: 18px; }
+
+.filter-caption-quick { margin-top: 4px; }
+
+.filter-reset {
+  border: 0;
+  padding: 4px 2px;
+  color: var(--md-sys-color-primary, var(--app-accent));
+  background: transparent;
+  font: inherit;
+  font-size: .82rem;
+  cursor: pointer;
+}
 
 .folder-filter {
   min-height: 40px;
