@@ -225,6 +225,26 @@ describe("Bitwarden auth client", () => {
     expect(new Headers(calls[0][1].headers).get("Authorization")).toBe("Bearer access-secret");
   });
 
+  it("refreshes once when a non-expired access token is revoked", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/sync?excludeDomains=true")) {
+        const authorization = new Headers(init?.headers).get("Authorization");
+        if (authorization === "Bearer access-secret") return json({ error: "invalid_token" }, 401);
+        expect(authorization).toBe("Bearer rotated-access");
+        return json({ Profile: { Id: "user" }, Ciphers: [] });
+      }
+      if (url.endsWith("/identity/connect/token")) {
+        expect((init?.body as URLSearchParams).get("grant_type")).toBe("refresh_token");
+        return json({ access_token: "rotated-access", refresh_token: "rotated-refresh", expires_in: 3600 });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    }) as unknown as typeof fetch;
+    const result = await new BitwardenClient(fetcher).sync(activeSession());
+    expect(result.session).toMatchObject({ accessToken: "rotated-access", refreshToken: "rotated-refresh" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("does not retry token login after an ambiguous network failure", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/accounts/prelogin")) return json({ Kdf: 0, KdfIterations: 1 });

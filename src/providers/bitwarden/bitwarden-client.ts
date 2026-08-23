@@ -641,18 +641,34 @@ export class BitwardenClient {
     init: RequestInit,
     errorPrefix: string
   ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
-    const active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, init.signal || undefined) : session;
-    const headers = new Headers(init.headers);
-    for (const [name, value] of authorizedHeaders(active.accessToken)) headers.set(name, value);
-    const payload = await this.request(`${active.apiUrl}${path}`, {
-      ...init,
-      headers
-    }, errorPrefix, undefined, async (response, requestSignal) => {
-      const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 密码库响应", requestSignal);
-      if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
-      return payload;
-    });
-    return { session: active, payload };
+    let active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, init.signal || undefined) : session;
+    const execute = async (current: BitwardenSessionConfig): Promise<Record<string, unknown>> => {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of authorizedHeaders(current.accessToken)) headers.set(name, value);
+      return this.request(`${current.apiUrl}${path}`, {
+        ...init,
+        headers
+      }, errorPrefix, undefined, async (response, requestSignal) => {
+        const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 密码库响应", requestSignal);
+        if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
+        return payload;
+      });
+    };
+    try {
+      return { session: active, payload: await execute(active) };
+    } catch (error) {
+      // A token may be revoked before its advertised expiry. Refresh once and
+      // replay the request; never loop or retry a second time.
+      if (!(error instanceof ProviderTransportError) || error.status !== 401 || !active.refreshToken) throw error;
+      try {
+        active = await this.refresh(active, init.signal || undefined);
+        return { session: active, payload: await execute(active) };
+      } catch {
+        // Preserve the original authenticated-request error. Refresh failures
+        // must not replace it with a transport/parser implementation detail.
+        throw error;
+      }
+    }
   }
 
   vaultKey(session: BitwardenSessionConfig): BitwardenSymmetricKey {
