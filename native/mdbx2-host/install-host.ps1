@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $HostName = "com.monica_pass.mdbx2"
+$WindowsHelloHostName = "com.monica_pass.windows_hello"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SourceExecutable = Join-Path $BundleRoot "monica-mdbx2-host.exe"
 $SourceUninstaller = Join-Path $BundleRoot "uninstall-host.ps1"
@@ -29,6 +30,7 @@ if (-not (Test-Path -LiteralPath $SourceExecutable -PathType Leaf)) {
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 $ExecutablePath = Join-Path $InstallRoot "monica-mdbx2-host.exe"
 $ManifestPath = Join-Path $InstallRoot "$HostName.json"
+$WindowsHelloManifestPath = Join-Path $InstallRoot "$WindowsHelloHostName.json"
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 Copy-Item -LiteralPath $SourceExecutable -Destination $ExecutablePath -Force
 if (Test-Path -LiteralPath $SourceUninstaller -PathType Leaf) {
@@ -46,18 +48,32 @@ $Manifest = [ordered]@{
     type = "stdio"
     allowed_origins = $Origins
 }
+$WindowsHelloManifest = [ordered]@{
+    name = $WindowsHelloHostName
+    description = "Monica Windows Hello Host"
+    path = $ExecutablePath
+    type = "stdio"
+    allowed_origins = $Origins
+}
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($ManifestPath, ($Manifest | ConvertTo-Json -Depth 4), $Utf8NoBom)
+[IO.File]::WriteAllText($WindowsHelloManifestPath, ($WindowsHelloManifest | ConvertTo-Json -Depth 4), $Utf8NoBom)
 
 if ($ChromeExtensionId) {
     $ChromeKey = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName"
     New-Item -Path $ChromeKey -Force | Out-Null
     Set-Item -Path $ChromeKey -Value $ManifestPath
+    $ChromeHelloKey = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$WindowsHelloHostName"
+    New-Item -Path $ChromeHelloKey -Force | Out-Null
+    Set-Item -Path $ChromeHelloKey -Value $WindowsHelloManifestPath
 }
 if ($EdgeExtensionId) {
     $EdgeKey = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName"
     New-Item -Path $EdgeKey -Force | Out-Null
     Set-Item -Path $EdgeKey -Value $ManifestPath
+    $EdgeHelloKey = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$WindowsHelloHostName"
+    New-Item -Path $EdgeHelloKey -Force | Out-Null
+    Set-Item -Path $EdgeHelloKey -Value $WindowsHelloManifestPath
 }
 
 Write-Host "Monica MDBX2 Native Host was installed to $InstallRoot"

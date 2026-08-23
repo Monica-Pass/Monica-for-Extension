@@ -1931,7 +1931,7 @@ function errorCode(error: unknown): string | undefined {
           </div>
           <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting hello-status-note">Windows Hello 本机绑定缺失或损坏，密码库保持锁定。请修复 Native Host 后重试，或使用加密整库备份恢复。</p>
           <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.native.available" class="supporting hello-status-note">Windows Hello 平台验证器当前不可用，密码库保持锁定。请恢复系统验证器后重试，或使用加密整库备份恢复。</p>
-          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 状态检查失败，密码库保持锁定。请修复 Native Host 后重试，或使用加密整库备份恢复。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 状态检查失败，密码库保持锁定。请安装或修复 Windows Hello Host 后重试，或使用加密整库备份恢复。</p>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
           <div v-if="lifecycle === 'uninitialized' || lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled" class="recovery-panel stack">

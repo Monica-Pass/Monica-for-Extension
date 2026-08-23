@@ -5,9 +5,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $HostName = "com.monica_pass.mdbx2"
+$WindowsHelloHostName = "com.monica_pass.windows_hello"
 $RegistryKeys = @(
     "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName",
-    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName"
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName",
+    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$WindowsHelloHostName",
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$WindowsHelloHostName"
 )
 foreach ($Key in $RegistryKeys) {
     if (Test-Path -LiteralPath $Key) {
@@ -22,8 +25,9 @@ if ($InstallRoot -eq $DriveRoot -or $InstallRoot.Length -le $DriveRoot.Length + 
 }
 if (Test-Path -LiteralPath $InstallRoot) {
     $ManifestPath = Join-Path $InstallRoot "$HostName.json"
+    $WindowsHelloManifestPath = Join-Path $InstallRoot "$WindowsHelloHostName.json"
     $ExecutablePath = Join-Path $InstallRoot "monica-mdbx2-host.exe"
-    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf) -and -not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf) -and -not (Test-Path -LiteralPath $WindowsHelloManifestPath -PathType Leaf) -and -not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
         throw "The target directory does not contain Monica MDBX2 Host files."
     }
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force

@@ -80,6 +80,7 @@ const bitwardenProvider = new BitwardenProvider();
 providers.register(bitwardenProvider);
 const bitwardenDurableSync = new BitwardenDurableSyncCoordinator(bitwardenProvider, service);
 const mdbx2NativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime());
+const windowsHelloNativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime(), undefined, "com.monica_pass.windows_hello");
 const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);
 const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);
 providers.register(mdbx2Provider);
@@ -272,13 +273,13 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.status();
     case "VAULT_UNLOCK_HELLO": {
       assertManagerPage(sender);
-      const state = await service.unlockWithWindowsHello((bindingId, challenge) => mdbx2NativeClient.verifyWindowsHello(bindingId, challenge).then(() => undefined));
+      const state = await service.unlockWithWindowsHello((bindingId, challenge) => windowsHelloNativeClient.verifyWindowsHello(bindingId, challenge).then(() => undefined));
       return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
     }
     case "VAULT_HELLO_STATUS": {
       assertManagerPage(sender);
       const bindingId = await service.windowsHelloBindingIdForRuntime();
-      const native = await mdbx2NativeClient.windowsHelloStatus(bindingId);
+      const native = await windowsHelloNativeClient.windowsHelloStatus(bindingId);
       const protectionMode = await service.protectionModeForRuntime();
       const vaultEnrolled = Boolean(bindingId);
       const bindingConsistent = !vaultEnrolled || native.enrolled;
@@ -293,15 +294,15 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_HELLO_ENROLL": {
       assertManagerPage(sender);
       const binding = await service.enrollWindowsHello(
-        (bindingId) => mdbx2NativeClient.enrollWindowsHello(bindingId),
-        (bindingId) => mdbx2NativeClient.revokeWindowsHello(bindingId).then(() => undefined)
+        (bindingId) => windowsHelloNativeClient.enrollWindowsHello(bindingId),
+        (bindingId) => windowsHelloNativeClient.revokeWindowsHello(bindingId).then(() => undefined)
       );
       return binding;
     }
     case "VAULT_HELLO_REVOKE": {
       assertManagerPage(sender);
       if (request.confirmed !== true) throw new Error("撤销 Windows Hello 需要明确确认。");
-      return service.revokeWindowsHello((bindingId) => mdbx2NativeClient.revokeWindowsHello(bindingId).then(() => undefined));
+      return service.revokeWindowsHello((bindingId) => windowsHelloNativeClient.revokeWindowsHello(bindingId).then(() => undefined));
     }
     case "VAULT_SETUP": {
       assertExtensionPage(sender);
@@ -352,7 +353,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         currentPassword: request.currentPassword
       });
       if (replacedHelloBindingId) {
-        try { await mdbx2NativeClient.revokeWindowsHello(replacedHelloBindingId); }
+        try { await windowsHelloNativeClient.revokeWindowsHello(replacedHelloBindingId); }
         catch { /* The restored vault no longer trusts this binding; native orphan cleanup is best effort. */ }
       }
       pendingCredentialCaptures.clear();

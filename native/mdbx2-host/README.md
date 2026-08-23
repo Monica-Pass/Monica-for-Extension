@@ -81,7 +81,7 @@ Unresolved conflicts are exposed in pages of at most 50 records. Summary respons
 
 Synchronization state uses two alternating durable slots. A portable `.mdbx` file initializes a device; normal multi-device operation exchanges authenticated bundle v8 segments, state deltas and encrypted external Blobs. Export checkpoints advance only after immutable publication, and remote stream cursors advance only after atomic apply and Blob completion.
 
-The extension registers the Host-backed Provider only in the privileged background. Raw Collection, Object, history and conflict commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
+The extension registers the MDBX2 provider only in the privileged background. Windows Hello uses the separate `com.monica_pass.windows_hello` Native Messaging registration; it shares the reviewed executable package but has an independent manifest, registry entry and extension client connection. Raw Collection, Object, history and conflict commands are accepted from `index.html` and rejected from Popup, content scripts and web pages. Locking the Monica vault, locking an MDBX2 source or removing the source clears the background compatibility cache.
 
 ## Build
 
@@ -107,7 +107,7 @@ Extract `release/monica-mdbx2-host-windows-x64-<version>.zip`, copy the extensio
 .\install-host.ps1 -ChromeExtensionId <chrome-id> -EdgeExtensionId <edge-id>
 ```
 
-The installer writes only under the current user's `%LOCALAPPDATA%` and `HKCU`. It creates exact `chrome-extension://<id>/` origins and never uses a wildcard. Fully exit and reopen the browser after installation. `uninstall-host.ps1` removes both per-user registry entries and the verified Host directory.
+The installer writes only under the current user's `%LOCALAPPDATA%` and `HKCU`. It creates exact `chrome-extension://<id>/` origins for both `com.monica_pass.mdbx2` and `com.monica_pass.windows_hello`, and never uses a wildcard. Fully exit and reopen the browser after installation. `uninstall-host.ps1` removes both per-user registry entries and the verified Host directory.
 
 ## Installation security
 

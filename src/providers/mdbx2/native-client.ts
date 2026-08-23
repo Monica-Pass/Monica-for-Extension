@@ -156,7 +156,8 @@ export class Mdbx2NativeClient {
 
   constructor(
     private readonly runtime: Mdbx2NativeRuntime,
-    private readonly createRequestId: () => string = () => crypto.randomUUID()
+    private readonly createRequestId: () => string = () => crypto.randomUUID(),
+    private readonly hostName: string = MDBX2_NATIVE_HOST_NAME
   ) {}
 
   async hello(timeoutMs = 5_000): Promise<Mdbx2HostCapabilities> {
@@ -1074,7 +1075,7 @@ export class Mdbx2NativeClient {
   private ensurePort(): Mdbx2NativePort {
     if (this.port) return this.port;
     try {
-      const port = this.runtime.connectNative(MDBX2_NATIVE_HOST_NAME);
+      const port = this.runtime.connectNative(this.hostName);
       port.onMessage.addListener(this.onMessage);
       port.onDisconnect.addListener(this.onDisconnect);
       this.port = port;

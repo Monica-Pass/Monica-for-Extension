@@ -40,7 +40,9 @@ const metadata = {
   installScope: "current-user",
   registryTargets: [
     "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.monica_pass.mdbx2",
-    "HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.monica_pass.mdbx2"
+    "HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.monica_pass.mdbx2",
+    "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.monica_pass.windows_hello",
+    "HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.monica_pass.windows_hello"
   ]
 };
 entries.set("HOST-METADATA.json", jsonBytes(metadata));
