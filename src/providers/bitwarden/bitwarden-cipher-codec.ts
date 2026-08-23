@@ -764,30 +764,37 @@ async function decodeFido2Credentials(
   key: BitwardenSymmetricKey,
   androidMetadata: boolean
 ): Promise<PasskeyItem[]> {
+  const metadata = parseAndroidPasskeyMetadata(base.notes);
   return Promise.all(arrayValue(login, "Fido2Credentials", "fido2Credentials").map(async (entry, index) => {
     const fido = record(entry);
     const decrypted = await decryptFidoRecordFields(fido, key, ["CredentialId", "KeyAlgorithm", "KeyValue", "RpId", "RpName", "Counter", "UserHandle", "UserName", "UserDisplayName", "Discoverable", "CreationDate"]);
-    const credentialId = decrypted.CredentialId || `unknown-${index}`;
-    const algorithm = normalizePasskeyAlgorithm(decrypted.KeyAlgorithm);
+    const metadataCredential = metadata.get("credentialId") || "";
+    const credentialId = decrypted.CredentialId || metadataCredential || `${cipherReference.remoteId}#metadata-${index}`;
+    const algorithm = normalizePasskeyAlgorithm(decrypted.KeyAlgorithm || metadata.get("publicKeyAlgorithm") || "");
+    const rpId = decrypted.RpId || metadata.get("rpId") || "";
+    const rpName = decrypted.RpName || metadata.get("rpName") || base.title.replace(/\s*\[Passkey\]\s*$/i, "");
+    const userHandle = decrypted.UserHandle || metadata.get("userId") || "";
+    const userName = decrypted.UserName || metadata.get("userName") || "";
+    const userDisplayName = decrypted.UserDisplayName || metadata.get("userDisplayName") || userName;
     return {
       ...base,
       id: `${base.id}:passkey:${credentialId}`,
       kind: "passkey",
-      title: decrypted.RpName || base.title,
+      title: rpName || base.title,
       credentialId,
-      rpId: decrypted.RpId,
-      rpName: decrypted.RpName,
-      userHandle: decrypted.UserHandle,
-      userName: decrypted.UserName,
-      userDisplayName: decrypted.UserDisplayName,
+      rpId,
+      rpName,
+      userHandle,
+      userName,
+      userDisplayName,
       algorithm,
       keyAlgorithm: decrypted.KeyAlgorithm || undefined,
       publicKey: "",
       privateKeyPkcs8: decrypted.KeyValue || undefined,
-      signCount: Number(decrypted.Counter) || 0,
+      signCount: Number(decrypted.Counter || metadata.get("signCount")) || 0,
       discoverable: decrypted.Discoverable.toLowerCase() !== "false",
       sourceMode: decrypted.KeyValue ? "bitwarden" : androidMetadata ? "android-metadata-only" : "bitwarden",
-      createdAt: dateValue(decrypted.CreationDate, base.createdAt),
+      createdAt: dateValue(decrypted.CreationDate || metadata.get("createdAt"), base.createdAt),
       providerRefs: [{ ...cipherReference, remoteId: `${cipherReference.remoteId}#fido2:${credentialId}` }]
     } satisfies PasskeyItem;
   }));
@@ -881,11 +888,7 @@ function decodeAndroidPasskeyMetadata(
 ): PasskeyItem | undefined {
   const marker = notes.indexOf("[Monica Passkey Metadata]");
   if (marker < 0) return undefined;
-  const values = new Map<string, string>();
-  for (const line of notes.slice(marker).split(/\r?\n/).slice(1)) {
-    const separator = line.indexOf(": ");
-    if (separator > 0) values.set(line.slice(0, separator).trim(), line.slice(separator + 2).trim());
-  }
+  const values = parseAndroidPasskeyMetadata(notes);
   const credentialId = values.get("credentialId") || `${reference.remoteId}#metadata`;
   const rpId = values.get("rpId") || "";
   const rpName = values.get("rpName") || base.title.replace(/\s*\[Passkey\]\s*$/i, "");
@@ -912,6 +915,17 @@ function decodeAndroidPasskeyMetadata(
     sourceMode: "android-metadata-only",
     providerRefs: [{ ...reference, remoteId: `${reference.remoteId}#fido2:${credentialId}` }]
   };
+}
+
+function parseAndroidPasskeyMetadata(notes: string): Map<string, string> {
+  const marker = notes.indexOf("[Monica Passkey Metadata]");
+  const values = new Map<string, string>();
+  if (marker < 0) return values;
+  for (const line of notes.slice(marker).split(/\r?\n/).slice(1)) {
+    const separator = line.indexOf(": ");
+    if (separator > 0) values.set(line.slice(0, separator).trim(), line.slice(separator + 2).trim());
+  }
+  return values;
 }
 
 function decodeStandaloneTotp(login: LoginItem, rawSecret: string, reference: ProviderReference): TotpItem | undefined {

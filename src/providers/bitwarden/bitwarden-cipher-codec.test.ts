@@ -286,6 +286,20 @@ describe("Bitwarden Cipher codec", () => {
     });
   });
 
+  it("fills incomplete FIDO2 fields from Monica Android metadata", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const decoded = await decodeBitwardenCipher({
+      Id: "partial-fido", Type: 1, Name: await enc("GitHub [Passkey]"),
+      Notes: await enc("[Monica Passkey Metadata]\ncredentialId: android-id\nrpId: github.com\nrpName: GitHub\nuserId: android-user\nuserName: joy\nuserDisplayName: Joy\npublicKeyAlgorithm: -7\nsignCount: 12\ncreatedAt: 2026-07-14T00:00:00.000Z"),
+      RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Fido2Credentials: [{ KeyValue: null, Discoverable: "true" }] }
+    }, "provider-1", KEY);
+    expect(decoded.items.find((item) => item.kind === "passkey")).toMatchObject({
+      credentialId: "android-id", rpId: "github.com", rpName: "GitHub", userHandle: "android-user", userName: "joy", signCount: 12,
+      sourceMode: "android-metadata-only"
+    });
+  });
+
   it("writes the local archive timestamp into the Bitwarden Cipher", async () => {
     const archivedAt = "2026-07-15T04:00:00.000Z";
     const item: LoginItem = {
