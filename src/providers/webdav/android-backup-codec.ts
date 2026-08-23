@@ -12,6 +12,9 @@ import {
   serializeSecureCustomFields
 } from "../monica-item-data";
 import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
+import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
+
+export interface AndroidBackupCodecOptions { allowPortablePasskeys?: boolean }
 
 export interface AndroidBackupRecord {
   path: string;
@@ -29,7 +32,7 @@ export interface AndroidBackupDocument {
 
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
-export function readAndroidBackup(zipBytes: Uint8Array, providerId: string): AndroidBackupDocument {
+export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, options: AndroidBackupCodecOptions = {}): AndroidBackupDocument {
   const entries = safeUnzipSync(zipBytes);
   const items: VaultItem[] = [];
   const records = new Map<string, AndroidBackupRecord>();
@@ -39,7 +42,7 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string): And
     if (!JSON_PATH.test(path)) continue;
     try {
       const raw = JSON.parse(strFromU8(bytes)) as Record<string, unknown>;
-      const item = androidRecordToItem(path, raw, providerId);
+      const item = androidRecordToItem(path, raw, providerId, options);
       if (!item) continue;
       items.push(item);
       records.set(item.id, { path, raw, itemId: item.id, item: cloneVaultItem(item) });
@@ -73,7 +76,7 @@ function restoreAndroidOtpBindings(items: VaultItem[]): void {
   }
 }
 
-export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string): Uint8Array {
+export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string, options: AndroidBackupCodecOptions = {}): Uint8Array {
   const entries = { ...document.entries };
   for (const item of items) {
     const existing = document.records.get(item.id);
@@ -82,7 +85,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
       continue;
     }
     if (existing && sameWritableItem(item, existing.item)) continue;
-    const target = serializeAndroidItem(item, existing?.raw, existing?.item);
+    const target = serializeAndroidItem(item, existing?.raw, existing?.item, options);
     if (!target) continue;
     const remotePath = existing?.path || providerPath(item, target.id);
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
@@ -102,7 +105,7 @@ export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId:
   document.items = document.items.filter((item) => item.id !== itemId);
 }
 
-export function androidRecordToItem(path: string, raw: Record<string, unknown>, providerId: string): VaultItem | null {
+export function androidRecordToItem(path: string, raw: Record<string, unknown>, providerId: string, options: AndroidBackupCodecOptions = {}): VaultItem | null {
   const match = path.match(JSON_PATH);
   if (!match) return null;
   const kindFolder = match[2].toLowerCase();
@@ -199,6 +202,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
   }
 
   if (kindFolder === "passkeys") {
+    const portableKey = options.allowPortablePasskeys ? parsePortablePasskeyPrivateKey(raw.privateKeyAlias) : undefined;
     return {
       ...base,
       kind: "passkey",
@@ -220,7 +224,9 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       iconUrl: optionalString(raw.iconUrl),
       boundPasswordId: optionalNumber(raw.boundPasswordId),
       passkeyMode: normalizePasskeyMode(raw.passkeyMode),
-      sourceMode: "android-metadata-only"
+      ...(portableKey?.algorithm === -7 && portableKey.algorithm === numberValue(raw.publicKeyAlgorithm, -7)
+        ? { privateKeyPkcs8: portableKey.pkcs8Base64, sourceMode: "browser-local" as const }
+        : { sourceMode: "android-metadata-only" as const })
     } satisfies PasskeyItem;
   }
 
@@ -372,7 +378,7 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
   };
 }
 
-function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem): { id: number | string; raw: Record<string, unknown> } | null {
+function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem, options: AndroidBackupCodecOptions = {}): { id: number | string; raw: Record<string, unknown> } | null {
   const originalId = original?.id;
   const id: number | string = typeof originalId === "number" || typeof originalId === "string" ? originalId : numericId(item);
   const raw: Record<string, unknown> = { ...(original || {}) };
@@ -570,8 +576,10 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("boundPasswordId", item.boundPasswordId ?? null, item.boundPasswordId, previous?.boundPasswordId);
       setChanged("passkeyMode", item.passkeyMode || "BW_COMPAT", item.passkeyMode, previous?.passkeyMode);
       setChanged("notes", item.notes, item.notes, previous?.notes);
+      const portableKey = options.allowPortablePasskeys ? parsePortablePasskeyPrivateKey(item.privateKeyPkcs8) : undefined;
+      const portableValue = portableKey?.algorithm === -7 && item.algorithm === -7 ? portableKey.pkcs8Base64 : "";
+      raw.privateKeyAlias = portableValue;
       if (isNew) {
-        raw.privateKeyAlias = "";
         raw.categoryName = item.categoryName ?? null;
       }
       return { id: item.credentialId, raw };

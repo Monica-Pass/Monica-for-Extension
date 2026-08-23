@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem } from "../../core/model";
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 import { readAndroidBackup, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
@@ -516,6 +517,23 @@ describe("Android backup ZIP codec", () => {
     expect(raw).not.toHaveProperty("privateKeyPkcs8");
   });
 
+  it("imports and writes portable ES256 keys only inside an encrypted backup boundary", () => {
+    const path = "folders/_root/passkeys/passkey_portable.json";
+    const raw = {
+      credentialId: "portable", rpId: "example.com", rpName: "Example", userId: "user", userName: "joy", userDisplayName: "Joy",
+      publicKeyAlgorithm: -7, publicKey: "public", privateKeyAlias: P256_PKCS8, signCount: 0, isDiscoverable: true, createdAt: 1_700_000_000_000
+    };
+    const zip = zipSync({ [path]: strToU8(JSON.stringify(raw)) });
+    const plain = readAndroidBackup(zip, "plain").items[0];
+    expect(plain).toMatchObject({ sourceMode: "android-metadata-only" });
+    expect(plain).not.toHaveProperty("privateKeyPkcs8");
+    const encrypted = readAndroidBackup(zip, "encrypted", { allowPortablePasskeys: true });
+    expect(encrypted.items[0]).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: P256_PKCS8 });
+
+    const output = unzipSync(writeAndroidBackup({ entries: {}, items: [], records: new Map(), warnings: [] }, encrypted.items, "encrypted", { allowPortablePasskeys: true }));
+    expect(JSON.parse(strFromU8(output[path])).privateKeyAlias).toBe(P256_PKCS8);
+  });
+
   it("round-trips every current Android record shape while preserving Android-only fields", () => {
     const fixture = currentAndroidRecordsFixture();
     const document = readAndroidBackup(fixture.zip, "provider-current");
@@ -594,7 +612,7 @@ describe("Android backup ZIP codec", () => {
         { label: "Pinned", value: "false", type: "BOOLEAN" }
       ]
     });
-    expect(written.passkey).toEqual({ ...fixture.raws.passkey, notes: "new passkey note" });
+    expect(written.passkey).toEqual({ ...fixture.raws.passkey, notes: "new passkey note", privateKeyAlias: "" });
   });
 
   it("keeps duplicate Android numeric IDs distinct and preserves malformed future records", () => {

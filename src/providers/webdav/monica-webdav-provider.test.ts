@@ -1,12 +1,14 @@
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
-import type { LoginItem, ProviderAccount, VaultItem } from "../../core/model";
+import type { LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../core/model";
 import { readAndroidBackup } from "./android-backup-codec";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
 import { MonicaWebDavProvider } from "./monica-webdav-provider";
 
 const PROVIDER_ID = "webdav-provider";
 const PATH = "folders/_root/passwords/password_42_1700000000000.json";
+const PASSKEY_PATH = "folders/_root/passkeys/passkey_portable.json";
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 function androidZip(password = "android-secret", updatedAt = 1_700_000_001_000) {
   return zipSync({
@@ -23,6 +25,13 @@ function androidZip(password = "android-secret", updatedAt = 1_700_000_001_000) 
     })),
     "future/unknown.bin": Uint8Array.of(9, 8, 7)
   });
+}
+
+function portablePasskeyZip() {
+  return zipSync({ [PASSKEY_PATH]: strToU8(JSON.stringify({
+    credentialId: "portable", rpId: "example.com", rpName: "Example", userId: "user", userName: "joy", userDisplayName: "Joy",
+    publicKeyAlgorithm: -7, publicKey: "public", privateKeyAlias: P256_PKCS8, signCount: 0, isDiscoverable: true, createdAt: 1_700_000_000_000
+  })) });
 }
 
 function account(config: Record<string, unknown> = {}): ProviderAccount {
@@ -136,6 +145,34 @@ describe("Monica WebDAV provider", () => {
     const decrypted = await decryptAndroidBackup(uploaded!, backupPassword);
     expect(unzipSync(decrypted)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
     expect(readAndroidBackup(decrypted, PROVIDER_ID).items[0]).toMatchObject({ password: "encrypted-browser-secret" });
+  });
+
+  it("promotes portable Passkeys only after encrypted WebDAV decryption and keeps them encrypted on write", async () => {
+    const backupPassword = "portable-backup";
+    const encryptedRemote = await encryptAndroidBackup(portablePasskeyZip(), backupPassword);
+    const mock = server(encryptedRemote, multiStatus("monica_backup_portable.enc.zip", '"portable"'));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const first = await provider.sync(account({ backupPassword }), { now: "2026-08-23T00:00:00.000Z", localItems: [] });
+    const imported = first.items[0] as PasskeyItem;
+    expect(imported).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: P256_PKCS8 });
+
+    const changed = { ...imported, notes: "edited", updatedAt: "2026-08-23T00:01:00.000Z" };
+    await provider.sync(account({ ...first.accountPatch?.config, backupPassword }), { now: "2026-08-23T00:02:00.000Z", localItems: [changed] });
+    expect(isAndroidEncryptedBackup(mock.uploaded()!)).toBe(true);
+    const decrypted = await decryptAndroidBackup(mock.uploaded()!, backupPassword);
+    expect(JSON.parse(new TextDecoder().decode(unzipSync(decrypted)[PASSKEY_PATH])).privateKeyAlias).toBe(P256_PKCS8);
+  });
+
+  it("never promotes or rewrites a portable key from an unencrypted WebDAV snapshot", async () => {
+    const mock = server(portablePasskeyZip());
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const first = await provider.sync(account(), { now: "2026-08-23T00:00:00.000Z", localItems: [] });
+    const imported = first.items[0] as PasskeyItem;
+    expect(imported).toMatchObject({ sourceMode: "android-metadata-only" });
+    expect(imported).not.toHaveProperty("privateKeyPkcs8");
+
+    await provider.sync(account(first.accountPatch?.config), { now: "2026-08-23T00:02:00.000Z", localItems: [{ ...imported, notes: "edited", updatedAt: "2026-08-23T00:01:00.000Z" }] });
+    expect(JSON.parse(new TextDecoder().decode(unzipSync(mock.uploaded()!)[PASSKEY_PATH])).privateKeyAlias).toBe("");
   });
 
   it("reports a three-way conflict and does not overwrite a newer Android snapshot", async () => {

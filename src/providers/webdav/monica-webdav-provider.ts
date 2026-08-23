@@ -158,8 +158,9 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     if (!file) return null;
     const config = readConfig(account);
     const remoteBytes = await client.download(file, signal);
-    const zipBytes = isAndroidEncryptedBackup(remoteBytes) ? await decryptAndroidBackup(remoteBytes, config.backupPassword || "") : remoteBytes;
-    return { file, document: readAndroidBackup(zipBytes, account.id) };
+    const encrypted = isAndroidEncryptedBackup(remoteBytes);
+    const zipBytes = encrypted ? await decryptAndroidBackup(remoteBytes, config.backupPassword || "") : remoteBytes;
+    return { file, document: readAndroidBackup(zipBytes, account.id, { allowPortablePasskeys: encrypted }) };
   }
 
   private async uploadDocument(
@@ -170,8 +171,8 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     expectedLatest?: WebDavBackupFile
   ): Promise<WebDavBackupFile> {
     const config = readConfig(account);
-    const zipBytes = writeAndroidBackup(document, items, account.id);
     const encrypted = Boolean(config.backupPassword);
+    const zipBytes = writeAndroidBackup(document, items, account.id, { allowPortablePasskeys: encrypted });
     const payload = encrypted ? await encryptAndroidBackup(zipBytes, config.backupPassword!) : zipBytes;
     const client = this.client(account);
     if (expectedLatest) {

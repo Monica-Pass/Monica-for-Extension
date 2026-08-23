@@ -4,6 +4,7 @@ import type { Mdbx2ObjectRecord } from "./native-contract";
 import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
 
 const META = { headCommitId: "commit-1", updatedAt: "2026-08-02T00:00:00Z" };
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("MDBX2 Android item codec", () => {
   it("uses the current Android logical ID prefixes for every shared item kind", () => {
@@ -191,14 +192,14 @@ describe("MDBX2 Android item codec", () => {
         user_display_name: "Demo",
         public_key_algorithm: -7,
         public_key: "public",
-        private_key_alias: "private-pkcs8",
+        private_key_alias: P256_PKCS8,
         sign_count: 2
       })
     };
     const item = decodeMdbx2Object(record, META, "mdbx-provider").item as PasskeyItem;
-    expect(item).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: "private-pkcs8", signCount: 2 });
+    expect(item).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: P256_PKCS8, signCount: 2 });
 
-    const metadataOnly = decodeMdbx2Object({ ...record, payloadJson: record.payloadJson.replace("private-pkcs8", "") }, META, "mdbx-provider").item as PasskeyItem;
+    const metadataOnly = decodeMdbx2Object({ ...record, payloadJson: record.payloadJson.replace(P256_PKCS8, "monica-passkey-key-ref-v1:device-only") }, META, "mdbx-provider").item as PasskeyItem;
     expect(metadataOnly).toMatchObject({ sourceMode: "android-metadata-only", privateKeyPkcs8: undefined });
   });
 

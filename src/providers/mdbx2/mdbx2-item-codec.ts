@@ -2,6 +2,7 @@ import type { ProviderReference, TotpItem, VaultItem } from "../../core/model";
 import { exportSteamMaFile, parseSteamMaFile } from "../../core/steam-mafile";
 import { androidRecordToItem, vaultItemToAndroidRecord } from "../webdav/android-backup-codec";
 import type { Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput } from "./native-contract";
+import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
 
 export interface Mdbx2ObjectMetadata {
   headCommitId: string;
@@ -69,9 +70,10 @@ export function decodeMdbx2Object(
     deletedAt: record.deleted ? updatedAt : undefined
   } as VaultItem;
   if (item.kind === "passkey") {
-    const privateKeyPkcs8 = stringValue(payload.private_key_alias);
-    item.privateKeyPkcs8 = privateKeyPkcs8 || undefined;
-    item.sourceMode = privateKeyPkcs8 ? "browser-local" : "android-metadata-only";
+    const portableKey = parsePortablePasskeyPrivateKey(payload.private_key_alias);
+    const usable = portableKey?.algorithm === -7 && item.algorithm === -7;
+    item.privateKeyPkcs8 = usable ? portableKey.pkcs8Base64 : undefined;
+    item.sourceMode = usable ? "browser-local" : "android-metadata-only";
   }
   return { logicalObjectId, payload, item };
 }
