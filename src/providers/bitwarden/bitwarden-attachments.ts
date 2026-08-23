@@ -704,7 +704,10 @@ function attachmentDownloadCandidates(signedUrl: string, apiUrl?: string): strin
   try {
     const signed = new URL(signedUrl);
     const api = new URL(apiUrl);
-    const apiDirectory = api.pathname.endsWith("/") ? api.pathname.slice(0, -1) : api.pathname.substring(0, api.pathname.lastIndexOf("/"));
+    const normalizedApiPath = api.pathname.replace(/\/+$/, "");
+    const apiDirectory = normalizedApiPath && normalizedApiPath !== "/"
+      ? normalizedApiPath
+      : "";
     if (!apiDirectory || apiDirectory === "/" || signed.pathname.startsWith(`${apiDirectory}/`)) return [signedUrl];
     const prefixed = new URL(signedUrl);
     prefixed.pathname = `${apiDirectory}${signed.pathname.startsWith("/") ? signed.pathname : `/${signed.pathname}`}`;

@@ -5,6 +5,7 @@ import { BitwardenAttachmentDownloadService } from "./bitwarden-attachments";
 
 const API_URL = "https://vault.example.test/api";
 const SIGNED_URL = "https://objects.example.test/opaque?sig=must-not-leak";
+const SELF_SIGNED_URL = "https://vault.example.test/attachments/cipher-1/attachment-1?token=opaque";
 const PROVIDER_ID = "provider-1";
 const ITEM_ID = "item-1";
 
@@ -39,6 +40,27 @@ describe("Bitwarden authenticated attachment download", () => {
     await expect(readAll(service, begun.readHandle, 13)).resolves.toEqual(fixture.plaintext);
     expect(organizationKey.encKey.some(Boolean)).toBe(true);
     expect(organizationKey.macKey.some(Boolean)).toBe(true);
+  });
+
+  it("retries a self-hosted attachment URL with the API deployment prefix after a 404", async () => {
+    const fixture = await attachmentFixture({ perCipherKey: true, independentAttachmentKey: true });
+    const base = attachmentFetcher(fixture.body, { url: SELF_SIGNED_URL });
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === SELF_SIGNED_URL) return new Response(null, { status: 404 });
+      if (url === "https://vault.example.test/api/attachments/cipher-1/attachment-1?token=opaque") {
+        return new Response(fixture.body.slice(), { headers: { "content-type": "application/octet-stream" } });
+      }
+      return base(input, init);
+    }) as unknown as typeof fetch;
+    const service = new BitwardenAttachmentDownloadService({ fetcher, transportPolicy: fastTransport() });
+    const begun = await service.beginDownload(context(fixture));
+    await expect(readAll(service, begun.readHandle, 64)).resolves.toEqual(fixture.plaintext);
+    expect(fetchCalls(fetcher).map((call) => String(call[0]))).toEqual([
+      `${API_URL}/ciphers/cipher-1/attachment/attachment-1`,
+      SELF_SIGNED_URL,
+      "https://vault.example.test/api/attachments/cipher-1/attachment-1?token=opaque"
+    ]);
   });
 
   it("falls back to the Cipher key for legacy attachments without an independent key", async () => {
