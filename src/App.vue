@@ -1928,20 +1928,20 @@ function errorCode(error: unknown): string | undefined {
       <div class="brand"><img src="/icons/logo-256.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
       <m3e-card variant="outlined" class="login-card">
         <div slot="content" class="stack">
-          <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可留空。留空时使用本机设备密钥自动解锁；设置主密码可获得更强的离线保护。' : windowsHelloStatus?.vaultEnrolled && windowsHelloStatus.protectionMode === 'device-key' ? '当前设备密钥密码库需要 Windows Hello。绑定不可用时请使用加密整库备份恢复。' : '主密码模式请输入密码；设备密钥模式可留空解锁。' }}</p></div>
+          <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可选，也可使用设备密钥。' : '输入主密码解锁。' }}</p></div>
           <label class="field"><span>主密码{{ lifecycle === 'uninitialized' ? '（可选）' : '' }}</span><input v-model="auth.masterPassword" aria-label="主密码" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></label>
           <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
           <div v-if="lifecycle === 'locked' && windowsHelloStatus?.unlockAvailable" class="hello-unlock-action">
             <m3e-button variant="tonal" type="button" :disabled="Boolean(windowsHelloBusy) || authBusy" @click="unlockVaultWithWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'verify' ? '正在等待 Windows Hello…' : '使用 Windows Hello 解锁' }}</m3e-button>
-            <small>验证成功后只释放当前浏览器会话的设备密钥；取消或超时会保持锁定。</small>
+            <small>仅解锁当前浏览器会话。</small>
           </div>
-          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting hello-status-note">Windows Hello 本机绑定缺失或损坏，密码库保持锁定。请修复 Native Host 后重试，或使用加密整库备份恢复。</p>
-          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.native.available" class="supporting hello-status-note">Windows Hello 平台验证器当前不可用，密码库保持锁定。请恢复系统验证器后重试，或使用加密整库备份恢复。</p>
-          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 状态检查失败，密码库保持锁定。请安装或修复 Windows Hello Host 后重试，或使用加密整库备份恢复。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.bindingConsistent" class="supporting hello-status-note">Windows Hello 绑定不可用。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled && !windowsHelloStatus.native.available" class="supporting hello-status-note">Windows Hello 暂不可用。</p>
+          <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">Windows Hello 状态检查失败。</p>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? '处理中…' : lifecycle === 'uninitialized' ? '创建并解锁' : '解锁' }}</m3e-button>
           <div v-if="lifecycle === 'uninitialized' || lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled" class="recovery-panel stack">
-            <div><strong>{{ lifecycle === 'locked' ? '使用加密整库备份恢复' : '已有加密整库备份？' }}</strong><p class="supporting">{{ lifecycle === 'locked' ? '恢复会验证备份密码并替换当前本地密码库，同时清除恢复数据中的 Windows Hello 绑定。' : '选择备份并输入对应的备份密码，可恢复项目、密码源和设置。' }}</p></div>
+            <div><strong>{{ lifecycle === 'locked' ? '备份恢复' : '已有加密整库备份？' }}</strong><p class="supporting">选择备份文件恢复。</p></div>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>选择加密整库备份</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">已选择：{{ selectedEncryptedBackupName }}</p>
@@ -1950,7 +1950,7 @@ function errorCode(error: unknown): string | undefined {
             </template>
             <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
           </div>
-        <div class="security-note"><m3e-icon name="encrypted"></m3e-icon><span>AES-256-GCM · Argon2id 或设备密钥 · 仅本次浏览器会话</span></div>
+        <div class="security-note"><m3e-icon name="encrypted"></m3e-icon><span>AES-256-GCM · 会话级解锁</span></div>
         </div>
       </m3e-card>
     </form>
