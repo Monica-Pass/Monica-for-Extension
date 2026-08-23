@@ -2178,12 +2178,15 @@ function errorCode(error: unknown): string | undefined {
             </template>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
-            <h2>更改保护方式</h2>
-            <p class="supporting">留空使用设备密钥；填写则使用 Argon2id。</p>
-            <label class="field"><span>当前主密码（设备密钥模式留空）</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
-            <label class="field"><span>新主密码（可选）</span><input v-model="passwordChange.newPassword" type="password" :minlength="passwordChange.newPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
-            <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
-            <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? '正在重新加密…' : '更改主密码' }}</m3e-button>
+            <details class="settings-disclosure">
+              <summary><span><strong>更改保护方式</strong><small>留空使用设备密钥；填写则使用 Argon2id。</small></span><m3e-icon name="expand_more" aria-hidden="true"></m3e-icon></summary>
+              <div class="settings-disclosure-content">
+                <label class="field"><span>当前主密码（设备密钥模式留空）</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
+                <label class="field"><span>新主密码（可选）</span><input v-model="passwordChange.newPassword" type="password" :minlength="passwordChange.newPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
+                <label class="field"><span>确认新主密码</span><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
+                <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? '正在重新加密…' : '更改主密码' }}</m3e-button>
+              </div>
+            </details>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>明文手动迁移</h2><p class="supporting">仅导出项目，不包含密码源；文件是明文，请只保存到可信位置。</p><m3e-button variant="tonal" aria-label="导出明文 JSON" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>导出 JSON</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>导入明文 JSON / CSV</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack"><h2>安全边界</h2><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>持久数据使用 AES-256-GCM 加密</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>解锁密钥仅保留在浏览器会话存储</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>内容脚本无法读取完整密码库</span></div></div></m3e-card>
