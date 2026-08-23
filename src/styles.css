@@ -600,8 +600,13 @@ main {
   padding: 8px 16px;
 }
 
-.settings-page .settings-disclosure > summary > span {
+.settings-page .settings-disclosure > summary > span:not(.settings-entry-icon) {
   grid-column: 2;
+}
+
+.settings-page .settings-disclosure > summary > .settings-entry-icon {
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .settings-page .settings-disclosure > summary > m3e-icon:not(.settings-disclosure-chevron) {
@@ -665,6 +670,15 @@ main {
 .settings-page .settings-entry-icon m3e-icon,
 .settings-page .settings-entry-chevron {
   --m3e-icon-size: 20px;
+}
+
+.settings-page .settings-entry-icon m3e-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  line-height: 1;
+  font-size: 20px;
 }
 
 .settings-page .settings-entry-chevron {
