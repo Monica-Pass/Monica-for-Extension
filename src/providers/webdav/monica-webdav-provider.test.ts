@@ -70,6 +70,23 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it("lists and reads a real Android portable attachment manifest", async () => {
+    const payload = new TextEncoder().encode("portable payload");
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const remote = zipSync({
+      [PATH]: strToU8(JSON.stringify({ id: 42, title: "Android Login", username: "joy" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "note.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/cGF5bG9hZA.bin" }] })),
+      "attachments_portable/cGF5bG9hZA.bin": payload
+    });
+    const provider = new MonicaWebDavProvider(server(remote).fetcher);
+    const item = (await provider.sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: [] })).items[0];
+    const page = await provider.listAttachments(account(), item);
+    expect(page.items).toMatchObject([{ fileName: "note.txt", sizeBytes: payload.byteLength, providerKind: "monica-webdav", protected: true }]);
+    const read = await provider.readAttachment(account(), item, page.items[0].attachmentId);
+    expect(read.bytes).toEqual(payload);
+  });
+
   it("imports the latest Android snapshot and records an item baseline", async () => {
     const mock = server(androidZip());
     const provider = new MonicaWebDavProvider(mock.fetcher);
