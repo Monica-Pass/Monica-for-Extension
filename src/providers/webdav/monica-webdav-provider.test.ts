@@ -70,6 +70,16 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it("lists redacted Android timeline summaries from the latest backup", async () => {
+    const timeline = [{ id: 4, itemType: "NOTE", itemId: 8, itemTitle: "NOTE#8", operationType: "UPDATE", changesJson: JSON.stringify([{ fieldName: "内容", oldValue: "private", newValue: "secret" }]), deviceId: "hidden-id", deviceName: "Android", timestamp: 1_700_000_000_000, isReverted: false }];
+    const provider = new MonicaWebDavProvider(server(zipSync({ "timeline_history.json": strToU8(JSON.stringify(timeline)) })).fetcher);
+    const result = await provider.listTimeline(account());
+    expect(result).toEqual([expect.objectContaining({ id: "4", itemType: "NOTE", changedFields: ["内容"] })]);
+    expect(JSON.stringify(result)).not.toContain("private");
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(JSON.stringify(result)).not.toContain("hidden-id");
+  });
+
   it("lists and reads a real Android portable attachment manifest", async () => {
     const payload = new TextEncoder().encode("portable payload");
     const digest = await crypto.subtle.digest("SHA-256", payload);

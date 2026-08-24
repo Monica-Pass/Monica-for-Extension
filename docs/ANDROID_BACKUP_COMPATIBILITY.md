@@ -35,6 +35,7 @@ The status vocabulary is intentionally strict:
 | Passkeys | Full | Browser/Bitwarden keys are usable; Android aliases remain metadata-only | WebAuthn E2E and source-mode tests |
 | Password generator/history | Planned | Browser generator works; Android history entries remain portable | Generator unit tests and ZIP byte checks |
 | Categories/favorites/order | Data | Category IDs/names are resolved for active and trash records; new categories are appended without rewriting existing metadata | Migration and codec tests |
+| Operation timeline | Data | The unlocked manager reads operation summaries and field names; old/new values and device IDs stay in the background boundary | Codec, sender-policy and UI tests |
 | Images and attachments | Data | Opaque encrypted blobs stay intact; portable metadata is visible | Binary ZIP entry equality tests |
 | Wi-Fi records | Planned | Metadata can be viewed/edited without pretending to configure an OS network | Model/editor tests |
 | SSH key records | Planned | Public/private OpenSSH fields remain encrypted and editable | Model/editor and content-boundary tests |
@@ -86,7 +87,7 @@ The key is PBKDF2-HMAC-SHA256 with 100,000 iterations and a 256-bit output. Exte
 | `steam/mafiles/*` | Steam Guard maFiles | Opaque byte preservation |
 | `images/*` | Encrypted secure-item images | Opaque byte preservation |
 | `password_icons/*` | Uploaded password icons | Opaque byte preservation |
-| `timeline_history.json` | Operation timeline | Opaque byte preservation |
+| `timeline_history.json` | Operation timeline | Read-only redacted summaries in the manager; original entry remains byte-identical |
 | `trash/trash_passwords.json` | Deleted passwords | Opaque byte preservation |
 | `trash/trash_secure_items.json` | Deleted secure items | Opaque byte preservation |
 | `monica_config/common_account.json` | Common fill identity/templates | Opaque byte preservation |

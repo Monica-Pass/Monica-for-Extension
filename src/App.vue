@@ -35,12 +35,13 @@ import { passkeyAvailability, passkeyAvailabilityLabel } from "./passkey/source-
 import { presentKeePassRemoteError, type KeePassRemoteErrorPresentation } from "./providers/keepass/keepass-remote-status";
 import type { Mdbx2HostStatus, Mdbx2VaultRuntimeStatus } from "./providers/mdbx2/native-contract";
 import type { MonicaWebDavConfig } from "./providers/webdav/monica-webdav-provider";
+import type { AndroidTimelineEntrySummary } from "./providers/webdav/android-backup-codec";
 import { ExtensionRuntimeError, vaultClient } from "./runtime/client";
 import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyncStatus, VaultWindowsHelloStatus } from "./runtime/messages";
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | VaultManagerSection | "steam" | "sends" | "archive" | "trash" | "generator" | "providers" | "settings";
+type Section = "overview" | VaultManagerSection | "steam" | "sends" | "archive" | "trash" | "timeline" | "generator" | "providers" | "settings";
 type LoginType = NonNullable<LoginItem["loginType"]>;
 type KeePassSourceMode = "local-file" | "webdav";
 
@@ -97,6 +98,9 @@ interface PendingConfirmationAction {
 const vaultItems = ref<VaultItem[]>([]);
 const archivedItems = ref<VaultItem[]>([]);
 const deletedItems = ref<VaultItem[]>([]);
+const androidTimeline = ref<Array<AndroidTimelineEntrySummary & { providerName: string }>>([]);
+const timelineBusy = ref(false);
+const timelineError = ref("");
 const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; recovering?: number; maxAttempts: number; lastError?: string }>>([]);
 const providerConflicts = ref<ProviderConflictSummary[]>([]);
@@ -658,15 +662,31 @@ function navigate(section: Section) {
   activeSection.value = section;
   mobileNavOpen.value = false;
   if (section === "providers") void refreshProviders();
+  if (section === "timeline") void loadAndroidTimeline();
   if (section === "settings") void Promise.all([refreshWindowsHelloStatus(), refreshAutofillSitePolicy()]);
 }
 
 function sectionTitle(section: Section): string {
-  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", sends: "安全发送", archive: "归档", trash: "回收站", generator: "生成器", providers: "密码源", settings: "设置与备份" } as const)[section];
+  return ({ overview: "密码库概览", passwords: "登录项", wallet: "钱包与身份", notes: "安全笔记", totp: "动态验证码", steam: "Steam", passkeys: "Passkey", sends: "安全发送", archive: "归档", trash: "回收站", timeline: "Android 时间线", generator: "生成器", providers: "密码源", settings: "设置与备份" } as const)[section];
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", sends: "创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。", archive: "归档项目从普通分类、自动填充和 Passkey 候选中隐藏，取消归档后恢复使用。", trash: "远端回收站项目保存在加密墓碑中，可恢复且不会被静默永久删除。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+  return ({ overview: "扩展源码复用 WebUI，但运行时完全独立。", passwords: "登录密码只在解锁后显示和编辑。", wallet: "管理证件、账单地址、银行卡与支付账号。", notes: "只管理加密安全笔记，不混入验证码。", totp: "管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。", steam: "管理 Steam 登录批准、交易确认、库存、市场与授权设备。", passkeys: "查看 Passkey 来源与使用状态；私钥始终保持隐藏。", sends: "创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。", archive: "归档项目从普通分类、自动填充和 Passkey 候选中隐藏，取消归档后恢复使用。", trash: "远端回收站项目保存在加密墓碑中，可恢复且不会被静默永久删除。", timeline: "查看 Android WebDAV 备份中的操作摘要，不显示字段旧值和新值。", generator: "使用浏览器加密随机源生成密码、PIN 与密码短语。", providers: "连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。", settings: "管理外观、导入导出与安全边界。" } as const)[section];
+}
+
+async function loadAndroidTimeline() {
+  timelineBusy.value = true;
+  timelineError.value = "";
+  try {
+    const pages = await Promise.all(webDavProviders.value.map(async (provider) =>
+      (await vaultClient.listAndroidTimeline(provider.id)).map((entry) => ({ ...entry, providerName: provider.name }))
+    ));
+    androidTimeline.value = pages.flat().sort((left, right) => right.timestamp - left.timestamp);
+  } catch (error) {
+    timelineError.value = errorMessage(error);
+  } finally {
+    timelineBusy.value = false;
+  }
 }
 
 function filterManagerItems(items: VaultItem[]): VaultItem[] {
@@ -2095,6 +2115,7 @@ function errorCode(error: unknown): string | undefined {
             <button class="nav-item" :class="{ selected: activeSection === 'sends' }" :aria-current="activeSection === 'sends' ? 'page' : undefined" type="button" @click="navigate('sends')"><m3e-icon name="send"></m3e-icon><span>安全发送</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'archive' }" :aria-current="activeSection === 'archive' ? 'page' : undefined" type="button" @click="navigate('archive')"><m3e-icon name="archive"></m3e-icon><span>归档</span><span class="nav-count">{{ archivedItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'trash' }" :aria-current="activeSection === 'trash' ? 'page' : undefined" type="button" @click="navigate('trash')"><m3e-icon name="delete"></m3e-icon><span>回收站</span><span class="nav-count">{{ deletedItems.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'timeline' }" :aria-current="activeSection === 'timeline' ? 'page' : undefined" type="button" @click="navigate('timeline')"><m3e-icon name="history"></m3e-icon><span>时间线</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'providers' }" :aria-current="activeSection === 'providers' ? 'page' : undefined" type="button" @click="navigate('providers')"><m3e-icon name="cloud_sync"></m3e-icon><span>密码源</span></button>
           </section>
           <section>
@@ -2174,6 +2195,17 @@ function errorCode(error: unknown): string | undefined {
         <GeneratorPanel v-else-if="activeSection === 'generator'" />
 
         <BitwardenSendsPanel v-else-if="activeSection === 'sends'" :providers="providers" :query="query" />
+
+        <section v-else-if="activeSection === 'timeline'" class="content-grid lifecycle-page">
+          <m3e-card variant="filled" class="data-card motion-card">
+            <div slot="header" class="card-head"><h2>Android 操作记录</h2><p>{{ androidTimeline.length }} 条</p></div>
+            <p v-if="timelineError" class="form-error" slot="content">{{ timelineError }}</p>
+            <div v-else-if="androidTimeline.length" class="table-wrap"><table><thead><tr><th>操作</th><th>类型</th><th>变更字段</th><th>设备</th><th>时间</th><th>状态</th></tr></thead><tbody>
+              <tr v-for="entry in androidTimeline" :key="`${entry.providerName}:${entry.id}:${entry.timestamp}`"><td data-label="操作"><strong>{{ entry.operationType }}</strong><small class="timeline-title">{{ entry.itemTitle }}</small></td><td data-label="类型">{{ entry.itemType }}</td><td data-label="变更字段">{{ entry.changedFields.join('、') || '—' }}</td><td data-label="设备">{{ entry.deviceName }}<small class="timeline-title">{{ entry.providerName }}</small></td><td data-label="时间">{{ new Date(entry.timestamp).toLocaleString() }}</td><td data-label="状态"><span class="state" :class="entry.reverted ? 'state-attention' : 'state-healthy'">{{ entry.reverted ? '已恢复' : '有效' }}</span></td></tr>
+            </tbody></table></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="timelineBusy ? 'progress_activity' : 'history'" /><h2>{{ timelineBusy ? '正在读取时间线' : '暂无 Android 时间线' }}</h2><p>{{ timelineBusy ? '正在从已连接的 WebDAV 备份读取。' : 'Android 开启时间线备份后，操作摘要会显示在这里。' }}</p></div>
+          </m3e-card>
+        </section>
 
         <section v-else-if="activeSection === 'archive' || activeSection === 'trash'" class="content-grid lifecycle-page">
           <m3e-card variant="filled" class="data-card motion-card">

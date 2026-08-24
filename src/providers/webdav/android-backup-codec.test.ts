@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -878,5 +878,29 @@ describe("Android backup ZIP codec", () => {
       expect.objectContaining({ entryId: 42, password: "current", lastUsedAt: 1_700_000_001_000 }),
       expect.objectContaining({ entryId: 999, password: "unmatched", unknownOwner: true })
     ]));
+  });
+
+  it("reads Android timeline summaries without exposing change values", () => {
+    const timeline = [{
+      id: 7,
+      itemType: "PASSWORD",
+      itemId: 42,
+      itemTitle: "PASSWORD#42",
+      operationType: "UPDATE",
+      changesJson: JSON.stringify([{ fieldName: "密码", oldValue: "old-secret", newValue: "new-secret" }]),
+      deviceId: "private-device-id",
+      deviceName: "Android Phone",
+      timestamp: 1_700_000_002_000,
+      isReverted: true,
+      future: { keep: true }
+    }];
+    const document = readAndroidBackup(zipSync({ "timeline_history.json": strToU8(JSON.stringify(timeline)) }), "provider-timeline");
+    const summaries = listAndroidTimeline(document);
+
+    expect(summaries).toEqual([{ id: "7", itemType: "PASSWORD", itemId: 42, itemTitle: "PASSWORD#42", operationType: "UPDATE", deviceName: "Android Phone", timestamp: 1_700_000_002_000, reverted: true, changedFields: ["密码"] }]);
+    expect(JSON.stringify(summaries)).not.toContain("secret");
+    expect(JSON.stringify(summaries)).not.toContain("private-device-id");
+    const output = unzipSync(writeAndroidBackup(document, [], "provider-timeline"));
+    expect(output["timeline_history.json"]).toEqual(strToU8(JSON.stringify(timeline)));
   });
 });

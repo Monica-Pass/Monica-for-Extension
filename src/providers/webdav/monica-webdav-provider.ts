@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
-import { deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
+import { deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument, type AndroidTimelineEntrySummary } from "./android-backup-codec";
 import type { ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
 import { createSourceRecord } from "../../core/source-records";
@@ -151,6 +151,11 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     if (!loaded) return;
     deleteAndroidBackupItem(loaded.document, item.id);
     await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+  }
+
+  async listTimeline(account: ProviderAccount, signal?: AbortSignal): Promise<AndroidTimelineEntrySummary[]> {
+    const loaded = await this.loadLatest(account, signal);
+    return loaded ? listAndroidTimeline(loaded.document) : [];
   }
 
   async listAttachments(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<ProviderAttachmentPage> {
