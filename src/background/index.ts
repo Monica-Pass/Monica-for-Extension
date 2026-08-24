@@ -1250,6 +1250,20 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (!account || account.kind !== "monica-webdav") throw new Error("Monica Android WebDAV 密码源不存在。");
       return monicaWebDavProvider.listTimeline(account);
     }
+    case "ANDROID_GENERATOR_HISTORY_LIST": {
+      assertManagerPage(sender);
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "monica-webdav") throw new Error("Monica Android WebDAV 密码源不存在。");
+      return monicaWebDavProvider.listGeneratorHistory(account);
+    }
+    case "ANDROID_GENERATOR_HISTORY_DELETE": {
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error("删除 Android 生成历史需要明确确认。");
+      if (!request.entryId || request.entryId.length > 1_024) throw new Error("Android 生成历史标识无效。");
+      const account = await service.getProvider(request.providerId);
+      if (!account || account.kind !== "monica-webdav") throw new Error("Monica Android WebDAV 密码源不存在。");
+      return monicaWebDavProvider.deleteGeneratorHistoryEntry(account, request.entryId);
+    }
     case "PROVIDER_ATTACHMENT_RECOVERY_STATUS": {
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);

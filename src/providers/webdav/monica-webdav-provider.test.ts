@@ -70,6 +70,30 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it("lists Android generator history from the latest backup", async () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const history = [{ password: "generated-secret", timestamp: 1_700_000_003_000, domain: "example.com", username: "joy", type: "AUTOFILL" }];
+    const provider = new MonicaWebDavProvider(server(zipSync({ [path]: strToU8(JSON.stringify(history)) })).fetcher);
+
+    await expect(provider.listGeneratorHistory(account())).resolves.toEqual([
+      expect.objectContaining({ password: "generated-secret", timestamp: 1_700_000_003_000, domain: "example.com", username: "joy", type: "AUTOFILL" })
+    ]);
+  });
+
+  it("deletes one Android generator history entry through an ETag-checked upload", async () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const history = [
+      { password: "remove-me", timestamp: 1_700_000_003_000, type: "SYMBOL" },
+      { password: "keep-me", timestamp: 1_700_000_002_000, type: "PIN", future: true }
+    ];
+    const mock = server(zipSync({ [path]: strToU8(JSON.stringify(history)) }));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const [entry] = await provider.listGeneratorHistory(account());
+
+    await expect(provider.deleteGeneratorHistoryEntry(account(), entry.id)).resolves.toBe(true);
+    expect(JSON.parse(new TextDecoder().decode(unzipSync(mock.uploaded()!)[path]))).toEqual([history[1]]);
+  });
+
   it("lists redacted Android timeline summaries from the latest backup", async () => {
     const timeline = [{ id: 4, itemType: "NOTE", itemId: 8, itemTitle: "NOTE#8", operationType: "UPDATE", changesJson: JSON.stringify([{ fieldName: "内容", oldValue: "private", newValue: "secret" }]), deviceId: "hidden-id", deviceName: "Android", timestamp: 1_700_000_000_000, isReverted: false }];
     const provider = new MonicaWebDavProvider(server(zipSync({ "timeline_history.json": strToU8(JSON.stringify(timeline)) })).fetcher);

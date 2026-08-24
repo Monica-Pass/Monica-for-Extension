@@ -2196,7 +2196,7 @@ function errorCode(error: unknown): string | undefined {
           <div v-if="!filteredSteamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? '没有匹配的 Steam 项目' : '还没有 Steam 验证器' }}</h2><p>{{ query || hasActiveManagerFilter ? '调整分类或快捷筛选条件。' : '从 Monica Android 同步，或在动态验证码中添加 Steam Guard。' }}</p><m3e-button v-if="!query && !hasActiveManagerFilter" variant="filled" aria-label="添加 Steam Guard 验证器" @click="openVaultCreate('totp')">添加 Steam</m3e-button></div>
         </section>
 
-        <GeneratorPanel v-else-if="activeSection === 'generator'" />
+        <GeneratorPanel v-else-if="activeSection === 'generator'" :providers="webDavProviders" />
 
         <BitwardenSendsPanel v-else-if="activeSection === 'sends'" :providers="providers" :query="query" />
 

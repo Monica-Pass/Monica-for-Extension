@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
-import { deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument, type AndroidTimelineEntrySummary } from "./android-backup-codec";
+import { deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument, type AndroidGeneratorHistoryEntry, type AndroidTimelineEntrySummary } from "./android-backup-codec";
 import type { ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
 import { createSourceRecord } from "../../core/source-records";
@@ -156,6 +156,18 @@ export class MonicaWebDavProvider implements ProviderAdapter {
   async listTimeline(account: ProviderAccount, signal?: AbortSignal): Promise<AndroidTimelineEntrySummary[]> {
     const loaded = await this.loadLatest(account, signal);
     return loaded ? listAndroidTimeline(loaded.document) : [];
+  }
+
+  async listGeneratorHistory(account: ProviderAccount, signal?: AbortSignal): Promise<AndroidGeneratorHistoryEntry[]> {
+    const loaded = await this.loadLatest(account, signal);
+    return loaded ? listAndroidGeneratorHistory(loaded.document) : [];
+  }
+
+  async deleteGeneratorHistoryEntry(account: ProviderAccount, entryId: string, signal?: AbortSignal): Promise<boolean> {
+    const loaded = await this.loadLatest(account, signal);
+    if (!loaded || !deleteAndroidGeneratorHistoryEntry(loaded.document, entryId)) return false;
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    return true;
   }
 
   async listAttachments(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<ProviderAttachmentPage> {

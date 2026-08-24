@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -902,5 +902,59 @@ describe("Android backup ZIP codec", () => {
     expect(JSON.stringify(summaries)).not.toContain("private-device-id");
     const output = unzipSync(writeAndroidBackup(document, [], "provider-timeline"));
     expect(output["timeline_history.json"]).toEqual(strToU8(JSON.stringify(timeline)));
+  });
+
+  it("reads Android generator history and preserves unchanged bytes", () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const history = [
+      { password: "generated-secret", timestamp: 1_700_000_003_000, packageName: "com.example.app", domain: "example.com", username: "joy", type: "AUTOFILL", future: { keep: true } },
+      { password: "246810", timestamp: 1_700_000_002_000, type: "PIN" }
+    ];
+    const bytes = strToU8(JSON.stringify(history));
+    const document = readAndroidBackup(zipSync({ [path]: bytes }), "provider-generator-history");
+
+    expect(listAndroidGeneratorHistory(document)).toEqual([
+      { id: `${path}:0:1700000003000`, password: "generated-secret", timestamp: 1_700_000_003_000, packageName: "com.example.app", domain: "example.com", username: "joy", type: "AUTOFILL" },
+      { id: `${path}:1:1700000002000`, password: "246810", timestamp: 1_700_000_002_000, packageName: "", domain: "", username: "", type: "PIN" }
+    ]);
+    const output = unzipSync(writeAndroidBackup(document, [], "provider-generator-history"));
+    expect(output[path]).toEqual(bytes);
+  });
+
+  it("deletes one Android generator history entry without normalizing retained fields", () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const history = [
+      { password: "remove-me", timestamp: 1_700_000_003_000, type: "SYMBOL" },
+      { password: "keep-me", timestamp: 1_700_000_002_000, type: "PASSWORD", packageName: null, future: ["unchanged"] }
+    ];
+    const document = readAndroidBackup(zipSync({ [path]: strToU8(JSON.stringify(history)) }), "provider-generator-delete");
+
+    expect(deleteAndroidGeneratorHistoryEntry(document, `${path}:0:1700000003000`)).toBe(true);
+    expect(deleteAndroidGeneratorHistoryEntry(document, "missing")).toBe(false);
+    const output = unzipSync(writeAndroidBackup(document, [], "provider-generator-delete"));
+    expect(JSON.parse(strFromU8(output[path]))).toEqual([history[1]]);
+  });
+
+  it("preserves malformed Android generator history and refuses to edit it", () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const bytes = strToU8('{"future":true');
+    const document = readAndroidBackup(zipSync({ [path]: bytes }), "provider-generator-malformed");
+
+    expect(document.warnings.join(" ")).toContain("generated_history.json");
+    expect(listAndroidGeneratorHistory(document)).toEqual([]);
+    expect(deleteAndroidGeneratorHistoryEntry(document, `${path}:0:1`)).toBe(false);
+    const output = unzipSync(writeAndroidBackup(document, [], "provider-generator-malformed"));
+    expect(output[path]).toEqual(bytes);
+  });
+
+  it("preserves oversized Android generator history without exposing it", () => {
+    const path = "Monica_20260824_120000_generated_history.json";
+    const bytes = strToU8(JSON.stringify(Array.from({ length: 1_001 }, () => null)));
+    const document = readAndroidBackup(zipSync({ [path]: bytes }, { level: 0 }), "provider-generator-oversized");
+
+    expect(document.warnings.join(" ")).toContain("过大");
+    expect(listAndroidGeneratorHistory(document)).toEqual([]);
+    expect(document.entries[path]).toEqual(bytes);
+    expect(unzipSync(writeAndroidBackup(document, [], "provider-generator-oversized"))[path]).toEqual(bytes);
   });
 });

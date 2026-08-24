@@ -5,7 +5,7 @@ This document defines the browser extension's compatibility contract with the cu
 ## Authority
 
 - Repository: `Monica-Pass/Monica`
-- Audited local commit: `3666e6eb6619f8884ca330efba57c6a2b6096242`
+- Audited committed baseline: `12de90beefea7ec5df243d55fa6254e171cf8b73`
 - Backup writer/reader: `Monica for Android/app/src/main/java/takagi/ru/monica/utils/WebDavHelper.kt`
 - Wallet codecs/models: `CardWalletDataCodec.kt` and `SecureItemModels.kt`
 - Encryption: `EncryptionHelper.kt`
@@ -33,7 +33,7 @@ The status vocabulary is intentionally strict:
 | Payment accounts | Planned | Full `PaymentAccountData`, embedded address and custom fields | Codec field matrix and payment autofill E2E |
 | Secure notes | Planned | Content, tags, Markdown and image references | Editor and Android codec tests |
 | Passkeys | Full | Browser/Bitwarden keys are usable; Android aliases remain metadata-only | WebAuthn E2E and source-mode tests |
-| Password generator/history | Planned | Browser generator works; Android history entries remain portable | Generator unit tests and ZIP byte checks |
+| Password generator/history | Data | Browser generator works; Android generated history can be reviewed and individually deleted while future fields remain portable | Generator unit/E2E tests and ZIP byte checks |
 | Categories/favorites/order | Data | Category IDs/names are resolved for active and trash records; new categories are appended without rewriting existing metadata | Migration and codec tests |
 | Operation timeline | Data | The unlocked manager reads operation summaries and field names; old/new values and device IDs stay in the background boundary | Codec, sender-policy and UI tests |
 | Images and attachments | Data | Opaque encrypted blobs stay intact; portable metadata is visible | Binary ZIP entry equality tests |
@@ -83,7 +83,7 @@ The key is PBKDF2-HMAC-SHA256 with 100,000 iterations and a 256-bit output. Exte
 | `categories.json` | Category IDs, names, order | Parsed for category resolution; unchanged bytes and unknown fields retained; new categories appended using Android fields |
 | `Monica_<timestamp>_password.csv` | Compatibility password CSV | Opaque byte preservation |
 | `password_history.json` | Prior passwords | Opaque byte preservation |
-| `Monica_<timestamp>_generated_history.json` | Generator history | Opaque byte preservation |
+| `Monica_<timestamp>_generated_history.json` | Generator history | Manager-only masked list and field-preserving individual deletion; unchanged bytes remain identical |
 | `steam/mafiles/*` | Steam Guard maFiles | Opaque byte preservation |
 | `images/*` | Encrypted secure-item images | Opaque byte preservation |
 | `password_icons/*` | Uploaded password icons | Opaque byte preservation |
@@ -161,6 +161,10 @@ Current `itemData` fields are `content`, `tags`, and `isMarkdown`. Only `content
 Android currently writes `credentialId`, `rpId`, `rpName`, `userId`, `userName`, `userDisplayName`, `publicKeyAlgorithm`, `publicKey`, `privateKeyAlias`, `createdAt`, `lastUsedAt`, `useCount`, `iconUrl`, `isDiscoverable`, `isUserVerificationRequired`, `transports`, `aaguid`, `signCount`, `notes`, `boundPasswordId`, `passkeyMode`, and `categoryName`.
 
 `privateKeyAlias` is an Android key reference, not PKCS#8 key material. The extension must preserve it but cannot use it for browser WebAuthn signing.
+
+### Generator history
+
+Android writes at most 50 entries with `password`, `timestamp`, `packageName`, `domain`, `username`, and `type`. Recognized types are `SYMBOL`, `PASSWORD`, `PASSPHRASE`, `PIN`, and `AUTOFILL`. The unlocked manager masks values until explicitly revealed. Deleting one entry retains the Android filename and every unknown member of retained entries; malformed or oversized history remains byte-identical and is not editable.
 
 ## Write Rules
 

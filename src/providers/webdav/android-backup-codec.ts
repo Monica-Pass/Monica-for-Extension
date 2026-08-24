@@ -33,7 +33,23 @@ export interface AndroidBackupDocument {
   records: Map<string, AndroidBackupRecord>;
   warnings: string[];
   passwordHistoryRaw?: unknown[];
+  generatorHistoryRecords?: AndroidGeneratorHistoryRecord[];
   portableAttachmentsAllowed?: boolean;
+}
+
+interface AndroidGeneratorHistoryRecord {
+  path: string;
+  values: unknown[];
+}
+
+export interface AndroidGeneratorHistoryEntry {
+  id: string;
+  password: string;
+  timestamp: number;
+  packageName: string;
+  domain: string;
+  username: string;
+  type: string;
 }
 
 export interface AndroidPortableAttachment {
@@ -76,6 +92,8 @@ const PORTABLE_ATTACHMENT_PATH = /^attachments_portable\/([^/]+)\.bin$/;
 const PORTABLE_ATTACHMENT_MAX_BYTES = 256 * 1024 * 1024;
 const CATEGORIES_PATH = "categories.json";
 const TIMELINE_PATH = "timeline_history.json";
+const GENERATOR_HISTORY_SUFFIX = "_generated_history.json";
+const GENERATOR_HISTORY_MAX_ENTRIES = 1_000;
 
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
@@ -101,6 +119,44 @@ export function listAndroidTimeline(document: AndroidBackupDocument): AndroidTim
       changedFields: timelineChangedFields(raw.changesJson)
     }];
   }).sort((left, right) => right.timestamp - left.timestamp);
+}
+
+export function listAndroidGeneratorHistory(document: AndroidBackupDocument): AndroidGeneratorHistoryEntry[] {
+  return (document.generatorHistoryRecords || []).flatMap((record) => record.values.flatMap((value, index): AndroidGeneratorHistoryEntry[] => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const raw = value as Record<string, unknown>;
+    const password = optionalString(raw.password);
+    const timestamp = optionalNumber(raw.timestamp);
+    if (password === undefined || timestamp === undefined) return [];
+    return [{
+      id: generatorHistoryId(record.path, index, timestamp),
+      password,
+      timestamp,
+      packageName: optionalString(raw.packageName) || "",
+      domain: optionalString(raw.domain) || "",
+      username: optionalString(raw.username) || "",
+      type: optionalString(raw.type) || "AUTOFILL"
+    }];
+  }));
+}
+
+export function deleteAndroidGeneratorHistoryEntry(document: AndroidBackupDocument, id: string): boolean {
+  for (const record of document.generatorHistoryRecords || []) {
+    const index = record.values.findIndex((value, candidateIndex) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const timestamp = optionalNumber((value as Record<string, unknown>).timestamp);
+      return timestamp !== undefined && generatorHistoryId(record.path, candidateIndex, timestamp) === id;
+    });
+    if (index < 0) continue;
+    record.values.splice(index, 1);
+    document.entries[record.path] = strToU8(JSON.stringify(record.values));
+    return true;
+  }
+  return false;
+}
+
+function generatorHistoryId(path: string, index: number, timestamp: number): string {
+  return `${path}:${index}:${timestamp}`;
 }
 
 function timelineChangedFields(value: unknown): string[] {
@@ -143,12 +199,13 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
   readAndroidTrash(entries, providerId, options, items, records, warnings);
   hydrateAndroidCategories(entries, items, warnings);
   const passwordHistoryRaw = readAndroidPasswordHistory(entries, items, records, warnings);
+  const generatorHistoryRecords = readAndroidGeneratorHistory(entries, warnings);
   restoreAndroidOtpBindings(items);
   for (const item of items) {
     const record = records.get(item.id);
     if (record) record.item = cloneVaultItem(item);
   }
-  return { entries, items, records, warnings, passwordHistoryRaw, portableAttachmentsAllowed: options.allowPortableAttachments !== false };
+  return { entries, items, records, warnings, passwordHistoryRaw, generatorHistoryRecords, portableAttachmentsAllowed: options.allowPortableAttachments !== false };
 }
 
 function restoreAndroidOtpBindings(items: VaultItem[]): void {
@@ -787,6 +844,23 @@ function readAndroidPasswordHistory(
     if (history.length < 1_000) login.passwordHistory = [...history, { password, lastUsedAt }];
   }
   return raw;
+}
+
+function readAndroidGeneratorHistory(entries: Record<string, Uint8Array>, warnings: string[]): AndroidGeneratorHistoryRecord[] {
+  const records: AndroidGeneratorHistoryRecord[] = [];
+  for (const [path, bytes] of Object.entries(entries)) {
+    if (!path.toLowerCase().endsWith(GENERATOR_HISTORY_SUFFIX)) continue;
+    try {
+      const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+      if (!Array.isArray(parsed) || parsed.length > GENERATOR_HISTORY_MAX_ENTRIES) {
+        throw new Error("历史列表格式无效或过大");
+      }
+      records.push({ path, values: parsed });
+    } catch (error) {
+      warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}，原始条目已保留。`);
+    }
+  }
+  return records;
 }
 
 function writeAndroidPasswordHistory(document: AndroidBackupDocument, items: VaultItem[], entries: Record<string, Uint8Array>): void {

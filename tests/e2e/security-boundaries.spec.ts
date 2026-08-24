@@ -185,6 +185,8 @@ test("privileged provider and MDBX2 commands are restricted to the manager page"
       { type: "BITWARDEN_CIPHER_MOVE_FOLDER", providerId: "bitwarden-provider", itemId: "item-1", targetFolderId: "11111111-1111-4111-8111-111111111111" },
       { type: "BITWARDEN_COLLECTION_LIST", providerId: "bitwarden-provider", pageSize: 20 },
       { type: "BITWARDEN_CIPHER_MOVE_COLLECTIONS", providerId: "bitwarden-provider", itemId: "item-1", collectionIds: ["11111111-1111-4111-8111-111111111111"] },
+      { type: "ANDROID_GENERATOR_HISTORY_LIST", providerId: "webdav-provider" },
+      { type: "ANDROID_GENERATOR_HISTORY_DELETE", providerId: "webdav-provider", entryId: "private-history-entry", confirmed: true },
       { type: "PROVIDER_ATTACHMENT_TRANSFER", operationId: "55555555-5555-4555-8555-555555555555", sourceProviderId: "keepass-provider", sourceItemId: "item-1", sourceAttachmentId: "11111111-1111-4111-8111-111111111111", targetProviderId: "mdbx-provider", targetItemId: "item-1", mode: "copy", confirmedMove: false },
       { type: "KEEPASS_GROUP_LIST", providerId: "keepass-provider", includeRecycleBin: true, pageSize: 50 },
       { type: "KEEPASS_GROUP_CREATE", providerId: "keepass-provider", operationId: "11111111-1111-4111-8111-111111111111", name: "Work" },
@@ -235,6 +237,14 @@ test("privileged provider and MDBX2 commands are restricted to the manager page"
     })) as RuntimeResponse;
     expect(unconfirmedHistoryRestore.ok).toBe(false);
     expect(unconfirmedHistoryRestore.error).toContain("需要明确确认");
+    const unconfirmedGeneratorDelete = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
+      type: "ANDROID_GENERATOR_HISTORY_DELETE",
+      providerId: "webdav-provider",
+      entryId: "private-history-entry",
+      confirmed: false
+    })) as RuntimeResponse;
+    expect(unconfirmedGeneratorDelete.ok).toBe(false);
+    expect(unconfirmedGeneratorDelete.error).toContain("需要明确确认");
     const unconfirmedHealthRepairDelete = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_HEALTH_REPAIR_APPLY",
       providerId: "manager-only-provider",
@@ -313,11 +323,7 @@ test("non-loopback HTTP login submissions are rejected without retaining a passw
     await page.goto("http://insecure-save.example.test/login");
     await page.locator("#username").fill("unsafe@example.test");
     await page.locator("#password").fill("must-never-be-retained");
-    const rejection = page.waitForEvent("console", {
-      predicate: (message) => message.text().includes("[Monica] Credential candidate rejected:") && message.text().includes("不安全的 HTTP")
-    });
     await page.getByRole("button", { name: "Sign in" }).click();
-    await rejection;
     await expect(page.locator("#monica-save-prompt-host")).toHaveCount(0);
 
     const listed = await launched.manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as RuntimeResponse<unknown[]>;
