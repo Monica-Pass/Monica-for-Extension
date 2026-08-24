@@ -34,7 +34,7 @@ The status vocabulary is intentionally strict:
 | Secure notes | Planned | Content, tags, Markdown and image references | Editor and Android codec tests |
 | Passkeys | Full | Browser/Bitwarden keys are usable; Android aliases remain metadata-only | WebAuthn E2E and source-mode tests |
 | Password generator/history | Planned | Browser generator works; Android history entries remain portable | Generator unit tests and ZIP byte checks |
-| Categories/favorites/order | Planned | Shared organization fields remain stable across edits | Migration and codec tests |
+| Categories/favorites/order | Data | Category IDs/names are resolved for active and trash records; new categories are appended without rewriting existing metadata | Migration and codec tests |
 | Images and attachments | Data | Opaque encrypted blobs stay intact; portable metadata is visible | Binary ZIP entry equality tests |
 | Wi-Fi records | Planned | Metadata can be viewed/edited without pretending to configure an OS network | Model/editor tests |
 | SSH key records | Planned | Public/private OpenSSH fields remain encrypted and editable | Model/editor and content-boundary tests |
@@ -79,7 +79,7 @@ The key is PBKDF2-HMAC-SHA256 with 100,000 iterations and a 256-bit output. Exte
 | `folders/<category>/payment_accounts/payment_account_<id>_<createdAt>.json` | Payment account | Parsed for filling; extra data retained |
 | `folders/<category>/notes/note_<id>_<createdAt>.json` | Secure note | Content parsed; tags/Markdown metadata retained |
 | `folders/<category>/passkeys/passkey_<credentialId>.json` | Android Passkey metadata and key alias | Metadata only; key alias and Android-only fields retained |
-| `categories.json` | Category IDs, names, order | Opaque byte preservation |
+| `categories.json` | Category IDs, names, order | Parsed for category resolution; unchanged bytes and unknown fields retained; new categories appended using Android fields |
 | `Monica_<timestamp>_password.csv` | Compatibility password CSV | Opaque byte preservation |
 | `password_history.json` | Prior passwords | Opaque byte preservation |
 | `Monica_<timestamp>_generated_history.json` | Generator history | Opaque byte preservation |

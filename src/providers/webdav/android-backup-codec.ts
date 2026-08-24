@@ -62,6 +62,7 @@ export interface AndroidPortableAttachmentInput {
 const PORTABLE_ATTACHMENT_MANIFEST = "attachments_portable/attachments_portable.json";
 const PORTABLE_ATTACHMENT_PATH = /^attachments_portable\/([^/]+)\.bin$/;
 const PORTABLE_ATTACHMENT_MAX_BYTES = 256 * 1024 * 1024;
+const CATEGORIES_PATH = "categories.json";
 
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
@@ -88,6 +89,7 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
     }
   }
   readAndroidTrash(entries, providerId, options, items, records, warnings);
+  hydrateAndroidCategories(entries, items, warnings);
   const passwordHistoryRaw = readAndroidPasswordHistory(entries, items, records, warnings);
   restoreAndroidOtpBindings(items);
   for (const item of items) {
@@ -117,6 +119,7 @@ function restoreAndroidOtpBindings(items: VaultItem[]): void {
 
 export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string, options: AndroidBackupCodecOptions = {}): Uint8Array {
   const entries = { ...document.entries };
+  synchronizeAndroidCategories(document, items, entries);
   for (const item of items) {
     const existing = document.records.get(item.id);
     if (item.deletedAt) {
@@ -154,6 +157,108 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
   const output = zipSync(entries, { level: 6 });
   inspectZipArchive(output);
   return output;
+}
+
+interface AndroidCategoryRecord {
+  id: number;
+  name: string;
+  sortOrder: number;
+  raw: Record<string, unknown>;
+}
+
+function parseAndroidCategories(bytes: Uint8Array | undefined): { values: unknown[]; records: AndroidCategoryRecord[] } | undefined {
+  if (!bytes) return { values: [], records: [] };
+  const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("分类清单不是 JSON 数组");
+  const records: AndroidCategoryRecord[] = [];
+  for (const value of parsed) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const raw = value as Record<string, unknown>;
+    const id = optionalNumber(raw.id);
+    const name = optionalString(raw.name)?.trim();
+    if (id === undefined || !name) continue;
+    records.push({ id, name, sortOrder: optionalNumber(raw.sortOrder) ?? 0, raw });
+  }
+  return { values: parsed, records };
+}
+
+function hydrateAndroidCategories(entries: Record<string, Uint8Array>, items: VaultItem[], warnings: string[]): void {
+  let categories: ReturnType<typeof parseAndroidCategories>;
+  try {
+    categories = parseAndroidCategories(entries[CATEGORIES_PATH]);
+  } catch (error) {
+    warnings.push(`${CATEGORIES_PATH}: ${error instanceof Error ? error.message : "无法解析"}`);
+    return;
+  }
+  if (!categories) return;
+  const namesById = new Map(categories.records.map((category) => [category.id, category.name]));
+  for (const item of items) {
+    if (!item.categoryName && item.categoryId !== undefined) item.categoryName = namesById.get(item.categoryId);
+  }
+}
+
+function synchronizeAndroidCategories(
+  document: AndroidBackupDocument,
+  items: VaultItem[],
+  entries: Record<string, Uint8Array>
+): void {
+  let categories: ReturnType<typeof parseAndroidCategories>;
+  try {
+    categories = parseAndroidCategories(entries[CATEGORIES_PATH]);
+  } catch (error) {
+    const hasCategoryChange = items.some((item) => {
+      const previous = document.records.get(item.id)?.item;
+      return Boolean(item.categoryName?.trim()) && (!previous || item.categoryName !== previous.categoryName || item.categoryId !== previous.categoryId);
+    });
+    if (hasCategoryChange) {
+      throw new Error(`${CATEGORIES_PATH} 无法安全更新：${error instanceof Error ? error.message : "无法解析"}`);
+    }
+    return;
+  }
+  if (!categories) return;
+
+  const byId = new Map(categories.records.map((category) => [category.id, category]));
+  const byName = new Map(categories.records.map((category) => [category.name, category]));
+  for (const baseline of document.items) {
+    const name = baseline.categoryName?.trim();
+    if (!name || baseline.categoryId === undefined || byName.has(name) || byId.has(baseline.categoryId)) continue;
+    const inferred = { id: baseline.categoryId, name, sortOrder: baseline.sortOrder ?? 0, raw: { id: baseline.categoryId, name, sortOrder: baseline.sortOrder ?? 0 } };
+    byId.set(inferred.id, inferred);
+    byName.set(inferred.name, inferred);
+  }
+
+  let changed = false;
+  let nextId = Math.max(0, ...byId.keys()) + 1;
+  let nextSortOrder = Math.max(-1, ...categories.records.map((category) => category.sortOrder)) + 1;
+  for (const item of items) {
+    const name = item.categoryName?.trim();
+    if (!name) continue;
+    const previous = document.records.get(item.id)?.item;
+    const categoryChanged = !previous || name !== previous.categoryName?.trim() || item.categoryId !== previous.categoryId;
+    if (!categoryChanged) continue;
+
+    let category = byName.get(name);
+    if (!category && item.categoryId !== undefined) {
+      const matchingId = byId.get(item.categoryId);
+      if (matchingId?.name === name) category = matchingId;
+    }
+    if (!category) {
+      while (byId.has(nextId)) nextId += 1;
+      const id = item.categoryId !== undefined && !byId.has(item.categoryId) ? item.categoryId : nextId++;
+      const sortOrder = item.sortOrder ?? nextSortOrder++;
+      const raw = { id, name, sortOrder };
+      category = { id, name, sortOrder, raw };
+      byId.set(id, category);
+      byName.set(name, category);
+    }
+    item.categoryId = category.id;
+    if (!categories.records.some((record) => record.id === category?.id || record.name === category?.name)) {
+      categories.values.push(category.raw);
+      categories.records.push(category);
+      changed = true;
+    }
+  }
+  if (changed) entries[CATEGORIES_PATH] = strToU8(JSON.stringify(categories.values));
 }
 
 export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId: string): void {

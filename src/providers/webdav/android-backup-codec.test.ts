@@ -780,7 +780,68 @@ describe("Android backup ZIP codec", () => {
     } satisfies SecureNoteItem;
     const output = unzipSync(writeAndroidBackup(document, [note], "provider-category"));
     expect(Object.keys(output).some((path) => /^folders\/工作___重要\/notes\/note_[^/]+_1787529600000\.json$/.test(path))).toBe(true);
+    expect(JSON.parse(strFromU8(output["categories.json"]))).toEqual([
+      { id: expect.any(Number), name: "工作 / 重要", sortOrder: 0 }
+    ]);
     expect(output["future/keep.bin"]).toEqual(Uint8Array.of(1));
+  });
+
+  it("hydrates Android trash categories from categories.json", () => {
+    const categories = [
+      { id: 8, name: "工作", sortOrder: 2, futureCategoryField: { keep: true } },
+      { id: 9, name: "个人", sortOrder: 4 }
+    ];
+    const trash = [{
+      id: 55,
+      itemType: "NOTE",
+      title: "已删除笔记",
+      itemData: JSON.stringify({ content: "正文" }),
+      categoryId: 8,
+      deletedAt: 1_700_000_100_000,
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_050_000
+    }];
+    const document = readAndroidBackup(zipSync({
+      "categories.json": strToU8(JSON.stringify(categories)),
+      "trash/trash_secure_items.json": strToU8(JSON.stringify(trash))
+    }), "provider-trash-category");
+
+    expect(document.items[0]).toMatchObject({ categoryId: 8, categoryName: "工作", deletedAt: new Date(1_700_000_100_000).toISOString() });
+    const output = unzipSync(writeAndroidBackup(document, document.items, "provider-trash-category"));
+    expect(output["categories.json"]).toEqual(strToU8(JSON.stringify(categories)));
+  });
+
+  it("appends new Android categories without rewriting existing category objects", () => {
+    const originalCategories = [
+      { id: 8, name: "Work", sortOrder: 7, color: "future-color", future: { keep: true } },
+      { id: 21, name: "Archive", sortOrder: 11 }
+    ];
+    const fixture = currentAndroidRecordsFixture();
+    const archive = unzipSync(fixture.zip);
+    archive["categories.json"] = strToU8(JSON.stringify(originalCategories));
+    const document = readAndroidBackup(zipSync(archive), "provider-new-category");
+    const changed = document.items.map((item) => item.kind === "login" ? { ...item, categoryName: "Personal", categoryId: 8 } : item);
+
+    const output = unzipSync(writeAndroidBackup(document, changed, "provider-new-category"));
+    const categories = JSON.parse(strFromU8(output["categories.json"]));
+    expect(categories.slice(0, 2)).toEqual(originalCategories);
+    expect(categories[2]).toEqual({ id: 22, name: "Personal", sortOrder: 12 });
+    const movedPath = fixture.paths.password.replace("folders/Work/", "folders/Personal/");
+    expect(JSON.parse(strFromU8(output[movedPath]))).toMatchObject({ categoryId: 22, categoryName: "Personal" });
+  });
+
+  it("does not overwrite a malformed category manifest", () => {
+    const malformed = strToU8('{"future":true');
+    const document = readAndroidBackup(zipSync({
+      "categories.json": malformed,
+      "folders/_root/passwords/password_1_0.json": strToU8(JSON.stringify({ id: 1, title: "Login", createdAt: 1, updatedAt: 1 }))
+    }), "provider-malformed-category");
+    expect(document.warnings.join(" ")).toContain("categories.json");
+
+    expect(() => writeAndroidBackup(document, [{ ...document.items[0], categoryName: "New" }], "provider-malformed-category"))
+      .toThrow(/categories\.json 无法安全更新/);
+    const unchanged = unzipSync(writeAndroidBackup(document, document.items, "provider-malformed-category"));
+    expect(unchanged["categories.json"]).toEqual(malformed);
   });
 
   it("moves an edited record between Android category folders without duplicating it", () => {
