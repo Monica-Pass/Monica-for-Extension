@@ -198,7 +198,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     const remoteBytes = await client.download(file, signal);
     const encrypted = isAndroidEncryptedBackup(remoteBytes);
     const zipBytes = encrypted ? await decryptAndroidBackup(remoteBytes, config.backupPassword || "") : remoteBytes;
-    return { file, document: readAndroidBackup(zipBytes, account.id, { allowPortablePasskeys: encrypted }) };
+    return { file, document: readAndroidBackup(zipBytes, account.id, { allowPortablePasskeys: encrypted, allowPortableAttachments: encrypted }) };
   }
 
   private async uploadDocument(

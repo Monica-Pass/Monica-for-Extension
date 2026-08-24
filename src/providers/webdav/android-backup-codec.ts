@@ -14,7 +14,10 @@ import {
 import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
 import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
 
-export interface AndroidBackupCodecOptions { allowPortablePasskeys?: boolean }
+export interface AndroidBackupCodecOptions {
+  allowPortablePasskeys?: boolean;
+  allowPortableAttachments?: boolean;
+}
 
 export interface AndroidBackupRecord {
   path: string;
@@ -29,6 +32,7 @@ export interface AndroidBackupDocument {
   records: Map<string, AndroidBackupRecord>;
   warnings: string[];
   passwordHistoryRaw?: unknown[];
+  portableAttachmentsAllowed?: boolean;
 }
 
 export interface AndroidPortableAttachment {
@@ -65,6 +69,10 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
   const items: VaultItem[] = [];
   const records = new Map<string, AndroidBackupRecord>();
   const warnings: string[] = [];
+  const hasPortableAttachments = Boolean(entries[PORTABLE_ATTACHMENT_MANIFEST]);
+  if (hasPortableAttachments && options.allowPortableAttachments === false) {
+    warnings.push("未加密的 Android 备份包含 portable 附件；附件字节已原样保留，但不会显示或解密。");
+  }
 
   for (const [path, bytes] of Object.entries(entries)) {
     if (!JSON_PATH.test(path)) continue;
@@ -84,7 +92,7 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
     const record = records.get(item.id);
     if (record) record.item = cloneVaultItem(item);
   }
-  return { entries, items, records, warnings, passwordHistoryRaw };
+  return { entries, items, records, warnings, passwordHistoryRaw, portableAttachmentsAllowed: options.allowPortableAttachments !== false };
 }
 
 function restoreAndroidOtpBindings(items: VaultItem[]): void {
@@ -383,6 +391,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
 }
 
 export function listAndroidPortableAttachments(document: AndroidBackupDocument, item: VaultItem): AndroidPortableAttachment[] {
+  if (document.portableAttachmentsAllowed === false) return [];
   const manifest = parsePortableAttachmentManifest(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
   if (!manifest.length) return [];
   const ids = new Set<number>();

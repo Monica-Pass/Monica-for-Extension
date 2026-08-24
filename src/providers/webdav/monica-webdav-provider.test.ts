@@ -79,12 +79,27 @@ describe("Monica WebDAV provider", () => {
       "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "note.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/cGF5bG9hZA.bin" }] })),
       "attachments_portable/cGF5bG9hZA.bin": payload
     });
-    const provider = new MonicaWebDavProvider(server(remote).fetcher);
-    const item = (await provider.sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: [] })).items[0];
-    const page = await provider.listAttachments(account(), item);
+    const backupPassword = "portable-read";
+    const provider = new MonicaWebDavProvider(server(await encryptAndroidBackup(remote, backupPassword)).fetcher);
+    const protectedAccount = account({ backupPassword });
+    const item = (await provider.sync(protectedAccount, { now: "2026-07-15T03:00:00.000Z", localItems: [] })).items[0];
+    const page = await provider.listAttachments(protectedAccount, item);
     expect(page.items).toMatchObject([{ fileName: "note.txt", sizeBytes: payload.byteLength, providerKind: "monica-webdav", protected: true }]);
-    const read = await provider.readAttachment(account(), item, page.items[0].attachmentId);
+    const read = await provider.readAttachment(protectedAccount, item, page.items[0].attachmentId);
     expect(read.bytes).toEqual(payload);
+  });
+
+  it("does not expose portable plaintext from an unencrypted Android backup", async () => {
+    const payload = Uint8Array.of(1);
+    const remote = zipSync({
+      [PATH]: strToU8(JSON.stringify({ id: 42, title: "Android Login" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "secret.bin", mimeType: "application/octet-stream", sizeBytes: 1, sha256Hex: "0".repeat(64), payloadPath: "attachments_portable/secret.bin", createdAt: 1, updatedAt: 1 }] })),
+      "attachments_portable/secret.bin": payload
+    });
+    const provider = new MonicaWebDavProvider(server(remote).fetcher);
+    const synced = await provider.sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: [] });
+    expect(synced.warnings.join(" ")).toContain("未加密");
+    await expect(provider.listAttachments(account(), synced.items[0])).resolves.toEqual({ items: [] });
   });
 
   it("writes portable attachments only into an encrypted Android backup", async () => {

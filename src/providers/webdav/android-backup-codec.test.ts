@@ -356,6 +356,18 @@ describe("Android backup ZIP codec", () => {
     await expect(readAndroidPortableAttachment(document, attachment)).resolves.toEqual(payload);
   });
 
+  it("preserves but does not expose portable payloads when the caller disallows plaintext attachments", () => {
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Test" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "secret.bin", mimeType: "application/octet-stream", sizeBytes: 1, sha256Hex: "0".repeat(64), payloadPath: "attachments_portable/secret.bin", createdAt: 1, updatedAt: 1 }] })),
+      "attachments_portable/secret.bin": Uint8Array.of(1)
+    });
+    const document = readAndroidBackup(zip, "webdav", { allowPortableAttachments: false });
+    expect(listAndroidPortableAttachments(document, document.items[0])).toEqual([]);
+    expect(document.entries["attachments_portable/secret.bin"]).toEqual(Uint8Array.of(1));
+    expect(document.warnings.join(" ")).toContain("未加密");
+  });
+
   it("ignores path traversal entries and rejects digest mismatches", async () => {
     const payload = new TextEncoder().encode("bad");
     const zip = zipSync({
