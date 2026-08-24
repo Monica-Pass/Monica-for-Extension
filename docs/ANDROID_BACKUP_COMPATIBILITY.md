@@ -24,14 +24,14 @@ The status vocabulary is intentionally strict:
 
 | Android feature group | Browser status | Compatibility requirement | Acceptance evidence |
 | --- | --- | --- | --- |
-| Login/password records | Planned | Empty username/password, multiple URIs, SSO, custom fields, app metadata, bindings, archive/trash metadata | Model migration, URI matcher, autofill and save E2E |
+| Login/password records | Full | Empty username/password, multiple URIs, SSO, custom fields, app metadata, bindings, archive/trash metadata | Empty-credential SSO save E2E and URI-rule editing (`tests/e2e/login.spec.ts`), URI matcher and archived-exclusion units (`src/core/matching.test.ts`), login custom-field fill (`src/content/dom.test.ts`), Android trash/category/timeline sync E2E, codec retention tests |
 | TOTP/HOTP/Steam/Yandex/mOTP | Full | Preserve every algorithm/type parameter and Steam metadata | OTP vectors and Android codec round trips |
 | Steam network operations | Full | Login approvals, confirmations, inventory, market, devices and maFile metadata | Mocked Steam API E2E and boundary audit |
-| Bank cards | Planned | Full `BankCardData`, custom fields and billing-address link | Codec field matrix and card autofill E2E |
-| Documents/identities | Planned | Full `DocumentData`, aliases and custom fields | Codec field matrix and identity autofill E2E |
-| Billing addresses | Planned | Full `BillingAddressData`, defaults and custom fields | Codec field matrix and address autofill E2E |
-| Payment accounts | Planned | Full `PaymentAccountData`, embedded address and custom fields | Codec field matrix and payment autofill E2E |
-| Secure notes | Planned | Content, tags, Markdown and image references | Editor and Android codec tests |
+| Bank cards | Full | Full `BankCardData`, custom fields and billing-address link | Complete-card manager round trip with BOOLEAN custom fields and preserved `billingAddress` JSON (`tests/e2e/wallet.spec.ts`), card wallet autofill (`src/content/wallet-dom.test.ts` in the security gate), codec field matrix tests |
+| Documents/identities | Full | Full `DocumentData`, aliases and custom fields | Identity import/edit E2E (`tests/e2e/manager.spec.ts`), identity wallet autofill E2E (`tests/e2e/wallet.spec.ts`), legacy-alias and custom-field codec tests |
+| Billing addresses | Full | Full `BillingAddressData`, defaults and custom fields | Address autofill E2E (`tests/e2e/wallet.spec.ts`), `isDefault` editor/codec round trips, custom-field codec tests |
+| Payment accounts | Full | Full `PaymentAccountData`, embedded address and custom fields | Payment autofill E2E (`tests/e2e/wallet.spec.ts`), embedded `billingAddress` JSON retention and `paymentNotes` preservation tests, custom-field codec tests |
+| Secure notes | Full | Content, tags, Markdown and image references | Markdown/tags manager E2E (`tests/e2e/wallet.spec.ts`), Bitwarden `monica_note_*` carrier fields, `imagePaths` preserved in WebDAV and KeePass codecs (Android-local image references stay metadata) |
 | Passkeys | Full | Browser/Bitwarden keys are usable; Android aliases remain metadata-only | WebAuthn E2E and source-mode tests |
 | Password generator/history | Data | Browser generator works; Android generated history can be reviewed and individually deleted while future fields remain portable | Generator unit/E2E tests and ZIP byte checks |
 | Categories/favorites/order | Data | Category IDs/names are resolved for active and trash records; new categories are appended without rewriting existing metadata | Migration and codec tests |
