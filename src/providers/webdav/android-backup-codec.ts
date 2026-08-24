@@ -34,7 +34,7 @@ export interface AndroidBackupDocument {
 export interface AndroidPortableAttachment {
   attachmentId: string;
   parentPasswordId?: number;
-  parentSecureItemId?: string;
+  parentSecureItemId?: number;
   fileName: string;
   mimeType?: string;
   sizeBytes: number;
@@ -373,12 +373,13 @@ export function listAndroidPortableAttachments(document: AndroidBackupDocument, 
   const manifest = parsePortableAttachmentManifest(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
   if (!manifest.length) return [];
   const ids = new Set<number>();
+  const secureItemId = optionalNumber(document.records.get(item.id)?.raw.id);
   for (const reference of item.providerRefs) {
     const match = reference.remoteId?.match(/password_(-?\d+)_\d+\.json$/i);
     if (match) ids.add(Number(match[1]));
   }
   return manifest.filter((attachment) =>
-    (attachment.parentSecureItemId && attachment.parentSecureItemId === item.id)
+    (attachment.parentSecureItemId !== undefined && attachment.parentSecureItemId === secureItemId)
     || (attachment.parentPasswordId !== undefined && ids.has(attachment.parentPasswordId))
   );
 }
@@ -397,9 +398,11 @@ function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAtt
   if (!bytes) return [];
   let raw: unknown;
   try { raw = JSON.parse(strFromU8(bytes)); } catch { return []; }
-  if (!Array.isArray(raw)) return [];
   const result: AndroidPortableAttachment[] = [];
-  for (const value of raw) {
+  const entries: unknown[] = Array.isArray(raw) ? raw : raw && typeof raw === "object" && Array.isArray((raw as Record<string, unknown>).entries)
+    ? (raw as Record<string, unknown>).entries as unknown[]
+    : [];
+  for (const value of entries) {
     if (!value || typeof value !== "object") continue;
     const record = value as Record<string, unknown>;
     const payloadPath = typeof record.payloadPath === "string" ? record.payloadPath : "";
@@ -409,7 +412,8 @@ function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAtt
     if (!PORTABLE_ATTACHMENT_PATH.test(payloadPath) || !fileName || !/^[0-9a-f]{64}$/.test(sha256Hex)) continue;
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > PORTABLE_ATTACHMENT_MAX_BYTES) continue;
     const parentPasswordId = typeof record.parentPasswordId === "number" && Number.isSafeInteger(record.parentPasswordId) ? record.parentPasswordId : undefined;
-    const parentSecureItemId = typeof record.parentSecureItemId === "string" && record.parentSecureItemId ? record.parentSecureItemId : undefined;
+    const parentSecureItemId = typeof record.parentSecureItemId === "number" && Number.isSafeInteger(record.parentSecureItemId) && record.parentSecureItemId > 0 ? record.parentSecureItemId : undefined;
+    if ((parentPasswordId === undefined) === (parentSecureItemId === undefined)) continue;
     result.push({
       attachmentId: `android-portable:${payloadPath}`,
       parentPasswordId,

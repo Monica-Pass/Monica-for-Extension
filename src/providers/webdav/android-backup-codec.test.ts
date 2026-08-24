@@ -346,7 +346,7 @@ describe("Android backup ZIP codec", () => {
     const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
     const zip = zipSync({
       "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Test", username: "u" })),
-      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify([{ parentPasswordId: 42, fileName: "a.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/abc.bin" }])),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "a.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/abc.bin" }] })),
       "attachments_portable/abc.bin": payload
     });
     const document = readAndroidBackup(zip, "webdav");
@@ -359,7 +359,7 @@ describe("Android backup ZIP codec", () => {
   it("ignores path traversal entries and rejects digest mismatches", async () => {
     const payload = new TextEncoder().encode("bad");
     const zip = zipSync({
-      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify([{ parentSecureItemId: "item", fileName: "x", sizeBytes: payload.byteLength, sha256Hex: "0".repeat(64), payloadPath: "attachments_portable/../secret.bin" }])),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentSecureItemId: 42, fileName: "x", sizeBytes: payload.byteLength, sha256Hex: "0".repeat(64), payloadPath: "attachments_portable/../secret.bin" }] })),
       "attachments_portable/secret.bin": payload
     });
     const document = readAndroidBackup(zip, "webdav");
