@@ -24,6 +24,7 @@ export interface AndroidBackupRecord {
   raw: Record<string, unknown>;
   itemId: string;
   item: VaultItem;
+  container?: "json-array";
 }
 
 export interface AndroidBackupDocument {
@@ -86,6 +87,7 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
       warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
     }
   }
+  readAndroidTrash(entries, providerId, options, items, records, warnings);
   const passwordHistoryRaw = readAndroidPasswordHistory(entries, items, records, warnings);
   restoreAndroidOtpBindings(items);
   for (const item of items) {
@@ -118,12 +120,28 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
   for (const item of items) {
     const existing = document.records.get(item.id);
     if (item.deletedAt) {
-      if (existing) delete entries[existing.path];
+      if (!existing) continue;
+      if (sameWritableItem(item, existing.item)) continue;
+      const target = serializeAndroidItem(item, existing.raw, existing.item, options);
+      if (!target) continue;
+      if (existing.container === "json-array") {
+        updateAndroidArrayEntry(entries, existing.path, target.id, target.raw);
+      } else {
+        delete entries[existing.path];
+        updateAndroidArrayEntry(entries, trashPath(item), target.id, target.raw);
+      }
       continue;
     }
     if (existing && sameWritableItem(item, existing.item)) continue;
     const target = serializeAndroidItem(item, existing?.raw, existing?.item, options);
     if (!target) continue;
+    if (existing?.container === "json-array") {
+      updateAndroidArrayEntry(entries, existing.path, target.id, undefined);
+      const remotePath = providerPath(item, target.id);
+      entries[remotePath] = strToU8(JSON.stringify(target.raw));
+      ensureProviderReference(item, providerId, remotePath);
+      continue;
+    }
     const remotePath = existing
       ? existingPathForCategory(item, existing)
       : providerPath(item, target.id);
@@ -144,7 +162,8 @@ export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId:
   for (const attachment of listAndroidPortableAttachments(document, record.item)) {
     deleteAndroidPortableAttachment(document, record.item, attachment.attachmentId);
   }
-  delete document.entries[record.path];
+  if (record.container === "json-array") updateAndroidArrayEntry(document.entries, record.path, record.raw.id, undefined);
+  else delete document.entries[record.path];
   document.records.delete(itemId);
   document.items = document.items.filter((item) => item.id !== itemId);
 }
@@ -388,6 +407,60 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
     } satisfies PaymentAccountItem;
   }
   return null;
+}
+
+function readAndroidTrash(
+  entries: Record<string, Uint8Array>,
+  providerId: string,
+  options: AndroidBackupCodecOptions,
+  items: VaultItem[],
+  records: Map<string, AndroidBackupRecord>,
+  warnings: string[]
+): void {
+  for (const path of ["trash/trash_passwords.json", "trash/trash_secure_items.json"] as const) {
+    const bytes = entries[path];
+    if (!bytes) continue;
+    try {
+      const values = JSON.parse(strFromU8(bytes)) as unknown;
+      if (!Array.isArray(values)) throw new Error("回收站清单不是 JSON 数组");
+      for (const value of values) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const raw = value as Record<string, unknown>;
+        const id = optionalNumber(raw.id);
+        if (id === undefined) continue;
+        const syntheticPath = path.endsWith("trash_passwords.json")
+          ? `folders/_trash/passwords/password_${id}_0.json`
+          : trashSecureSyntheticPath(id, stringValue(raw.itemType));
+        if (!syntheticPath) continue;
+        const decoded = androidRecordToItem(syntheticPath, raw, providerId, options);
+        if (!decoded) continue;
+        const itemId = `android:${providerId}:${path}#${id}`;
+        const item = {
+          ...decoded,
+          id: itemId,
+          deletedAt: dateValue(raw.deletedAt, decoded.updatedAt),
+          providerRefs: [{ providerId, remoteId: `${path}#${id}` }]
+        } as VaultItem;
+        items.push(item);
+        records.set(itemId, { path, raw, itemId, item: cloneVaultItem(item), container: "json-array" });
+      }
+    } catch (error) {
+      warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
+    }
+  }
+}
+
+function trashSecureSyntheticPath(id: number, itemType: string): string | undefined {
+  const mapping: Record<string, [string, string]> = {
+    NOTE: ["notes", "note"],
+    TOTP: ["authenticators", "totp"],
+    BANK_CARD: ["bank_cards", "bank_card"],
+    DOCUMENT: ["documents", "document"],
+    BILLING_ADDRESS: ["billing_addresses", "billing_address"],
+    PAYMENT_ACCOUNT: ["payment_accounts", "payment_account"]
+  };
+  const target = mapping[itemType.toUpperCase()];
+  return target ? `folders/_trash/${target[0]}/${target[1]}_${id}_0.json` : undefined;
 }
 
 export function listAndroidPortableAttachments(document: AndroidBackupDocument, item: VaultItem): AndroidPortableAttachment[] {
@@ -869,6 +942,37 @@ function providerPath(item: VaultItem, id: number | string): string {
   return `folders/${folderKey}/${folder}/${prefix}_${safeId}_${millis}.json`;
 }
 
+function trashPath(item: VaultItem): string {
+  return item.kind === "login" ? "trash/trash_passwords.json" : "trash/trash_secure_items.json";
+}
+
+function updateAndroidArrayEntry(
+  entries: Record<string, Uint8Array>,
+  path: string,
+  id: unknown,
+  replacement: Record<string, unknown> | undefined
+): void {
+  let values: unknown[] = [];
+  const bytes = entries[path];
+  if (bytes) {
+    try {
+      const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+      if (Array.isArray(parsed)) values = parsed;
+    } catch {
+      throw new Error(`${path} 无法安全更新，因为现有 JSON 已损坏。`);
+    }
+  }
+  const key = String(id);
+  const index = values.findIndex((value) => value && typeof value === "object" && !Array.isArray(value) && String((value as Record<string, unknown>).id) === key);
+  if (replacement) {
+    if (index >= 0) values[index] = replacement;
+    else values.push(replacement);
+  } else if (index >= 0) {
+    values.splice(index, 1);
+  }
+  entries[path] = strToU8(JSON.stringify(values));
+}
+
 function existingPathForCategory(item: VaultItem, existing: AndroidBackupRecord): string {
   if (item.categoryName === existing.item.categoryName) return existing.path;
   const match = existing.path.match(/^folders\/[^/]+\/([^/]+)\/([^/]+)$/i);
@@ -889,8 +993,9 @@ export function androidFolderKey(categoryName?: string): string {
 }
 
 function ensureProviderReference(item: VaultItem, providerId: string, remoteId: string) {
-  if (item.providerRefs.some((reference) => reference.providerId === providerId && reference.remoteId === remoteId)) return;
-  item.providerRefs.push({ providerId, remoteId });
+  const existing = item.providerRefs.find((reference) => reference.providerId === providerId);
+  if (existing) existing.remoteId = remoteId;
+  else item.providerRefs.push({ providerId, remoteId });
 }
 
 function numericId(item: VaultItem): number {

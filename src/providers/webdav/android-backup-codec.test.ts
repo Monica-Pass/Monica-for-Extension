@@ -1,7 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { PasskeyItem, SecureNoteItem } from "../../core/model";
+import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
@@ -425,6 +425,38 @@ describe("Android backup ZIP codec", () => {
     deleteAndroidBackupItem(document, document.items[0].id);
     expect(document.entries["attachments_portable/delete.bin"]).toBeUndefined();
     expect(JSON.parse(strFromU8(document.entries["attachments_portable/attachments_portable.json"])).entries).toEqual([]);
+  });
+
+  it("imports Android trash arrays as deleted vault items", () => {
+    const zip = zipSync({
+      "trash/trash_passwords.json": strToU8(JSON.stringify([{ id: 42, title: "Deleted login", username: "joy", password: "secret", website: "https://example.com", createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000, deletedAt: 1_700_000_002_000, future: true }])),
+      "trash/trash_secure_items.json": strToU8(JSON.stringify([{ id: 43, title: "Deleted note", itemType: "NOTE", itemData: JSON.stringify({ content: "body" }), createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000, deletedAt: 1_700_000_002_000 }]))
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    expect(document.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "login", title: "Deleted login", deletedAt: "2023-11-14T22:13:22.000Z" }),
+      expect.objectContaining({ kind: "secure-note", title: "Deleted note", content: "body", deletedAt: "2023-11-14T22:13:22.000Z" })
+    ]));
+  });
+
+  it("moves an active Android item to trash and restores it without dropping unknown fields", () => {
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Login", username: "joy", password: "secret", future: { keep: true }, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000 }))
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    const deleted = { ...document.items[0], deletedAt: "2026-08-24T00:00:00.000Z", updatedAt: "2026-08-24T00:00:00.000Z" } as VaultItem;
+    const deletedZip = writeAndroidBackup(document, [deleted], "webdav");
+    const deletedEntries = unzipSync(deletedZip);
+    expect(deletedEntries["folders/_root/passwords/password_42_0.json"]).toBeUndefined();
+    const trash = JSON.parse(strFromU8(deletedEntries["trash/trash_passwords.json"]));
+    expect(trash).toEqual([expect.objectContaining({ id: 42, future: { keep: true }, deletedAt: Date.parse(deleted.deletedAt!) })]);
+
+    const trashedDocument = readAndroidBackup(deletedZip, "webdav");
+    const restored = { ...trashedDocument.items[0], deletedAt: undefined, updatedAt: "2026-08-24T00:01:00.000Z" } as VaultItem;
+    const restoredEntries = unzipSync(writeAndroidBackup(trashedDocument, [restored], "webdav"));
+    expect(JSON.parse(strFromU8(restoredEntries["trash/trash_passwords.json"]))).toEqual([]);
+    const activePath = Object.keys(restoredEntries).find((path) => /\/passwords\//.test(path))!;
+    expect(JSON.parse(strFromU8(restoredEntries[activePath]))).toEqual(expect.objectContaining({ id: 42, future: { keep: true }, isDeleted: false }));
   });
   it("round-trips the checked-in forward-compatible Android fixture", () => {
     const fixture = JSON.parse(readFileSync(new URL("../../../tests/fixtures/android/forward-compatible-record.json", import.meta.url), "utf8")) as {

@@ -151,7 +151,7 @@ describe("Monica WebDAV provider", () => {
     const result = await new MonicaWebDavProvider(fetcher).sync(account(), { now: "2026-07-15T03:00:00.000Z", localItems: snapshot });
 
     expect(snapshot).toEqual([local]);
-    expect(result.items[0]).toMatchObject({ id: local.id, providerRefs: [expect.objectContaining({ remoteId: local.id, etag: '"created"' })] });
+    expect(result.items[0]).toMatchObject({ id: local.id, providerRefs: [expect.objectContaining({ remoteId: expect.stringMatching(/^folders\/_root\/passwords\/password_/), etag: '"created"' })] });
     expect(uploaded).toBeDefined();
   });
 
@@ -250,9 +250,18 @@ describe("Monica WebDAV provider", () => {
     const result = await provider.sync(account(first.accountPatch?.config), { now: "2026-07-15T03:05:00.000Z", localItems: [deleted] });
 
     expect(result.conflicts).toEqual([]);
-    expect(result.items).toEqual([]);
-    expect(readAndroidBackup(mock.uploaded()!, PROVIDER_ID).items).toEqual([]);
+    expect(result.items).toEqual([expect.objectContaining({ id: imported.id, deletedAt: deleted.deletedAt })]);
+    expect(readAndroidBackup(mock.uploaded()!, PROVIDER_ID).items).toEqual([expect.objectContaining({ kind: "login", deletedAt: deleted.deletedAt })]);
     expect(unzipSync(mock.uploaded()!)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
+  });
+
+  it("imports Android trash into the local encrypted tombstone list", async () => {
+    const deletedAt = 1_700_000_002_000;
+    const remote = zipSync({
+      "trash/trash_passwords.json": strToU8(JSON.stringify([{ id: 42, title: "Deleted", username: "joy", password: "secret", createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000, deletedAt }]))
+    });
+    const result = await new MonicaWebDavProvider(server(remote).fetcher).sync(account(), { now: "2026-08-24T00:00:00.000Z", localItems: [] });
+    expect(result.items).toEqual([expect.objectContaining({ kind: "login", title: "Deleted", deletedAt: new Date(deletedAt).toISOString() })]);
   });
 
   it("stops an upload when the server drops the latest backup ETag during the concurrency check", async () => {

@@ -86,7 +86,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
 
       if (!hasBaseline || !baselineRevision) {
         if (local.deletedAt || Date.parse(local.updatedAt) > Date.parse(remote.updatedAt)) {
-          if (!local.deletedAt) merged.push(local);
+          merged.push(local);
           needsUpload = true;
         } else {
           merged.push(remote);
@@ -100,7 +100,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
         conflicts.push({ itemId: local.id, reason: "浏览器和 Monica Android 在上次同步后都修改了此项目。", local, remote });
         merged.push(local);
       } else if (localChanged) {
-        if (!local.deletedAt) merged.push(local);
+        merged.push(local);
         needsUpload = true;
       } else {
         merged.push(remote);
@@ -118,7 +118,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     }
 
     let baselineFile = loaded.file;
-    if (needsUpload) baselineFile = await this.uploadDocument(account, loaded.document, [...merged, ...localScoped.filter((item) => item.deletedAt)], context.signal, loaded.file);
+    if (needsUpload) baselineFile = await this.uploadDocument(account, loaded.document, merged, context.signal, loaded.file);
     const synced = finalizeItems(merged, account.id, baselineFile);
     return {
       items: [...unrelated, ...synced],
@@ -274,7 +274,7 @@ function remoteIdOf(item: VaultItem, providerId: string): string {
 }
 
 function finalizeItems(items: VaultItem[], providerId: string, file: WebDavBackupFile): VaultItem[] {
-  return items.filter((item) => !item.deletedAt).map((item) => finalizeItem(item, providerId, file));
+  return items.map((item) => finalizeItem(item, providerId, file));
 }
 
 function finalizeItem(item: VaultItem, providerId: string, file: WebDavBackupFile): VaultItem {

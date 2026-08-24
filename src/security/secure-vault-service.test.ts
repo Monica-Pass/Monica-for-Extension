@@ -838,7 +838,7 @@ describe("encrypted vault", () => {
     const result = await new MonicaWebDavProvider(fetcher).sync(account, { now: "2026-07-26T00:00:00.000Z", localItems: structuredClone(snapshot) });
     expect(snapshot.find((item) => item.id === local.id)?.providerRefs[0]?.remoteId).toBeUndefined();
     await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
-    expect((await service.readState()).items.find((item) => item.id === local.id)?.providerRefs[0]).toMatchObject({ remoteId: local.id, etag: '"created"' });
+    expect((await service.readState()).items.find((item) => item.id === local.id)?.providerRefs[0]).toMatchObject({ remoteId: expect.stringMatching(/^folders\/_root\/passwords\/password_/), etag: '"created"' });
   });
 
   it("reports the persisted merge conflict count and retains a non-deleted local item missing remotely", async () => {
