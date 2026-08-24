@@ -14,7 +14,7 @@ function fakeStorage(initial: Record<string, unknown> = {}) {
 describe("generator preferences parity", () => {
   it("keeps browser first-run defaults aligned with the current manager", () => {
     const preferences = normalizeGeneratorPreferences(undefined);
-    expect(preferences).toMatchObject({ selectedGenerator: "SYMBOL", symbolLength: 20, includeUppercase: true, includeLowercase: true, includeNumbers: true, includeSymbols: true, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_SYMBOLS, excludeSimilar: true, excludeAmbiguous: false, uppercaseMin: 1, lowercaseMin: 1, numbersMin: 1, symbolsMin: 1, passphraseWordCount: 4, passphraseDelimiter: "-", passphraseCapitalize: false, passphraseIncludeNumber: false, passphraseCustomWord: "", pinLength: 6, passwordLength: 12, firstLetterUppercase: false, includeNumbersInPassword: true, customSeparator: "", separatorCountsTowardsLength: false, segmentLength: 0 });
+    expect(preferences).toMatchObject({ selectedGenerator: "SYMBOL", symbolLength: 20, includeUppercase: true, includeLowercase: true, includeNumbers: true, includeSymbols: true, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_SYMBOLS, excludeSimilar: true, excludeAmbiguous: false, uppercaseMin: 1, lowercaseMin: 1, numbersMin: 1, symbolsMin: 1, passphraseWordCount: 4, passphraseDelimiter: "-", passphraseCapitalize: false, passphraseIncludeNumber: false, passphraseCustomWord: "", pinLength: 6, passwordLength: 12, firstLetterUppercase: false, includeNumbersInPassword: true, customSeparator: "", separatorCountsTowardsLength: false, segmentLength: 0, sshKeyAlgorithm: "ED25519", sshKeyRsaSize: 3072 });
   });
 
   it("normalizes word-password preferences within Android UI ranges", () => {
@@ -26,6 +26,11 @@ describe("generator preferences parity", () => {
     expect(preferences.customSeparator).toBe("_-=");
     expect(preferences.separatorCountsTowardsLength).toBe(false);
     expect(preferences.segmentLength).toBe(0);
+  });
+
+  it("whitelists SSH algorithm and RSA size preferences", () => {
+    expect(normalizeGeneratorPreferences({ sshKeyAlgorithm: "ECDSA", sshKeyRsaSize: 1024 })).toMatchObject({ sshKeyAlgorithm: "ED25519", sshKeyRsaSize: 3072 });
+    expect(normalizeGeneratorPreferences({ sshKeyAlgorithm: "RSA", sshKeyRsaSize: 4096 })).toMatchObject({ sshKeyAlgorithm: "RSA", sshKeyRsaSize: 4096 });
   });
 
   it("falls back to defaults for corrupt or mistyped stored values", () => {

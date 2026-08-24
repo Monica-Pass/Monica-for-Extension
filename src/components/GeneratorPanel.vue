@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { DEFAULT_SYMBOLS, generatePassphrase, generatePassword, generatePin, generateWordPassword, passwordStrengthBits } from "../core/credential-generator";
 import { DEFAULT_GENERATOR_PREFERENCES, GeneratorPreferencesStore, normalizeGeneratorPreferences, resolveAllowedSymbols } from "../core/generator-preferences";
+import { generateSshKeyPair, type SshKeyPairData } from "../core/ssh-key-generator";
 import type { ProviderAccount } from "../core/model";
 import { vaultClient } from "../runtime/client";
 import type { AndroidGeneratorHistoryEntry } from "../runtime/messages";
@@ -13,7 +14,7 @@ interface GeneratorHistoryRow extends AndroidGeneratorHistoryEntry {
   providerName: string;
 }
 
-type Mode = "password" | "pin" | "passphrase";
+type Mode = "password" | "word" | "pin" | "passphrase" | "ssh";
 const mode = ref<Mode>("password");
 const result = ref("");
 const status = ref("");
@@ -28,6 +29,10 @@ const password = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.symbolLength, 
 const pin = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.pinLength });
 const phrase = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.passphraseWordCount, delimiter: DEFAULT_GENERATOR_PREFERENCES.passphraseDelimiter, capitalize: false, includeNumber: false, customWord: "" });
 const words = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.passwordLength, firstLetterUppercase: DEFAULT_GENERATOR_PREFERENCES.firstLetterUppercase, includeNumbers: DEFAULT_GENERATOR_PREFERENCES.includeNumbersInPassword, separator: DEFAULT_GENERATOR_PREFERENCES.customSeparator, separatorCountsTowardsLength: DEFAULT_GENERATOR_PREFERENCES.separatorCountsTowardsLength, segmentLength: DEFAULT_GENERATOR_PREFERENCES.segmentLength });
+const ssh = reactive({ algorithm: DEFAULT_GENERATOR_PREFERENCES.sshKeyAlgorithm, rsaSize: DEFAULT_GENERATOR_PREFERENCES.sshKeyRsaSize });
+const sshResult = ref<SshKeyPairData | null>(null);
+const revealedPrivateKey = ref(false);
+const generating = ref(false);
 const entropy = computed(() => mode.value === "password" ? passwordStrengthBits(result.value) : 0);
 const symbolSource = computed({
   get: () => password.useSymbolExclusionMode ? "exclusion" : "custom",
@@ -36,7 +41,7 @@ const symbolSource = computed({
 
 function toPreferences() {
   return normalizeGeneratorPreferences({
-    selectedGenerator: mode.value === "pin" ? "PIN" : mode.value === "passphrase" ? "PASSPHRASE" : mode.value === "word" ? "PASSWORD" : "SYMBOL",
+    selectedGenerator: mode.value === "pin" ? "PIN" : mode.value === "passphrase" ? "PASSPHRASE" : mode.value === "word" ? "PASSWORD" : mode.value === "ssh" ? "SSH_KEY" : "SYMBOL",
     symbolLength: password.length,
     includeUppercase: password.uppercase,
     includeLowercase: password.lowercase,
@@ -62,7 +67,9 @@ function toPreferences() {
     includeNumbersInPassword: words.includeNumbers,
     customSeparator: words.separator,
     separatorCountsTowardsLength: words.separatorCountsTowardsLength,
-    segmentLength: words.segmentLength
+    segmentLength: words.segmentLength,
+    sshKeyAlgorithm: ssh.algorithm,
+    sshKeyRsaSize: ssh.rsaSize
   });
 }
 
@@ -93,7 +100,9 @@ function applyPreferences(preferences: ReturnType<typeof normalizeGeneratorPrefe
   words.separator = preferences.customSeparator;
   words.separatorCountsTowardsLength = preferences.separatorCountsTowardsLength;
   words.segmentLength = preferences.segmentLength;
-  mode.value = preferences.selectedGenerator === "PIN" ? "pin" : preferences.selectedGenerator === "PASSPHRASE" ? "passphrase" : preferences.selectedGenerator === "PASSWORD" ? "word" : "password";
+  ssh.algorithm = preferences.sshKeyAlgorithm;
+  ssh.rsaSize = preferences.sshKeyRsaSize;
+  mode.value = preferences.selectedGenerator === "PIN" ? "pin" : preferences.selectedGenerator === "PASSPHRASE" ? "passphrase" : preferences.selectedGenerator === "PASSWORD" ? "word" : preferences.selectedGenerator === "SSH_KEY" ? "ssh" : "password";
 }
 
 async function restore() {
@@ -107,16 +116,31 @@ function persist() {
   void preferencesStore.save(toPreferences()).catch(() => { /* 偏好保存失败不影响生成。 */ });
 }
 
-watch([password, pin, phrase, words, mode], persist, { deep: true });
+watch([password, pin, phrase, words, ssh, mode], persist, { deep: true });
 
-function generate() {
+async function generate() {
+  if (generating.value) return;
   status.value = "";
   try {
     if (mode.value === "password") result.value = generatePassword({ length: password.length, uppercaseChars: password.uppercase ? undefined : "", lowercaseChars: password.lowercase ? undefined : "", numberChars: password.numbers ? undefined : "", symbolChars: password.symbols ? resolveAllowedSymbols(toPreferences()) : "", uppercaseMin: password.uppercase ? password.uppercaseMin : 0, lowercaseMin: password.lowercase ? password.lowercaseMin : 0, numbersMin: password.numbers ? password.numbersMin : 0, symbolsMin: password.symbols ? password.symbolsMin : 0, excludeSimilar: password.excludeSimilar, excludeAmbiguous: password.excludeAmbiguous });
     else if (mode.value === "word") result.value = generateWordPassword({ length: words.length, firstLetterUppercase: words.firstLetterUppercase, includeNumbers: words.includeNumbers, separator: words.separator, separatorCountsTowardsLength: words.separatorCountsTowardsLength, segmentLength: words.segmentLength });
     else if (mode.value === "pin") result.value = generatePin(pin.length);
+    else if (mode.value === "ssh") {
+      generating.value = true;
+      revealedPrivateKey.value = false;
+      sshResult.value = await generateSshKeyPair({ algorithm: ssh.algorithm === "RSA" ? "RSA" : "ED25519", rsaKeySize: ssh.rsaSize });
+      result.value = "";
+      generating.value = false;
+      return;
+    }
     else result.value = generatePassphrase(phrase);
   } catch (error) { status.value = error instanceof Error ? error.message : "无法生成。"; }
+  generating.value = false;
+}
+
+async function copyText(value: string) {
+  try { await navigator.clipboard.writeText(value); status.value = "已复制到剪贴板。"; }
+  catch { status.value = "复制失败，请手动选择内容。"; }
 }
 
 function toggleExcludedSymbol(symbol: string) {
@@ -127,11 +151,14 @@ function toggleExcludedSymbol(symbol: string) {
 
 async function copyResult() {
   if (!result.value) return;
-  try { await navigator.clipboard.writeText(result.value); status.value = "已复制到剪贴板。"; }
-  catch { status.value = "复制失败，请手动选择结果。"; }
+  await copyText(result.value);
 }
 
-function changeMode(value: Mode) { mode.value = value; generate(); }
+function changeMode(value: Mode) {
+  mode.value = value;
+  if (value !== "ssh") { sshResult.value = null; revealedPrivateKey.value = false; }
+  void generate();
+}
 
 async function loadHistory() {
   historyBusy.value = true;
@@ -200,7 +227,22 @@ onMounted(async () => {
     </div>
 
     <div class="generator-modes" role="tablist" aria-label="生成类型">
-      <button v-for="entry in ([['password','密码','password'],['word','单词','abc'],['pin','PIN','pin'],['passphrase','短语','text_fields']] as const)" :key="entry[0]" type="button" role="tab" :aria-selected="mode === entry[0]" :class="{ selected: mode === entry[0] }" @click="changeMode(entry[0])"><m3e-icon :name="entry[2]"></m3e-icon><span>{{ entry[1] }}</span></button>
+      <button v-for="entry in ([['password','密码','password'],['word','单词','abc'],['pin','PIN','pin'],['passphrase','短语','text_fields'],['ssh','SSH 密钥','key']] as const)" :key="entry[0]" type="button" role="tab" :aria-selected="mode === entry[0]" :class="{ selected: mode === entry[0] }" @click="changeMode(entry[0])"><m3e-icon :name="entry[2]"></m3e-icon><span>{{ entry[1] }}</span></button>
+    </div>
+
+    <div v-if="mode === 'ssh' && sshResult" class="generator-ssh-result field-wide">
+      <dl class="generator-ssh-facts">
+        <div><dt>算法</dt><dd>{{ sshResult.algorithm }} · {{ sshResult.keySize }} 位</dd></div>
+        <div><dt>指纹</dt><dd><code>{{ sshResult.fingerprintSha256 }}</code></dd></div>
+      </dl>
+      <label class="field field-wide"><span>公钥（OpenSSH）</span><textarea class="generator-ssh-text" readonly rows="3" :value="sshResult.publicKeyOpenSsh" aria-label="公钥内容"></textarea></label>
+      <div class="generator-result-actions">
+        <m3e-icon-button aria-label="复制公钥" title="复制公钥" @click="copyText(sshResult.publicKeyOpenSsh)"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button :aria-label="revealedPrivateKey ? '隐藏私钥' : '显示私钥'" :title="revealedPrivateKey ? '隐藏私钥' : '显示私钥'" @click="revealedPrivateKey = !revealedPrivateKey"><m3e-icon :name="revealedPrivateKey ? 'visibility_off' : 'visibility'"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button v-if="revealedPrivateKey" aria-label="复制私钥" title="复制私钥" @click="copyText(sshResult.privateKeyOpenSsh)"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
+      </div>
+      <label v-if="revealedPrivateKey" class="field field-wide"><span>私钥（OpenSSH，请妥善保管）</span><textarea class="generator-ssh-text" readonly rows="8" :value="sshResult.privateKeyOpenSsh" aria-label="私钥内容"></textarea></label>
+      <p class="generator-history-empty">私钥仅保存在本页面内存中，不会写入密码库或同步数据。</p>
     </div>
 
     <form class="generator-form" @submit.prevent="generate">
@@ -226,6 +268,10 @@ onMounted(async () => {
         <label class="field field-wide"><span>分段长度：{{ words.segmentLength }}</span><input v-model.number="words.segmentLength" type="range" min="0" max="20" aria-label="分段长度" /></label>
       </template>
       <template v-else-if="mode === 'pin'"><label class="field field-wide"><span>PIN 长度</span><input v-model.number="pin.length" type="number" min="1" max="128" inputmode="numeric" /></label></template>
+      <template v-else-if="mode === 'ssh'">
+        <label class="field"><span>算法</span><select v-model="ssh.algorithm" aria-label="SSH 算法"><option value="ED25519">Ed25519</option><option value="RSA">RSA</option></select></label>
+        <label v-if="ssh.algorithm === 'RSA'" class="field"><span>RSA 位数</span><select v-model.number="ssh.rsaSize" aria-label="RSA 位数"><option value="2048">2048</option><option value="3072">3072</option><option value="4096">4096</option></select></label>
+      </template>
       <template v-else><label class="field"><span>单词数</span><input v-model.number="phrase.length" type="number" min="1" max="32" /></label><label class="field"><span>分隔符</span><input v-model="phrase.delimiter" maxlength="8" /></label><label class="field field-wide"><span>自定义单词（可选）</span><input v-model="phrase.customWord" /></label><label class="favorite-row"><input v-model="phrase.capitalize" type="checkbox" />首字母大写</label><label class="favorite-row"><input v-model="phrase.includeNumber" type="checkbox" />附加数字</label></template>
       <p v-if="status" class="generator-status field-wide" aria-live="polite">{{ status }}</p>
       <footer class="field-wide"><m3e-button variant="filled" type="submit"><m3e-icon slot="icon" name="refresh"></m3e-icon>重新生成</m3e-button></footer>

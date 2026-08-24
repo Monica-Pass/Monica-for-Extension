@@ -2,7 +2,7 @@ import { DEFAULT_SYMBOLS } from "./credential-generator";
 
 export const GENERATOR_PREFERENCES_STORAGE_KEY = "generator_preferences_v1";
 
-export type GeneratorMode = "SYMBOL" | "PASSWORD" | "PIN" | "PASSPHRASE";
+export type GeneratorMode = "SYMBOL" | "PASSWORD" | "PIN" | "PASSPHRASE" | "SSH_KEY";
 
 export interface GeneratorPreferences {
   selectedGenerator: GeneratorMode;
@@ -32,6 +32,8 @@ export interface GeneratorPreferences {
   customSeparator: string;
   separatorCountsTowardsLength: boolean;
   segmentLength: number;
+  sshKeyAlgorithm: "ED25519" | "RSA";
+  sshKeyRsaSize: number;
 }
 
 export const DEFAULT_GENERATOR_PREFERENCES: GeneratorPreferences = {
@@ -61,10 +63,13 @@ export const DEFAULT_GENERATOR_PREFERENCES: GeneratorPreferences = {
   includeNumbersInPassword: true,
   customSeparator: "",
   separatorCountsTowardsLength: false,
-  segmentLength: 0
+  segmentLength: 0,
+  sshKeyAlgorithm: "ED25519",
+  sshKeyRsaSize: 3072
 };
 
-const GENERATOR_MODES: GeneratorMode[] = ["SYMBOL", "PASSWORD", "PIN", "PASSPHRASE"];
+const GENERATOR_MODES: GeneratorMode[] = ["SYMBOL", "PASSWORD", "PIN", "PASSPHRASE", "SSH_KEY"];
+const SSH_RSA_SIZES = [2048, 3072, 4096];
 const MAX_SYMBOL_SET_LENGTH = 256;
 
 export function normalizeGeneratorPreferences(raw: unknown): GeneratorPreferences {
@@ -96,7 +101,9 @@ export function normalizeGeneratorPreferences(raw: unknown): GeneratorPreference
     includeNumbersInPassword: pickFlag(source.includeNumbersInPassword, true),
     customSeparator: boundedText(source.customSeparator, 8),
     separatorCountsTowardsLength: pickFlag(source.separatorCountsTowardsLength, false),
-    segmentLength: clampInteger(source.segmentLength, 0, 20, DEFAULT_GENERATOR_PREFERENCES.segmentLength)
+    segmentLength: clampInteger(source.segmentLength, 0, 20, DEFAULT_GENERATOR_PREFERENCES.segmentLength),
+    sshKeyAlgorithm: source.sshKeyAlgorithm === "RSA" ? "RSA" : DEFAULT_GENERATOR_PREFERENCES.sshKeyAlgorithm,
+    sshKeyRsaSize: SSH_RSA_SIZES.includes(coerceNumber(source.sshKeyRsaSize)) ? coerceNumber(source.sshKeyRsaSize) : DEFAULT_GENERATOR_PREFERENCES.sshKeyRsaSize
   };
 }
 
