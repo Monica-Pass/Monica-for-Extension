@@ -50,9 +50,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npx playwright install chromium
       - run: npm run verify:supply-chain
       - run: npm run test:mdbx2-host
       - run: npm run lint:mdbx2-host
+      - run: npm run build
+      - run: npx playwright test tests/e2e/passkey-windows-hello.spec.ts
       - run: npm run package:mdbx2-host
       - run: npm run package:verify:mdbx2-host
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

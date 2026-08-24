@@ -32,7 +32,7 @@ import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutat
 import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
 import { BitwardenSendError, BitwardenSendService, type BitwardenSendFileInput } from "../providers/bitwarden/bitwarden-sends";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
-import { MDBX2_MAX_BINARY_CHUNK_BYTES, Mdbx2NativeHostError, type Mdbx2SyncStateStatus } from "../providers/mdbx2/native-contract";
+import { MDBX2_MAX_BINARY_CHUNK_BYTES, MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION, MDBX2_WINDOWS_HELLO_RP_ID, Mdbx2NativeHostError, type Mdbx2SyncStateStatus, type Mdbx2WindowsHelloStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
 import { Mdbx2BatchTransferCoordinator, type Mdbx2BatchTransferProgress, type Mdbx2BatchTransferStatus } from "../providers/mdbx2/mdbx2-batch-transfer-coordinator";
 import { assertMdbx2TransferOperationId } from "../providers/mdbx2/mdbx2-transfer-identity";
@@ -297,8 +297,21 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_HELLO_STATUS": {
       assertManagerPage(sender);
       const bindingId = await service.windowsHelloBindingIdForRuntime();
-      const native = await windowsHelloNativeClient.windowsHelloStatus(bindingId);
       const protectionMode = await service.protectionModeForRuntime();
+      let native: Mdbx2WindowsHelloStatus;
+      try {
+        native = await windowsHelloNativeClient.windowsHelloStatus(bindingId);
+      } catch {
+        native = {
+          version: MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION,
+          supported: false,
+          available: false,
+          enrolled: false,
+          bindingIdPresent: Boolean(bindingId),
+          rpId: MDBX2_WINDOWS_HELLO_RP_ID,
+          reason: "native-host-unavailable"
+        };
+      }
       const vaultEnrolled = Boolean(bindingId);
       const bindingConsistent = !vaultEnrolled || native.enrolled;
       return {

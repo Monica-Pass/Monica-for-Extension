@@ -21,8 +21,10 @@ test("Windows Hello remains manager-only and exposes a truthful device-key recov
     await expect(manager.getByRole("heading", { name: "密码库概览" })).toBeVisible();
 
     await manager.getByRole("button", { name: "设置与备份" }).click();
-    await expect(manager.getByRole("heading", { name: "Windows Hello" })).toBeVisible();
-    await expect(manager.getByText(/设备密钥模式不保存主密码，请保留加密整库备份/)).toBeVisible();
+    const helloDisclosure = manager.locator("details.hello-disclosure");
+    await expect(helloDisclosure.locator("summary")).toContainText("设备不可用 · 设备密钥");
+    await helloDisclosure.locator("summary").click();
+    await expect(helloDisclosure.getByText("使用 Windows Hello 保护设备密钥；私钥不离开本机。")).toBeVisible();
 
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
