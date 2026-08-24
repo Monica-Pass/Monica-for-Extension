@@ -594,7 +594,7 @@ main {
 
 .settings-page .settings-disclosure > summary {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
   min-height: 72px;
   align-items: center;
   padding: 8px 16px;
@@ -612,20 +612,20 @@ main {
 .settings-page .settings-disclosure > summary > m3e-icon:not(.settings-disclosure-chevron) {
   grid-column: 1;
   grid-row: 1;
-  width: 40px !important;
-  min-width: 40px;
-  max-width: 40px;
-  height: 40px !important;
-  min-height: 40px;
-  max-height: 40px;
+  width: 48px !important;
+  min-width: 48px;
+  max-width: 48px;
+  height: 48px !important;
+  min-height: 48px;
+  max-height: 48px;
   aspect-ratio: 1;
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--app-shape-card);
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
-  --m3e-icon-size: 20px;
+  --m3e-icon-size: 24px;
 }
 
 .settings-page .settings-disclosure > summary .settings-disclosure-chevron {
@@ -639,7 +639,7 @@ main {
 
 .settings-page .settings-entry {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
   min-height: 72px;
   align-items: center;
   padding: 8px 16px;
@@ -652,33 +652,33 @@ main {
 .settings-page .settings-entry-icon {
   grid-column: 1;
   grid-row: 1;
-  width: 40px !important;
-  min-width: 40px;
-  max-width: 40px;
-  height: 40px !important;
-  min-height: 40px;
-  max-height: 40px;
+  width: 48px !important;
+  min-width: 48px;
+  max-width: 48px;
+  height: 48px !important;
+  min-height: 48px;
+  max-height: 48px;
   aspect-ratio: 1;
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--app-shape-card);
   color: var(--md-sys-color-on-primary-container, var(--app-text));
   background: var(--md-sys-color-primary-container, var(--app-selected));
 }
 
 .settings-page .settings-entry-icon m3e-icon,
 .settings-page .settings-entry-chevron {
-  --m3e-icon-size: 20px;
+  --m3e-icon-size: 24px;
 }
 
 .settings-page .settings-entry-icon m3e-icon {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   line-height: 1;
-  font-size: 20px;
+  font-size: 24px;
 }
 
 .settings-page .settings-entry-chevron {
@@ -693,10 +693,12 @@ main {
 .settings-disclosure > summary strong { font-size: 1.15rem; }
 .settings-disclosure > summary small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
 .settings-disclosure > summary m3e-icon { --m3e-icon-size: 20px; transition: transform var(--motion-fast) var(--motion-ease); }
+.settings-page .settings-disclosure > summary .settings-disclosure-chevron,
+.settings-page .settings-entry-chevron { --m3e-icon-size: 24px; }
 .settings-disclosure[open] > summary .settings-disclosure-chevron { transform: rotate(180deg); }
 .settings-disclosure > summary .settings-disclosure-chevron { margin-left: auto; }
 .hello-disclosure > summary { min-height: 64px; }
-.hello-disclosure > summary > m3e-icon { color: var(--app-primary); --m3e-icon-size: 24px; }
+.hello-disclosure > summary .settings-disclosure-chevron { --m3e-icon-size: 24px; }
 .hello-disclosure > summary .settings-disclosure-chevron { --m3e-icon-size: 20px; }
 .settings-disclosure-content { display: grid; gap: 12px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 16px 4px 4px; }
 .settings-entry { width: 100%; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; padding: 0 4px; color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
@@ -749,17 +751,6 @@ main {
 .settings-main .settings-page .settings-disclosure > summary small,
 .settings-main .settings-page .settings-entry small {
   font-size: .82rem;
-}
-
-.settings-main .settings-page .settings-entry-icon,
-.settings-main .settings-page .settings-disclosure > summary > m3e-icon:not(.settings-disclosure-chevron) {
-  width: 36px !important;
-  min-width: 36px;
-  max-width: 36px;
-  height: 36px !important;
-  min-height: 36px;
-  max-height: 36px;
-  aspect-ratio: 1;
 }
 
 .metric-card {

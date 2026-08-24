@@ -64,16 +64,16 @@ function updatePalette(value: ThemePaletteId) {
 <style scoped>
 .appearance-card { --m3e-card-padding: 0; }
 .appearance-disclosure { min-width: 0; }
-.appearance-trigger { width: 100%; min-height: 72px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: center; gap: 12px; border: 0; padding: 8px 16px; color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.appearance-trigger { width: 100%; min-height: 72px; display: grid; grid-template-columns: 48px minmax(0, 1fr) 24px; align-items: center; gap: 12px; border: 0; padding: 8px 16px; color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
 .appearance-trigger:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container, var(--app-selected)) 28%, transparent); }
 .appearance-trigger:focus-visible { outline: 3px solid var(--md-sys-color-primary, var(--app-primary)); outline-offset: -3px; }
-.appearance-summary-icon { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--md-sys-color-on-primary-container, var(--app-text)); background: var(--md-sys-color-primary-container, var(--app-selected)); }
-.appearance-summary-icon m3e-icon, .appearance-chevron { --m3e-icon-size: 20px; }
+.appearance-summary-icon { width: 48px; height: 48px; border-radius: var(--app-shape-card); display: grid; place-items: center; color: var(--md-sys-color-on-primary-container, var(--app-text)); background: var(--md-sys-color-primary-container, var(--app-selected)); }
+.appearance-summary-icon m3e-icon { --m3e-icon-size: 24px; }
 .appearance-summary-copy { min-width: 0; display: grid; gap: 2px; }
 .appearance-summary-copy strong, .appearance-summary-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .appearance-summary-copy strong { font-size: 1rem; }
 .appearance-summary-copy small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .82rem; }
-.appearance-chevron { --m3e-icon-size: 20px; }
+.appearance-chevron { --m3e-icon-size: 24px; }
 .appearance-controls { display: grid; gap: 16px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding: 16px; }
 .appearance-controls fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
 .appearance-controls legend { margin-bottom: 8px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); font-size: .82rem; font-weight: 600; }
