@@ -15,14 +15,13 @@ export interface PasskeyGetInterceptionInput {
 }
 
 /**
- * Monica currently provides user presence through its confirmation dialog,
- * but it does not yet have a trusted OS re-authentication surface. Requests
- * that require UV therefore remain with the browser's native authenticator.
+ * UV-required requests enter Monica so the background can verify an enrolled
+ * Windows Hello binding. Without one the background reports NotSupported and
+ * the main-world bridge falls back to the browser authenticator.
  */
 export function shouldInterceptPasskeyCreate(input: PasskeyCreateInterceptionInput): boolean {
   return input.topLevel
     && input.authenticatorAttachment !== "cross-platform"
-    && input.userVerification !== "required"
     && input.extensionNames.every((name) => name === "credProps")
     && input.algorithms.includes(-7);
 }
@@ -31,7 +30,6 @@ export function shouldInterceptPasskeyGet(input: PasskeyGetInterceptionInput): b
   return input.topLevel
     && input.mediation !== "conditional"
     && input.mediation !== "silent"
-    && input.userVerification !== "required"
     && input.extensionNames.length === 0
     && !input.externalOnly;
 }

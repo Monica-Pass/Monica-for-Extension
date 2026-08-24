@@ -118,7 +118,7 @@ export function renderPasskeyPrompt(
       choice.tabIndex = index === 0 ? 0 : -1;
       choice.innerHTML = `<span class="choice-copy"><strong></strong><span class="supporting"></span></span><span class="source"></span>`;
       (choice.querySelector("strong") as HTMLElement).textContent = credential.title;
-      (choice.querySelector(".supporting") as HTMLElement).textContent = [credential.userDisplayName || credential.userName || "无用户名", credential.useCount ? `已使用 ${credential.useCount} 次` : "未使用"].join(" · ");
+      (choice.querySelector(".supporting") as HTMLElement).textContent = [credential.userDisplayName || credential.userName || "无用户名", credential.useCount ? `已使用 ${credential.useCount} 次` : "未使用", credential.userVerificationRequired ? "Windows Hello" : ""].filter(Boolean).join(" · ");
       (choice.querySelector(".source") as HTMLElement).textContent = credential.sourceMode === "bitwarden" ? "Bitwarden" : "浏览器本地";
       const selectChoice = () => {
         selected = credential.itemId;
@@ -154,9 +154,11 @@ export function renderPasskeyPrompt(
   notice.id = "monica-passkey-description";
   notice.className = "notice";
   notice.innerHTML = `${promptIcon("info")}<span></span>`;
-  (notice.querySelector("span") as HTMLElement).textContent = context.operation === "create"
-    ? "私钥会加密保存；Monica 不会把私钥发送给当前网站。"
-    : "只有确认后才会使用所选私钥完成本次签名。";
+  (notice.querySelector("span") as HTMLElement).textContent = context.userVerificationRequired
+    ? "确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。"
+    : context.operation === "create"
+      ? "私钥会加密保存；Monica 不会把私钥发送给当前网站。"
+      : "只有确认后才会使用所选私钥完成本次签名。";
   const status = rootDocument.createElement("p"); status.className = "status"; status.setAttribute("aria-live", "polite");
   const actions = rootDocument.createElement("footer"); actions.className = "actions";
   const cancel = rootDocument.createElement("button"); cancel.type = "button"; cancel.className = "secondary"; cancel.textContent = "取消";
@@ -203,7 +205,7 @@ export function renderPasskeyPrompt(
     if (targetSelect) targetSelect.disabled = true;
     status.className = "status";
     status.removeAttribute("role");
-    status.textContent = context.operation === "create" ? "正在创建并加密保存…" : "正在完成安全签名…";
+    status.textContent = context.userVerificationRequired ? "正在等待 Windows Hello…" : context.operation === "create" ? "正在创建并加密保存…" : "正在完成安全签名…";
     void accept(selected, selectedProviderId).then(cleanup).catch((error) => {
       busy = false;
       card.removeAttribute("aria-busy");

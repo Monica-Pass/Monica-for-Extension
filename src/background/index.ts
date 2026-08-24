@@ -2554,6 +2554,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   const source = assertWebPageSender(sender);
   if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
   if (await autofillBlocked(source.url)) throw new Error("此网站已禁止使用 Monica 自动填充和 Passkey。");
+  if (passkeyRequiresUserVerification(request)) await assertPasskeyUserVerificationAvailable();
   const rpId = validateRpId(source.origin, request.rpId);
   const state = await service.readState();
   const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
@@ -2583,11 +2584,48 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
     origin: source.origin,
     userName: request.operation === "create" ? request.userName : matches[0]?.userName || "",
     userDisplayName: request.operation === "create" ? request.userDisplayName : matches[0]?.userDisplayName,
+    userVerificationRequired: passkeyRequiresUserVerification(request),
     saveTargets: request.operation === "create" ? saveTargets.map((target) => ({ providerId: target.providerId, name: target.name, sourceMode: target.kind === "bitwarden" ? "bitwarden" : "browser-local" })) : [],
     defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined,
-    credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local", useCount: item.useCount || 0, lastUsedAt: item.lastUsedAt })),
+    credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local", userVerificationRequired: item.userVerificationRequired === true, useCount: item.useCount || 0, lastUsedAt: item.lastUsedAt })),
     expiresAt
   };
+}
+
+function passkeyRequiresUserVerification(request: PasskeyRequest): boolean {
+  return request.operation === "create" ? request.userVerificationRequired === true : request.userVerification === "required";
+}
+
+async function assertPasskeyUserVerificationAvailable(): Promise<string> {
+  const bindingId = await service.windowsHelloBindingIdForRuntime();
+  if (!bindingId) throw new PasskeyUnavailableError("此网站要求用户验证，但 Monica 尚未启用 Windows Hello。");
+  try {
+    const status = await windowsHelloNativeClient.windowsHelloStatus(bindingId);
+    if (!status.available || !status.enrolled || status.reason !== "ready") throw new Error("Windows Hello not ready");
+    return bindingId;
+  } catch {
+    throw new PasskeyUnavailableError("此网站要求用户验证，但 Windows Hello 当前不可用。");
+  }
+}
+
+async function verifyPasskeyUserIfRequired(request: PasskeyRequest, credentialRequiresVerification = false): Promise<boolean> {
+  if (!passkeyRequiresUserVerification(request) && !credentialRequiresVerification) return false;
+  const bindingId = await assertPasskeyUserVerificationAvailable();
+  const challenge = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  try {
+    const result = await windowsHelloNativeClient.verifyWindowsHello(bindingId, challenge);
+    if (!result.verified) throw new Error("Windows Hello 未确认用户身份。");
+    if ((await service.status()) !== "unlocked" || await service.windowsHelloBindingIdForRuntime() !== bindingId) {
+      throw new VaultLockedError("Windows Hello 验证期间密码库状态已变化。");
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof VaultLockedError) throw error;
+    throw new PasskeyCancelledError("Windows Hello 用户验证未完成。");
+  }
 }
 
 async function acceptPasskeyRequest(candidateId: string, itemId: string | undefined, providerId: string | undefined, sender: chrome.runtime.MessageSender): Promise<PasskeyResult> {
@@ -2622,7 +2660,8 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
     if (activePending.request.operation === "create") {
       const target = activePending.saveTargets.find((candidate) => candidate.providerId === (providerId || activePending.defaultSaveTargetId));
       if (!target) throw new Error("所选 Passkey 保存位置不可用。");
-      const created = await createPasskey({ ...activePending.request, origin: activePending.origin, rpId: activePending.rpId, userVerified: false });
+      const userVerified = await verifyPasskeyUserIfRequired(activePending.request);
+      const created = await createPasskey({ ...activePending.request, origin: activePending.origin, rpId: activePending.rpId, userVerified });
       if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
       const liveState = await service.readState();
       const liveTarget = liveState.providers.find((candidate) => candidate.id === target.providerId && candidate.enabled && candidate.kind === target.kind);
@@ -2634,7 +2673,7 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
       }
       const now = new Date().toISOString();
       const bitwarden = target.kind === "bitwarden";
-      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: target.kind === "local" ? [] : [{ providerId: target.providerId }], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: false, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
+      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: target.kind === "local" ? [] : [{ providerId: target.providerId }], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: activePending.request.userVerificationRequired === true, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
       const result: PasskeyResult = { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response, clientExtensionResults: activePending.request.credProps ? { credProps: { rk: item.discoverable } } : {} };
       preparedReceipt = {
         id: candidateId,
@@ -2662,7 +2701,8 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
     if (!activePending.matches.includes(selectedId)) throw new Error("所选 Passkey 不属于当前请求。");
     const item = await service.getItem(selectedId);
     if (!item || item.kind !== "passkey" || passkeyAvailability(item, activePending.rpId) !== "ready" || !item.privateKeyPkcs8) throw new Error("所选 Passkey 没有可用私钥或算法不受支持。");
-    const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount, userVerified: false });
+    const userVerified = await verifyPasskeyUserIfRequired(activePending.request, item.userVerificationRequired);
+    const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount, userVerified });
     if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
     const id = normalizeCredentialId(item.credentialId);
     const result: PasskeyResult = { operation: "get", id, rawId: id, response: assertion.response };

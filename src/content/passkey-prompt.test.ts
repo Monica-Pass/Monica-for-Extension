@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { passkeyPromptRootForTest, renderPasskeyPrompt } from "./passkey-prompt";
 
 describe("Passkey confirmation prompt", () => {
+  it("announces Windows Hello before a UV-required operation", () => {
+    const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
+    const host = renderPasskeyPrompt({
+      candidateId: "candidate-uv", operation: "create", rpId: "passkey.example.test", rpName: "示例网站",
+      origin: "https://passkey.example.test", userName: "demo", userVerificationRequired: true,
+      saveTargets: [{ providerId: "local", name: "Monica 本地库", sourceMode: "browser-local" }], defaultSaveTargetId: "local",
+      credentials: [], expiresAt: Date.now() + 10_000
+    }, vi.fn().mockResolvedValue(undefined), vi.fn().mockResolvedValue(undefined), dom.window.document, { allowUntrustedEvents: true });
+    expect(passkeyPromptRootForTest(host)?.textContent).toContain("Windows Hello 验证身份");
+    dom.window.close();
+  });
+
   it("uses a stable vector icon and confirms an explicit create request", async () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
     const accept = vi.fn().mockResolvedValue(undefined);

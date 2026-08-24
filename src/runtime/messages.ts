@@ -98,9 +98,10 @@ export interface PasskeyPromptContext {
   origin: string;
   userName: string;
   userDisplayName?: string;
+  userVerificationRequired?: boolean;
   saveTargets: Array<{ providerId: string; name: string; sourceMode: "browser-local" | "bitwarden" }>;
   defaultSaveTargetId?: string;
-  credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; useCount: number; lastUsedAt?: string }>;
+  credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; userVerificationRequired?: boolean; useCount: number; lastUsedAt?: string }>;
   expiresAt: number;
 }
 
