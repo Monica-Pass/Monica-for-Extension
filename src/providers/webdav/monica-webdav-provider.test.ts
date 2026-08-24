@@ -87,6 +87,24 @@ describe("Monica WebDAV provider", () => {
     expect(read.bytes).toEqual(payload);
   });
 
+  it("writes portable attachments only into an encrypted Android backup", async () => {
+    const backupPassword = "portable-write";
+    const payload = new TextEncoder().encode("original");
+    const mock = server(await encryptAndroidBackup(androidZip(), backupPassword));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const first = await provider.sync(account({ backupPassword }), { now: "2026-07-15T03:00:00.000Z", localItems: [] });
+    const item = first.items[0];
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const added = await provider.addAttachment(account({ backupPassword }), item, { fileName: "secret.txt", mediaType: "text/plain", sizeBytes: payload.byteLength, sha256Hex }, payload);
+    expect(added.providerKind).toBe("monica-webdav");
+    expect(isAndroidEncryptedBackup(mock.uploaded()!)).toBe(true);
+    const decrypted = await decryptAndroidBackup(mock.uploaded()!, backupPassword);
+    const entries = unzipSync(decrypted);
+    const manifest = JSON.parse(new TextDecoder().decode(entries["attachments_portable/attachments_portable.json"]));
+    expect(manifest.entries).toEqual(expect.arrayContaining([expect.objectContaining({ fileName: "secret.txt", sizeBytes: payload.byteLength })]));
+  });
+
   it("imports the latest Android snapshot and records an item baseline", async () => {
     const mock = server(androidZip());
     const provider = new MonicaWebDavProvider(mock.fetcher);

@@ -44,6 +44,16 @@ export interface AndroidPortableAttachment {
   updatedAt?: number;
 }
 
+export interface AndroidPortableAttachmentInput {
+  fileName: string;
+  mimeType?: string;
+  sizeBytes: number;
+  sha256Hex: string;
+  attachmentId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 const PORTABLE_ATTACHMENT_MANIFEST = "attachments_portable/attachments_portable.json";
 const PORTABLE_ATTACHMENT_PATH = /^attachments_portable\/([^/]+)\.bin$/;
 const PORTABLE_ATTACHMENT_MAX_BYTES = 256 * 1024 * 1024;
@@ -394,6 +404,48 @@ export async function readAndroidPortableAttachment(document: AndroidBackupDocum
   return bytes.slice();
 }
 
+export function upsertAndroidPortableAttachment(document: AndroidBackupDocument, item: VaultItem, input: AndroidPortableAttachmentInput, bytes: Uint8Array): AndroidPortableAttachment {
+  if (bytes.byteLength !== input.sizeBytes) throw new Error("Android portable 附件大小与上传内容不一致。");
+  if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0 || input.sizeBytes > PORTABLE_ATTACHMENT_MAX_BYTES) throw new Error("Android portable 附件大小无效。");
+  if (!/^[0-9a-f]{64}$/i.test(input.sha256Hex)) throw new Error("Android portable 附件 SHA-256 无效。");
+  const manifest = readPortableManifestForWrite(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
+  const existing = input.attachmentId ? manifest.entries.find((entry) => `android-portable:${entry.payloadPath}` === input.attachmentId) : undefined;
+  const payloadPath = existing?.payloadPath || `attachments_portable/${portablePayloadName()}.bin`;
+  const owner = portableOwner(item, document.records.get(item.id)?.raw.id);
+  const entry: AndroidPortableAttachment = {
+    attachmentId: `android-portable:${payloadPath}`,
+    ...owner,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+    sha256Hex: input.sha256Hex.toLowerCase(),
+    payloadPath,
+    createdAt: input.createdAt || existing?.createdAt || Date.now(),
+    updatedAt: input.updatedAt || Date.now()
+  };
+  const nextEntries = manifest.rawEntries.filter((candidate) => {
+    const payload = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).payloadPath : undefined;
+    return payload !== payloadPath;
+  });
+  nextEntries.push(entry);
+  document.entries[payloadPath] = bytes.slice();
+  document.entries[PORTABLE_ATTACHMENT_MANIFEST] = strToU8(JSON.stringify({ ...manifest.root, version: 2, entries: nextEntries }));
+  return entry;
+}
+
+export function deleteAndroidPortableAttachment(document: AndroidBackupDocument, item: VaultItem, attachmentId: string): boolean {
+  const manifest = readPortableManifestForWrite(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
+  const target = manifest.entries.find((entry) => `android-portable:${entry.payloadPath}` === attachmentId);
+  if (!target || !listAndroidPortableAttachments(document, item).some((entry) => entry.attachmentId === attachmentId)) return false;
+  delete document.entries[target.payloadPath];
+  const entries = manifest.rawEntries.filter((entry) => {
+    const payload = entry && typeof entry === "object" ? (entry as Record<string, unknown>).payloadPath : undefined;
+    return payload !== target.payloadPath;
+  });
+  document.entries[PORTABLE_ATTACHMENT_MANIFEST] = strToU8(JSON.stringify({ ...manifest.root, version: 2, entries }));
+  return true;
+}
+
 function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAttachment[] {
   if (!bytes) return [];
   let raw: unknown;
@@ -428,6 +480,29 @@ function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAtt
     });
   }
   return result;
+}
+
+function readPortableManifestForWrite(bytes?: Uint8Array): { root: Record<string, unknown>; entries: AndroidPortableAttachment[]; rawEntries: unknown[] } {
+  if (!bytes) return { root: {}, entries: [], rawEntries: [] };
+  try {
+    const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { root: {}, entries: [], rawEntries: [] };
+    const root = parsed as Record<string, unknown>;
+    const rawEntries = Array.isArray(root.entries) ? root.entries : [];
+    return { root, entries: parsePortableAttachmentManifest(bytes), rawEntries };
+  } catch {
+    return { root: {}, entries: [], rawEntries: [] };
+  }
+}
+
+function portableOwner(item: VaultItem, rawId: unknown): Pick<AndroidPortableAttachment, "parentPasswordId" | "parentSecureItemId"> {
+  const id = optionalNumber(rawId);
+  if (!id || !Number.isSafeInteger(id) || id <= 0) throw new Error("Android 项目缺少可关联的数字 ID，无法写入 portable 附件。");
+  return item.kind === "login" ? { parentPasswordId: id } : { parentSecureItemId: id };
+}
+
+function portablePayloadName(): string {
+  return btoa(crypto.randomUUID()).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 function readAndroidPasswordHistory(

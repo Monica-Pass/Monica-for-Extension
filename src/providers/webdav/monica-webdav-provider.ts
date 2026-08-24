@@ -1,7 +1,7 @@
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
-import { deleteAndroidBackupItem, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
+import { deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
 import type { ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
 import { createSourceRecord } from "../../core/source-records";
@@ -167,6 +167,27 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     if (!attachment) throw new Error("Android portable 附件不存在或不属于当前项目。");
     const bytes = await readAndroidPortableAttachment(loaded.document, attachment);
     return { ...portableSummary(attachment), readHandle: "", maxChunkBytes: 256 * 1024, bytes };
+  }
+
+  async addAttachment(account: ProviderAccount, item: VaultItem, input: { fileName: string; mediaType?: string; sizeBytes: number; sha256Hex: string; attachmentId?: string }, bytes: Uint8Array, signal?: AbortSignal): Promise<ProviderAttachmentSummary> {
+    const config = readConfig(account);
+    if (!config.backupPassword) throw new Error("写入 Android portable 附件前必须设置 WebDAV 备份密码。");
+    const loaded = await this.loadLatest(account, signal);
+    if (!loaded) throw new Error("WebDAV 中尚无 Monica Android 备份，请先完成一次同步。");
+    const entry = upsertAndroidPortableAttachment(loaded.document, item, input, bytes);
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    return portableSummary(entry);
+  }
+
+  async deleteAttachment(account: ProviderAccount, item: VaultItem, attachmentId: string, signal?: AbortSignal): Promise<boolean> {
+    const config = readConfig(account);
+    if (!config.backupPassword) throw new Error("删除 Android portable 附件前必须设置 WebDAV 备份密码。");
+    const loaded = await this.loadLatest(account, signal);
+    if (!loaded) return false;
+    const changed = deleteAndroidPortableAttachment(loaded.document, item, attachmentId);
+    if (!changed) return false;
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    return true;
   }
 
   async loadLatest(account: ProviderAccount, signal?: AbortSignal): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument } | null> {

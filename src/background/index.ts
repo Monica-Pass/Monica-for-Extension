@@ -1456,6 +1456,22 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           clearBitwardenOrganizationKeys(context.organizationKeys);
         }
       }
+      if (account.kind === "monica-webdav") {
+        const config = account.config as { backupPassword?: unknown };
+        if (typeof config.backupPassword !== "string" || !config.backupPassword) throw new ProviderAttachmentError("attachment-encryption-required", "写入 Android portable 附件前必须设置 WebDAV 备份密码。");
+        return providerAttachmentUploads.begin({
+          providerId: account.id,
+          itemId: item.id,
+          providerKind: "monica-webdav",
+          fileName: request.fileName,
+          mediaType: request.mediaType,
+          sizeBytes: request.sizeBytes,
+          sha256: request.sha256,
+          replaceExisting: request.replaceExisting === true,
+          operationId: request.operationId,
+          attachmentId: request.replaceExisting ? request.attachmentId : undefined
+        }, 256 * 1024 * 1024);
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_CHUNK": {
@@ -1482,6 +1498,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
         }
         if (account.kind === "mdbx2") return await mdbx2NativeClient.sendAttachmentUploadChunk(request.transferId, request.offset, bytes);
+        if (account.kind === "monica-webdav") {
+          const intent = providerAttachmentUploads.intent(request.transferId);
+          if (intent && (intent.providerId !== account.id || intent.providerKind !== "monica-webdav")) throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+          return providerAttachmentUploads.write(request.transferId, request.offset, bytes);
+        }
         throw unsupportedAttachmentProvider(account.kind);
       } finally {
         bytes.fill(0);
@@ -1586,6 +1607,11 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         }
         return providerAttachmentUploads.abort(request.transferId);
       }
+      if (account.kind === "monica-webdav") {
+        const intent = providerAttachmentUploads.intent(request.transferId);
+        if (intent && (intent.providerId !== account.id || intent.providerKind !== "monica-webdav")) throw new ProviderAttachmentError("attachment-upload-target-mismatch", "附件上传会话与当前密码源不一致。");
+        return providerAttachmentUploads.abort(request.transferId);
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_DELETE": {
@@ -1627,6 +1653,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           clearBitwardenOrganizationKeys(context.organizationKeys);
         }
       }
+      if (account.kind === "monica-webdav") return { changed: await monicaWebDavProvider.deleteAttachment(account, item, request.attachmentId) };
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "KEEPASS_WEBDAV_TEST": {

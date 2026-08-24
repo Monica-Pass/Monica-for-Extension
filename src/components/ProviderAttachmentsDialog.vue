@@ -80,7 +80,7 @@ let listGeneration = 0;
 const deleteOperationIds = new Map<string, string>();
 
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
-const readOnlyProvider = computed(() => selectedProvider.value?.kind === "monica-webdav");
+const readOnlyProvider = computed(() => selectedProvider.value?.kind === "monica-webdav" && !Boolean(selectedProvider.value.config.backupPassword));
 const transferTargets = computed(() => props.providers.filter((provider) => provider.id !== selectedProviderId.value));
 const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
 const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || recoveryBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
@@ -96,7 +96,9 @@ const regularAttachments = computed(() => {
 const providerDescription = computed(() => {
   if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
   if (selectedProvider.value?.kind === "bitwarden") return "Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。";
-  if (readOnlyProvider.value) return "来自 Monica Android 的 portable 附件；当前只读并在下载前校验大小和 SHA-256。";
+  if (selectedProvider.value?.kind === "monica-webdav") return readOnlyProvider.value
+    ? "来自 Monica Android 的 portable 附件；设置 WebDAV 备份密码后才能安全写回。"
+    : "Android portable 附件写入已加密 WebDAV 备份，并在下载前校验大小和 SHA-256。";
   if (selectedProvider.value?.config.sourceMode === "webdav") return "KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。";
   return "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。";
 });

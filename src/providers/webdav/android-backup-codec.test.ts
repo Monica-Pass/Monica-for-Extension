@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -364,6 +364,25 @@ describe("Android backup ZIP codec", () => {
     });
     const document = readAndroidBackup(zip, "webdav");
     expect(listAndroidPortableAttachments(document, { id: "item", providerRefs: [] } as never)).toEqual([]);
+  });
+
+  it("writes and removes portable payloads without dropping unknown manifest entries", async () => {
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Test" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, future: { keep: true }, entries: [{ futureField: "preserve", payloadPath: "attachments_portable/future.bin" }] })),
+      "attachments_portable/future.bin": Uint8Array.of(1)
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    const item = document.items[0];
+    const payload = new TextEncoder().encode("new");
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const entry = upsertAndroidPortableAttachment(document, item, { fileName: "new.txt", sizeBytes: payload.byteLength, sha256Hex: [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("") }, payload);
+    const manifest = JSON.parse(strFromU8(document.entries["attachments_portable/attachments_portable.json"]));
+    expect(manifest.future).toEqual({ keep: true });
+    expect(manifest.entries).toEqual(expect.arrayContaining([expect.objectContaining({ payloadPath: "attachments_portable/future.bin" }), expect.objectContaining({ fileName: "new.txt" })]));
+    expect(deleteAndroidPortableAttachment(document, item, entry.attachmentId)).toBe(true);
+    expect(document.entries[entry.payloadPath]).toBeUndefined();
+    expect(JSON.parse(strFromU8(document.entries["attachments_portable/attachments_portable.json"])).entries).toEqual([expect.objectContaining({ payloadPath: "attachments_portable/future.bin" })]);
   });
   it("round-trips the checked-in forward-compatible Android fixture", () => {
     const fixture = JSON.parse(readFileSync(new URL("../../../tests/fixtures/android/forward-compatible-record.json", import.meta.url), "utf8")) as {

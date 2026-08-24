@@ -178,7 +178,7 @@ function validateIntent(input: ProviderAttachmentUploadIntent, maxBytes: number)
   if (input.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.sha256)) {
     throw new ProviderAttachmentError("attachment-sha256-invalid", "附件 SHA-256 必须是 64 位小写十六进制。");
   }
-  if (input.providerKind !== "keepass" && input.providerKind !== "bitwarden" && input.providerKind !== "mdbx2") {
+  if (input.providerKind !== "keepass" && input.providerKind !== "bitwarden" && input.providerKind !== "mdbx2" && input.providerKind !== "monica-webdav") {
     throw new ProviderAttachmentError("attachment-provider-invalid", "附件密码源类型无效。");
   }
   if (typeof input.providerId !== "string" || !input.providerId || typeof input.itemId !== "string" || !input.itemId) {
@@ -187,7 +187,7 @@ function validateIntent(input: ProviderAttachmentUploadIntent, maxBytes: number)
   if (input.operationId !== undefined && !isUuid(input.operationId)) {
     throw new ProviderAttachmentError("attachment-operation-invalid", "附件操作 ID 无效。");
   }
-  if (input.attachmentId !== undefined && (input.providerKind === "bitwarden" ? !isOpaqueId(input.attachmentId) : !isUuid(input.attachmentId))) {
+  if (input.attachmentId !== undefined && (input.providerKind === "bitwarden" || input.providerKind === "monica-webdav" ? !isOpaqueId(input.attachmentId) : !isUuid(input.attachmentId))) {
     throw new ProviderAttachmentError("attachment-id-invalid", "附件 ID 无效。");
   }
   return { ...input, mediaType: input.mediaType?.trim() || undefined, replaceExisting: input.replaceExisting === true };
