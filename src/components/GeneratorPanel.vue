@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
-import { generatePassphrase, generatePassword, generatePin, passwordStrengthBits } from "../core/credential-generator";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { DEFAULT_SYMBOLS, generatePassphrase, generatePassword, generatePin, passwordStrengthBits } from "../core/credential-generator";
+import { DEFAULT_GENERATOR_PREFERENCES, GeneratorPreferencesStore, normalizeGeneratorPreferences, resolveAllowedSymbols } from "../core/generator-preferences";
 import type { ProviderAccount } from "../core/model";
 import { vaultClient } from "../runtime/client";
 import type { AndroidGeneratorHistoryEntry } from "../runtime/messages";
@@ -21,18 +22,93 @@ const historyBusy = ref(false);
 const historyError = ref("");
 const revealedHistory = ref(new Set<string>());
 const pendingDelete = ref("");
-const password = reactive({ length: 20, uppercase: true, lowercase: true, numbers: true, symbols: true, excludeSimilar: true, excludeAmbiguous: false, uppercaseMin: 1, lowercaseMin: 1, numbersMin: 1, symbolsMin: 1 });
-const pin = reactive({ length: 6 });
-const phrase = reactive({ length: 4, delimiter: "-", capitalize: false, includeNumber: false, customWord: "" });
+const preferencesStore = new GeneratorPreferencesStore();
+let restored = false;
+const password = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.symbolLength, uppercase: true, lowercase: true, numbers: true, symbols: true, excludeSimilar: DEFAULT_GENERATOR_PREFERENCES.excludeSimilar, excludeAmbiguous: false, uppercaseMin: DEFAULT_GENERATOR_PREFERENCES.uppercaseMin, lowercaseMin: DEFAULT_GENERATOR_PREFERENCES.lowercaseMin, numbersMin: DEFAULT_GENERATOR_PREFERENCES.numbersMin, symbolsMin: DEFAULT_GENERATOR_PREFERENCES.symbolsMin, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_GENERATOR_PREFERENCES.customSymbols });
+const pin = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.pinLength });
+const phrase = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.passphraseWordCount, delimiter: DEFAULT_GENERATOR_PREFERENCES.passphraseDelimiter, capitalize: false, includeNumber: false, customWord: "" });
 const entropy = computed(() => mode.value === "password" ? passwordStrengthBits(result.value) : 0);
+const symbolSource = computed({
+  get: () => password.useSymbolExclusionMode ? "exclusion" : "custom",
+  set: (value: string) => { password.useSymbolExclusionMode = value !== "custom"; }
+});
+
+function toPreferences() {
+  return normalizeGeneratorPreferences({
+    selectedGenerator: mode.value === "pin" ? "PIN" : mode.value === "passphrase" ? "PASSPHRASE" : "SYMBOL",
+    symbolLength: password.length,
+    includeUppercase: password.uppercase,
+    includeLowercase: password.lowercase,
+    includeNumbers: password.numbers,
+    includeSymbols: password.symbols,
+    useSymbolExclusionMode: password.useSymbolExclusionMode,
+    excludedSymbols: password.excludedSymbols,
+    customSymbols: password.customSymbols,
+    excludeSimilar: password.excludeSimilar,
+    excludeAmbiguous: password.excludeAmbiguous,
+    uppercaseMin: password.uppercase ? password.uppercaseMin : 0,
+    lowercaseMin: password.lowercase ? password.lowercaseMin : 0,
+    numbersMin: password.numbers ? password.numbersMin : 0,
+    symbolsMin: password.symbols ? password.symbolsMin : 0,
+    passphraseWordCount: phrase.length,
+    passphraseDelimiter: phrase.delimiter,
+    passphraseCapitalize: phrase.capitalize,
+    passphraseIncludeNumber: phrase.includeNumber,
+    passphraseCustomWord: phrase.customWord,
+    pinLength: pin.length
+  });
+}
+
+function applyPreferences(preferences: ReturnType<typeof normalizeGeneratorPreferences>) {
+  password.length = preferences.symbolLength;
+  password.uppercase = preferences.includeUppercase;
+  password.lowercase = preferences.includeLowercase;
+  password.numbers = preferences.includeNumbers;
+  password.symbols = preferences.includeSymbols;
+  password.useSymbolExclusionMode = preferences.useSymbolExclusionMode;
+  password.excludedSymbols = preferences.excludedSymbols;
+  password.customSymbols = preferences.customSymbols;
+  password.excludeSimilar = preferences.excludeSimilar;
+  password.excludeAmbiguous = preferences.excludeAmbiguous;
+  password.uppercaseMin = preferences.uppercaseMin || 1;
+  password.lowercaseMin = preferences.lowercaseMin || 1;
+  password.numbersMin = preferences.numbersMin || 1;
+  password.symbolsMin = preferences.symbolsMin || 1;
+  pin.length = preferences.pinLength;
+  phrase.length = preferences.passphraseWordCount;
+  phrase.delimiter = preferences.passphraseDelimiter;
+  phrase.capitalize = preferences.passphraseCapitalize;
+  phrase.includeNumber = preferences.passphraseIncludeNumber;
+  phrase.customWord = preferences.passphraseCustomWord;
+  mode.value = preferences.selectedGenerator === "PIN" ? "pin" : preferences.selectedGenerator === "PASSPHRASE" ? "passphrase" : "password";
+}
+
+async function restore() {
+  try { applyPreferences(await preferencesStore.load()); }
+  catch { /* 首次运行使用默认值。 */ }
+  restored = true;
+}
+
+function persist() {
+  if (!restored) return;
+  void preferencesStore.save(toPreferences()).catch(() => { /* 偏好保存失败不影响生成。 */ });
+}
+
+watch([password, pin, phrase, mode], persist, { deep: true });
 
 function generate() {
   status.value = "";
   try {
-    if (mode.value === "password") result.value = generatePassword({ length: password.length, uppercaseChars: password.uppercase ? undefined : "", lowercaseChars: password.lowercase ? undefined : "", numberChars: password.numbers ? undefined : "", symbolChars: password.symbols ? undefined : "", uppercaseMin: password.uppercase ? password.uppercaseMin : 0, lowercaseMin: password.lowercase ? password.lowercaseMin : 0, numbersMin: password.numbers ? password.numbersMin : 0, symbolsMin: password.symbols ? password.symbolsMin : 0, excludeSimilar: password.excludeSimilar, excludeAmbiguous: password.excludeAmbiguous });
+    if (mode.value === "password") result.value = generatePassword({ length: password.length, uppercaseChars: password.uppercase ? undefined : "", lowercaseChars: password.lowercase ? undefined : "", numberChars: password.numbers ? undefined : "", symbolChars: password.symbols ? resolveAllowedSymbols(toPreferences()) : "", uppercaseMin: password.uppercase ? password.uppercaseMin : 0, lowercaseMin: password.lowercase ? password.lowercaseMin : 0, numbersMin: password.numbers ? password.numbersMin : 0, symbolsMin: password.symbols ? password.symbolsMin : 0, excludeSimilar: password.excludeSimilar, excludeAmbiguous: password.excludeAmbiguous });
     else if (mode.value === "pin") result.value = generatePin(pin.length);
     else result.value = generatePassphrase(phrase);
   } catch (error) { status.value = error instanceof Error ? error.message : "无法生成。"; }
+}
+
+function toggleExcludedSymbol(symbol: string) {
+  password.excludedSymbols = password.excludedSymbols.includes(symbol)
+    ? [...password.excludedSymbols].filter((value) => value !== symbol).join("")
+    : password.excludedSymbols + symbol;
 }
 
 async function copyResult() {
@@ -95,8 +171,11 @@ function historyTime(timestamp: number): string {
   return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp));
 }
 
-generate();
-onMounted(loadHistory);
+onMounted(async () => {
+  await restore();
+  generate();
+  await loadHistory();
+});
 </script>
 
 <template>
@@ -114,6 +193,16 @@ onMounted(loadHistory);
       <template v-if="mode === 'password'">
         <label class="field field-wide"><span>长度：{{ password.length }}</span><input v-model.number="password.length" type="range" min="4" max="64" /></label>
         <fieldset class="generator-options field-wide"><legend>字符类型</legend><label><input v-model="password.uppercase" type="checkbox" />大写字母</label><label><input v-model="password.lowercase" type="checkbox" />小写字母</label><label><input v-model="password.numbers" type="checkbox" />数字</label><label><input v-model="password.symbols" type="checkbox" />符号</label></fieldset>
+        <fieldset class="generator-options field-wide"><legend>最少数量</legend><label><input v-model.number="password.uppercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.uppercase" aria-label="大写最少数量" /><span>大写</span></label><label><input v-model.number="password.lowercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.lowercase" aria-label="小写最少数量" /><span>小写</span></label><label><input v-model.number="password.numbersMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.numbers" aria-label="数字最少数量" /><span>数字</span></label><label><input v-model.number="password.symbolsMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.symbols" aria-label="符号最少数量" /><span>符号</span></label></fieldset>
+        <fieldset class="generator-options field-wide"><legend>符号来源</legend><label><input v-model="symbolSource" type="radio" value="exclusion" name="symbol-source" />排除默认符号</label><label><input v-model="symbolSource" type="radio" value="custom" name="symbol-source" />自定义符号集</label>
+          <div v-if="password.useSymbolExclusionMode" class="generator-symbol-grid field-wide">
+            <label v-for="symbol in [...DEFAULT_SYMBOLS]" :key="symbol" class="generator-symbol-chip">
+              <input type="checkbox" :checked="!password.excludedSymbols.includes(symbol)" :aria-label="`使用符号 ${symbol}`" @change="toggleExcludedSymbol(symbol)" />
+              <span>{{ symbol }}</span>
+            </label>
+          </div>
+          <label v-else class="field field-wide"><span>自定义符号集</span><input v-model="password.customSymbols" aria-label="自定义符号集" maxlength="256" /></label>
+        </fieldset>
         <fieldset class="generator-options field-wide"><legend>可读性</legend><label><input v-model="password.excludeSimilar" type="checkbox" />排除 0 O l 1 I</label><label><input v-model="password.excludeAmbiguous" type="checkbox" />排除模糊符号</label></fieldset>
       </template>
       <template v-else-if="mode === 'pin'"><label class="field field-wide"><span>PIN 长度</span><input v-model.number="pin.length" type="number" min="1" max="128" inputmode="numeric" /></label></template>
