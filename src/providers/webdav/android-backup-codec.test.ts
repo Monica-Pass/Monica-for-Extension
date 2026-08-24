@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidPortableAttachment, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -383,6 +383,36 @@ describe("Android backup ZIP codec", () => {
     expect(deleteAndroidPortableAttachment(document, item, entry.attachmentId)).toBe(true);
     expect(document.entries[entry.payloadPath]).toBeUndefined();
     expect(JSON.parse(strFromU8(document.entries["attachments_portable/attachments_portable.json"])).entries).toEqual([expect.objectContaining({ payloadPath: "attachments_portable/future.bin" })]);
+  });
+
+  it("rejects replacing another item's portable attachment", async () => {
+    const payload = new TextEncoder().encode("secret");
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "One" })),
+      "folders/_root/passwords/password_43_0.json": strToU8(JSON.stringify({ id: 43, title: "Two" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "one.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/one.bin", createdAt: 1, updatedAt: 1 }] })),
+      "attachments_portable/one.bin": payload
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    const otherItem = document.items.find((item) => item.title === "Two")!;
+    expect(() => upsertAndroidPortableAttachment(document, otherItem, { attachmentId: "android-portable:attachments_portable/one.bin", fileName: "attack.txt", sizeBytes: payload.byteLength, sha256Hex }, payload)).toThrow("不属于当前项目");
+  });
+
+  it("removes owned portable payloads when deleting an Android item", async () => {
+    const payload = Uint8Array.of(1, 2, 3);
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Delete" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify({ version: 2, entries: [{ parentPasswordId: 42, fileName: "delete.bin", mimeType: "application/octet-stream", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/delete.bin", createdAt: 1, updatedAt: 1 }] })),
+      "attachments_portable/delete.bin": payload
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    deleteAndroidBackupItem(document, document.items[0].id);
+    expect(document.entries["attachments_portable/delete.bin"]).toBeUndefined();
+    expect(JSON.parse(strFromU8(document.entries["attachments_portable/attachments_portable.json"])).entries).toEqual([]);
   });
   it("round-trips the checked-in forward-compatible Android fixture", () => {
     const fixture = JSON.parse(readFileSync(new URL("../../../tests/fixtures/android/forward-compatible-record.json", import.meta.url), "utf8")) as {

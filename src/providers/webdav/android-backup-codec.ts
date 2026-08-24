@@ -133,6 +133,9 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
 export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId: string): void {
   const record = document.records.get(itemId);
   if (!record) return;
+  for (const attachment of listAndroidPortableAttachments(document, record.item)) {
+    deleteAndroidPortableAttachment(document, record.item, attachment.attachmentId);
+  }
   delete document.entries[record.path];
   document.records.delete(itemId);
   document.items = document.items.filter((item) => item.id !== itemId);
@@ -410,6 +413,9 @@ export function upsertAndroidPortableAttachment(document: AndroidBackupDocument,
   if (!/^[0-9a-f]{64}$/i.test(input.sha256Hex)) throw new Error("Android portable 附件 SHA-256 无效。");
   const manifest = readPortableManifestForWrite(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
   const existing = input.attachmentId ? manifest.entries.find((entry) => `android-portable:${entry.payloadPath}` === input.attachmentId) : undefined;
+  if (input.attachmentId && (!existing || !listAndroidPortableAttachments(document, item).some((entry) => entry.attachmentId === input.attachmentId))) {
+    throw new Error("要替换的 Android portable 附件不存在或不属于当前项目。");
+  }
   const payloadPath = existing?.payloadPath || `attachments_portable/${portablePayloadName()}.bin`;
   const owner = portableOwner(item, document.records.get(item.id)?.raw.id);
   const entry: AndroidPortableAttachment = {
