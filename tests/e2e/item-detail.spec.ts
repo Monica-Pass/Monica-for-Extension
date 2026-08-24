@@ -29,7 +29,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     await expect(page.getByText(/已加密导入 5 个密码库项目/)).toBeVisible();
 
     await page.locator("button.nav-item").filter({ hasText: "登录项" }).click();
-    await page.getByRole("cell", { name: /Detail Login/ }).getByRole("button", { name: /Detail Login/ }).click();
+    await page.locator("tr.row-clickable").filter({ hasText: "Detail Login" }).click();
     const detail = page.getByRole("dialog", { name: /Detail Login/ });
     await expect(detail).toBeVisible();
     await expect(detail.getByText("joy", { exact: true })).toBeVisible();
@@ -44,6 +44,11 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toBeVisible();
     await expect(page.getByRole("dialog", { name: /Detail Login/ })).toHaveCount(0);
     await page.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "编辑登录项" }).click();
+    await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toBeVisible();
+    await page.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("dialog", { name: /Detail Login/ })).toHaveCount(0);
 
     await page.locator("button.nav-item").filter({ hasText: "钱包与身份" }).click();
     await page.getByRole("cell", { name: /Detail Card/ }).getByRole("button", { name: /Detail Card/ }).click();

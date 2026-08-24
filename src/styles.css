@@ -1003,6 +1003,15 @@ tbody tr:hover td {
   align-items: center;
 }
 
+tr.row-clickable {
+  cursor: pointer;
+}
+
+tr.row-clickable:hover td,
+tr.row-clickable:focus-within td {
+  background: color-mix(in srgb, var(--app-selected) 32%, transparent);
+}
+
 .row-title-copy {
   min-width: 0;
   display: grid;
