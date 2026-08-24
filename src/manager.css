@@ -305,6 +305,153 @@
   width: min(100%, 780px);
 }
 
+.detail-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.detail-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.detail-body {
+  display: grid;
+  gap: 16px;
+}
+
+.detail-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 4px 32px;
+}
+
+.detail-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--m3e-color-outline-variant, var(--app-outline));
+}
+
+.detail-row dt {
+  color: var(--app-muted);
+  font-weight: 600;
+}
+
+.detail-row dd {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.detail-row dd code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.detail-field-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.detail-note {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--m3e-color-outline-variant, var(--app-outline));
+  border-radius: var(--app-shape-card);
+  padding: 14px 16px;
+}
+
+.detail-note h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.detail-note pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-tag {
+  padding: 4px 12px;
+  border: 1px solid var(--m3e-color-outline-variant, var(--app-outline));
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.detail-tag-markdown {
+  color: var(--app-primary);
+}
+
+.detail-notes-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-meta {
+  gap: 0 32px;
+}
+
+.detail-meta .detail-row {
+  padding: 6px 0;
+}
+
+.detail-meta dt {
+  font-weight: 500;
+}
+
+.detail-status {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--app-muted);
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button.row-title {
+  border: 0;
+  padding: 4px;
+  margin: -4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--app-shape-card);
+}
+
+button.row-title:hover {
+  background: color-mix(in srgb, var(--app-selected) 45%, transparent);
+}
+
+button.row-title:focus-visible {
+  outline: 3px solid var(--app-primary);
+  outline-offset: -3px;
+}
+
 .login-item-dialog {
   width: min(100%, 780px);
 }

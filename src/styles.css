@@ -1003,6 +1003,12 @@ tbody tr:hover td {
   align-items: center;
 }
 
+.row-title-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
 .row-icon {
   width: 44px;
   height: 44px;

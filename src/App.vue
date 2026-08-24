@@ -21,6 +21,7 @@ import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vu
 import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
+import VaultItemDetail from "./components/VaultItemDetail.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
 import { normalizeHost } from "./core/matching";
 import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
@@ -121,6 +122,7 @@ const editorOpen = ref(false);
 const vaultEditorOpen = ref(false);
 const vaultEditorItem = ref<VaultItem | undefined>();
 const vaultEditorKind = ref<EditableVaultKind>("card");
+const vaultDetailItem = ref<VaultItem | undefined>();
 const editingId = ref<string | null>(null);
 const revealPassword = ref(false);
 const specialQrDataUrl = ref("");
@@ -300,7 +302,7 @@ const keePassDialogTitle = computed(() => editingKeePassId.value ? "管理 KeePa
 
 onMounted(initialize);
 
-const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
+const hasOpenDialog = computed(() => editorOpen.value || vaultEditorOpen.value || Boolean(vaultDetailItem.value) || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -349,6 +351,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
     else if (keePassDialogOpen.value) closeKeePassDialog();
     else if (bitwardenDialogOpen.value) closeBitwardenDialog();
     else if (webDavDialogOpen.value) closeWebDavDialog();
+    else if (vaultDetailItem.value) vaultDetailItem.value = undefined;
     else if (vaultEditorOpen.value) vaultEditorOpen.value = false;
     else editorOpen.value = false;
     return;
@@ -910,6 +913,16 @@ function openVaultEdit(item: VaultItem) {
   vaultEditorItem.value = item;
   vaultEditorKind.value = item.kind;
   vaultEditorOpen.value = true;
+}
+
+function openVaultDetail(item: VaultItem) {
+  vaultDetailItem.value = item;
+}
+
+function editFromDetail(item: VaultItem) {
+  vaultDetailItem.value = undefined;
+  if (item.kind === "login") openEdit(item);
+  else openVaultEdit(item);
 }
 
 async function saveVaultItem(item: VaultItem) {
@@ -2191,7 +2204,7 @@ function errorCode(error: unknown): string | undefined {
           <m3e-card variant="filled" class="data-card login-data-card motion-card">
             <div slot="header" class="card-head"><h2>全部登录项</h2><p>{{ filteredCredentials.length }} 个结果</p></div>
             <div v-if="filteredCredentials.length" class="table-wrap"><table class="credential-table" aria-label="登录项列表"><thead><tr><th>名称</th><th>用户名</th><th>匹配网站</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><div><strong :title="item.title">{{ item.title }}</strong><small class="credential-compact-summary" :title="credentialCompactSummary(item)">{{ credentialCompactSummary(item) }}</small></div></div></td><td class="credential-detail-cell" data-label="用户名">{{ item.username || '—' }}</td><td class="credential-detail-cell" data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td class="credential-detail-cell" data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredCredentials" :key="item.id"><td class="item-cell" data-label="名称"><button class="row-title" type="button" :aria-label="`查看${item.title}详情`" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><span class="row-title-copy"><strong :title="item.title">{{ item.title }}</strong><small class="credential-compact-summary" :title="credentialCompactSummary(item)">{{ credentialCompactSummary(item) }}</small></span></button></td><td class="credential-detail-cell" data-label="用户名">{{ item.username || '—' }}</td><td class="credential-detail-cell" data-label="匹配网站"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td class="credential-detail-cell" data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="编辑登录项" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button aria-label="删除登录项" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? '没有匹配的登录项' : '加密密码库还是空的' }}</h2><p>{{ query ? '换一个关键词试试。' : '添加第一个账号后即可在 Popup 中匹配。' }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">添加登录项</m3e-button></div>
           </m3e-card>
@@ -2221,7 +2234,7 @@ function errorCode(error: unknown): string | undefined {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ activeSection === 'archive' ? '已归档项目' : '回收站项目' }}</h2><p>{{ activeSection === 'archive' ? filteredArchiveItems.length : filteredDeletedItems.length }} 个结果</p></div>
             <div v-if="(activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems).length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in (activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems)" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? passkeyAvailabilityLabel(passkeyAvailability(item)) : itemKindLabel(item.kind) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要">{{ itemSafeSummary(item) }}</td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="时间">{{ new Date(item.deletedAt || item.archivedAt || item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="activeSection === 'archive' && item.kind === 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive' && isEditableVaultItem(item) && item.kind !== 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`取消归档 ${item.title}`" @click="unarchiveItem(item)"><m3e-icon name="unarchive"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`删除归档的 ${item.title}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button><m3e-icon-button v-else :aria-label="`恢复 ${item.title}`" @click="restoreDeletedItem(item)"><m3e-icon name="restore"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in (activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems)" :key="item.id"><td class="item-cell" data-label="名称"><button class="row-title" type="button" :aria-label="`查看${item.title}详情`" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="itemIcon(item.kind)"></m3e-icon></span><span class="row-title-copy"><strong>{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? passkeyAvailabilityLabel(passkeyAvailability(item)) : itemKindLabel(item.kind) }}</small></span></button></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要">{{ itemSafeSummary(item) }}</td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="时间">{{ new Date(item.deletedAt || item.archivedAt || item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="activeSection === 'archive' && item.kind === 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive' && isEditableVaultItem(item) && item.kind !== 'login'" :aria-label="`编辑归档的 ${item.title}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`取消归档 ${item.title}`" @click="unarchiveItem(item)"><m3e-icon name="unarchive"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="`删除归档的 ${item.title}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button><m3e-icon-button v-else :aria-label="`恢复 ${item.title}`" @click="restoreDeletedItem(item)"><m3e-icon name="restore"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'archive' ? 'archive' : 'delete'" /><h2>{{ query ? '没有匹配项目' : activeSection === 'archive' ? '还没有归档项目' : '回收站为空' }}</h2><p>{{ query ? '换一个关键词试试。' : activeSection === 'archive' ? '归档项目会从普通列表和自动填充候选中隐藏。' : 'Bitwarden 软删除项目会保留在这里，恢复前不会永久清除。' }}</p></div>
           </m3e-card>
@@ -2231,7 +2244,7 @@ function errorCode(error: unknown): string | undefined {
           <m3e-card variant="filled" class="data-card motion-card">
             <div slot="header" class="card-head"><h2>{{ sectionTitle(activeSection) }}</h2><p>{{ filteredSectionItems.length }} 个结果</p></div>
             <div v-if="filteredSectionItems.length" class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>安全摘要</th><th>密码源</th><th>更新时间</th><th><span class="visually-hidden">操作</span></th></tr></thead><tbody>
-              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><div class="row-title"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><div><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></div></div></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in filteredSectionItems" :key="item.id"><td class="item-cell" data-label="名称"><button class="row-title" type="button" :aria-label="`查看${item.title}详情`" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><span class="row-title-copy"><strong>{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}</small></span></button></td><td data-label="类型"><span class="state state-local-only">{{ itemKindLabel(item.kind) }}</span></td><td data-label="安全摘要"><template v-if="item.kind === 'totp'"><TotpCodeCell :item="item" allow-use @used="advanceHotpItem(item)" /></template><template v-else>{{ itemSafeSummary(item) }}</template></td><td data-label="密码源">{{ providerName(item) }}</td><td data-label="更新时间">{{ new Date(item.updatedAt).toLocaleString() }}</td><td class="action-cell"><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="`查看 ${item.title} 的 KeePass 历史`" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="`管理 ${item.title} 的附件`" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="isEditableVaultItem(item)" :aria-label="`编辑${itemKindLabel(item.kind)}`" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="`删除${itemKindLabel(item.kind)}`" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
             <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? '没有匹配项目' : `还没有${sectionTitle(activeSection)}` }}</h2><p>{{ query ? '换一个关键词试试。' : '从密码源同步，或使用右上角的添加操作。' }}</p></div>
           </m3e-card>
@@ -2415,6 +2428,8 @@ function errorCode(error: unknown): string | undefined {
         </section>
       </main>
     </div>
+
+    <VaultItemDetail v-if="vaultDetailItem" :item="vaultDetailItem" :providers="providers" @close="vaultDetailItem = undefined" @edit="editFromDetail" />
 
     <VaultItemEditor v-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" @cancel="vaultEditorOpen = false" @save="saveVaultItem" />
 
