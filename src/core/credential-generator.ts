@@ -30,6 +30,63 @@ export interface PassphraseGeneratorConfig {
 
 export type RandomIndex = (upperExclusive: number) => number;
 
+export const DEFAULT_WORD_PASSWORD_WORDS = ["apple", "banana", "cherry", "date", "elderberry", "fig", "grape", "honeydew", "kiwi", "lemon", "mango", "nectarine", "orange", "papaya", "quince", "raspberry", "strawberry", "tangerine", "watermelon", "blueberry"];
+
+export interface WordPasswordGeneratorConfig {
+  length: number;
+  firstLetterUppercase?: boolean;
+  includeNumbers?: boolean;
+  separator?: string;
+  separatorCountsTowardsLength?: boolean;
+  segmentLength?: number;
+  wordlist?: string[];
+}
+
+function capitalizeFirst(value: string): string {
+  return value ? value[0].toLocaleUpperCase() + value.slice(1) : value;
+}
+
+export function generateWordPassword(config: WordPasswordGeneratorConfig, randomIndex: RandomIndex = secureRandomIndex): string {
+  const length = integer(config.length, 1, 128, "密码长度必须在 1 到 128 之间。");
+  const words = config.wordlist?.length ? config.wordlist : DEFAULT_WORD_PASSWORD_WORDS;
+  const separator = config.separator ?? "";
+  const segmentLength = config.segmentLength ?? 0;
+  const effectiveSegmentLength = segmentLength > 0 && segmentLength < length ? segmentLength : 0;
+
+  const buildContent = (contentLength: number): string => {
+    const targetWordCount = Math.min(5, Math.max(2, Math.floor(contentLength / 6)));
+    const selectedWords = Array.from({ length: targetWordCount }, () => pick(words, randomIndex));
+    if (config.firstLetterUppercase) selectedWords[0] = capitalizeFirst(selectedWords[0]);
+    let content = selectedWords.join("");
+    if (config.includeNumbers !== false) {
+      content += Array.from({ length: Math.max(0, contentLength - content.length) }, () => String(randomIndex(10))).join("");
+    }
+    return content.slice(0, contentLength);
+  };
+
+  if (!effectiveSegmentLength || !separator) return buildContent(length);
+
+  const separatorCharacter = [...separator][0];
+  if (config.separatorCountsTowardsLength) {
+    const maxSeparators = Math.floor((length - 1) / effectiveSegmentLength);
+    const content = buildContent(length - maxSeparators);
+    let output = "";
+    for (let index = 0; index < content.length; index += 1) {
+      output += content[index];
+      if ((index + 1) % effectiveSegmentLength === 0 && index < content.length - 1 && output.length < length) output += separatorCharacter;
+    }
+    return output.slice(0, length);
+  }
+
+  const content = buildContent(length);
+  let output = "";
+  for (let index = 0; index < content.length; index += 1) {
+    output += content[index];
+    if ((index + 1) % effectiveSegmentLength === 0 && index < content.length - 1) output += separatorCharacter;
+  }
+  return output;
+}
+
 export function generatePassword(config: PasswordGeneratorConfig, randomIndex: RandomIndex = secureRandomIndex): string {
   const length = integer(config.length, 1, 256, "密码长度必须在 1 到 256 之间。");
   const excluded = `${config.excludeSimilar ? SIMILAR_CHARACTERS : ""}${config.excludeAmbiguous ? AMBIGUOUS_CHARACTERS : ""}`;

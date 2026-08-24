@@ -26,6 +26,13 @@ test("generator preferences persist across remounts and reloads", async ({}, tes
     await page.getByRole("button", { name: "重新生成", exact: true }).last().click();
     await expect(page.locator(".generator-result output")).toHaveText(/^\d{9}$/);
 
+    await page.getByRole("tab", { name: "单词" }).click();
+    await page.getByLabel("附加数字", { exact: true }).uncheck();
+    await page.getByLabel("首字母大写", { exact: true }).check();
+    await page.getByLabel("自定义分隔符").fill("-");
+    await page.getByRole("button", { name: "重新生成", exact: true }).last().click();
+    await expect(page.locator(".generator-result output")).toHaveText(/^[A-Za-z-]+$/);
+
     await page.getByRole("button", { name: "登录项" }).click();
     await page.getByRole("button", { name: "生成器" }).click();
     await page.getByRole("tab", { name: "密码" }).click();
@@ -42,6 +49,12 @@ test("generator preferences persist across remounts and reloads", async ({}, tes
     await expect(page.locator(".generator-result output")).toHaveText(/^\d{20}$/);
     await page.getByRole("tab", { name: "PIN" }).click();
     await expect(page.getByLabel("PIN 长度")).toHaveValue("9");
+    await page.getByRole("tab", { name: "单词" }).click();
+    await expect(page.getByLabel("附加数字", { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel("首字母大写", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("自定义分隔符")).toHaveValue("-");
+    await page.getByRole("button", { name: "重新生成", exact: true }).last().click();
+    await expect(page.locator(".generator-result output")).toHaveText(/^[A-Za-z-]+$/);
 
     const accessibility = await new AxeBuilder({ page }).include(".generator-panel").analyze();
     expect(accessibility.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")).toEqual([]);

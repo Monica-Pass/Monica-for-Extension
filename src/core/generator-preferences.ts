@@ -2,7 +2,7 @@ import { DEFAULT_SYMBOLS } from "./credential-generator";
 
 export const GENERATOR_PREFERENCES_STORAGE_KEY = "generator_preferences_v1";
 
-export type GeneratorMode = "SYMBOL" | "PIN" | "PASSPHRASE";
+export type GeneratorMode = "SYMBOL" | "PASSWORD" | "PIN" | "PASSPHRASE";
 
 export interface GeneratorPreferences {
   selectedGenerator: GeneratorMode;
@@ -26,6 +26,12 @@ export interface GeneratorPreferences {
   passphraseIncludeNumber: boolean;
   passphraseCustomWord: string;
   pinLength: number;
+  passwordLength: number;
+  firstLetterUppercase: boolean;
+  includeNumbersInPassword: boolean;
+  customSeparator: string;
+  separatorCountsTowardsLength: boolean;
+  segmentLength: number;
 }
 
 export const DEFAULT_GENERATOR_PREFERENCES: GeneratorPreferences = {
@@ -49,10 +55,16 @@ export const DEFAULT_GENERATOR_PREFERENCES: GeneratorPreferences = {
   passphraseCapitalize: false,
   passphraseIncludeNumber: false,
   passphraseCustomWord: "",
-  pinLength: 6
+  pinLength: 6,
+  passwordLength: 12,
+  firstLetterUppercase: false,
+  includeNumbersInPassword: true,
+  customSeparator: "",
+  separatorCountsTowardsLength: false,
+  segmentLength: 0
 };
 
-const GENERATOR_MODES: GeneratorMode[] = ["SYMBOL", "PIN", "PASSPHRASE"];
+const GENERATOR_MODES: GeneratorMode[] = ["SYMBOL", "PASSWORD", "PIN", "PASSPHRASE"];
 const MAX_SYMBOL_SET_LENGTH = 256;
 
 export function normalizeGeneratorPreferences(raw: unknown): GeneratorPreferences {
@@ -78,7 +90,13 @@ export function normalizeGeneratorPreferences(raw: unknown): GeneratorPreference
     passphraseCapitalize: pickFlag(source.passphraseCapitalize, false),
     passphraseIncludeNumber: pickFlag(source.passphraseIncludeNumber, false),
     passphraseCustomWord: boundedText(source.passphraseCustomWord, 256),
-    pinLength: clampInteger(source.pinLength, 1, 128, DEFAULT_GENERATOR_PREFERENCES.pinLength)
+    pinLength: clampInteger(source.pinLength, 1, 128, DEFAULT_GENERATOR_PREFERENCES.pinLength),
+    passwordLength: clampInteger(source.passwordLength, 4, 128, DEFAULT_GENERATOR_PREFERENCES.passwordLength),
+    firstLetterUppercase: pickFlag(source.firstLetterUppercase, false),
+    includeNumbersInPassword: pickFlag(source.includeNumbersInPassword, true),
+    customSeparator: boundedText(source.customSeparator, 8),
+    separatorCountsTowardsLength: pickFlag(source.separatorCountsTowardsLength, false),
+    segmentLength: clampInteger(source.segmentLength, 0, 20, DEFAULT_GENERATOR_PREFERENCES.segmentLength)
   };
 }
 

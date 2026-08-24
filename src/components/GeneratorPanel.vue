@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { DEFAULT_SYMBOLS, generatePassphrase, generatePassword, generatePin, passwordStrengthBits } from "../core/credential-generator";
+import { DEFAULT_SYMBOLS, generatePassphrase, generatePassword, generatePin, generateWordPassword, passwordStrengthBits } from "../core/credential-generator";
 import { DEFAULT_GENERATOR_PREFERENCES, GeneratorPreferencesStore, normalizeGeneratorPreferences, resolveAllowedSymbols } from "../core/generator-preferences";
 import type { ProviderAccount } from "../core/model";
 import { vaultClient } from "../runtime/client";
@@ -27,6 +27,7 @@ let restored = false;
 const password = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.symbolLength, uppercase: true, lowercase: true, numbers: true, symbols: true, excludeSimilar: DEFAULT_GENERATOR_PREFERENCES.excludeSimilar, excludeAmbiguous: false, uppercaseMin: DEFAULT_GENERATOR_PREFERENCES.uppercaseMin, lowercaseMin: DEFAULT_GENERATOR_PREFERENCES.lowercaseMin, numbersMin: DEFAULT_GENERATOR_PREFERENCES.numbersMin, symbolsMin: DEFAULT_GENERATOR_PREFERENCES.symbolsMin, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_GENERATOR_PREFERENCES.customSymbols });
 const pin = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.pinLength });
 const phrase = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.passphraseWordCount, delimiter: DEFAULT_GENERATOR_PREFERENCES.passphraseDelimiter, capitalize: false, includeNumber: false, customWord: "" });
+const words = reactive({ length: DEFAULT_GENERATOR_PREFERENCES.passwordLength, firstLetterUppercase: DEFAULT_GENERATOR_PREFERENCES.firstLetterUppercase, includeNumbers: DEFAULT_GENERATOR_PREFERENCES.includeNumbersInPassword, separator: DEFAULT_GENERATOR_PREFERENCES.customSeparator, separatorCountsTowardsLength: DEFAULT_GENERATOR_PREFERENCES.separatorCountsTowardsLength, segmentLength: DEFAULT_GENERATOR_PREFERENCES.segmentLength });
 const entropy = computed(() => mode.value === "password" ? passwordStrengthBits(result.value) : 0);
 const symbolSource = computed({
   get: () => password.useSymbolExclusionMode ? "exclusion" : "custom",
@@ -35,7 +36,7 @@ const symbolSource = computed({
 
 function toPreferences() {
   return normalizeGeneratorPreferences({
-    selectedGenerator: mode.value === "pin" ? "PIN" : mode.value === "passphrase" ? "PASSPHRASE" : "SYMBOL",
+    selectedGenerator: mode.value === "pin" ? "PIN" : mode.value === "passphrase" ? "PASSPHRASE" : mode.value === "word" ? "PASSWORD" : "SYMBOL",
     symbolLength: password.length,
     includeUppercase: password.uppercase,
     includeLowercase: password.lowercase,
@@ -55,7 +56,13 @@ function toPreferences() {
     passphraseCapitalize: phrase.capitalize,
     passphraseIncludeNumber: phrase.includeNumber,
     passphraseCustomWord: phrase.customWord,
-    pinLength: pin.length
+    pinLength: pin.length,
+    passwordLength: words.length,
+    firstLetterUppercase: words.firstLetterUppercase,
+    includeNumbersInPassword: words.includeNumbers,
+    customSeparator: words.separator,
+    separatorCountsTowardsLength: words.separatorCountsTowardsLength,
+    segmentLength: words.segmentLength
   });
 }
 
@@ -80,7 +87,13 @@ function applyPreferences(preferences: ReturnType<typeof normalizeGeneratorPrefe
   phrase.capitalize = preferences.passphraseCapitalize;
   phrase.includeNumber = preferences.passphraseIncludeNumber;
   phrase.customWord = preferences.passphraseCustomWord;
-  mode.value = preferences.selectedGenerator === "PIN" ? "pin" : preferences.selectedGenerator === "PASSPHRASE" ? "passphrase" : "password";
+  words.length = preferences.passwordLength;
+  words.firstLetterUppercase = preferences.firstLetterUppercase;
+  words.includeNumbers = preferences.includeNumbersInPassword;
+  words.separator = preferences.customSeparator;
+  words.separatorCountsTowardsLength = preferences.separatorCountsTowardsLength;
+  words.segmentLength = preferences.segmentLength;
+  mode.value = preferences.selectedGenerator === "PIN" ? "pin" : preferences.selectedGenerator === "PASSPHRASE" ? "passphrase" : preferences.selectedGenerator === "PASSWORD" ? "word" : "password";
 }
 
 async function restore() {
@@ -94,12 +107,13 @@ function persist() {
   void preferencesStore.save(toPreferences()).catch(() => { /* 偏好保存失败不影响生成。 */ });
 }
 
-watch([password, pin, phrase, mode], persist, { deep: true });
+watch([password, pin, phrase, words, mode], persist, { deep: true });
 
 function generate() {
   status.value = "";
   try {
     if (mode.value === "password") result.value = generatePassword({ length: password.length, uppercaseChars: password.uppercase ? undefined : "", lowercaseChars: password.lowercase ? undefined : "", numberChars: password.numbers ? undefined : "", symbolChars: password.symbols ? resolveAllowedSymbols(toPreferences()) : "", uppercaseMin: password.uppercase ? password.uppercaseMin : 0, lowercaseMin: password.lowercase ? password.lowercaseMin : 0, numbersMin: password.numbers ? password.numbersMin : 0, symbolsMin: password.symbols ? password.symbolsMin : 0, excludeSimilar: password.excludeSimilar, excludeAmbiguous: password.excludeAmbiguous });
+    else if (mode.value === "word") result.value = generateWordPassword({ length: words.length, firstLetterUppercase: words.firstLetterUppercase, includeNumbers: words.includeNumbers, separator: words.separator, separatorCountsTowardsLength: words.separatorCountsTowardsLength, segmentLength: words.segmentLength });
     else if (mode.value === "pin") result.value = generatePin(pin.length);
     else result.value = generatePassphrase(phrase);
   } catch (error) { status.value = error instanceof Error ? error.message : "无法生成。"; }
@@ -186,7 +200,7 @@ onMounted(async () => {
     </div>
 
     <div class="generator-modes" role="tablist" aria-label="生成类型">
-      <button v-for="entry in ([['password','密码','password'],['pin','PIN','pin'],['passphrase','短语','text_fields']] as const)" :key="entry[0]" type="button" role="tab" :aria-selected="mode === entry[0]" :class="{ selected: mode === entry[0] }" @click="changeMode(entry[0])"><m3e-icon :name="entry[2]"></m3e-icon><span>{{ entry[1] }}</span></button>
+      <button v-for="entry in ([['password','密码','password'],['word','单词','abc'],['pin','PIN','pin'],['passphrase','短语','text_fields']] as const)" :key="entry[0]" type="button" role="tab" :aria-selected="mode === entry[0]" :class="{ selected: mode === entry[0] }" @click="changeMode(entry[0])"><m3e-icon :name="entry[2]"></m3e-icon><span>{{ entry[1] }}</span></button>
     </div>
 
     <form class="generator-form" @submit.prevent="generate">
@@ -204,6 +218,12 @@ onMounted(async () => {
           <label v-else class="field field-wide"><span>自定义符号集</span><input v-model="password.customSymbols" aria-label="自定义符号集" maxlength="256" /></label>
         </fieldset>
         <fieldset class="generator-options field-wide"><legend>可读性</legend><label><input v-model="password.excludeSimilar" type="checkbox" />排除 0 O l 1 I</label><label><input v-model="password.excludeAmbiguous" type="checkbox" />排除模糊符号</label></fieldset>
+      </template>
+      <template v-else-if="mode === 'word'">
+        <label class="field field-wide"><span>长度：{{ words.length }}</span><input v-model.number="words.length" type="range" min="4" max="128" aria-label="单词密码长度" /></label>
+        <fieldset class="generator-options field-wide"><legend>选项</legend><label><input v-model="words.firstLetterUppercase" type="checkbox" />首字母大写</label><label><input v-model="words.includeNumbers" type="checkbox" />附加数字</label><label><input v-model="words.separatorCountsTowardsLength" type="checkbox" />分隔符计入长度</label></fieldset>
+        <label class="field field-wide"><span>自定义分隔符（可选）</span><input v-model="words.separator" maxlength="8" aria-label="自定义分隔符" /></label>
+        <label class="field field-wide"><span>分段长度：{{ words.segmentLength }}</span><input v-model.number="words.segmentLength" type="range" min="0" max="20" aria-label="分段长度" /></label>
       </template>
       <template v-else-if="mode === 'pin'"><label class="field field-wide"><span>PIN 长度</span><input v-model.number="pin.length" type="number" min="1" max="128" inputmode="numeric" /></label></template>
       <template v-else><label class="field"><span>单词数</span><input v-model.number="phrase.length" type="number" min="1" max="32" /></label><label class="field"><span>分隔符</span><input v-model="phrase.delimiter" maxlength="8" /></label><label class="field field-wide"><span>自定义单词（可选）</span><input v-model="phrase.customWord" /></label><label class="favorite-row"><input v-model="phrase.capitalize" type="checkbox" />首字母大写</label><label class="favorite-row"><input v-model="phrase.includeNumber" type="checkbox" />附加数字</label></template>

@@ -14,7 +14,18 @@ function fakeStorage(initial: Record<string, unknown> = {}) {
 describe("generator preferences parity", () => {
   it("keeps browser first-run defaults aligned with the current manager", () => {
     const preferences = normalizeGeneratorPreferences(undefined);
-    expect(preferences).toMatchObject({ selectedGenerator: "SYMBOL", symbolLength: 20, includeUppercase: true, includeLowercase: true, includeNumbers: true, includeSymbols: true, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_SYMBOLS, excludeSimilar: true, excludeAmbiguous: false, uppercaseMin: 1, lowercaseMin: 1, numbersMin: 1, symbolsMin: 1, passphraseWordCount: 4, passphraseDelimiter: "-", passphraseCapitalize: false, passphraseIncludeNumber: false, passphraseCustomWord: "", pinLength: 6 });
+    expect(preferences).toMatchObject({ selectedGenerator: "SYMBOL", symbolLength: 20, includeUppercase: true, includeLowercase: true, includeNumbers: true, includeSymbols: true, useSymbolExclusionMode: true, excludedSymbols: "", customSymbols: DEFAULT_SYMBOLS, excludeSimilar: true, excludeAmbiguous: false, uppercaseMin: 1, lowercaseMin: 1, numbersMin: 1, symbolsMin: 1, passphraseWordCount: 4, passphraseDelimiter: "-", passphraseCapitalize: false, passphraseIncludeNumber: false, passphraseCustomWord: "", pinLength: 6, passwordLength: 12, firstLetterUppercase: false, includeNumbersInPassword: true, customSeparator: "", separatorCountsTowardsLength: false, segmentLength: 0 });
+  });
+
+  it("normalizes word-password preferences within Android UI ranges", () => {
+    const preferences = normalizeGeneratorPreferences({ selectedGenerator: "PASSWORD", passwordLength: 999, firstLetterUppercase: true, includeNumbersInPassword: false, customSeparator: "_-=", separatorCountsTowardsLength: "no", segmentLength: -3 });
+    expect(preferences.selectedGenerator).toBe("PASSWORD");
+    expect(preferences.passwordLength).toBe(128);
+    expect(preferences.firstLetterUppercase).toBe(true);
+    expect(preferences.includeNumbersInPassword).toBe(false);
+    expect(preferences.customSeparator).toBe("_-=");
+    expect(preferences.separatorCountsTowardsLength).toBe(false);
+    expect(preferences.segmentLength).toBe(0);
   });
 
   it("falls back to defaults for corrupt or mistyped stored values", () => {
