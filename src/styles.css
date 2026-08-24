@@ -1624,20 +1624,38 @@ tbody tr:hover td {
   }
 
   .appbar-trailing {
+    flex: 1 1 auto;
     width: auto;
     min-width: 0;
     gap: 6px;
   }
 
   .search {
-    width: min(52vw, 220px);
+    flex: 0 1 auto;
+    width: min(44vw, 180px);
     max-width: 100%;
+    min-width: 0;
     min-height: 52px;
-    padding-inline: 16px;
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
+  .appbar-create,
+  .appbar-filter {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    --m3e-button-small-leading-space: 4px;
+    --m3e-button-small-trailing-space: 4px;
+  }
+
+  .appbar-action-label {
+    display: none;
   }
 
   .search input {
     width: 100%;
+    min-width: 0;
   }
 
   .search input::placeholder {

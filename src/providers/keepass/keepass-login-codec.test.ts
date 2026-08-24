@@ -136,6 +136,15 @@ describe("buildKeePassLoginFields", () => {
     expect(written.get("MonicaSsoRefEntryId")).toBe("42");
   });
 
+  it("round-trips a barcode marker without changing its protected payload", () => {
+    const written = buildKeePassLoginFields({ item: login({ loginType: "BARCODE", password: "MONICA-123" }) });
+    const projection = readKeePassLoginFields(written);
+
+    expect(written.get("MonicaLoginType")).toBe("BARCODE");
+    expect(written.get("Password")).toBeInstanceOf(kdbxweb.ProtectedValue);
+    expect(projection).toMatchObject({ loginType: "BARCODE", password: "MONICA-123" });
+  });
+
   it("falls back to the title for the SSID when the Wi-Fi metadata has none", () => {
     const written = buildKeePassLoginFields({ item: login({ title: "Home网络", loginType: "WIFI", wifiMetadata: "" }) });
 

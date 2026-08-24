@@ -440,12 +440,57 @@
   gap: 8px;
 }
 
+.barcode-render-modes {
+  width: fit-content;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 4px;
+  border: 1px solid var(--m3e-color-outline-variant, var(--app-outline));
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.barcode-render-modes label {
+  position: relative;
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.barcode-render-modes input {
+  position: absolute;
+  opacity: 0;
+}
+
+.barcode-render-modes span {
+  pointer-events: none;
+}
+
+.barcode-render-modes label:has(input:checked) {
+  color: var(--m3e-color-on-secondary-container, var(--app-text));
+  background: var(--m3e-color-secondary-container, var(--app-selected));
+  font-weight: 600;
+}
+
+.barcode-render-modes label:has(input:focus-visible) {
+  outline: 3px solid var(--m3e-color-primary, var(--app-primary));
+  outline-offset: 1px;
+}
+
 .special-transfer img {
   width: 160px;
   height: 160px;
   border-radius: var(--app-shape-card);
   background: #fff;
   object-fit: contain;
+}
+
+.special-transfer img.barcode-linear-preview {
+  width: min(100%, 360px);
+  height: 112px;
+  border-radius: 8px;
 }
 
 .uri-rule-list,

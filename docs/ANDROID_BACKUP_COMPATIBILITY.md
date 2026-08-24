@@ -37,9 +37,9 @@ The status vocabulary is intentionally strict:
 | Categories/favorites/order | Data | Category IDs/names are resolved for active and trash records; new categories are appended without rewriting existing metadata | Migration and codec tests |
 | Operation timeline | Data | The unlocked manager reads operation summaries and field names; old/new values and device IDs stay in the background boundary | Codec, sender-policy and UI tests |
 | Images and attachments | Data | Opaque encrypted blobs stay intact; portable metadata is visible | Binary ZIP entry equality tests |
-| Wi-Fi records | Planned | Metadata can be viewed/edited without pretending to configure an OS network | Model/editor tests |
-| SSH key records | Planned | Public/private OpenSSH fields remain encrypted and editable | Model/editor and content-boundary tests |
-| Barcode records | Planned | Payload and format remain portable; browser can display/copy | Model/editor tests |
+| Wi-Fi records | Data | SSID, security, hidden-network, BSSID, identity and Android metadata can be viewed/edited without pretending to configure an OS network | WebDAV/Bitwarden/KeePass codec tests and manager E2E |
+| SSH key records | Full | Public/private OpenSSH fields remain encrypted and editable; QR export contains only the public key | Provider round trips, sender-policy tests and manager E2E |
+| Barcode records | Full | Password-field payload remains portable; browser can copy and render QR or Code 128 locally | Provider round trips, barcode unit tests and manager E2E |
 | Autofill blocked fields/targets | Preserved | Android package/field policies remain byte-identical | ZIP entry equality tests |
 | Bitwarden personal/organization vaults | Full | Supported cipher types, folders, collections, FIDO2, 2FA and conflict safety | Provider unit/E2E suite |
 | WebDAV backup/sync | Full | Encryption, ETag, cancellation, merge conflicts and unknown-entry retention | Provider unit/E2E suite |
@@ -165,6 +165,16 @@ Android currently writes `credentialId`, `rpId`, `rpName`, `userId`, `userName`,
 ### Generator history
 
 Android writes at most 50 entries with `password`, `timestamp`, `packageName`, `domain`, `username`, and `type`. Recognized types are `SYMBOL`, `PASSWORD`, `PASSPHRASE`, `PIN`, and `AUTOFILL`. The unlocked manager masks values until explicitly revealed. Deleting one entry retains the Android filename and every unknown member of retained entries; malformed or oversized history remains byte-identical and is not editable.
+
+### Special login records
+
+Wi-Fi, SSH key, SSO and barcode records remain password entries whose `loginType` controls interpretation. WebDAV edits update only the mapped password fields; the existing ZIP path, unknown outer members and unknown nested metadata remain unchanged.
+
+Bitwarden login ciphers use encrypted Monica carrier fields. `monica_login_type` identifies `WIFI`, `SSH_KEY`, `SSO` or `BARCODE`; `monica_wifi_data` carries the Android Wi-Fi JSON; SSO uses `monica_sso_provider` and `monica_sso_ref_entry_id`; SSH uses the `monica_ssh_*` field family and keeps the private key hidden. These carrier names are reserved system fields and are not duplicated as user custom fields.
+
+KeePass uses `MonicaLoginType`, `MonicaWifiData`, `SSID`, the SSO fields and the Monica SSH field family. A bare KeePass `SSID` remains accepted as Wi-Fi for KeePass2Android compatibility. Barcode content stays in the protected password field, with `MonicaLoginType=BARCODE` preventing it from being decoded as a normal website login.
+
+QR rendering uses the existing local QR encoder. Code 128 rendering dynamically loads the pinned `bwip-js` implementation only when selected; payloads never leave the extension and are limited to 4,096 characters.
 
 ## Write Rules
 

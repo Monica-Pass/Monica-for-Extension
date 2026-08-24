@@ -513,6 +513,45 @@ describe("Bitwarden Cipher codec", () => {
     expect(fields).toContain(future);
   });
 
+  it("round-trips Monica Wi-Fi metadata without degrading the login type", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const wifiMetadata = '{"ssid":"Monica Lab","security":"WPA3","future":{"keep":true}}';
+    const raw = {
+      Id: "wifi-cipher", Type: 1, Name: await enc("Monica Lab"), Notes: await enc(""),
+      RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Username: await enc("enterprise-user"), Password: await enc("wifi-secret"), Uris: [] },
+      Fields: [
+        { Type: 0, Name: await enc("monica_login_type"), Value: await enc("WIFI") },
+        { Type: 0, Name: await enc("monica_wifi_data"), Value: await enc(wifiMetadata) }
+      ]
+    };
+
+    const decoded = await decodeBitwardenCipher(raw, "provider-1", KEY);
+    const item = decoded.items[0] as LoginItem;
+    expect(item).toMatchObject({ loginType: "WIFI", wifiMetadata });
+
+    const changedMetadata = JSON.stringify({ ...JSON.parse(item.wifiMetadata || "{}"), hiddenNetwork: true });
+    const encoded = await encodeBitwardenCipher({ ...item, wifiMetadata: changedMetadata }, KEY, raw);
+    const roundTrip = await decodeBitwardenCipher(encoded, "provider-1", KEY);
+    expect(roundTrip.items[0]).toMatchObject({ loginType: "WIFI", wifiMetadata: changedMetadata });
+    expect(JSON.parse((roundTrip.items[0] as LoginItem).wifiMetadata || "{}")).toMatchObject({ future: { keep: true }, hiddenNetwork: true });
+  });
+
+  it("round-trips Monica barcode and SSO type markers", async () => {
+    const barcode: LoginItem = {
+      id: "barcode", kind: "login", title: "Membership", favorite: false, notes: "", createdAt: REVISION, updatedAt: REVISION,
+      providerRefs: [{ providerId: "provider-1" }], username: "", password: "MONICA-123", uris: [], customFields: [], loginType: "BARCODE"
+    };
+    const sso: LoginItem = { ...barcode, id: "sso", title: "Company SSO", password: "", loginType: "SSO", ssoProvider: "OKTA", ssoRefEntryId: 42 };
+
+    const barcodeEncoded = await encodeBitwardenCipher(barcode, KEY);
+    const ssoEncoded = await encodeBitwardenCipher(sso, KEY);
+    const barcodeRoundTrip = await decodeBitwardenCipher({ ...barcodeEncoded, Id: "barcode-roundtrip", RevisionDate: REVISION, CreationDate: REVISION }, "provider-1", KEY);
+    const ssoRoundTrip = await decodeBitwardenCipher({ ...ssoEncoded, Id: "sso-roundtrip", RevisionDate: REVISION, CreationDate: REVISION }, "provider-1", KEY);
+    expect(barcodeRoundTrip.items[0]).toMatchObject({ loginType: "BARCODE", password: "MONICA-123" });
+    expect(ssoRoundTrip.items[0]).toMatchObject({ loginType: "SSO", ssoProvider: "OKTA", ssoRefEntryId: 42 });
+  });
+
   it("preserves reprompt, attachments, history, and unknown Cipher keys when only the title changes", async () => {
     const attachments = [{ Id: "attachment-1", FileName: await encryptBitwardenString("report.pdf", KEY), Size: "2048", Key: "attachment-key" }];
     const passwordHistory = [{ Password: await encryptBitwardenString("old-secret", KEY), LastUsedDate: "2026-07-01T00:00:00.000Z" }];

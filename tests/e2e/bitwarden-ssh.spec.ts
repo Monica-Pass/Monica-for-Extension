@@ -78,7 +78,7 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await expect(manager.getByLabel("注释", { exact: true })).toHaveValue("local encrypted metadata");
     await manager.getByRole("button", { name: "关闭" }).click();
 
-    await manager.getByRole("button", { name: "添加登录项" }).first().click();
+    await manager.getByRole("button", { name: "新建", exact: true }).click();
     const createDialog = manager.getByRole("dialog", { name: "添加登录项" });
     await createDialog.getByLabel("名称 *", { exact: true }).fill("Fallback SSH");
     await createDialog.getByLabel("SSH 密钥", { exact: true }).check();

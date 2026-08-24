@@ -373,7 +373,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
     await dialog.getByRole("button", { name: "关闭" }).click();
 
     await openSection("登录项");
-    await page.getByRole("button", { name: "添加登录项" }).first().click();
+    await page.getByRole("button", { name: "新建", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "添加登录项" });
     await audit("登录项", dialog);
     await dialog.getByRole("button", { name: "关闭" }).click();
@@ -387,6 +387,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
     }
 
     await openSection("设置与备份");
+    await page.getByText("加密整库备份", { exact: true }).click();
     await page.getByRole("button", { name: "导出加密整库备份" }).click();
     dialog = page.getByRole("dialog", { name: "导出加密整库备份" });
     await audit("备份", dialog);

@@ -1,4 +1,5 @@
-import type { IdentityItem, VaultItem, VaultItemKind } from "../core/model";
+import type { IdentityItem, LoginItem, VaultItem, VaultItemKind } from "../core/model";
+import { parseSshKeyMetadata, parseWifiMetadata } from "../core/special-login";
 
 export type VaultManagerSection = "passwords" | "wallet" | "notes" | "totp" | "passkeys";
 
@@ -19,7 +20,7 @@ export function itemSection(item: VaultItem): VaultManagerSection { return KIND_
 
 export function itemSafeSummary(item: VaultItem): string {
   switch (item.kind) {
-    case "login": return [item.username || "无用户名", item.uris[0]].filter(Boolean).join(" · ");
+    case "login": return loginSafeSummary(item);
     case "card": return [item.brand || "银行卡", maskedSuffix(item.number)].filter(Boolean).join(" · ");
     case "identity": return [documentLabel(item.documentType), item.fullName, maskedSuffix(item.documentNumber)].filter(Boolean).join(" · ");
     case "billing-address": return [item.fullName, item.city, item.country].filter(Boolean).join(" · ") || "地址信息";
@@ -33,7 +34,7 @@ export function itemSafeSummary(item: VaultItem): string {
 export function itemSearchText(item: VaultItem): string {
   const common = `${item.title} ${item.notes} ${itemKindLabel(item.kind)} ${itemSafeSummary(item)}`;
   switch (item.kind) {
-    case "login": return `${common} ${item.username} ${item.uris.join(" ")}`;
+    case "login": return `${common} ${item.username} ${item.uris.join(" ")} ${loginSearchMetadata(item)}`;
     case "card": return `${common} ${item.cardholderName} ${item.brand || ""}`;
     case "identity": return `${common} ${item.firstName} ${item.middleName} ${item.lastName} ${item.email || ""} ${item.phone || ""}`;
     case "billing-address": return `${common} ${item.company} ${item.streetAddress} ${item.postalCode} ${item.email}`;
@@ -42,6 +43,32 @@ export function itemSearchText(item: VaultItem): string {
     case "totp": return `${common} ${item.issuer || ""} ${item.accountName || ""}`;
     case "passkey": return `${common} ${item.rpName} ${item.rpId} ${item.userDisplayName}`;
   }
+}
+
+function loginSafeSummary(item: LoginItem): string {
+  if (item.loginType === "WIFI") {
+    const wifi = parseWifiMetadata(item.wifiMetadata);
+    return [wifi.ssid || item.title, wifi.security].filter(Boolean).join(" · ");
+  }
+  if (item.loginType === "SSH_KEY") {
+    const ssh = parseSshKeyMetadata(item.sshKeyData);
+    return [ssh.algorithm || "SSH", ssh.fingerprintSha256 || "密钥内容已加密"].join(" · ");
+  }
+  if (item.loginType === "BARCODE") return "条码内容已加密";
+  if (item.loginType === "SSO") return [item.ssoProvider || "SSO", item.username || "无用户名"].join(" · ");
+  return [item.username || "无用户名", item.uris[0]].filter(Boolean).join(" · ");
+}
+
+function loginSearchMetadata(item: LoginItem): string {
+  if (item.loginType === "WIFI") {
+    const wifi = parseWifiMetadata(item.wifiMetadata);
+    return `${wifi.ssid} ${wifi.security} ${wifi.bssid}`;
+  }
+  if (item.loginType === "SSH_KEY") {
+    const ssh = parseSshKeyMetadata(item.sshKeyData);
+    return `${ssh.algorithm} ${ssh.fingerprintSha256} ${ssh.comment}`;
+  }
+  return item.loginType === "SSO" ? `${item.ssoProvider || ""}` : "";
 }
 
 export function sourceLabel(sourceMode: "browser-local" | "bitwarden" | "android-metadata-only"): string {

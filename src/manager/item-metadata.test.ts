@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { VaultItem } from "../core/model";
+import type { LoginItem, VaultItem } from "../core/model";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection } from "./item-metadata";
 
 const now = "2026-07-15T00:00:00.000Z";
@@ -34,5 +34,18 @@ describe("manager item metadata", () => {
     expect(itemSafeSummary(items[5])).not.toContain("private note");
     expect(itemSafeSummary(items[4])).not.toContain("****7890");
     expect(itemSafeSummary(items[4])).toContain("•••• 7890");
+  });
+
+  it("uses type-aware summaries for Android special login records", () => {
+    const login = items[0] as LoginItem;
+    const wifi: LoginItem = { ...login, loginType: "WIFI", username: "enterprise-user", password: "wifi-secret", wifiMetadata: '{"ssid":"Monica Lab","security":"WPA3"}' };
+    const ssh: LoginItem = { ...login, loginType: "SSH_KEY", username: "", password: "", sshKeyData: '{"algorithm":"ED25519","fingerprintSha256":"SHA256:public"}' };
+    const barcode: LoginItem = { ...login, loginType: "BARCODE", username: "", password: "MONICA-123", uris: [] };
+
+    expect(itemSafeSummary(wifi)).toBe("Monica Lab · WPA3");
+    expect(itemSafeSummary(ssh)).toBe("ED25519 · SHA256:public");
+    expect(itemSafeSummary(barcode)).toBe("条码内容已加密");
+    expect(itemSearchText(wifi)).not.toContain("wifi-secret");
+    expect(itemSearchText(barcode)).not.toContain("MONICA-123");
   });
 });

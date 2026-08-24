@@ -12,6 +12,8 @@ const RESERVED_PASSWORD_FIELD_NAMES = new Set([
   "monica_address_line", "addressLine", "address", "monica_city", "city",
   "monica_state", "state", "monica_zip_code", "zipCode", "monica_country", "country",
   "monica_passkey_bindings", "monica_login_type",
+  "monica_wifi_data", "MonicaWifiData",
+  "monica_sso_provider", "monica_sso_ref_entry_id",
   "monica_ssh_algorithm", "monica_ssh_key_size", "monica_ssh_public_key",
   "monica_ssh_private_key", "monica_ssh_fingerprint", "monica_ssh_comment", "monica_ssh_format"
 ]);
@@ -83,6 +85,8 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       .map((field) => ({ name: field.name, value: field.value, protected: field.type === BITWARDEN_HIDDEN_FIELD }));
     const sshKeyData = bitwardenSshKeyData(systemFields);
     const loginType = bitwardenLoginType(systemFields, sshKeyData);
+    const wifiMetadata = bitwardenSystemValue(systemFields, "monica_wifi_data", "MonicaWifiData") || undefined;
+    const ssoRefEntryId = optionalPositiveOrZeroInteger(bitwardenSystemValue(systemFields, "monica_sso_ref_entry_id"));
     const loginItem: LoginItem = {
       ...base,
       kind: "login",
@@ -105,6 +109,9 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       country: bitwardenSystemValue(systemFields, "monica_country", "country") || undefined,
       passkeyBindings: bitwardenSystemValue(systemFields, "monica_passkey_bindings") || undefined,
       loginType,
+      ssoProvider: bitwardenSystemValue(systemFields, "monica_sso_provider") || undefined,
+      ssoRefEntryId,
+      wifiMetadata,
       sshKeyData
     };
     const hasAndroidPasskeyMetadata = notes.includes("[Monica Passkey Metadata]");
@@ -638,6 +645,16 @@ function buildBitwardenSystemFields(item: LoginItem): SecureCustomField[] {
   add("monica_zip_code", item.zipCode);
   add("monica_country", item.country);
   add("monica_passkey_bindings", item.passkeyBindings);
+  if (item.loginType === "SSO") {
+    add("monica_login_type", "SSO");
+    add("monica_sso_provider", item.ssoProvider);
+    add("monica_sso_ref_entry_id", item.ssoRefEntryId === undefined ? undefined : String(item.ssoRefEntryId));
+  } else if (item.loginType === "WIFI") {
+    add("monica_login_type", "WIFI");
+    add("monica_wifi_data", item.wifiMetadata);
+  } else if (item.loginType === "BARCODE") {
+    add("monica_login_type", "BARCODE");
+  }
   addSsh(false);
   add("address", [item.addressLine, item.city, item.state, item.zipCode, item.country].filter(Boolean).join(", "));
   return fields;
@@ -659,6 +676,12 @@ function stringProperty(raw: Record<string, unknown>, name: string): string | un
 
 function numberProperty(raw: Record<string, unknown>, name: string): number {
   return typeof raw[name] === "number" && Number.isFinite(raw[name]) ? Math.floor(raw[name] as number) : 0;
+}
+
+function optionalPositiveOrZeroInteger(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 

@@ -957,4 +957,29 @@ describe("Android backup ZIP codec", () => {
     expect(document.entries[path]).toEqual(bytes);
     expect(unzipSync(writeAndroidBackup(document, [], "provider-generator-oversized"))[path]).toEqual(bytes);
   });
+
+  it("round-trips edited Android Wi-Fi SSH and barcode records without losing future fields", () => {
+    const base = { username: "", website: "", notes: "", isFavorite: false, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000, future: { keep: true } };
+    const wifiPath = "folders/_root/passwords/password_1_1700000000000.json";
+    const sshPath = "folders/_root/passwords/password_2_1700000000000.json";
+    const barcodePath = "folders/_root/passwords/password_3_1700000000000.json";
+    const document = readAndroidBackup(zipSync({
+      [wifiPath]: strToU8(JSON.stringify({ ...base, id: 1, title: "Lab Wi-Fi", password: "wifi-secret", loginType: "WIFI", wifiMetadata: '{"ssid":"Lab","security":"WPA3","futureWifi":7}' })),
+      [sshPath]: strToU8(JSON.stringify({ ...base, id: 2, title: "SSH", password: "", loginType: "SSH_KEY", sshKeyData: '{"algorithm":"ED25519","publicKeyOpenSsh":"ssh-ed25519 AAAA","privateKeyOpenSsh":"PRIVATE","fingerprintSha256":"SHA256:x","futureSsh":8}' })),
+      [barcodePath]: strToU8(JSON.stringify({ ...base, id: 3, title: "Member", password: "OLD-CODE", loginType: "BARCODE" }))
+    }), "provider-special-roundtrip");
+
+    const changed = document.items.map((item) => {
+      if (item.kind !== "login") return item;
+      if (item.loginType === "WIFI") return { ...item, wifiMetadata: '{"ssid":"Lab","security":"WPA3","hiddenNetwork":true,"futureWifi":7}' };
+      if (item.loginType === "SSH_KEY") return { ...item, sshKeyData: '{"algorithm":"ED25519","publicKeyOpenSsh":"ssh-ed25519 AAAA","privateKeyOpenSsh":"PRIVATE","fingerprintSha256":"SHA256:x","comment":"edited","futureSsh":8}' };
+      if (item.loginType === "BARCODE") return { ...item, password: "NEW-CODE" };
+      return item;
+    });
+    const output = unzipSync(writeAndroidBackup(document, changed, "provider-special-roundtrip"));
+
+    expect(JSON.parse(strFromU8(output[wifiPath]))).toMatchObject({ loginType: "WIFI", password: "wifi-secret", future: { keep: true }, wifiMetadata: expect.stringContaining('"futureWifi":7') });
+    expect(JSON.parse(strFromU8(output[sshPath]))).toMatchObject({ loginType: "SSH_KEY", future: { keep: true }, sshKeyData: expect.stringContaining('"futureSsh":8') });
+    expect(JSON.parse(strFromU8(output[barcodePath]))).toMatchObject({ loginType: "BARCODE", password: "NEW-CODE", future: { keep: true } });
+  });
 });

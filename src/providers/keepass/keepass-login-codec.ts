@@ -192,6 +192,7 @@ function resolveLoginType(input: { monicaLoginType: string; wifiJson: string; ss
   if (input.ssid) return { loginType: "WIFI" as const, wifiMetadata: wifiJsonFor(input.ssid) };
   if (declared === "SSO" || input.ssoProvider) return { loginType: "SSO" as const, wifiMetadata: undefined };
   if (declared === "SSH_KEY") return { loginType: "SSH_KEY" as const, wifiMetadata: undefined };
+  if (declared === "BARCODE") return { loginType: "BARCODE" as const, wifiMetadata: undefined };
   return { loginType: "PASSWORD" as const, wifiMetadata: undefined };
 }
 
@@ -284,6 +285,7 @@ export function buildKeePassLoginFields(input: KeePassLoginWriteInput): Map<stri
   }
 
   if (item.loginType === "SSH_KEY") fields.set(MONICA_LOGIN_TYPE, "SSH_KEY");
+  if (item.loginType === "BARCODE") fields.set(MONICA_LOGIN_TYPE, "BARCODE");
   writeSshFields(fields, item.sshKeyData, plain, secret);
   appendCustomFields(fields, item.customFields);
   return fields;

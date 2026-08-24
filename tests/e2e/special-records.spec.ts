@@ -2,8 +2,9 @@ import { chromium, expect, test, type BrowserContext, type Page } from "@playwri
 import path from "node:path";
 
 async function openLoginEditor(manager: Page): Promise<void> {
+  await expect(manager.getByRole("dialog")).toHaveCount(0);
   await manager.getByRole("button", { name: /^登录项/ }).click();
-  await manager.getByRole("button", { name: "添加登录项" }).first().click();
+  await manager.getByRole("button", { name: "新建", exact: true }).click();
 }
 
 test("manager edits Android Wi-Fi SSH key and barcode records with local QR operations", async ({}, testInfo) => {
@@ -50,6 +51,12 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
     await openLoginEditor(manager);
     await manager.getByLabel("名称 *", { exact: true }).fill("Membership Barcode");
     await manager.getByLabel("条码", { exact: true }).check();
+    await manager.getByLabel("条码内容", { exact: true }).fill("MONICA-123456789");
+    await manager.getByRole("button", { name: "生成二维码" }).click();
+    await expect(manager.getByAltText("BARCODE QR 二维码")).toBeVisible();
+    await manager.getByRole("radio", { name: "Code 128" }).check();
+    await manager.getByRole("button", { name: "生成条码" }).click();
+    await expect(manager.getByAltText("BARCODE Code 128 条码")).toHaveAttribute("src", /^data:image\/svg\+xml;base64,/);
     await manager.getByRole("button", { name: "加密保存" }).click();
 
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
@@ -64,13 +71,13 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
     expect(ssh.loginType).toBe("SSH_KEY");
     expect(JSON.parse(String(ssh.sshKeyData))).toMatchObject({ algorithm: "ED25519", keySize: 256, publicKeyOpenSsh: "ssh-ed25519 AAAAC3Nza monica", fingerprintSha256: "SHA256:monica" });
     const barcode = response.data.find((item) => item.title === "Membership Barcode")!;
-    expect(barcode).toMatchObject({ loginType: "BARCODE", password: "" });
-    expect(await manager.evaluate(async (item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: { ...item, password: "MONICA-123456789" } }), barcode)).toMatchObject({ ok: true });
+    expect(barcode).toMatchObject({ loginType: "BARCODE", password: "MONICA-123456789" });
     await manager.reload();
     await manager.getByRole("button", { name: /^登录项/ }).click();
     await manager.getByRole("row").filter({ hasText: "Membership Barcode" }).getByRole("button", { name: "编辑登录项" }).click();
-    await manager.getByRole("button", { name: "生成二维码" }).click();
-    await expect(manager.getByAltText("BARCODE 二维码")).toBeVisible();
+    await manager.getByRole("radio", { name: "Code 128" }).check();
+    await manager.getByRole("button", { name: "生成条码" }).click();
+    await expect(manager.getByAltText("BARCODE Code 128 条码")).toBeVisible();
 
     await manager.setViewportSize({ width: 375, height: 760 });
     expect(await manager.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

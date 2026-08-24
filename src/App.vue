@@ -25,6 +25,7 @@ import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemE
 import { normalizeHost } from "./core/matching";
 import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
+import { createCode128DataUrl } from "./core/barcode";
 import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
@@ -124,6 +125,7 @@ const editingId = ref<string | null>(null);
 const revealPassword = ref(false);
 const specialQrDataUrl = ref("");
 const specialQrError = ref("");
+const barcodeRenderMode = ref<"qr" | "code128">("qr");
 const formError = ref("");
 const notice = ref("");
 const webDavBusy = ref<"" | "test" | "save" | "sync" | "remove" | "logout">("");
@@ -861,6 +863,7 @@ function openCreate() {
   formError.value = "";
   revealPassword.value = false;
   clearSpecialQr();
+  barcodeRenderMode.value = "qr";
   editorOpen.value = true;
 }
 
@@ -891,6 +894,7 @@ function openEdit(item: LoginItem) {
   formError.value = "";
   revealPassword.value = false;
   clearSpecialQr();
+  barcodeRenderMode.value = "qr";
   editorOpen.value = true;
   if (specialPayloadValue()) void refreshSpecialQr();
 }
@@ -1004,9 +1008,11 @@ async function refreshSpecialQr(): Promise<void> {
   specialQrDataUrl.value = "";
   specialQrError.value = "";
   try {
-    specialQrDataUrl.value = await createQrDataUrl(specialPayloadValue());
+    specialQrDataUrl.value = form.loginType === "BARCODE" && barcodeRenderMode.value === "code128"
+      ? await createCode128DataUrl(specialPayloadValue())
+      : await createQrDataUrl(specialPayloadValue());
   } catch (cause) {
-    specialQrError.value = cause instanceof Error ? cause.message : "无法生成二维码。";
+    specialQrError.value = cause instanceof Error ? cause.message : "无法生成条码。";
   }
 }
 
@@ -2137,7 +2143,7 @@ function errorCode(error: unknown): string | undefined {
       <main id="main-content" :class="{ 'settings-main': activeSection === 'settings' }" tabindex="-1">
         <m3e-app-bar size="small" class="page-appbar">
           <m3e-icon-button slot="leading" class="mobile-menu" aria-label="打开导航" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="mobileNavOpen = !mobileNavOpen"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
-          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'providers' && syncableBitwardenProviders.length > 1" variant="tonal" :disabled="syncingAllBitwarden || Boolean(activeSyncProviderId)" @click="syncAllBitwarden"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ syncingAllBitwarden ? '正在同步' : '同步全部' }}</m3e-button><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" :aria-label="activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'notes' ? '添加安全笔记' : '添加验证码'" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon>新建</m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon>筛选<span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
+          <div slot="trailing" class="appbar-trailing"><label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" aria-label="搜索密码库" placeholder="搜索当前分类" /></label><m3e-button v-if="activeSection === 'providers' && syncableBitwardenProviders.length > 1" variant="tonal" :disabled="syncingAllBitwarden || Boolean(activeSyncProviderId)" @click="syncAllBitwarden"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ syncingAllBitwarden ? '正在同步' : '同步全部' }}</m3e-button><m3e-button v-if="activeSection === 'overview' || activeSection === 'passwords'" class="appbar-create" variant="filled" aria-label="新建" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon><span class="appbar-action-label">新建</span></m3e-button><m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" :aria-label="activeSection === 'wallet' ? '添加钱包项目' : activeSection === 'notes' ? '添加安全笔记' : '添加验证码'" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon><span class="appbar-action-label">新建</span></m3e-button><m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" aria-label="筛选" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon><span class="appbar-action-label">筛选</span><span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length }}</span></m3e-button></div>
         </m3e-app-bar>
 
         <div class="page-heading">
@@ -2554,8 +2560,8 @@ function errorCode(error: unknown): string | undefined {
           <details class="special-advanced field-wide"><summary>Android 原始元数据</summary><label class="field"><span>JSON</span><textarea v-model="form.sshKeyDataRaw" rows="6" spellcheck="false"></textarea><small>未知字段逐项保留；应用后同步到上方已知字段。</small></label><m3e-button variant="tonal" type="button" @click="applySpecialRaw">应用原始元数据</m3e-button></details>
         </fieldset>
       </template>
-      <label v-else-if="form.loginType === 'BARCODE'" class="field field-wide"><span>条码内容</span><input v-model="form.barcodeContent" autocomplete="off" spellcheck="false" /><small>按 Monica Android 格式保存到密码字段。</small></label>
-      <fieldset v-if="isSpecialLoginType" class="editor-fieldset special-transfer field-wide"><legend>复制与二维码</legend><div class="special-transfer-actions"><m3e-button variant="tonal" type="button" @click="copySpecialPayload"><m3e-icon slot="icon" name="content_copy"></m3e-icon>复制</m3e-button><m3e-button variant="text" type="button" @click="refreshSpecialQr"><m3e-icon slot="icon" name="qr_code_2"></m3e-icon>生成二维码</m3e-button></div><img v-if="specialQrDataUrl" :src="specialQrDataUrl" :alt="`${form.loginType} 二维码`" width="240" height="240" /><p v-if="specialQrError" class="form-error" role="alert">{{ specialQrError }}</p></fieldset>
+      <label v-else-if="form.loginType === 'BARCODE'" class="field field-wide"><span>条码内容</span><input v-model="form.barcodeContent" aria-label="条码内容" autocomplete="off" spellcheck="false" /><small>按 Monica Android 格式保存到密码字段。</small></label>
+      <fieldset v-if="isSpecialLoginType" class="editor-fieldset special-transfer field-wide"><legend>{{ form.loginType === 'BARCODE' ? '复制与条码' : '复制与二维码' }}</legend><div v-if="form.loginType === 'BARCODE'" class="barcode-render-modes" role="radiogroup" aria-label="条码显示方式"><label><input v-model="barcodeRenderMode" type="radio" value="qr" @change="clearSpecialQr" /><span>QR</span></label><label><input v-model="barcodeRenderMode" type="radio" value="code128" @change="clearSpecialQr" /><span>Code 128</span></label></div><div class="special-transfer-actions"><m3e-button variant="tonal" type="button" @click="copySpecialPayload"><m3e-icon slot="icon" name="content_copy"></m3e-icon>复制</m3e-button><m3e-button variant="text" type="button" @click="refreshSpecialQr"><m3e-icon slot="icon" :name="form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? 'barcode' : 'qr_code_2'"></m3e-icon>{{ form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? '生成条码' : '生成二维码' }}</m3e-button></div><img v-if="specialQrDataUrl" :class="{ 'barcode-linear-preview': form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' }" :src="specialQrDataUrl" :alt="form.loginType === 'BARCODE' ? `BARCODE ${barcodeRenderMode === 'code128' ? 'Code 128 条码' : 'QR 二维码'}` : `${form.loginType} 二维码`" width="240" :height="form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? 96 : 240" /><p v-if="specialQrError" class="form-error" role="alert">{{ specialQrError }}</p></fieldset>
       <template v-if="isWebLoginType">
         <label class="field"><span>绑定独立验证器</span><select v-model="form.boundTotpItemId"><option value="">不绑定独立项目</option><option v-for="item in totpItems" :key="item.id" :value="item.id">{{ item.title }} · {{ item.otpType || 'TOTP' }}</option></select></label>
         <label class="field"><span>内嵌验证码密钥</span><input v-model="form.totpSecret" :disabled="Boolean(form.boundTotpItemId)" autocomplete="off" placeholder="Base32 或 otpauth URI" /><small>独立验证器优先；验证码仅在点击填充时由后台生成。</small></label>
