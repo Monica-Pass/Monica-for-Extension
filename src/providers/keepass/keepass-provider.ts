@@ -1,7 +1,8 @@
 import * as kdbxweb from "kdbxweb";
-import type { PendingMutation, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
+import type { PasskeyItem, PendingMutation, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
+import { normalizeCredentialId } from "../../passkey/source-policy";
 import {
   KEEPASS_ATTACHMENT_MAX_BYTES,
   PROVIDER_ATTACHMENT_CHUNK_BYTES,
@@ -10,6 +11,7 @@ import {
 } from "../attachments/attachment-contract";
 import { keePassSourceRecordFor, openKeePassVault, readKeePassEntries, type KeePassSkippedEntry, type KeePassVaultEntries } from "./keepass-vault";
 import { createKeePassEntry, removeKeePassEntry, writeKeePassEntry } from "./keepass-writer";
+import { readKeePassPasskeyFields } from "./keepass-passkey-codec";
 import {
   KEEPASS_GROUP_MAX_PAGE_SIZE,
   KeePassGroupError,
@@ -36,6 +38,15 @@ import {
 } from "./keepass-history";
 
 const KEEPASS_PENDING_SYNC_LIMIT = 100;
+
+export class KeePassPasskeyCredentialConflictError extends Error {
+  readonly code = "keepass-passkey-credential-conflict";
+
+  constructor() {
+    super("目标 KeePass 数据库中已存在相同的 Passkey 凭据 ID。");
+    this.name = "KeePassPasskeyCredentialConflictError";
+  }
+}
 
 /**
  * What the settings UI is allowed to see. The open `Kdbx`, the master credential and the entry fields
@@ -513,11 +524,30 @@ export class KeePassProvider implements ProviderAdapter {
       updates.push({ entryUuid, item: local });
     }
 
+    const passkeyConflicts = conflictingPasskeyMutations(session, updates, creations);
     for (const update of updates) {
+      if (!passkeyConflicts.has(update.item.id)) continue;
+      conflicts.push({
+        itemId: update.item.id,
+        reason: "目标 KeePass 数据库中已存在相同的 Passkey 凭据 ID。",
+        local: update.item,
+        remote: remoteByUuid.get(update.entryUuid)
+      });
+      keepLocal.set(update.entryUuid, update.item);
+    }
+    for (const item of creations) {
+      if (!passkeyConflicts.has(item.id)) continue;
+      conflicts.push({ itemId: item.id, reason: "目标 KeePass 数据库中已存在相同的 Passkey 凭据 ID。", local: item });
+      deferredCreations.push(item);
+    }
+    const applicableUpdates = updates.filter((update) => !passkeyConflicts.has(update.item.id));
+    const applicableCreations = creations.filter((item) => !passkeyConflicts.has(item.id));
+
+    for (const update of applicableUpdates) {
       const entry = session.entries.entriesByUuid.get(update.entryUuid);
       if (entry) writeKeePassEntry(session.database, entry, update.item);
     }
-    for (const item of creations) {
+    for (const item of applicableCreations) {
       const { entry } = createKeePassEntry(session.database, item, item.keepassGroupPath);
       localByUuid.set(entry.uuid.toString(), item);
     }
@@ -526,7 +556,7 @@ export class KeePassProvider implements ProviderAdapter {
       if (entry) removeKeePassEntry(session.database, entry);
     }
 
-    if (updates.length + creations.length + deletions.length) session.dirty = true;
+    if (applicableUpdates.length + applicableCreations.length + deletions.length) session.dirty = true;
     this.reread(session, account.id);
 
     const warnings = [...session.summary.warnings];
@@ -589,6 +619,7 @@ export class KeePassProvider implements ProviderAdapter {
 
   async create(account: ProviderAccount, item: VaultItem): Promise<VaultItem> {
     const session = this.requireSession(account.id);
+    assertPasskeyCredentialAvailable(session, item);
     const { entry } = createKeePassEntry(session.database, item, item.keepassGroupPath);
     return this.afterWrite(session, account.id, entry.uuid.toString(), item);
   }
@@ -598,6 +629,7 @@ export class KeePassProvider implements ProviderAdapter {
     const entryUuid = referenceOf(item, account.id)?.remoteId;
     const entry = entryUuid ? session.entries.entriesByUuid.get(entryUuid) : undefined;
     if (!entry || !entryUuid) return this.create(account, item);
+    assertPasskeyCredentialAvailable(session, item, entryUuid);
     writeKeePassEntry(session.database, entry, item);
     return this.afterWrite(session, account.id, entryUuid, item);
   }
@@ -616,6 +648,14 @@ export class KeePassProvider implements ProviderAdapter {
     session.dirty = true;
     this.reread(session, providerId);
     const stored = session.entries.items.find((candidate) => remoteIdOf(candidate, providerId) === entryUuid);
+    if (item.kind === "passkey" && stored?.kind !== "passkey") {
+      const projected = {
+        ...item,
+        keepassEntryUuid: entryUuid,
+        providerRefs: [...item.providerRefs.filter((reference) => reference.providerId !== providerId), { providerId, remoteId: entryUuid }]
+      } as PasskeyItem;
+      return finalize(projected, item, providerId);
+    }
     return finalize(stored || item, item, providerId);
   }
 
@@ -799,6 +839,62 @@ export class KeePassProvider implements ProviderAdapter {
     if (!session) throw new Error("此 KeePass 数据库尚未解锁，请在 Monica 设置页中选择 .kdbx 文件并输入密码或密钥文件。");
     return session;
   }
+}
+
+function passkeyCredentialId(item: VaultItem): string | undefined {
+  if (item.kind !== "passkey") return undefined;
+  return normalizeCredentialId(item.credentialId) || undefined;
+}
+
+function rawPasskeyCredentialOwners(session: KeePassSession): Map<string, Set<string>> {
+  const owners = new Map<string, Set<string>>();
+  for (const [entryUuid, entry] of session.entries.entriesByUuid) {
+    const credentialId = normalizeCredentialId(readKeePassPasskeyFields(entry.fields)?.credentialId || "");
+    if (!credentialId) continue;
+    const entryUuids = owners.get(credentialId) || new Set<string>();
+    entryUuids.add(entryUuid);
+    owners.set(credentialId, entryUuids);
+  }
+  return owners;
+}
+
+function assertPasskeyCredentialAvailable(session: KeePassSession, item: VaultItem, exceptEntryUuid?: string): void {
+  const credentialId = passkeyCredentialId(item);
+  if (!credentialId) return;
+  const owners = rawPasskeyCredentialOwners(session).get(credentialId);
+  if (owners && [...owners].some((entryUuid) => entryUuid !== exceptEntryUuid)) {
+    throw new KeePassPasskeyCredentialConflictError();
+  }
+}
+
+function conflictingPasskeyMutations(
+  session: KeePassSession,
+  updates: Array<{ entryUuid: string; item: VaultItem }>,
+  creations: VaultItem[]
+): Set<string> {
+  const existingOwners = rawPasskeyCredentialOwners(session);
+  const desiredOwners = new Map<string, Array<{ itemId: string; entryUuid?: string }>>();
+  for (const mutation of [
+    ...updates.map((update) => ({ item: update.item, entryUuid: update.entryUuid })),
+    ...creations.map((item) => ({ item, entryUuid: undefined }))
+  ]) {
+    const credentialId = passkeyCredentialId(mutation.item);
+    if (!credentialId) continue;
+    const owners = desiredOwners.get(credentialId) || [];
+    owners.push({ itemId: mutation.item.id, entryUuid: mutation.entryUuid });
+    desiredOwners.set(credentialId, owners);
+  }
+
+  const conflicts = new Set<string>();
+  for (const [credentialId, desired] of desiredOwners) {
+    if (desired.length > 1) for (const owner of desired) conflicts.add(owner.itemId);
+    const existing = existingOwners.get(credentialId);
+    if (!existing) continue;
+    for (const owner of desired) {
+      if ([...existing].some((entryUuid) => entryUuid !== owner.entryUuid)) conflicts.add(owner.itemId);
+    }
+  }
+  return conflicts;
 }
 
 /**

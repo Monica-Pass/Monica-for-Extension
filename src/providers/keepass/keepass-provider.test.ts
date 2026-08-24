@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as kdbxweb from "kdbxweb";
-import type { LoginItem, PendingMutation, ProviderAccount, VaultItem } from "../../core/model";
+import type { LoginItem, PasskeyItem, PendingMutation, ProviderAccount, VaultItem } from "../../core/model";
 import { buildKeePassFixture, keePassCredentials, type KeePassFixtureEntry } from "./keepass-fixture";
 import { KeePassProvider } from "./keepass-provider";
 import { keePassFieldText } from "./keepass-login-codec";
@@ -11,6 +11,7 @@ import { keePassFieldText } from "./keepass-login-codec";
  */
 
 const PASSWORD = "fixture master password";
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 const ENTRIES: KeePassFixtureEntry[] = [
   {
     title: "GitHub",
@@ -56,6 +57,33 @@ function newLogin(overrides: Partial<LoginItem> = {}): LoginItem {
     uris: ["https://new.test"],
     customFields: [],
     providerRefs: [{ providerId: "kp-a" }],
+    ...overrides
+  };
+}
+
+function newPasskey(overrides: Partial<PasskeyItem> = {}): PasskeyItem {
+  return {
+    id: "passkey-new",
+    kind: "passkey",
+    title: "Example Passkey",
+    favorite: false,
+    notes: "",
+    createdAt: "2026-07-26T12:00:00.000Z",
+    updatedAt: "2026-07-26T12:00:00.000Z",
+    providerRefs: [{ providerId: "kp-a" }],
+    credentialId: "AQID",
+    rpId: "example.test",
+    rpName: "Example",
+    userHandle: "dXNlcg",
+    userName: "joy",
+    userDisplayName: "Joy",
+    algorithm: -7,
+    publicKey: "public",
+    privateKeyPkcs8: P256_PKCS8,
+    signCount: 0,
+    discoverable: true,
+    passkeyMode: "KEEPASS_COMPAT",
+    sourceMode: "browser-local",
     ...overrides
   };
 }
@@ -113,6 +141,39 @@ describe("KeePassProvider", () => {
     expect(created.providerRefs.find((reference) => reference.providerId === target.id)?.remoteId).toBe(
       group.entries[0].uuid.toString()
     );
+  });
+
+  it("rejects duplicate Passkey credential IDs before mutating another KeePass entry", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, []);
+    const first = await provider.create(target, newPasskey({ id: "first", credentialId: "AQID=" })) as PasskeyItem;
+    const second = await provider.create(target, newPasskey({ id: "second", credentialId: "BAUG", userName: "other" })) as PasskeyItem;
+
+    await expect(provider.create(target, newPasskey({ id: "duplicate", credentialId: "AQID" })))
+      .rejects.toMatchObject({ code: "keepass-passkey-credential-conflict" });
+    await expect(provider.update(target, { ...second, credentialId: "AQID" }))
+      .rejects.toMatchObject({ code: "keepass-passkey-credential-conflict" });
+    await expect(provider.update(target, { ...first, title: "Updated same entry" })).resolves.toMatchObject({ title: "Updated same entry" });
+
+    const reopened = await reopen(provider, target);
+    const entries = reopened.getDefaultGroup().entries;
+    expect(entries).toHaveLength(2);
+    expect(entries.find((entry) => keePassFieldText(entry.fields.get("MonicaPasskeyCredentialId")) === "AQID=")?.history).toHaveLength(1);
+    expect(entries.find((entry) => keePassFieldText(entry.fields.get("MonicaPasskeyCredentialId")) === "BAUG")?.history).toHaveLength(0);
+  });
+
+  it("preflights a duplicate Passkey sync batch without partially writing either entry", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, []);
+
+    const result = await sync(provider, target, [
+      newPasskey({ id: "batch-a", credentialId: "AQID=" }),
+      newPasskey({ id: "batch-b", credentialId: "AQID", userName: "other" })
+    ]);
+
+    expect(result.conflicts.map((conflict) => conflict.itemId).sort()).toEqual(["batch-a", "batch-b"]);
+    expect(result.items.filter((item) => item.kind === "passkey")).toHaveLength(2);
+    expect((await reopen(provider, target)).getDefaultGroup().entries).toHaveLength(0);
   });
 
   /** The handoff's core requirement, exercised end to end: an edit may not disturb a field it does not own. */

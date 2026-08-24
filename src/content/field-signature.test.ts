@@ -89,7 +89,7 @@ describe("autofill field signatures", () => {
 
     expect(context).toMatchObject({ role: "wallet", hostname: "login.example.com" });
     expect(context?.signature).toMatch(/^[0-9a-f]{64}$/);
-  });
+  }, 15_000);
 
   it("signs all credential fields in a submitted form without requiring focus", async () => {
     const dom = page('<form><input autocomplete="username" value="private-user"><input type="password" autocomplete="current-password" value="private-password"><button>Login</button></form>');

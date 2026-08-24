@@ -45,6 +45,9 @@ export function renderPasskeyPrompt(
     .choice-copy { min-width:0; flex:1; display:grid; gap:2px; }
     .choice-copy strong,.choice-copy span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .source { flex:0 0 auto; padding:3px 7px; border-radius:8px; color:var(--monica-primary); background:var(--monica-surface-high); font-size:0.6875rem; }
+    .choice.conflict { border-color:var(--monica-error); }
+    .choice.conflict .supporting { color:var(--monica-error); }
+    .source { max-width:42%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .field { display:grid; gap:6px; }
     .field-label { color:var(--monica-muted); font-size:0.75rem; }
     select { width:100%; min-height:48px; border:1px solid var(--monica-outline); border-radius:8px; padding:0 12px; color:var(--monica-text); background:var(--monica-surface); }
@@ -103,7 +106,8 @@ export function renderPasskeyPrompt(
     }
   }
 
-  let selected = context.credentials[0]?.itemId;
+  const requiresExplicitSelection = context.credentials.some((credential) => credential.credentialConflict);
+  let selected = requiresExplicitSelection ? undefined : context.credentials[0]?.itemId;
   if (context.operation === "get") {
     const choices = rootDocument.createElement("div");
     choices.className = "choices";
@@ -113,13 +117,16 @@ export function renderPasskeyPrompt(
       const choice = rootDocument.createElement("button");
       choice.type = "button";
       choice.className = "choice";
+      if (credential.credentialConflict) choice.classList.add("conflict");
       choice.setAttribute("role", "radio");
-      choice.setAttribute("aria-checked", String(index === 0));
+      choice.setAttribute("aria-checked", String(!requiresExplicitSelection && index === 0));
       choice.tabIndex = index === 0 ? 0 : -1;
       choice.innerHTML = `<span class="choice-copy"><strong></strong><span class="supporting"></span></span><span class="source"></span>`;
       (choice.querySelector("strong") as HTMLElement).textContent = credential.title;
-      (choice.querySelector(".supporting") as HTMLElement).textContent = [credential.userDisplayName || credential.userName || "无用户名", credential.useCount ? `已使用 ${credential.useCount} 次` : "未使用", credential.userVerificationRequired ? "Windows Hello" : ""].filter(Boolean).join(" · ");
-      (choice.querySelector(".source") as HTMLElement).textContent = credential.sourceMode === "bitwarden" ? "Bitwarden" : "浏览器本地";
+      (choice.querySelector(".supporting") as HTMLElement).textContent = [credential.userDisplayName || credential.userName || "无用户名", credential.useCount ? `已使用 ${credential.useCount} 次` : "未使用", credential.userVerificationRequired ? "Windows Hello" : "", credential.credentialConflict ? "凭据 ID 重复，请确认密码源" : ""].filter(Boolean).join(" · ");
+      const source = choice.querySelector(".source") as HTMLElement;
+      source.textContent = credential.providerName;
+      source.title = credential.providerName;
       const selectChoice = () => {
         selected = credential.itemId;
         for (const item of Array.from(choices.querySelectorAll<HTMLButtonElement>('[role="radio"]'))) {
@@ -154,7 +161,9 @@ export function renderPasskeyPrompt(
   notice.id = "monica-passkey-description";
   notice.className = "notice";
   notice.innerHTML = `${promptIcon("info")}<span></span>`;
-  (notice.querySelector("span") as HTMLElement).textContent = context.userVerificationRequired
+  (notice.querySelector("span") as HTMLElement).textContent = requiresExplicitSelection
+    ? "凭据 ID 重复，请确认密码源。只有明确选择后才会使用对应私钥。"
+    : context.userVerificationRequired
     ? "确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。"
     : context.operation === "create"
       ? "私钥会加密保存；Monica 不会把私钥发送给当前网站。"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem } from "../core/model";
-import { hasExcludedUsablePasskey, isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "./source-policy";
+import { duplicatePasskeyCredentialIds, hasExcludedUsablePasskey, isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "./source-policy";
 
 const base: PasskeyItem = {
   id: "passkey-1",
@@ -72,5 +72,14 @@ describe("Passkey source policy", () => {
     const unsupported = { ...base, algorithm: -257 };
     expect(hasExcludedUsablePasskey([metadata, unsupported], "example.com", ["AQID"])).toBe(false);
     expect(hasExcludedUsablePasskey([base], "example.com", ["AQID"])).toBe(true);
+  });
+
+  it("detects normalized duplicate credential IDs across provider-owned records", () => {
+    const bitwarden = { ...base, id: "bitwarden", credentialId: "AQID=", sourceMode: "bitwarden" as const, providerRefs: [{ providerId: "bw-work" }] };
+    const keepass = { ...base, id: "keepass", credentialId: "AQID", providerRefs: [{ providerId: "kp-family" }] };
+    const distinct = { ...base, id: "distinct", credentialId: "BAUG", providerRefs: [{ providerId: "local" }] };
+
+    expect([...duplicatePasskeyCredentialIds([bitwarden, keepass, distinct])]).toEqual(["AQID"]);
+    expect(duplicatePasskeyCredentialIds([bitwarden, { ...bitwarden }])).toEqual(new Set());
   });
 });

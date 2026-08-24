@@ -55,8 +55,8 @@ describe("Passkey confirmation prompt", () => {
       userName: "demo@example.test",
       saveTargets: [],
       credentials: [
-        { itemId: "local", title: "本地凭据", userName: "demo", userDisplayName: "Demo", sourceMode: "browser-local", useCount: 0 },
-        { itemId: "bw", title: "工作凭据", userName: "work", userDisplayName: "Work", sourceMode: "bitwarden", useCount: 3 }
+        { itemId: "local", title: "本地凭据", userName: "demo", userDisplayName: "Demo", sourceMode: "browser-local", providerName: "Monica 本地库", credentialConflict: false, useCount: 0 },
+        { itemId: "bw", title: "工作凭据", userName: "work", userDisplayName: "Work", sourceMode: "bitwarden", providerName: "工作 Bitwarden", credentialConflict: false, useCount: 3 }
       ],
       expiresAt: Date.now() + 10_000
     }, accept, vi.fn().mockResolvedValue(undefined), dom.window.document, { allowUntrustedEvents: true });
@@ -71,6 +71,25 @@ describe("Passkey confirmation prompt", () => {
     choices[1].click();
     (shadow.querySelector(".primary") as HTMLButtonElement).click();
     await vi.waitFor(() => expect(accept).toHaveBeenCalledWith("bw", undefined));
+    dom.window.close();
+  });
+
+  it("names real provider accounts and marks duplicate credential choices", () => {
+    const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
+    const host = renderPasskeyPrompt({
+      candidateId: "candidate-conflict", operation: "get", rpId: "passkey.example.test", rpName: "示例网站",
+      origin: "https://passkey.example.test", userName: "demo", saveTargets: [],
+      credentials: [
+        { itemId: "work", title: "工作账号", userName: "demo", userDisplayName: "Demo", sourceMode: "bitwarden", providerName: "工作 Bitwarden", credentialConflict: true, useCount: 2 },
+        { itemId: "family", title: "家庭账号", userName: "demo", userDisplayName: "Demo", sourceMode: "browser-local", providerName: "家庭 KeePass", credentialConflict: true, useCount: 0 }
+      ],
+      expiresAt: Date.now() + 10_000
+    }, vi.fn(), vi.fn(), dom.window.document, { allowUntrustedEvents: true });
+
+    const text = passkeyPromptRootForTest(host)?.textContent || "";
+    expect(text).toContain("工作 Bitwarden");
+    expect(text).toContain("家庭 KeePass");
+    expect(text).toContain("凭据 ID 重复，请确认密码源");
     dom.window.close();
   });
 

@@ -42,6 +42,20 @@ export function normalizeCredentialId(value: string): string {
   }
 }
 
+/** Returns normalized credential IDs owned by more than one usable vault item. */
+export function duplicatePasskeyCredentialIds(items: PasskeyItem[]): Set<string> {
+  const owners = new Map<string, Set<string>>();
+  for (const item of items) {
+    if (passkeyAvailability(item) !== "ready") continue;
+    const credentialId = normalizeCredentialId(item.credentialId);
+    if (!credentialId) continue;
+    const itemIds = owners.get(credentialId) || new Set<string>();
+    itemIds.add(item.id);
+    owners.set(credentialId, itemIds);
+  }
+  return new Set([...owners].filter(([, itemIds]) => itemIds.size > 1).map(([credentialId]) => credentialId));
+}
+
 export function passkeyRpIdsEqual(left: string, right: string): boolean {
   const normalizedLeft = normalizeRpId(left);
   const normalizedRight = normalizeRpId(right);

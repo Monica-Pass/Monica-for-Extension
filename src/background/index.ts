@@ -65,7 +65,7 @@ import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, Login
 import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
-import { hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
+import { duplicatePasskeyCredentialIds, hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
 import { base64ToBytes, bytesToBase64 } from "../security/encoding";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from "../security/secure-vault-service";
@@ -2609,6 +2609,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   const pending: PendingPasskeyRequest = { id, request, tabId: source.tabId, frameId: source.frameId, documentId: source.documentId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), saveTargets: request.operation === "create" ? saveTargets : [], defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined };
   await persistPendingPasskeyRequest(pending);
   schedulePasskeyExpiry(id, expiresAt);
+  const duplicateCredentialIds = duplicatePasskeyCredentialIds(state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt));
   return {
     candidateId: id,
     operation: request.operation,
@@ -2620,7 +2621,23 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
     userVerificationRequired: passkeyRequiresUserVerification(request),
     saveTargets: request.operation === "create" ? saveTargets.map((target) => ({ providerId: target.providerId, name: target.name, sourceMode: target.kind === "bitwarden" ? "bitwarden" : "browser-local" })) : [],
     defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined,
-    credentials: matches.map((item) => ({ itemId: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local", userVerificationRequired: item.userVerificationRequired === true, useCount: item.useCount || 0, lastUsedAt: item.lastUsedAt })),
+    credentials: matches.map((item) => {
+      const provider = item.providerRefs[0]
+        ? state.providers.find((candidate) => candidate.id === item.providerRefs[0].providerId)
+        : undefined;
+      return {
+        itemId: item.id,
+        title: item.title,
+        userName: item.userName,
+        userDisplayName: item.userDisplayName,
+        sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local",
+        providerName: provider?.name || (item.sourceMode === "bitwarden" ? "Bitwarden" : "Monica 本地库"),
+        credentialConflict: duplicateCredentialIds.has(normalizeCredentialId(item.credentialId)),
+        userVerificationRequired: item.userVerificationRequired === true,
+        useCount: item.useCount || 0,
+        lastUsedAt: item.lastUsedAt
+      };
+    }),
     expiresAt
   };
 }
@@ -2730,10 +2747,17 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
       await deletePendingPasskeyRequest(candidateId).catch(() => undefined);
       return result;
     }
+    const liveState = await service.readState();
+    const livePasskeys = liveState.items.filter((candidate): candidate is PasskeyItem => candidate.kind === "passkey" && !candidate.deletedAt);
+    const liveMatches = selectPasskeyCandidates(livePasskeys, activePending.rpId, activePending.request.allowCredentialIds)
+      .filter((candidate) => activePending.matches.includes(candidate.id));
+    if (!itemId && duplicatePasskeyCredentialIds(liveMatches).size) {
+      throw new Error("检测到重复的 Passkey 凭据 ID，请明确选择密码源。");
+    }
     const selectedId = itemId || activePending.matches[0];
-    if (!activePending.matches.includes(selectedId)) throw new Error("所选 Passkey 不属于当前请求。");
-    const item = await service.getItem(selectedId);
-    if (!item || item.kind !== "passkey" || passkeyAvailability(item, activePending.rpId) !== "ready" || !item.privateKeyPkcs8) throw new Error("所选 Passkey 没有可用私钥或算法不受支持。");
+    const item = liveMatches.find((candidate) => candidate.id === selectedId);
+    if (!item) throw new Error("所选 Passkey 不属于当前请求，或密码库内容已经变化。");
+    if (passkeyAvailability(item, activePending.rpId) !== "ready" || !item.privateKeyPkcs8) throw new Error("所选 Passkey 没有可用私钥或算法不受支持。");
     const userVerified = await verifyPasskeyUserIfRequired(activePending.request, item.userVerificationRequired);
     const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8, signCount: item.signCount, userVerified });
     if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
