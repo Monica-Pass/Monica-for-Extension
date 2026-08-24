@@ -259,7 +259,7 @@ const mdbx2Providers = computed(() => providers.value.filter((provider) => provi
 const editingMdbx2Provider = computed(() => providers.value.find((provider) => provider.id === editingMdbx2Id.value && provider.kind === "mdbx2"));
 const externalProviders = computed(() => providers.value.filter((provider) => provider.kind !== "local"));
 const attachmentProviderById = computed(() => new Map(providers.value
-  .filter((provider) => provider.kind === "keepass" || provider.kind === "mdbx2" || provider.kind === "bitwarden")
+  .filter((provider) => provider.kind === "keepass" || provider.kind === "mdbx2" || provider.kind === "bitwarden" || provider.kind === "monica-webdav")
   .map((provider) => [provider.id, provider])));
 const keePassHistoryProviderById = computed(() => new Map(keePassProviders.value
   .filter((provider) => Boolean(keePassSessions.value[provider.id]))

@@ -80,6 +80,7 @@ let listGeneration = 0;
 const deleteOperationIds = new Map<string, string>();
 
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
+const readOnlyProvider = computed(() => selectedProvider.value?.kind === "monica-webdav");
 const transferTargets = computed(() => props.providers.filter((provider) => provider.id !== selectedProviderId.value));
 const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
 const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || recoveryBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
@@ -95,6 +96,7 @@ const regularAttachments = computed(() => {
 const providerDescription = computed(() => {
   if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
   if (selectedProvider.value?.kind === "bitwarden") return "Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。";
+  if (readOnlyProvider.value) return "来自 Monica Android 的 portable 附件；当前只读并在下载前校验大小和 SHA-256。";
   if (selectedProvider.value?.config.sourceMode === "webdav") return "KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。";
   return "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。";
 });
@@ -557,9 +559,9 @@ function transferErrorMessage(cause: unknown): string {
         </label>
         <div v-else class="attachment-provider-summary">
           <m3e-icon :name="selectedProvider?.kind === 'mdbx2' ? 'database' : selectedProvider?.kind === 'bitwarden' ? 'shield_lock' : 'key'"></m3e-icon>
-          <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : 'KeePass' }}</small></span>
+          <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : selectedProvider?.kind === 'monica-webdav' ? 'Monica Android WebDAV' : 'KeePass' }}</small></span>
         </div>
-        <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>添加附件</m3e-button>
+        <m3e-button v-if="!readOnlyProvider" variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>添加附件</m3e-button>
         <input ref="fileInput" class="attachment-file-input" type="file" :accept="fileInputAccept || undefined" aria-label="选择附件文件" @change="handleFileSelection" />
       </div>
 
@@ -658,9 +660,9 @@ function transferErrorMessage(cause: unknown): string {
               <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ attachmentSizeLabel(attachment) }} · {{ attachment.mediaType || '未知媒体类型' }} · 随密码源加密</small></span>
               <span class="attachment-row-actions">
                 <m3e-icon-button :aria-label="`下载 ${attachment.fileName}`" :disabled="interactionLocked" @click="downloadAttachment(attachment)"><m3e-icon :name="downloadingAttachmentId === attachment.attachmentId ? 'progress_activity' : 'download'"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button :aria-label="`替换 ${attachment.fileName} 的内容`" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button v-if="transferTargets.length" :aria-label="`复制或移动 ${attachment.fileName} 到其他密码源`" :disabled="interactionLocked" @click="requestTransfer(attachment)"><m3e-icon name="drive_file_move"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button class="attachment-delete-button" :aria-label="`删除 ${attachment.fileName}`" :disabled="interactionLocked" @click="requestDelete(attachment)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider" :aria-label="`替换 ${attachment.fileName} 的内容`" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider && transferTargets.length" :aria-label="`复制或移动 ${attachment.fileName} 到其他密码源`" :disabled="interactionLocked" @click="requestTransfer(attachment)"><m3e-icon name="drive_file_move"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider" class="attachment-delete-button" :aria-label="`删除 ${attachment.fileName}`" :disabled="interactionLocked" @click="requestDelete(attachment)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
               </span>
             </div>
             <div v-if="pendingTransfer?.attachment.attachmentId === attachment.attachmentId" class="attachment-transfer-panel">

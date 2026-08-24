@@ -1,7 +1,8 @@
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
-import { deleteAndroidBackupItem, readAndroidBackup, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
+import { deleteAndroidBackupItem, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument } from "./android-backup-codec";
+import type { ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
 import { createSourceRecord } from "../../core/source-records";
 
@@ -152,6 +153,22 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
   }
 
+  async listAttachments(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<ProviderAttachmentPage> {
+    const loaded = await this.loadLatest(account, signal);
+    if (!loaded) return { items: [] };
+    const items = listAndroidPortableAttachments(loaded.document, item).map((attachment) => portableSummary(attachment));
+    return { items };
+  }
+
+  async readAttachment(account: ProviderAccount, item: VaultItem, attachmentId: string, signal?: AbortSignal): Promise<ProviderAttachmentReadBeginResult & { bytes: Uint8Array }> {
+    const loaded = await this.loadLatest(account, signal);
+    if (!loaded) throw new Error("WebDAV 中尚无 Monica Android 备份。");
+    const attachment = listAndroidPortableAttachments(loaded.document, item).find((candidate) => candidate.attachmentId === attachmentId);
+    if (!attachment) throw new Error("Android portable 附件不存在或不属于当前项目。");
+    const bytes = await readAndroidPortableAttachment(loaded.document, attachment);
+    return { ...portableSummary(attachment), readHandle: "", maxChunkBytes: 256 * 1024, bytes };
+  }
+
   async loadLatest(account: ProviderAccount, signal?: AbortSignal): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument } | null> {
     const client = this.client(account);
     const [file] = await client.listBackups(signal);
@@ -188,6 +205,10 @@ export class MonicaWebDavProvider implements ProviderAdapter {
   private client(account: ProviderAccount): WebDavClient {
     return new WebDavClient(readConfig(account), this.fetcher);
   }
+}
+
+function portableSummary(attachment: { attachmentId: string; fileName: string; sizeBytes: number; mimeType?: string }): ProviderAttachmentSummary {
+  return { attachmentId: attachment.attachmentId, providerKind: "monica-webdav", fileName: attachment.fileName, sizeBytes: attachment.sizeBytes, protected: true, mediaType: attachment.mimeType };
 }
 
 function readConfig(account: ProviderAccount): MonicaWebDavConfig {

@@ -80,7 +80,8 @@ const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
 const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
 const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore(), () => Date.now(), new ChromeVaultDeviceKeyStore());
 const providers = new ProviderRegistry();
-providers.register(new MonicaWebDavProvider());
+const monicaWebDavProvider = new MonicaWebDavProvider();
+providers.register(monicaWebDavProvider);
 const bitwardenProvider = new BitwardenProvider();
 providers.register(bitwardenProvider);
 const bitwardenDurableSync = new BitwardenDurableSyncCoordinator(bitwardenProvider, service);
@@ -1227,6 +1228,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           clearBitwardenOrganizationKeys(context.organizationKeys);
         }
       }
+      if (account.kind === "monica-webdav") return monicaWebDavProvider.listAttachments(account, item);
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_RECOVERY_STATUS": {
@@ -1261,6 +1263,15 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS
         });
         return { ...attachment, readHandle, maxChunkBytes: PROVIDER_ATTACHMENT_CHUNK_BYTES };
+      }
+      if (account.kind === "monica-webdav") {
+        pruneProviderAttachmentReads();
+        if (providerAttachmentReads.size >= PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS) throw new ProviderAttachmentError("attachment-read-limit", "同时进行的附件下载过多，请完成或取消现有下载。");
+        const result = await monicaWebDavProvider.readAttachment(account, item, request.attachmentId);
+        const readHandle = crypto.randomUUID();
+        providerAttachmentReads.set(readHandle, { providerId: account.id, itemId: item.id, attachmentId: request.attachmentId, expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS });
+        result.bytes.fill(0);
+        return { attachmentId: result.attachmentId, providerKind: result.providerKind, fileName: result.fileName, sizeBytes: result.sizeBytes, protected: result.protected, mediaType: result.mediaType, readHandle, maxChunkBytes: PROVIDER_ATTACHMENT_CHUNK_BYTES };
       }
       if (account.kind === "mdbx2") {
         const target = requireMdbx2AttachmentTarget(account, item);
@@ -1320,6 +1331,21 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         const result = await mdbx2NativeClient.readAttachmentChunk(request.readHandle, request.offset, request.maxBytes);
         return { ...result };
       }
+      if (account.kind === "monica-webdav") {
+        pruneProviderAttachmentReads();
+        const route = providerAttachmentReads.get(request.readHandle);
+        if (!route || route.providerId !== account.id) throw new ProviderAttachmentError("attachment-read-not-found", "附件下载已过期，请重新开始。");
+        const { item } = await requireAttachmentTarget(route.providerId, route.itemId);
+        const result = await monicaWebDavProvider.readAttachment(account, item, route.attachmentId);
+        route.expiresAt = Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS;
+        const offset = request.offset;
+        const maxBytes = Math.min(request.maxBytes ?? PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES);
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > result.bytes.byteLength) throw new ProviderAttachmentError("attachment-read-offset-invalid", "附件读取位置无效。");
+        const bytes = result.bytes.slice(offset, Math.min(offset + maxBytes, result.bytes.byteLength));
+        try {
+          return { readHandle: request.readHandle, attachmentId: result.attachmentId, fileName: result.fileName, sizeBytes: result.sizeBytes, offset, nextOffset: offset + bytes.byteLength, dataBase64: bytesToBase64(bytes), eof: offset + bytes.byteLength === result.sizeBytes };
+        } finally { bytes.fill(0); result.bytes.fill(0); }
+      }
       if (account.kind === "bitwarden") {
         pruneProviderAttachmentReads();
         const route = bitwardenAttachmentReadRoutes.get(request.readHandle);
@@ -1354,6 +1380,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         bitwardenAttachmentReadRoutes.delete(request.readHandle);
         return bitwardenAttachmentDownloads.release(account.id, request.readHandle);
       }
+      if (account.kind === "monica-webdav") return providerAttachmentReads.delete(request.readHandle);
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_BEGIN": {

@@ -31,6 +31,23 @@ export interface AndroidBackupDocument {
   passwordHistoryRaw?: unknown[];
 }
 
+export interface AndroidPortableAttachment {
+  attachmentId: string;
+  parentPasswordId?: number;
+  parentSecureItemId?: string;
+  fileName: string;
+  mimeType?: string;
+  sizeBytes: number;
+  sha256Hex: string;
+  payloadPath: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+const PORTABLE_ATTACHMENT_MANIFEST = "attachments_portable/attachments_portable.json";
+const PORTABLE_ATTACHMENT_PATH = /^attachments_portable\/([^/]+)\.bin$/;
+const PORTABLE_ATTACHMENT_MAX_BYTES = 256 * 1024 * 1024;
+
 const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
 export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, options: AndroidBackupCodecOptions = {}): AndroidBackupDocument {
@@ -350,6 +367,63 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
     } satisfies PaymentAccountItem;
   }
   return null;
+}
+
+export function listAndroidPortableAttachments(document: AndroidBackupDocument, item: VaultItem): AndroidPortableAttachment[] {
+  const manifest = parsePortableAttachmentManifest(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
+  if (!manifest.length) return [];
+  const ids = new Set<number>();
+  for (const reference of item.providerRefs) {
+    const match = reference.remoteId?.match(/password_(-?\d+)_\d+\.json$/i);
+    if (match) ids.add(Number(match[1]));
+  }
+  return manifest.filter((attachment) =>
+    (attachment.parentSecureItemId && attachment.parentSecureItemId === item.id)
+    || (attachment.parentPasswordId !== undefined && ids.has(attachment.parentPasswordId))
+  );
+}
+
+export async function readAndroidPortableAttachment(document: AndroidBackupDocument, attachment: AndroidPortableAttachment): Promise<Uint8Array> {
+  const bytes = document.entries[attachment.payloadPath];
+  if (!bytes) throw new Error("Android portable 附件内容不存在。");
+  if (bytes.byteLength !== attachment.sizeBytes) throw new Error("Android portable 附件大小校验失败。");
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice());
+  const actual = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  if (actual !== attachment.sha256Hex) throw new Error("Android portable 附件 SHA-256 校验失败。");
+  return bytes.slice();
+}
+
+function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAttachment[] {
+  if (!bytes) return [];
+  let raw: unknown;
+  try { raw = JSON.parse(strFromU8(bytes)); } catch { return []; }
+  if (!Array.isArray(raw)) return [];
+  const result: AndroidPortableAttachment[] = [];
+  for (const value of raw) {
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    const payloadPath = typeof record.payloadPath === "string" ? record.payloadPath : "";
+    const fileName = typeof record.fileName === "string" ? record.fileName : "";
+    const sha256Hex = typeof record.sha256Hex === "string" ? record.sha256Hex.toLowerCase() : "";
+    const sizeBytes = typeof record.sizeBytes === "number" ? record.sizeBytes : NaN;
+    if (!PORTABLE_ATTACHMENT_PATH.test(payloadPath) || !fileName || !/^[0-9a-f]{64}$/.test(sha256Hex)) continue;
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > PORTABLE_ATTACHMENT_MAX_BYTES) continue;
+    const parentPasswordId = typeof record.parentPasswordId === "number" && Number.isSafeInteger(record.parentPasswordId) ? record.parentPasswordId : undefined;
+    const parentSecureItemId = typeof record.parentSecureItemId === "string" && record.parentSecureItemId ? record.parentSecureItemId : undefined;
+    result.push({
+      attachmentId: `android-portable:${payloadPath}`,
+      parentPasswordId,
+      parentSecureItemId,
+      fileName,
+      mimeType: typeof record.mimeType === "string" && record.mimeType ? record.mimeType : undefined,
+      sizeBytes,
+      sha256Hex,
+      payloadPath,
+      createdAt: typeof record.createdAt === "number" ? record.createdAt : undefined,
+      updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : undefined
+    });
+  }
+  return result;
 }
 
 function readAndroidPasswordHistory(

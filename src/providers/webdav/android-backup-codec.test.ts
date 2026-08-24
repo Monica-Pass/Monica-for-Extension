@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem } from "../../core/model";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, readAndroidBackup, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -340,6 +340,31 @@ function currentAndroidRecordsFixture() {
 }
 
 describe("Android backup ZIP codec", () => {
+  it("indexes and verifies portable attachments for the matching Android password", async () => {
+    const payload = new TextEncoder().encode("hello attachment");
+    const digest = await crypto.subtle.digest("SHA-256", payload);
+    const sha256Hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const zip = zipSync({
+      "folders/_root/passwords/password_42_0.json": strToU8(JSON.stringify({ id: 42, title: "Test", username: "u" })),
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify([{ parentPasswordId: 42, fileName: "a.txt", mimeType: "text/plain", sizeBytes: payload.byteLength, sha256Hex, payloadPath: "attachments_portable/abc.bin" }])),
+      "attachments_portable/abc.bin": payload
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    const [item] = document.items;
+    const [attachment] = listAndroidPortableAttachments(document, item);
+    expect(attachment.fileName).toBe("a.txt");
+    await expect(readAndroidPortableAttachment(document, attachment)).resolves.toEqual(payload);
+  });
+
+  it("ignores path traversal entries and rejects digest mismatches", async () => {
+    const payload = new TextEncoder().encode("bad");
+    const zip = zipSync({
+      "attachments_portable/attachments_portable.json": strToU8(JSON.stringify([{ parentSecureItemId: "item", fileName: "x", sizeBytes: payload.byteLength, sha256Hex: "0".repeat(64), payloadPath: "attachments_portable/../secret.bin" }])),
+      "attachments_portable/secret.bin": payload
+    });
+    const document = readAndroidBackup(zip, "webdav");
+    expect(listAndroidPortableAttachments(document, { id: "item", providerRefs: [] } as never)).toEqual([]);
+  });
   it("round-trips the checked-in forward-compatible Android fixture", () => {
     const fixture = JSON.parse(readFileSync(new URL("../../../tests/fixtures/android/forward-compatible-record.json", import.meta.url), "utf8")) as {
       path: string;
