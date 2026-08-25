@@ -245,6 +245,12 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     const storedAfterSign = await fixturePasskeyEntry(remote.bytes, rpId);
     expect(storedAfterSign.credentialId).toBe(created[0].credentialId);
     expect(storedAfterSign.useCount).toBe(1);
+
+    expect(await send(launched.manager, { type: "VAULT_DELETE_ITEM", itemId: created[0].id })).toMatchObject({ ok: true });
+    expect(await send(launched.manager, { type: "PROVIDER_SYNC", providerId })).toMatchObject({ ok: true, data: { conflicts: 0 } });
+    expect(remote.putCount).toBe(3);
+    expect(await vaultPasskeys(launched.manager)).toHaveLength(0);
+    await expect(fixturePasskeyEntry(remote.bytes, rpId)).rejects.toThrow("Passkey 条目");
     await expectSecretsAbsent(launched.manager);
   } finally {
     await context?.close();
@@ -265,7 +271,16 @@ interface FixturePasskeyEntry {
 
 async function fixturePasskeyEntry(bytes: Uint8Array, rpId: string): Promise<FixturePasskeyEntry> {
   const database = await kdbxRuntime.Kdbx.load(bytes.slice().buffer, keePassCredentials(DATABASE_PASSWORD));
+  const recycleBinUuid = database.meta.recycleBinUuid?.id;
   for (const entry of database.getDefaultGroup().allEntries()) {
+    // Deleted entries move into the KDBX recycle bin; only the active tree counts as present.
+    let parent: kdbxweb.KdbxGroup | undefined = entry.parentGroup;
+    let inRecycleBin = false;
+    while (parent) {
+      if (recycleBinUuid && parent.uuid.id === recycleBinUuid) inRecycleBin = true;
+      parent = parent.parentGroup;
+    }
+    if (inRecycleBin) continue;
     const relyingParty = entry.fields.get("KPEX_PASSKEY_RELYING_PARTY");
     if (typeof relyingParty !== "string" || relyingParty !== rpId) continue;
     const text = (value: unknown): string => (typeof value === "string" ? value : (value as { getText?: () => string })?.getText?.() ?? "");

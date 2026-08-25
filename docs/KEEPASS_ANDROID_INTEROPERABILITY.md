@@ -33,4 +33,15 @@ KDBX `Meta/Generator` identifies the application that last serialized the file. 
 
 Twofish remains outside the browser implementation because `kdbxweb` has no audited Twofish engine. Reclassifying a Twofish failure as an incorrect password would be unsafe and misleading, so the outer KDBX header is inspected before password derivation.
 
+## Browser Passkey support in KDBX
+
+The extension treats passkey entries as first-class KDBX citizens, using the same dual format as Monica Android:
+
+- **Read**: an entry carrying `MonicaPasskeyCredentialId`/`MonicaPasskeyData` (Monica payload wins) or the five `KPEX_PASSKEY_*` fields written by KeePassDX is projected into a usable browser credential when it contains an ES256 private key. Entries whose private key is an Android key alias stay metadata-only.
+- **Create**: the WebAuthn bridge can save a newly registered passkey into a connected KDBX through the normal sync queue. The written entry carries both the Monica payload and the KeePassDX fields (`KPEX_PASSKEY_USERNAME`, `KPEX_PASSKEY_PRIVATE_KEY_PEM`, `KPEX_PASSKEY_CREDENTIAL_ID`, `KPEX_PASSKEY_USER_HANDLE`, `KPEX_PASSKEY_RELYING_PARTY`, backup flags), so KeePassDX and Monica Android read it natively.
+- **Assert**: every browser assertion updates the stored `signCount`/`useCount` and syncs them back into the KDBX through the same field-patch path, preserving entry history and unknown fields.
+- **Delete**: removing the vault item removes the KDBX entry through the sync queue.
+
+The E2E acceptance is `tests/e2e/keepass-webdav.spec.ts` ("KeePass passkey saves into the KDBX and signs a later assertion"); codec-level round trips live in `src/providers/keepass/keepass-passkey-codec.test.ts`.
+
 This acceptance verifies format interoperability for the exercised structures. It does not make the Android repository writable and does not expose KDBX bytes, credentials, attachment plaintext, passkey private keys, or source records to Popup or content-script contexts.
