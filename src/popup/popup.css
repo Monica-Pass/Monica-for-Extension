@@ -323,6 +323,7 @@ body.popup-body {
 .match-section,
 .match-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
 }
 

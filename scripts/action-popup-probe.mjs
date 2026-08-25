@@ -151,13 +151,16 @@ try {
       type: "VAULT_IMPORT_ITEMS",
       items: [
         { id: "probe-github", kind: "login", title: "GitHub 账号", username: "joy@github", password: "gh-secret", uris: ["https://github.com"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
-        { id: "probe-forum", kind: "login", title: "论坛账号", username: "ling@forum", password: "forum-secret", uris: ["https://forum.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] }
+        { id: "probe-forum", kind: "login", title: "论坛账号", username: "ling@forum", password: "forum-secret", uris: ["https://forum.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
+        { id: "probe-long", kind: "login", title: "一个非常非常长的登录项标题用来验证列表不会把弹窗撑出横向滚动条", username: "extremely-long-username-for-overflow-regression@example-domain.test", password: "long-secret", uris: ["https://long.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] }
       ]
     });
   });
   assert(seeded?.ok, `Action Popup search probe could not seed logins: ${seeded?.error || "unknown"}`);
   await popup.evaluate(() => window.__monicaPopupRefresh());
   await popup.getByText("全部登录项").waitFor({ timeout: 15000 });
+  const overflow = await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
+  assert(overflow.scroll <= overflow.client + 1, `Action Popup global list causes horizontal overflow: client=${overflow.client} scroll=${overflow.scroll}`);
   await popup.getByLabel("搜索全部登录项").fill("github");
   await popup.waitForTimeout(300);
   const searchText = await popup.locator(".popup-shell").innerText();
