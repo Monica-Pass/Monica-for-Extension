@@ -423,6 +423,19 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
       return matches.map(toMatchSummary);
     }
+    case "VAULT_LIST_LOGIN_SUMMARIES": {
+      assertExtensionPage(sender);
+      return (await service.listItems())
+        .filter((item): item is LoginItem => isLoginItem(item) && !item.deletedAt)
+        .sort((left, right) => Number(right.favorite) - Number(left.favorite) || right.updatedAt.localeCompare(left.updatedAt))
+        .map(toMatchSummary);
+    }
+    case "VAULT_LOGIN_SECRET": {
+      assertExtensionPage(sender);
+      const item = (await service.listItems()).find((candidate): candidate is LoginItem => candidate.id === request.itemId && isLoginItem(candidate) && !candidate.deletedAt);
+      if (!item) throw new Error("登录项不存在或已删除。");
+      return { value: request.field === "password" ? item.password : item.username };
+    }
     case "VAULT_MATCH_PASSKEYS": {
       assertExtensionPage(sender);
       const page = new URL(request.pageUrl);

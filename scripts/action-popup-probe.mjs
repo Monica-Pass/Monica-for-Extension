@@ -140,6 +140,46 @@ try {
     console.log(`Saved Action Popup screenshot to ${screenshotPath}.`);
   }
   console.log(`Verified real Action Popup: ${metrics.innerWidth}x${metrics.innerHeight}px, root ${metrics.rootWidth}px, ${icons.length} icons fit at 200% text.`);
+
+  // Phase 2: unlock, then seed + refresh entirely inside the popup (focus changes close it).
+  await popup.getByLabel("主密码").fill("popup icon probe password");
+  await popup.getByRole("button", { name: "解锁", exact: true }).click();
+  await popup.getByLabel("搜索全部登录项").waitFor({ state: "attached", timeout: 15000 });
+  const seeded = await popup.evaluate(async () => {
+    const now = new Date().toISOString();
+    return chrome.runtime.sendMessage({
+      type: "VAULT_IMPORT_ITEMS",
+      items: [
+        { id: "probe-github", kind: "login", title: "GitHub 账号", username: "joy@github", password: "gh-secret", uris: ["https://github.com"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
+        { id: "probe-forum", kind: "login", title: "论坛账号", username: "ling@forum", password: "forum-secret", uris: ["https://forum.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] }
+      ]
+    });
+  });
+  assert(seeded?.ok, `Action Popup search probe could not seed logins: ${seeded?.error || "unknown"}`);
+  await popup.evaluate(() => window.__monicaPopupRefresh());
+  await popup.getByText("全部登录项").waitFor({ timeout: 15000 });
+  await popup.getByLabel("搜索全部登录项").fill("github");
+  await popup.waitForTimeout(300);
+  const searchText = await popup.locator(".popup-shell").innerText();
+  assert(searchText.includes("GitHub 账号"), "Action Popup search did not surface the GitHub login.");
+  assert(!searchText.includes("论坛账号"), "Action Popup search leaked a non-matching login.");
+  await popup.getByRole("button", { name: "复制用户名" }).first().click();
+  await popup.getByText("已复制用户名").waitFor({ timeout: 5000 });
+
+  await site.goto("chrome://version/");
+  await popup.evaluate(() => window.__monicaPopupRefresh());
+  await popup.getByText("此浏览器页面不允许自动填充").waitFor({ timeout: 15000 });
+  await popup.getByLabel("搜索全部登录项").fill("");
+  await popup.waitForTimeout(300);
+  const unsupportedText = await popup.locator(".popup-shell").innerText();
+  assert(unsupportedText.includes("全部登录项"), "Action Popup hid the global login list on an unsupported page.");
+  await popup.getByLabel("搜索全部登录项").fill("论坛");
+  await popup.waitForTimeout(300);
+  const unsupportedFiltered = await popup.locator(".popup-shell").innerText();
+  assert(unsupportedFiltered.includes("论坛账号"), "Action Popup search failed on an unsupported page.");
+  await popup.getByRole("button", { name: "复制密码" }).first().click();
+  await popup.getByText("已复制密码").waitFor({ timeout: 5000 });
+  console.log("Verified Action Popup global search and copy fallback on an unsupported page.");
 } finally {
   await attachedBrowser?.close().catch(() => undefined);
   await ownerContext?.close().catch(() => undefined);
@@ -172,7 +212,7 @@ async function connectToBrowser(port) {
 }
 
 async function waitForPopup(browser) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     const popup = browser.contexts().flatMap((context) => context.pages()).find((page) => page.url().endsWith("/popup.html"));
     if (popup) return popup;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));

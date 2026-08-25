@@ -107,8 +107,8 @@ body.popup-body {
 }
 
 .popup-brand img {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
 }
 
@@ -122,7 +122,7 @@ body.popup-body {
 }
 
 .popup-brand strong {
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 
 .popup-brand small,
@@ -135,7 +135,7 @@ body.popup-body {
 }
 
 .site-summary {
-  min-height: 72px;
+  min-height: 62px;
   gap: 12px;
   border-radius: var(--app-shape-card);
   padding: 10px 12px;
@@ -155,6 +155,11 @@ body.popup-body {
   white-space: nowrap;
 }
 
+.site-summary strong,
+.popup-state strong {
+  font-size: 0.95rem;
+}
+
 .site-icon,
 .credential-icon {
   flex: 0 0 auto;
@@ -165,8 +170,8 @@ body.popup-body {
 }
 
 .site-icon {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--app-shape-card);
 }
 
@@ -191,25 +196,25 @@ body.popup-body {
 }
 
 .popup-state {
-  min-height: 250px;
+  min-height: 210px;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 10px;
-  padding: 28px;
+  padding: 22px;
   text-align: center;
 }
 
 .popup-state > m3e-icon {
-  --m3e-icon-size: 48px;
-  width: 48px;
-  height: 48px;
-  font-size: 48px;
+  --m3e-icon-size: 38px;
+  width: 38px;
+  height: 38px;
+  font-size: 38px;
   color: var(--app-primary);
 }
 
 .popup-unlock {
-  min-height: 250px;
+  min-height: 210px;
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
   gap: 12px;
@@ -300,7 +305,7 @@ body.popup-body {
 
 .section-title h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.92rem;
   font-weight: 700;
 }
 
@@ -325,9 +330,72 @@ body.popup-body {
   padding: 1px;
 }
 
+.popup-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  border: 1px solid color-mix(in srgb, var(--app-muted) 26%, transparent);
+  border-radius: var(--app-shape-card);
+  padding: 0 12px;
+  color: var(--app-muted);
+  background: color-mix(in srgb, var(--app-surface) 90%, var(--app-bg));
+}
+
+.popup-search:focus-within {
+  border-color: var(--app-primary);
+}
+
+.popup-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  color: var(--app-text);
+  background: transparent;
+  font: inherit;
+}
+
+.popup-search input:focus {
+  outline: none;
+}
+
+.login-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+}
+
+.login-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.login-row-main:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.row-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
 .credential-card {
   width: 100%;
-  min-height: 68px;
+  min-height: 60px;
   gap: 12px;
   border: 1px solid color-mix(in srgb, var(--app-muted) 22%, transparent);
   border-radius: var(--app-shape-card);
@@ -423,8 +491,8 @@ body.popup-body {
 }
 
 .credential-icon {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--app-shape-card);
 }
 
