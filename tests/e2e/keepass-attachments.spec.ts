@@ -258,7 +258,7 @@ test("KeePass Android-managed bank-card photos have front/back controls and pres
 
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: /^钱包与身份/ }).click();
-    const cardRow = page.getByRole("row").filter({ hasText: "Android Bank Card" });
+    const cardRow = page.locator(".item-card").filter({ hasText: "Android Bank Card" });
     await expect(cardRow).toBeVisible();
     await cardRow.getByRole("button", { name: "管理 Android Bank Card 的附件" }).click();
 

@@ -42,21 +42,21 @@ test("manager archive and recycle-bin views keep records recoverable and privile
     await manager.reload();
     await manager.waitForLoadState("load");
     await openMobileSection(manager, /^归档/);
-    await expect(manager.getByRole("row").filter({ hasText: "Archived account" })).toBeVisible();
+    await expect(manager.locator(".item-card").filter({ hasText: "Archived account" })).toBeVisible();
     await expect(manager.getByRole("button", { name: "取消归档 Archived account" })).toBeVisible();
     await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "8px");
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     await expectNoHorizontalOverflow(manager);
     await expectNoGradients(manager.locator(".lifecycle-page"));
     await manager.getByRole("button", { name: "取消归档 Archived account" }).click();
-    await expect(manager.getByRole("row").filter({ hasText: "Archived account" })).toHaveCount(0);
+    await expect(manager.locator(".item-card").filter({ hasText: "Archived account" })).toHaveCount(0);
 
     await openMobileSection(manager, /^回收站/);
-    await expect(manager.getByRole("row").filter({ hasText: "Deleted account" })).toBeVisible();
+    await expect(manager.locator(".item-card").filter({ hasText: "Deleted account" })).toBeVisible();
     await manager.getByRole("button", { name: "恢复 Deleted account" }).click();
-    await expect(manager.getByRole("row").filter({ hasText: "Deleted account" })).toHaveCount(0);
+    await expect(manager.locator(".item-card").filter({ hasText: "Deleted account" })).toHaveCount(0);
     await openMobileSection(manager, /^登录项/);
-    await expect(manager.getByRole("row").filter({ hasText: "Deleted account" })).toBeVisible();
+    await expect(manager.locator("tr.row-clickable").filter({ hasText: "Deleted account" })).toBeVisible();
 
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);

@@ -68,7 +68,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await expect(manager.getByText("Example OTP", { exact: true })).toBeVisible();
 
     await manager.getByRole("button", { name: /安全笔记/ }).click();
-    const noteRow = manager.getByRole("row").filter({ hasText: "Private Note" });
+    const noteRow = manager.locator(".item-card").filter({ hasText: "Private Note" });
     manager.once("dialog", (dialog) => void dialog.accept());
     await noteRow.getByRole("button", { name: "删除安全笔记" }).click();
     await expect(manager.getByText("Private Note", { exact: true })).toHaveCount(0);
