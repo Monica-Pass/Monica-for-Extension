@@ -186,6 +186,110 @@ test("remote KeePass preserves a rebase conflict code and never overwrites the c
   }
 });
 
+test("KeePass passkey saves into the KDBX and signs a later assertion", async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  let context: BrowserContext | undefined;
+  try {
+    const fixture = await buildKeePassFixture({
+      password: DATABASE_PASSWORD,
+      name: "KeePass Passkey Fixture",
+      entries: [{ title: "Anchor login", group: "Shared", fields: { UserName: "anchor-user" }, protectedFields: { Password: "anchor-private-secret" } }]
+    });
+    const remote: RemoteState = { bytes: fixture, etag: '"passkey-etag-1"', getCount: 0, putCount: 0 };
+    const launched = await launchExtension(testInfo, remote);
+    context = launched.context;
+    const providerId = await connectRemoteKeePass(launched.manager, "Passkey KeePass");
+
+    const rpId = "keepass-passkey.example.test";
+    await context.route(`https://${rpId}/**`, (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: passkeyCeremonyPage(rpId) }));
+    const page = await context.newPage();
+    await page.goto(`https://${rpId}/`);
+    await page.locator("#register").click();
+    // The prompt lives in a closed shadow root: focus starts on 创建 Passkey;
+    // Shift+Tab twice reaches the 保存位置 select, ArrowDown picks the KeePass target.
+    await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#result")).toContainText("registered:");
+    await expect(page.locator("#result")).not.toContainText("error:");
+
+    const created = await vaultPasskeys(launched.manager);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ sourceMode: "browser-local", signCount: 0 });
+    expect(created[0].providerRefs).toEqual([expect.objectContaining({ providerId })]);
+
+    expect(await send(launched.manager, { type: "PROVIDER_SYNC", providerId })).toMatchObject({ ok: true, data: { conflicts: 0 } });
+    expect(remote.putCount).toBe(1);
+    const stored = await fixturePasskeyEntry(remote.bytes, rpId);
+    expect(stored.credentialId).toBe(created[0].credentialId);
+    expect(stored.privateKeyPem).toContain("BEGIN PRIVATE KEY");
+
+    await page.locator("#authenticate").click();
+    const prompt = page.locator("#monica-passkey-prompt-host");
+    await expect(prompt).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#result")).toContainText("authenticated:");
+    await expect(page.locator("#result")).not.toContainText("error:");
+    const signed = await vaultPasskeys(launched.manager);
+    expect(signed[0]).toMatchObject({ useCount: 1, lastUsedAt: expect.any(String) });
+
+    expect(await send(launched.manager, { type: "PROVIDER_SYNC", providerId })).toMatchObject({ ok: true, data: { conflicts: 0 } });
+    expect(remote.putCount).toBe(2);
+    const storedAfterSign = await fixturePasskeyEntry(remote.bytes, rpId);
+    expect(storedAfterSign.credentialId).toBe(created[0].credentialId);
+    expect(storedAfterSign.useCount).toBe(1);
+    await expectSecretsAbsent(launched.manager);
+  } finally {
+    await context?.close();
+  }
+});
+
+async function vaultPasskeys(page: Page): Promise<Array<Record<string, any>>> {
+  const response = await send<Array<{ kind: string } & Record<string, any>>>(page, { type: "VAULT_LIST_ITEMS" });
+  expect(response, response.error).toMatchObject({ ok: true });
+  return (response.data || []).filter((item) => item.kind === "passkey");
+}
+
+interface FixturePasskeyEntry {
+  credentialId: string;
+  privateKeyPem: string;
+  useCount?: number;
+}
+
+async function fixturePasskeyEntry(bytes: Uint8Array, rpId: string): Promise<FixturePasskeyEntry> {
+  const database = await kdbxRuntime.Kdbx.load(bytes.slice().buffer, keePassCredentials(DATABASE_PASSWORD));
+  for (const entry of database.getDefaultGroup().allEntries()) {
+    const relyingParty = entry.fields.get("KPEX_PASSKEY_RELYING_PARTY");
+    if (typeof relyingParty !== "string" || relyingParty !== rpId) continue;
+    const text = (value: unknown): string => (typeof value === "string" ? value : (value as { getText?: () => string })?.getText?.() ?? "");
+    const payloadText = text(entry.fields.get("MonicaPasskeyData"));
+    let useCount: number | undefined;
+    try { useCount = JSON.parse(payloadText).useCount; } catch { /* Monica payload is optional. */ }
+    return {
+      credentialId: String(entry.fields.get("MonicaPasskeyCredentialId") ?? ""),
+      privateKeyPem: text(entry.fields.get("KPEX_PASSKEY_PRIVATE_KEY_PEM")),
+      useCount
+    };
+  }
+  throw new Error(`KDBX 中没有 ${rpId} 的 Passkey 条目`);
+}
+
+function passkeyCeremonyPage(rpId: string): string {
+  return `<!doctype html><title>KeePass Passkey Test</title><button id="register">Register passkey</button><button id="authenticate">Authenticate passkey</button><output id="result"></output><script>
+    const challenge = () => new Uint8Array(32).fill(21); let credentialId;
+    const decode = value => { const normalized=value.replace(/-/g,'+').replace(/_/g,'/'); const binary=atob(normalized+'='.repeat((4-normalized.length%4)%4)); return Uint8Array.from(binary,c=>c.charCodeAt(0)); };
+    register.onclick = async () => { try { const credential = await navigator.credentials.create({ publicKey: { challenge: challenge(), rp: { id: '${rpId}', name: 'KeePass Passkey Test' }, user: { id: new Uint8Array(16).fill(13), name: 'joy@example.com', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000, attestation: 'none' } }); credentialId=credential.id; result.textContent='registered:'+credential.id; } catch(error) { result.textContent='error:'+error.name+':'+error.message; } };
+    authenticate.onclick = async () => { try { const credential = await navigator.credentials.get({ publicKey: { challenge: challenge(), rpId: '${rpId}', allowCredentials: [{ type:'public-key', id: decode(credentialId) }], timeout: 60000 } }); result.textContent='authenticated:'+credential.id+':'+credential.response.signature.byteLength; } catch(error) { result.textContent='error:'+error.name+':'+error.message; } };
+  </script>`;
+}
+
 async function launchExtension(testInfo: TestInfo, remote: RemoteState): Promise<{ context: BrowserContext; extensionId: string; manager: Page }> {
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {

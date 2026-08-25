@@ -188,7 +188,7 @@ interface PendingPasskeyRequest {
   rpId: string;
   expiresAt: number;
   matches: string[];
-  saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" | "mdbx2" }>;
+  saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" | "mdbx2" | "keepass" }>;
   defaultSaveTargetId?: string;
 }
 
@@ -2592,7 +2592,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   const state = await service.readState();
   const passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
   const saveTargets = state.providers
-    .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" | "mdbx2" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden" || provider.kind === "mdbx2"))
+    .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" | "mdbx2" | "keepass" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden" || provider.kind === "mdbx2" || provider.kind === "keepass"))
     .map((provider) => ({ providerId: provider.id, name: provider.name, kind: provider.kind }));
   const configuredTarget = saveTargets.find((provider) => provider.providerId === state.settings.defaultProviderId);
   const defaultSaveTarget = configuredTarget || saveTargets.find((provider) => provider.kind === "local") || saveTargets[0];
