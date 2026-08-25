@@ -2091,10 +2091,10 @@ function errorCode(error: unknown): string | undefined {
     </div>
 
     <form v-else-if="lifecycle !== 'unlocked'" class="login vault-auth" @submit.prevent="lifecycle === 'uninitialized' ? setupVault() : unlockVault()">
-      <div class="brand"><img src="/icons/logo-256.png" alt="" /><span>Monica<small>浏览器插件</small></span></div>
       <m3e-card variant="outlined" class="login-card">
-        <div slot="content" class="stack">
-          <div><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可选，也可使用设备密钥。' : protectionMode === 'device-key' ? '设备密钥模式可留空解锁。' : '输入主密码解锁。' }}</p></div>
+        <div slot="content" class="stack login-stack">
+          <div class="login-brand"><img src="/icons/logo-256.png" alt="" /><span class="login-brand-copy">Monica<small>浏览器插件</small></span></div>
+          <div class="login-heading"><h1>{{ lifecycle === 'uninitialized' ? '创建加密密码库' : '解锁 Monica' }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? '主密码可选，也可使用设备密钥。' : protectionMode === 'device-key' ? '设备密钥模式可留空解锁。' : '输入主密码解锁。' }}</p></div>
           <label class="field"><span>主密码{{ lifecycle === 'uninitialized' || protectionMode === 'device-key' ? '（可选）' : '' }}</span><input v-model="auth.masterPassword" aria-label="主密码" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></label>
           <label v-if="lifecycle === 'uninitialized'" class="field"><span>确认主密码</span><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
           <div v-if="lifecycle === 'locked' && windowsHelloStatus?.unlockAvailable" class="hello-unlock-action">

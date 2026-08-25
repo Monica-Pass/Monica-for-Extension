@@ -222,7 +222,59 @@ m3e-icon-button {
 }
 
 .login-card {
-  width: min(100%, 430px);
+  width: min(100%, 400px);
+  --m3e-card-padding: 28px;
+}
+
+.login-stack {
+  gap: 18px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.login-brand img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.login-brand-copy {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.login-brand-copy small {
+  display: block;
+  margin-top: 2px;
+  color: var(--md-sys-color-on-surface-variant, var(--app-muted));
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.login-heading h1 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+  line-height: 1.3;
+}
+
+.login-heading p {
+  margin: 0;
+}
+
+.login-card m3e-button[type="submit"] {
+  min-height: 48px;
+  width: 100%;
+}
+
+.login-card .security-note {
+  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  background: transparent;
 }
 
 .stack {

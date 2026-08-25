@@ -21,10 +21,6 @@
   background: var(--app-bg);
 }
 
-.vault-auth h1 {
-  font-size: 2rem;
-}
-
 .security-note {
   min-height: 44px;
   display: flex;
