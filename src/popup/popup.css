@@ -293,6 +293,20 @@ body.popup-body {
   font-size: 0.78rem;
 }
 
+.inline-warning m3e-icon {
+  --m3e-icon-size: 20px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.inline-warning span {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.5;
+}
+
 .danger-warning {
   color: var(--md-sys-color-on-error-container, #410002);
   background: var(--md-sys-color-error-container, #ffdad6);
