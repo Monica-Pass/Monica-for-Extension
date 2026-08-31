@@ -4,7 +4,7 @@
 
 本阶段目标已完成并提交到 `main`：
 
-- 提交：`92c9e59 fix(passkey): import provider FIDO2 credentials`
+- 提交：`49bb5e4 fix(passkey): validate portable EC curve`（包含前序 `92c9e59`）
 - 远端：`origin/main` 已同步
 - worktree：干净
 - 发布包：`release/monica-extension-0.1.23.zip`
@@ -13,7 +13,7 @@
 ## 本阶段实现
 
 1. Bitwarden FIDO2/Passkey 导入支持官方字段 `KeyType`、`KeyAlgorithm`、`KeyCurve`、`KeyValue`，兼容大小写和自部署服务端的明文标量字段。
-2. `KeyValue` 支持 Bitwarden 官方无填充 Base64URL PKCS#8；导入前验证 PKCS#8 算法，当前只有 ES256/P-256 会携带可用私钥。
+2. `KeyValue` 支持 Bitwarden 官方无填充 Base64URL PKCS#8；导入前验证 PKCS#8 算法和 EC 曲线，只有 ES256/P-256 会携带可用私钥，P-384 等曲线仅保留为不可用记录。
 3. 写回 Bitwarden 时生成 `b64.<credential-id>`（UUID 保持 UUID）、`public-key`、`ECDSA`、`P-256` 和 Base64URL `KeyValue`。
 4. 非法、P-384、未知算法和仅 Android 元数据记录仍可查看，但不会被标记为可登录。
 5. Bitwarden 父级 Login Cipher 保留，同时每个 FIDO2 credential 暴露为独立 `kind: passkey` 子项。
@@ -31,7 +31,7 @@
 
 ## 验证结果
 
-- `npm test`：112 个测试文件，1030 项通过。
+- `npm test`：112 个测试文件，1031 项通过。
 - `npm run test:security`：82 项通过，构建和安全审计通过。
 - `npm run audit:production`：0 个生产依赖漏洞。
 - `npm run test:e2e`：96 项通过。
@@ -47,7 +47,7 @@
 2. 用多个 Bitwarden 账户和组织库做登录、令牌刷新、空库保护、Collection/Folder 路由及并发 ETag 场景测试。
 3. 检查 Popup 自动填充候选项对 imported Passkey 的来源/不可用原因提示，确保私钥仍只在后台解密。
 4. 继续 MDBX2 浏览器客户端工作；不要恢复 MDBX1 支持，也不要修改 Android 工作区。
-5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。
+5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。当前最新提交为 `49bb5e4`，已推送 `origin/main`。
 
 下一会话建议先读取：
 
