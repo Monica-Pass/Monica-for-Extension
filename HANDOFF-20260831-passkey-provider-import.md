@@ -8,11 +8,11 @@
 - 引用凭据 ID 与 Android 保持一致，为 `bw_ref_<cipherId>`；RP ID 从可解析的 Login URI 提取并通过 WebAuthn 域名规范化。
 - 没有私钥的记录继续标记为 `android-metadata-only`，不会进入浏览器可用候选项。
 
-- 提交：本次代码提交后更新（见 `git log`），包含前序 Passkey 兼容修复
+- 提交：`13e18cc fix(passkey): import legacy Bitwarden name markers`（包含前序 Passkey 兼容修复）
 - 远端：`origin/main` 已同步
 - worktree：干净
 - 发布包：`release/monica-extension-0.1.23.zip`
-- 包 SHA-256：`5113fe86bab92026ee32c61171a5ca09950064f809e6b25f5fc48d3cf50505cb`
+- 包 SHA-256：`5fea94efacce56e94fa802ba0bb46d86ba5d12bc8e46af4640e5b040819f8cd8`
 
 ## 本阶段实现
 
