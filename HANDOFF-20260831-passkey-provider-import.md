@@ -36,6 +36,7 @@
 - `npm run test:security`：82 项通过，构建和安全审计通过。
 - `npm run audit:production`：0 个生产依赖漏洞。
 - Passkey 专项 E2E：7 项通过（导入、实际认证、锁定、取消、计数器和删除）。完整 `npm run test:e2e` 在本机环境超过 4 分钟未结束，需下一会话单独复跑。
+- 真实自部署 Bitwarden 只读检查：登录成功，`/api/sync` 返回 18 个 Cipher，但 FIDO2 数量为 0，解码得到 14 个登录项和 4 个卡片；该账号当前没有可导入的 Passkey，不能用它验证远端 Passkey 展示。
 - `npm run package:release && npm run package:verify`：通过，包内容与独立生成结果字节一致。
 
 任务过程记录在 `.codex-tasks/20260831-passkey-provider-import/`，其中 `TODO.csv` 和 `PROGRESS.md` 已闭环。根目录临时 TODO CSV 已删除，避免提交临时文件。
