@@ -95,7 +95,9 @@ const TIMELINE_PATH = "timeline_history.json";
 const GENERATOR_HISTORY_SUFFIX = "_generated_history.json";
 const GENERATOR_HISTORY_MAX_ENTRIES = 1_000;
 
-const JSON_PATH = /^folders\/([^/]+)\/(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
+// Current Android exports use folders/<category>/<kind>. Older exports kept
+// passkeys at the archive root; Android restore still accepts that layout.
+const JSON_PATH = /^(?:folders\/([^/]+)\/)?(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
 
 export function listAndroidTimeline(document: AndroidBackupDocument): AndroidTimelineEntrySummary[] {
   const bytes = document.entries[TIMELINE_PATH];

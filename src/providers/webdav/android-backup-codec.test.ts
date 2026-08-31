@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
 import { createAssertion } from "../../passkey/webauthn-core";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
+import { androidFolderKey, androidRecordToItem, deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
 function fixtureZip() {
   const password = {
@@ -341,6 +341,21 @@ function currentAndroidRecordsFixture() {
 }
 
 describe("Android backup ZIP codec", () => {
+  it("imports legacy top-level passkeys accepted by Android restore", () => {
+    const item = androidRecordToItem("passkeys/passkey_legacy.json", {
+      credentialId: "legacy-credential",
+      rpId: "example.com",
+      rpName: "Example",
+      userId: "user",
+      userName: "joy",
+      userDisplayName: "Joy",
+      publicKeyAlgorithm: -7,
+      publicKey: "public",
+      createdAt: 1_700_000_000_000
+    }, "webdav");
+    expect(item).toMatchObject({ kind: "passkey", credentialId: "legacy-credential", sourceMode: "android-metadata-only" });
+  });
+
   it("indexes and verifies portable attachments for the matching Android password", async () => {
     const payload = new TextEncoder().encode("hello attachment");
     const digest = await crypto.subtle.digest("SHA-256", payload);

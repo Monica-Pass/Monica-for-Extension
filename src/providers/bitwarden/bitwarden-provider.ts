@@ -12,6 +12,7 @@ import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
 import { BitwardenAttachmentDownloadService } from "./bitwarden-attachments";
 import { isSteamMaFileLogin, isSteamMaFileName, parseSteamMaFile, STEAM_MAFILE_MAX_BYTES } from "./bitwarden-steam-mafile";
 import { PROVIDER_ATTACHMENT_CHUNK_BYTES, type ProviderAttachmentSummary } from "../attachments/attachment-contract";
+import { normalizeCredentialId } from "../../passkey/source-policy";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
@@ -693,7 +694,11 @@ function itemChanged(item: VaultItem, providerId: string): boolean {
 }
 
 function findEquivalent(local: VaultItem, remotes: VaultItem[]): VaultItem | undefined {
-  if (local.kind === "passkey") return remotes.find((remote) => remote.kind === "passkey" && remote.credentialId === local.credentialId);
+  if (local.kind === "passkey") {
+    const localCredentialId = normalizeCredentialId(local.credentialId);
+    return remotes.find((remote) => remote.kind === "passkey"
+      && normalizeCredentialId(remote.credentialId) === localCredentialId);
+  }
   return remotes.find((remote) => remote.kind === local.kind);
 }
 
