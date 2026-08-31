@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem } from "../core/model";
-import { duplicatePasskeyCredentialIds, hasExcludedUsablePasskey, isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "./source-policy";
+import { decodeBitwardenCredentialId, duplicatePasskeyCredentialIds, hasExcludedUsablePasskey, isUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyAvailabilityLabel, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates, toBitwardenCredentialId } from "./source-policy";
 
 const base: PasskeyItem = {
   id: "passkey-1",
@@ -72,6 +72,12 @@ describe("Passkey source policy", () => {
     const unsupported = { ...base, algorithm: -257 };
     expect(hasExcludedUsablePasskey([metadata, unsupported], "example.com", ["AQID"])).toBe(false);
     expect(hasExcludedUsablePasskey([base], "example.com", ["AQID"])).toBe(true);
+  });
+
+  it("decodes only explicitly tagged Bitwarden byte IDs", () => {
+    expect(decodeBitwardenCredentialId("b64.AAECAwQFBgcICQoLDA0ODw")).toBe("AAECAwQFBgcICQoLDA0ODw");
+    expect(decodeBitwardenCredentialId("android-id")).toBe("android-id");
+    expect(toBitwardenCredentialId("b64.AAECAwQFBgcICQoLDA0ODw")).toBe("b64.AAECAwQFBgcICQoLDA0ODw");
   });
 
   it("detects normalized duplicate credential IDs across provider-owned records", () => {

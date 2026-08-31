@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem, TotpItem } from "../../core/model";
 import { resolveLoginOtp } from "../../core/login-otp";
+import { createAssertion } from "../../passkey/webauthn-core";
 import { decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "./bitwarden-cipher-codec";
 import { decryptBitwardenString, encryptBitwardenBytes, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 
@@ -9,6 +10,7 @@ const KEY: BitwardenSymmetricKey = {
   macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32)
 };
 const REVISION = "2026-07-15T03:00:00.000Z";
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("Bitwarden Cipher codec", () => {
   it("maps login, TOTP, custom fields, and FIDO2 credentials", async () => {
@@ -32,7 +34,7 @@ describe("Bitwarden Cipher codec", () => {
         Fido2Credentials: [{
           CredentialId: await enc("credential-id"),
           KeyAlgorithm: await enc("ECDSA"),
-          KeyValue: await enc("pkcs8-material"),
+          KeyValue: await enc(P256_PKCS8),
           RpId: await enc("github.com"),
           RpName: await enc("GitHub"),
           Counter: await enc("7"),
@@ -62,7 +64,50 @@ describe("Bitwarden Cipher codec", () => {
       bitwardenCustomFieldsVersion: 1
     });
     expect(decoded.items[1]).toMatchObject({ kind: "totp", secret: "JBSWY3DPEHPK3PXP", issuer: "GitHub", accountName: "joy@example.com" });
-    expect(decoded.items[2]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: "pkcs8-material", signCount: 7, sourceMode: "bitwarden" });
+    expect(decoded.items[2]).toMatchObject({ kind: "passkey", credentialId: "credential-id", rpId: "github.com", privateKeyPkcs8: P256_PKCS8, signCount: 7, sourceMode: "bitwarden" });
+  });
+
+  it("imports an official Base64URL PKCS8 KeyValue and uses it for a real assertion", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const keyValue = P256_PKCS8.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const decoded = await decodeBitwardenCipher({
+      id: "official-passkey", type: 1, name: await enc("Example"), revisionDate: REVISION, creationDate: REVISION,
+      login: { username: await enc("joy"), password: null, uris: [], fido2Credentials: [{
+        credentialId: await enc("b64.AAECAwQFBgcICQoLDA0ODw"),
+        keyType: await enc("public-key"), keyAlgorithm: await enc("ECDSA"), keyCurve: await enc("P-256"),
+        keyValue: await enc(keyValue), rpId: await enc("example.com"), rpName: await enc("Example"),
+        counter: await enc("0"), userHandle: await enc("dXNlcg"), userName: await enc("joy"),
+        userDisplayName: await enc("Joy"), discoverable: await enc("true"), creationDate: REVISION
+      }] }
+    }, "provider-official", KEY);
+
+    const passkey = decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")!;
+    expect(passkey.credentialId).toBe("AAECAwQFBgcICQoLDA0ODw");
+    expect(passkey.privateKeyPkcs8).toBe(P256_PKCS8);
+    await expect(createAssertion({
+      origin: "https://example.com",
+      challenge: "AAECAwQFBgcICQoLDA0ODw",
+      rpId: "example.com",
+      credentialId: passkey.credentialId,
+      userHandle: passkey.userHandle,
+      privateKeyPkcs8: passkey.privateKeyPkcs8!,
+      signCount: passkey.signCount
+    })).resolves.toMatchObject({ response: { signature: expect.any(String) } });
+  });
+
+  it("keeps malformed or non-P256 FIDO2 keys visible but never marks them usable", async () => {
+    const enc = (value: string) => encryptBitwardenString(value, KEY);
+    const decoded = await decodeBitwardenCipher({
+      Id: "invalid-passkey", Type: 1, Name: await enc("Invalid"), RevisionDate: REVISION, CreationDate: REVISION,
+      Login: { Fido2Credentials: [{
+        CredentialId: await enc("00112233-4455-6677-8899-aabbccddeeff"), KeyType: await enc("public-key"),
+        KeyAlgorithm: await enc("ECDSA"), KeyCurve: await enc("P-384"), KeyValue: await enc("not-pkcs8"),
+        RpId: await enc("example.com"), Counter: await enc("0"), Discoverable: await enc("true")
+      }] }
+    }, "provider-1", KEY);
+    const passkey = decoded.items.find((item): item is PasskeyItem => item.kind === "passkey")!;
+    expect(passkey).toMatchObject({ sourceMode: "bitwarden", algorithm: -7 });
+    expect(passkey.privateKeyPkcs8).toBeUndefined();
   });
 
   it("projects an Android standalone validator Login into a first-class TOTP item", async () => {
@@ -744,6 +789,11 @@ describe("Bitwarden Cipher codec", () => {
 
   it("creates a login Cipher containing a Bitwarden-compatible FIDO2 credential", async () => {
     const encoded = await encodeBitwardenPasskeyCipher(passkey("new-credential", 0), KEY);
+    const credential = ((encoded.login as Record<string, unknown>).fido2Credentials as Array<Record<string, string>>)[0];
+    await expect(decryptBitwardenString(credential.credentialId, KEY)).resolves.toBe("b64.new-credential");
+    await expect(decryptBitwardenString(credential.keyType, KEY)).resolves.toBe("public-key");
+    await expect(decryptBitwardenString(credential.keyCurve, KEY)).resolves.toBe("P-256");
+    await expect(decryptBitwardenString(credential.keyValue, KEY)).resolves.toBe(P256_PKCS8.replace(/\+/g, "-").replace(/\//g, "_"));
     const decoded = await decodeBitwardenCipher({ ...encoded, id: "created", revisionDate: REVISION, creationDate: REVISION }, "provider-1", KEY);
 
     expect(decoded.items).toHaveLength(2);
@@ -751,7 +801,7 @@ describe("Bitwarden Cipher codec", () => {
     expect(decoded.items[1]).toMatchObject({
       kind: "passkey",
       credentialId: "new-credential",
-      privateKeyPkcs8: "pkcs8-material-new-credential",
+      privateKeyPkcs8: P256_PKCS8,
       signCount: 0,
       sourceMode: "bitwarden"
     });
@@ -833,7 +883,7 @@ function passkey(credentialId: string, signCount: number): PasskeyItem {
     userDisplayName: "Joy",
     algorithm: -7,
     publicKey: "spki-material",
-    privateKeyPkcs8: `pkcs8-material-${credentialId}`,
+    privateKeyPkcs8: P256_PKCS8,
     signCount,
     discoverable: true,
     sourceMode: "bitwarden"

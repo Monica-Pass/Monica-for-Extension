@@ -8,7 +8,31 @@ import { MemoryVaultStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore } from "./vault-device-key";
 import { MonicaWebDavProvider } from "../providers/webdav/monica-webdav-provider";
 
+const REVISION_FOR_PASSKEY_TEST = "2026-08-31T00:00:00.000Z";
+const P256_PKCS8_FOR_PASSKEY_TEST = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
+
 describe("encrypted vault", () => {
+  it("keeps WebDAV and Bitwarden copies of the same Passkey as typed provider-owned records", async () => {
+    const service = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await service.setup("dual provider Passkey password");
+    await service.upsertProvider({ id: "webdav-passkey", kind: "monica-webdav", name: "Android WebDAV", enabled: true, isDefaultSaveTarget: false, config: {} });
+    await service.upsertProvider({ id: "bw-passkey", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const shared = {
+      kind: "passkey" as const, title: "Example", favorite: false, notes: "", createdAt: REVISION_FOR_PASSKEY_TEST,
+      updatedAt: REVISION_FOR_PASSKEY_TEST, credentialId: "00112233-4455-6677-8899-aabbccddeeff", rpId: "example.com",
+      rpName: "Example", userHandle: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithm: -7,
+      publicKey: "", privateKeyPkcs8: P256_PKCS8_FOR_PASSKEY_TEST, signCount: 0, discoverable: true
+    };
+    const webdav: PasskeyItem = { ...shared, id: "webdav-copy", sourceMode: "browser-local", providerRefs: [{ providerId: "webdav-passkey", remoteId: "folders/_root/passkeys/passkey_shared.json" }] };
+    const bitwarden: PasskeyItem = { ...shared, id: "bitwarden-copy", sourceMode: "bitwarden", providerRefs: [{ providerId: "bw-passkey", remoteId: "cipher-1#fido2:00112233-4455-6677-8899-aabbccddeeff" }] };
+
+    await service.applyProviderSync("webdav-passkey", [webdav]);
+    await service.applyProviderSync("bw-passkey", [...await service.listItems(), bitwarden]);
+
+    const passkeys = (await service.listItems()).filter((item): item is PasskeyItem => item.kind === "passkey");
+    expect(passkeys).toHaveLength(2);
+    expect(passkeys.map((item) => item.providerRefs[0].providerId).sort()).toEqual(["bw-passkey", "webdav-passkey"]);
+  });
   it("keeps a durable mutation successful when only session activity refresh fails", async () => {
     class FailingRefreshSessionStore extends MemoryVaultSessionStore {
       private writes = 0;

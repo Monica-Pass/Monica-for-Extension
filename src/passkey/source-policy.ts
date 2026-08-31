@@ -42,6 +42,29 @@ export function normalizeCredentialId(value: string): string {
   }
 }
 
+/** Decodes Bitwarden's tagged byte IDs without reinterpreting legacy plain-text IDs. */
+export function decodeBitwardenCredentialId(value: string): string {
+  const trimmed = value.trim();
+  const encoded = /^b64\.(.+)$/i.exec(trimmed)?.[1];
+  if (encoded === undefined) return isUuidCredentialId(trimmed) ? normalizeCredentialId(trimmed) : trimmed;
+  const unpadded = encoded.replace(/=+$/, "");
+  if (!/^[A-Za-z0-9_-]+$/.test(unpadded) || unpadded.length % 4 === 1) return encoded;
+  const canonical = normalizeCredentialId(unpadded);
+  return canonical === unpadded ? canonical : encoded;
+}
+
+/** Bitwarden stores UUID credentials directly and prefixes every other byte ID with `b64.`. */
+export function toBitwardenCredentialId(value: string): string {
+  const trimmed = value.trim();
+  if (isUuidCredentialId(trimmed)) return trimmed.toLowerCase();
+  const encoded = /^b64\.(.+)$/i.exec(trimmed)?.[1] || trimmed;
+  return `b64.${decodeBitwardenCredentialId(`b64.${encoded}`)}`;
+}
+
+function isUuidCredentialId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 /** Returns normalized credential IDs owned by more than one usable vault item. */
 export function duplicatePasskeyCredentialIds(items: PasskeyItem[]): Set<string> {
   const owners = new Map<string, Set<string>>();

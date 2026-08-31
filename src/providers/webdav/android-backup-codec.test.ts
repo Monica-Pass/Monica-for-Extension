@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
+import { createAssertion } from "../../passkey/webauthn-core";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 import { androidFolderKey, deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
 
@@ -635,7 +636,7 @@ describe("Android backup ZIP codec", () => {
     expect(raw).not.toHaveProperty("privateKeyPkcs8");
   });
 
-  it("imports and writes portable ES256 keys only inside an encrypted backup boundary", () => {
+  it("imports signs and writes portable ES256 keys only inside an encrypted backup boundary", async () => {
     const path = "folders/_root/passkeys/passkey_portable.json";
     const raw = {
       credentialId: "portable", rpId: "example.com", rpName: "Example", userId: "user", userName: "joy", userDisplayName: "Joy",
@@ -647,6 +648,16 @@ describe("Android backup ZIP codec", () => {
     expect(plain).not.toHaveProperty("privateKeyPkcs8");
     const encrypted = readAndroidBackup(zip, "encrypted", { allowPortablePasskeys: true });
     expect(encrypted.items[0]).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: P256_PKCS8 });
+    const imported = encrypted.items[0] as PasskeyItem;
+    await expect(createAssertion({
+      origin: "https://example.com",
+      challenge: "AAECAwQFBgcICQoLDA0ODw",
+      rpId: imported.rpId,
+      credentialId: imported.credentialId,
+      userHandle: imported.userHandle,
+      privateKeyPkcs8: imported.privateKeyPkcs8!,
+      signCount: imported.signCount
+    })).resolves.toMatchObject({ response: { signature: expect.any(String) } });
 
     const output = unzipSync(writeAndroidBackup({ entries: {}, items: [], records: new Map(), warnings: [] }, encrypted.items, "encrypted", { allowPortablePasskeys: true }));
     expect(JSON.parse(strFromU8(output[path])).privateKeyAlias).toBe(P256_PKCS8);

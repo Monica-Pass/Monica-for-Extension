@@ -13,6 +13,7 @@ const KEY: BitwardenSymmetricKey = {
   macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 32)
 };
 const REVISION = "2026-08-08T00:00:00.000Z";
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("Bitwarden durable item synchronization", () => {
   it("includes Passkey archive state in the durable Bitwarden intent fingerprint", async () => {
@@ -603,7 +604,7 @@ async function fidoCredential(credentialId: string, counter: number): Promise<Re
   return {
     CredentialId: await enc(credentialId),
     KeyAlgorithm: await enc("ECDSA"),
-    KeyValue: await enc(`pkcs8-${credentialId}`),
+    KeyValue: await enc(P256_PKCS8),
     RpId: await enc("example.com"),
     RpName: await enc("Example"),
     Counter: await enc(String(counter)),

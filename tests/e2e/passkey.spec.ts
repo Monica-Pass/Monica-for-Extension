@@ -2,7 +2,10 @@ import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 import { decodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
-import { deriveBitwardenMasterKey, stretchBitwardenMasterKey, type BitwardenKdfConfig, type BitwardenSymmetricKey } from "../../src/providers/bitwarden/bitwarden-crypto";
+import { deriveBitwardenMasterKey, encryptBitwardenString, stretchBitwardenMasterKey, type BitwardenKdfConfig, type BitwardenSymmetricKey } from "../../src/providers/bitwarden/bitwarden-crypto";
+
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
+const IMPORTED_CREDENTIAL_ID = "AAECAwQFBgcICQoLDA0ODw";
 
 async function confirmPasskeyCreate(page: import("@playwright/test").Page): Promise<void> {
   const prompt = page.locator("#monica-passkey-prompt-host");
@@ -47,6 +50,56 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
     await expect(page.locator("#result")).toContainText("authenticated:"); await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(signed.data[0]).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
+  } finally { await context?.close(); }
+});
+
+test("an imported Bitwarden FIDO2 credential completes the page authentication path", async ({}, testInfo) => {
+  const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
+  const email = "import@example.com"; const masterPassword = "imported passkey master password";
+  const kdf: BitwardenKdfConfig = { type: 0, iterations: 10_000 };
+  const vaultKey: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 2), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 34) };
+  const enc = (value: string) => encryptBitwardenString(value, vaultKey);
+  const stretched = await stretchBitwardenMasterKey(await deriveBitwardenMasterKey(masterPassword, email, kdf));
+  const protectedKey = await new BitwardenClient((() => Promise.reject(new Error("unused"))) as unknown as typeof fetch).protectVaultKey(vaultKey, stretched, Uint8Array.from({ length: 16 }, (_, index) => index + 1));
+  const revision = "2026-08-31T12:00:00.000Z";
+  const remoteCipher = {
+    Id: "imported-passkey-cipher", Type: 1, Name: await enc("Imported Passkey"), Notes: null, Favorite: false,
+    RevisionDate: revision, CreationDate: revision,
+    Login: { Username: await enc("joy@example.com"), Password: null, Uris: [], Fido2Credentials: [{
+      CredentialId: await enc(`b64.${IMPORTED_CREDENTIAL_ID}`), KeyType: await enc("public-key"), KeyAlgorithm: await enc("ECDSA"),
+      KeyCurve: await enc("P-256"), KeyValue: await enc(P256_PKCS8.replace(/\+/g, "-").replace(/\//g, "_")),
+      RpId: await enc("imported-passkey.example.test"), RpName: await enc("Imported Passkey"), Counter: await enc("4"),
+      UserHandle: await enc("dXNlcg"), UserName: await enc("joy@example.com"), UserDisplayName: await enc("Joy"),
+      Discoverable: await enc("true"), CreationDate: await enc(revision)
+    }] }
+  };
+  try {
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-import"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    await context.route("https://import-bw.example.test/**", async (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
+      if (pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "import-access", refresh_token: "import-refresh", expires_in: 3600, Key: protectedKey });
+      if (pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "import-user" }, Ciphers: [remoteCipher] });
+      return route.abort("failed");
+    });
+    await context.route("https://imported-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="authenticate">Authenticate</button><output id="result"></output><script>
+      const decode=value=>{const normalized=value.replace(/-/g,'+').replace(/_/g,'/');const binary=atob(normalized+'='.repeat((4-normalized.length%4)%4));return Uint8Array.from(binary,c=>c.charCodeAt(0));};
+      authenticate.onclick=async()=>{try{const credential=await navigator.credentials.get({publicKey:{challenge:new Uint8Array(32).fill(13),rpId:'imported-passkey.example.test',allowCredentials:[{type:'public-key',id:decode('${IMPORTED_CREDENTIAL_ID}')}],timeout:60000}});result.textContent='authenticated:'+credential.id+':'+credential.response.signature.byteLength;}catch(error){result.textContent='error:'+error.name+':'+error.message;}};
+    </script>` }));
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
+    const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "imported provider vault password" })) as { ok: boolean; error?: string };
+    expect(setup.ok, setup.error).toBe(true);
+    const login = await manager.evaluate(async ({ email, masterPassword }) => chrome.runtime.sendMessage({ type: "BITWARDEN_LOGIN", name: "Imported Bitwarden", vaultUrl: "https://import-bw.example.test", email, masterPassword }), { email, masterPassword }) as { ok: boolean; data: { providerId: string }; error?: string };
+    expect(login.ok, login.error).toBe(true);
+    expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), login.data.providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
+    const imported = (await listVaultItems(manager)).find((item) => item.kind === "passkey")!;
+    expect(imported).toMatchObject({ credentialId: IMPORTED_CREDENTIAL_ID, sourceMode: "bitwarden", signCount: 4, privateKeyPkcs8: P256_PKCS8 });
+
+    const page = await context.newPage(); await page.goto("https://imported-passkey.example.test/");
+    await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
+    await expect(page.locator("#result")).toContainText(`authenticated:${IMPORTED_CREDENTIAL_ID}:`);
+    await expect(page.locator("#result")).not.toContainText("error:");
   } finally { await context?.close(); }
 });
 

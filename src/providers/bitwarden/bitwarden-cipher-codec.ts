@@ -1,6 +1,8 @@
 import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { parseTotpParameters } from "../../core/totp";
+import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
+import { decodeBitwardenCredentialId, normalizeCredentialId, toBitwardenCredentialId } from "../../passkey/source-policy";
 
 export const BITWARDEN_CUSTOM_FIELDS_VERSION = 1 as const;
 
@@ -699,11 +701,12 @@ export async function encodeBitwardenPasskeyCipher(
   const existingCredentials = arrayValue(preservedLogin, "Fido2Credentials", "fido2Credentials").map(record);
   const matched = await Promise.all(existingCredentials.map(async (credential) => ({
     credential,
-    credentialId: await decryptBitwardenString(stringValue(credential, "CredentialId", "credentialId"), encryptionKey)
+    credentialId: normalizeCredentialId(decodeBitwardenCredentialId(await decryptBitwardenString(stringValue(credential, "CredentialId", "credentialId"), encryptionKey)))
   })));
-  const replacement = operation === "upsert" ? await encodeFido2Credential(item, encryptionKey, matched.find((entry) => entry.credentialId === item.credentialId)?.credential) : undefined;
-  const fido2Credentials = matched.flatMap((entry) => entry.credentialId === item.credentialId ? (replacement ? [replacement] : []) : [entry.credential]);
-  if (replacement && !matched.some((entry) => entry.credentialId === item.credentialId)) fido2Credentials.push(replacement);
+  const itemCredentialId = normalizeCredentialId(item.credentialId);
+  const replacement = operation === "upsert" ? await encodeFido2Credential(item, encryptionKey, matched.find((entry) => entry.credentialId === itemCredentialId)?.credential) : undefined;
+  const fido2Credentials = matched.flatMap((entry) => entry.credentialId === itemCredentialId ? (replacement ? [replacement] : []) : [entry.credential]);
+  if (replacement && !matched.some((entry) => entry.credentialId === itemCredentialId)) fido2Credentials.push(replacement);
 
   if (!preservedRaw) {
     return {
@@ -751,12 +754,16 @@ export async function encodeBitwardenPasskeyCipher(
 }
 
 async function encodeFido2Credential(item: PasskeyItem, key: BitwardenSymmetricKey, preserved?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const privateKey = parsePortablePasskeyPrivateKey(item.privateKeyPkcs8);
+  if (!privateKey || privateKey.algorithm !== -7) throw new Error("Bitwarden Passkey 私钥不是有效的 ES256 PKCS#8。");
   const unknown = Object.fromEntries(Object.entries(preserved || {}).filter(([name]) => !FIDO2_FIELD_NAMES.has(name.toLowerCase())));
   return {
     ...unknown,
-    credentialId: await encryptBitwardenString(item.credentialId, key),
-    keyAlgorithm: await encryptBitwardenString(item.keyAlgorithm || "ECDSA", key),
-    keyValue: await encryptBitwardenString(item.privateKeyPkcs8 || "", key),
+    credentialId: await encryptBitwardenString(toBitwardenCredentialId(item.credentialId), key),
+    keyType: await encryptBitwardenString("public-key", key),
+    keyAlgorithm: await encryptBitwardenString("ECDSA", key),
+    keyCurve: await encryptBitwardenString("P-256", key),
+    keyValue: await encryptBitwardenString(toBase64UrlText(privateKey.pkcs8Base64), key),
     rpId: await encryptBitwardenString(item.rpId, key),
     rpName: await encryptBitwardenString(item.rpName || item.title, key),
     counter: await encryptBitwardenString(String(Math.max(0, Math.floor(item.signCount))), key),
@@ -769,7 +776,7 @@ async function encodeFido2Credential(item: PasskeyItem, key: BitwardenSymmetricK
 }
 
 const FIDO2_FIELD_NAMES = new Set([
-  "credentialid", "keyalgorithm", "keyvalue", "rpid", "rpname", "counter", "userhandle", "username", "userdisplayname", "discoverable", "creationdate"
+  "credentialid", "keytype", "keyalgorithm", "keycurve", "keyvalue", "rpid", "rpname", "counter", "userhandle", "username", "userdisplayname", "discoverable", "creationdate"
 ]);
 
 function bitwardenType(item: VaultItem): number {
@@ -790,10 +797,17 @@ async function decodeFido2Credentials(
   const metadata = parseAndroidPasskeyMetadata(base.notes);
   return Promise.all(arrayValue(login, "Fido2Credentials", "fido2Credentials").map(async (entry, index) => {
     const fido = record(entry);
-    const decrypted = await decryptFidoRecordFields(fido, key, ["CredentialId", "KeyAlgorithm", "KeyValue", "RpId", "RpName", "Counter", "UserHandle", "UserName", "UserDisplayName", "Discoverable", "CreationDate"]);
+    const decrypted = await decryptFidoRecordFields(fido, key, ["CredentialId", "KeyType", "KeyAlgorithm", "KeyCurve", "KeyValue", "RpId", "RpName", "Counter", "UserHandle", "UserName", "UserDisplayName", "Discoverable", "CreationDate"]);
     const metadataCredential = metadata.get("credentialId") || "";
-    const credentialId = decrypted.CredentialId || metadataCredential || `${cipherReference.remoteId}#metadata-${index}`;
+    const rawCredentialId = decrypted.CredentialId || metadataCredential || `${cipherReference.remoteId}#metadata-${index}`;
+    const credentialId = decodeBitwardenCredentialId(rawCredentialId) || rawCredentialId;
     const algorithm = normalizePasskeyAlgorithm(decrypted.KeyAlgorithm || metadata.get("publicKeyAlgorithm") || "");
+    const portableKey = parsePortablePasskeyPrivateKey(decrypted.KeyValue);
+    const keyMetadataSupported = (!decrypted.KeyType || decrypted.KeyType === "public-key")
+      && (!decrypted.KeyCurve || decrypted.KeyCurve.toUpperCase() === "P-256");
+    const privateKeyPkcs8 = algorithm === -7 && keyMetadataSupported && portableKey?.algorithm === -7
+      ? portableKey.pkcs8Base64
+      : undefined;
     const rpId = decrypted.RpId || metadata.get("rpId") || "";
     const rpName = decrypted.RpName || metadata.get("rpName") || base.title.replace(/\s*\[Passkey\]\s*$/i, "");
     const userHandle = decrypted.UserHandle || metadata.get("userId") || "";
@@ -813,10 +827,10 @@ async function decodeFido2Credentials(
       algorithm,
       keyAlgorithm: decrypted.KeyAlgorithm || undefined,
       publicKey: "",
-      privateKeyPkcs8: decrypted.KeyValue || undefined,
+      privateKeyPkcs8,
       signCount: Number(decrypted.Counter || metadata.get("signCount")) || 0,
       discoverable: decrypted.Discoverable.toLowerCase() !== "false",
-      sourceMode: decrypted.KeyValue ? "bitwarden" : androidMetadata ? "android-metadata-only" : "bitwarden",
+      sourceMode: privateKeyPkcs8 ? "bitwarden" : androidMetadata ? "android-metadata-only" : "bitwarden",
       createdAt: dateValue(decrypted.CreationDate || metadata.get("createdAt"), base.createdAt),
       providerRefs: [{ ...cipherReference, remoteId: `${cipherReference.remoteId}#fido2:${credentialId}` }]
     } satisfies PasskeyItem;
@@ -859,6 +873,10 @@ function optionalDateValue(raw: unknown): string | undefined {
 
 function lowerFirst(value: string): string {
   return value.slice(0, 1).toLowerCase() + value.slice(1);
+}
+
+function toBase64UrlText(value: string): string {
+  return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function value(raw: Record<string, unknown>, ...names: string[]): unknown {

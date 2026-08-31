@@ -9,6 +9,7 @@ const KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_,
 const ORGANIZATION_KEY: BitwardenSymmetricKey = { encKey: Uint8Array.from({ length: 32 }, (_, index) => index + 64), macKey: Uint8Array.from({ length: 32 }, (_, index) => index + 96) };
 const OLD_REVISION = "2026-07-15T03:00:00.000Z";
 const RSA_FIXTURE_TIMEOUT_MS = 15_000;
+const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("Bitwarden provider", () => {
   it("routes a new Android category to an existing encrypted Bitwarden folder", async () => {
@@ -1132,7 +1133,7 @@ async function fidoCredential(credentialId: string, counter: number): Promise<Re
   return {
     CredentialId: await enc(credentialId),
     KeyAlgorithm: await enc("ECDSA"),
-    KeyValue: await enc(`pkcs8-${credentialId}`),
+    KeyValue: await enc(P256_PKCS8),
     RpId: await enc("example.com"),
     RpName: await enc("Example"),
     Counter: await enc(String(counter)),
@@ -1177,7 +1178,7 @@ function localPasskey(credentialId: string): PasskeyItem {
     userDisplayName: "Joy",
     algorithm: -7,
     publicKey: "spki",
-    privateKeyPkcs8: "pkcs8-new",
+    privateKeyPkcs8: P256_PKCS8,
     signCount: 0,
     discoverable: true,
     sourceMode: "bitwarden"
