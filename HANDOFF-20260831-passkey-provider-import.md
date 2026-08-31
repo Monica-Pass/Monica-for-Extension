@@ -4,7 +4,7 @@
 
 本阶段目标已完成并提交到 `main`：
 
-- 提交：`49bb5e4 fix(passkey): validate portable EC curve`（包含前序 `92c9e59`）
+- 提交：`2fb03d9 fix(passkey): preserve legacy Android imports`（包含前序 `49bb5e4`、`92c9e59`）
 - 远端：`origin/main` 已同步
 - worktree：干净
 - 发布包：`release/monica-extension-0.1.23.zip`
@@ -19,6 +19,7 @@
 5. Bitwarden 父级 Login Cipher 保留，同时每个 FIDO2 credential 暴露为独立 `kind: passkey` 子项。
 6. WebDAV 与 Bitwarden 对同一 credential ID 的记录按 provider 所有权分别保留，不互相覆盖。
 7. 新增真实验证：加密 Android WebDAV portable Passkey 私钥实际签名；远端 Bitwarden Cipher 导入后在真实页面完成 WebAuthn 登录。
+8. 兼容 Android 旧版顶层 `passkeys/*.json` 备份路径；Bitwarden 合并时统一 UUID、`b64.` 和 Base64URL credential ID，避免同一凭据重复或漏合并。
 
 ## 关键文件
 
@@ -31,10 +32,10 @@
 
 ## 验证结果
 
-- `npm test`：112 个测试文件，1031 项通过。
+- `npm test`：112 个测试文件，1032 项通过。
 - `npm run test:security`：82 项通过，构建和安全审计通过。
 - `npm run audit:production`：0 个生产依赖漏洞。
-- `npm run test:e2e`：96 项通过。
+- Passkey 专项 E2E：7 项通过（导入、实际认证、锁定、取消、计数器和删除）。完整 `npm run test:e2e` 在本机环境超过 4 分钟未结束，需下一会话单独复跑。
 - `npm run package:release && npm run package:verify`：通过，包内容与独立生成结果字节一致。
 
 任务过程记录在 `.codex-tasks/20260831-passkey-provider-import/`，其中 `TODO.csv` 和 `PROGRESS.md` 已闭环。根目录临时 TODO CSV 已删除，避免提交临时文件。
@@ -47,7 +48,7 @@
 2. 用多个 Bitwarden 账户和组织库做登录、令牌刷新、空库保护、Collection/Folder 路由及并发 ETag 场景测试。
 3. 检查 Popup 自动填充候选项对 imported Passkey 的来源/不可用原因提示，确保私钥仍只在后台解密。
 4. 继续 MDBX2 浏览器客户端工作；不要恢复 MDBX1 支持，也不要修改 Android 工作区。
-5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。当前最新提交为 `49bb5e4`，已推送 `origin/main`。
+5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。当前最新代码提交为 `2fb03d9`，文档更新提交随后追加，均已推送 `origin/main`。
 
 下一会话建议先读取：
 
