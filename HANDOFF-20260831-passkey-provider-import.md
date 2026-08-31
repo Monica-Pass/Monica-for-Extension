@@ -8,7 +8,7 @@
 - 远端：`origin/main` 已同步
 - worktree：干净
 - 发布包：`release/monica-extension-0.1.23.zip`
-- 包 SHA-256：`2c010e617a15f0438de871d0e0fbe8ccf717974781f9a642264e4011d10f3816`
+- 包 SHA-256：`811aded858a052e30d948585af9fcfa8ebb4cf598b31cbcd006603c3d816d001`
 
 ## 本阶段实现
 
