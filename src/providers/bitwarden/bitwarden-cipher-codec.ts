@@ -3,6 +3,7 @@ import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenS
 import { parseTotpParameters } from "../../core/totp";
 import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
 import { decodeBitwardenCredentialId, normalizeCredentialId, toBitwardenCredentialId } from "../../passkey/source-policy";
+import { normalizeRpId } from "../../passkey/webauthn-core";
 
 export const BITWARDEN_CUSTOM_FIELDS_VERSION = 1 as const;
 
@@ -117,9 +118,17 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
       sshKeyData
     };
     const hasAndroidPasskeyMetadata = notes.includes("[Monica Passkey Metadata]");
+    // Older Monica Android builds represented a passwordless item only by appending
+    // " [Passkey]" to the Cipher name. There is no FIDO2 array in that format, so
+    // keep the parent Login and project a metadata-only child below.
+    const hasLegacyPasskeyName = isLegacyPasskeyName(name);
     const passkeys = await decodeFido2Credentials(login, base, reference, key, hasAndroidPasskeyMetadata);
-    if (!passkeys.length && hasAndroidPasskeyMetadata) {
-      const metadataPasskey = decodeAndroidPasskeyMetadata(base, reference, notes);
+    if (!passkeys.length && (hasAndroidPasskeyMetadata || hasLegacyPasskeyName)) {
+      const metadataPasskey = decodeAndroidPasskeyMetadata(base, reference, notes, {
+        legacyName: hasLegacyPasskeyName,
+        fallbackRpId: extractRpIdFromUriRules(uriRules),
+        fallbackUserName: username
+      });
       if (metadataPasskey) passkeys.push(metadataPasskey);
     }
     // Bitwarden stores authenticators on Login.Totp for both ordinary credentials
@@ -925,15 +934,16 @@ function arrayValue(raw: Record<string, unknown>, ...names: string[]): unknown[]
 function decodeAndroidPasskeyMetadata(
   base: { id: string; title: string; favorite: boolean; notes: string; createdAt: string; updatedAt: string },
   reference: ProviderReference,
-  notes: string
+  notes: string,
+  fallback: { legacyName?: boolean; fallbackRpId?: string; fallbackUserName?: string } = {}
 ): PasskeyItem | undefined {
   const marker = notes.indexOf("[Monica Passkey Metadata]");
-  if (marker < 0) return undefined;
+  if (marker < 0 && !fallback.legacyName) return undefined;
   const values = parseAndroidPasskeyMetadata(notes);
-  const credentialId = values.get("credentialId") || `${reference.remoteId}#metadata`;
-  const rpId = values.get("rpId") || "";
+  const credentialId = values.get("credentialId") || (fallback.legacyName ? `bw_ref_${reference.remoteId}` : `${reference.remoteId}#metadata`);
+  const rpId = values.get("rpId") || fallback.fallbackRpId || "";
   const rpName = values.get("rpName") || base.title.replace(/\s*\[Passkey\]\s*$/i, "");
-  const userName = values.get("userName") || "";
+  const userName = values.get("userName") || fallback.fallbackUserName || "";
   const userDisplayName = values.get("userDisplayName") || userName;
   const userHandle = values.get("userId") || "";
   const algorithm = Number(values.get("publicKeyAlgorithm"));
@@ -956,6 +966,27 @@ function decodeAndroidPasskeyMetadata(
     sourceMode: "android-metadata-only",
     providerRefs: [{ ...reference, remoteId: `${reference.remoteId}#fido2:${credentialId}` }]
   };
+}
+
+function isLegacyPasskeyName(name: string): boolean {
+  return /\s\[Passkey\]$/.test(name);
+}
+
+/** Extract a WebAuthn RP ID from Android's Login URI projection. */
+function extractRpIdFromUriRules(uriRules: LoginUriRule[]): string {
+  for (const rule of uriRules) {
+    const candidate = rule.uri.trim();
+    if (!candidate || rule.matchType === "regex" || rule.matchType === "never") continue;
+    try {
+      const parsed = new URL(candidate.includes("://") ? candidate : `https://${candidate}`);
+      if (parsed.username || parsed.password || parsed.port) continue;
+      const normalized = normalizeRpId(parsed.hostname);
+      if (normalized) return normalized;
+    } catch {
+      // URI fields are user-controlled and may contain non-URL app identifiers.
+    }
+  }
+  return "";
 }
 
 function parseAndroidPasskeyMetadata(notes: string): Map<string, string> {

@@ -78,6 +78,27 @@ describe("Bitwarden provider", () => {
     expect(result.items.filter((item) => item.kind === "passkey")).toEqual([expect.objectContaining({ credentialId: "credential-mixed", sourceMode: "bitwarden" })]);
   });
 
+  it("keeps a legacy Monica name-only Passkey visible during provider sync", async () => {
+    const legacy = await loginCipher("", OLD_REVISION);
+    legacy.Id = "legacy-passkey";
+    legacy.Name = await encryptBitwardenString("GitHub [Passkey]", KEY);
+    legacy.Login = {
+      Username: await encryptBitwardenString("joy@example.com", KEY),
+      Password: await encryptBitwardenString("", KEY),
+      Uris: [{ Uri: await encryptBitwardenString("https://github.com/login", KEY) }],
+      Fido2Credentials: []
+    };
+    const fetcher = vi.fn(async () => json({ Profile: { Id: "user" }, Ciphers: [legacy] })) as unknown as typeof fetch;
+
+    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:01:00.000Z", localItems: [] });
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "login", title: "GitHub [Passkey]" }),
+      expect.objectContaining({ kind: "passkey", credentialId: "bw_ref_legacy-passkey", rpId: "github.com", sourceMode: "android-metadata-only" })
+    ]));
+  });
+
   it("imports and updates a personal login Cipher", async () => {
     let remote = await loginCipher("remote-secret", OLD_REVISION);
     let putCount = 0;

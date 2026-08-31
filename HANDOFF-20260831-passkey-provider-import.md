@@ -2,9 +2,13 @@
 
 ## 当前完成状态
 
-本阶段目标已完成并提交到 `main`：
+本阶段目标已完成并提交到 `main`。本次续作又补齐了 Monica Android 旧版“仅名称标记”的 Passkey 导入：
 
-- 提交：`2fb03d9 fix(passkey): preserve legacy Android imports`（包含前序 `49bb5e4`、`92c9e59`）
+- 名称以 ` [Passkey]` 结尾、但没有 FIDO2 数组的 Login Cipher 现在会保留父级登录项，并投影为 `kind: "passkey"` 的 Android 元数据记录。
+- 引用凭据 ID 与 Android 保持一致，为 `bw_ref_<cipherId>`；RP ID 从可解析的 Login URI 提取并通过 WebAuthn 域名规范化。
+- 没有私钥的记录继续标记为 `android-metadata-only`，不会进入浏览器可用候选项。
+
+- 提交：本次代码提交后更新（见 `git log`），包含前序 Passkey 兼容修复
 - 远端：`origin/main` 已同步
 - worktree：干净
 - 发布包：`release/monica-extension-0.1.23.zip`
@@ -32,7 +36,7 @@
 
 ## 验证结果
 
-- `npm test`：112 个测试文件，1032 项通过。
+- `npm test`：112 个测试文件，1034 项通过。
 - `npm run test:security`：82 项通过，构建和安全审计通过。
 - `npm run audit:production`：0 个生产依赖漏洞。
 - Passkey 专项 E2E：7 项通过（导入、实际认证、锁定、取消、计数器和删除）。完整 `npm run test:e2e` 在本机环境超过 4 分钟未结束，需下一会话单独复跑。
@@ -49,7 +53,7 @@
 2. 用多个 Bitwarden 账户和组织库做登录、令牌刷新、空库保护、Collection/Folder 路由及并发 ETag 场景测试。
 3. 检查 Popup 自动填充候选项对 imported Passkey 的来源/不可用原因提示，确保私钥仍只在后台解密。
 4. 继续 MDBX2 浏览器客户端工作；不要恢复 MDBX1 支持，也不要修改 Android 工作区。
-5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。当前最新代码提交为 `2fb03d9`，文档更新提交随后追加，均已推送 `origin/main`。
+5. 每个功能组在 `main` 独立 commit，遵守不建分支、不创建 PR 的约定。本次续作提交后同步推送 `origin/main`。
 
 下一会话建议先读取：
 

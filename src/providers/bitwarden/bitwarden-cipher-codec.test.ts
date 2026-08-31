@@ -110,6 +110,31 @@ describe("Bitwarden Cipher codec", () => {
     expect(passkey.privateKeyPkcs8).toBeUndefined();
   });
 
+  it("imports Monica Android's legacy name-only Passkey as a metadata child", async () => {
+    const decoded = await decodeBitwardenCipher({
+      Id: "legacy-passkey", Type: 1, Name: await encryptBitwardenString("GitHub [Passkey]", KEY),
+      Notes: await encryptBitwardenString("", KEY), Favorite: false, RevisionDate: REVISION, CreationDate: REVISION,
+      Login: {
+        Username: await encryptBitwardenString("joy@example.com", KEY), Password: null,
+        Uris: [{ Uri: await encryptBitwardenString("https://github.com/login", KEY), Match: 3 }],
+        Fido2Credentials: []
+      }
+    }, "provider-legacy", KEY);
+
+    expect(decoded.items.map((item) => item.kind)).toEqual(["login", "passkey"]);
+    expect(decoded.items[0]).toMatchObject({ kind: "login", title: "GitHub [Passkey]", username: "joy@example.com" });
+    expect(decoded.items[1]).toMatchObject({
+      kind: "passkey",
+      credentialId: "bw_ref_legacy-passkey",
+      rpId: "github.com",
+      rpName: "GitHub",
+      userName: "joy@example.com",
+      userDisplayName: "joy@example.com",
+      sourceMode: "android-metadata-only"
+    });
+    expect((decoded.items[1] as PasskeyItem).privateKeyPkcs8).toBeUndefined();
+  });
+
   it("projects an Android standalone validator Login into a first-class TOTP item", async () => {
     const raw = {
       Id: "cipher-standalone-totp",
