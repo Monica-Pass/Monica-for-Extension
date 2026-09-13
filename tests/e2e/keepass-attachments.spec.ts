@@ -78,7 +78,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await expect.poll(async () => (await listItems(page)).some((item) => item.title === "KeePass attachment account")).toBe(true);
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     const manageButton = page.getByRole("button", { name: "管理 KeePass attachment account 的附件" });
     await expect(manageButton).toBeVisible();
     await expectMinimumTarget(manageButton);
@@ -184,7 +184,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "管理 KeePass attachment account 的附件" }).click();
     const lightDialog = page.getByRole("dialog", { name: "附件 · KeePass attachment account" });
     await expect(lightDialog).toHaveCSS("background-image", "none");
@@ -264,7 +264,7 @@ test("KeePass Android-managed bank-card photos have front/back controls and pres
     await expect.poll(async () => (await listItems(page)).some((item) => item.title === "Android Bank Card")).toBe(true);
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^钱包与身份/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^钱包与身份/ }).click();
     const cardRow = page.locator(".item-card").filter({ hasText: "Android Bank Card" });
     await expect(cardRow).toBeVisible();
     await cardRow.getByRole("button", { name: "管理 Android Bank Card 的附件" }).click();

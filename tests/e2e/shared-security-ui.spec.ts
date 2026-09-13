@@ -192,7 +192,7 @@ test("shared provider and Windows Hello actions use secret-free retry-safe M3E c
 async function openMobileSection(page: Page, name: string): Promise<void> {
   const openNavigation = page.getByRole("button", { name: "打开导航" });
   if (await openNavigation.isVisible()) await openNavigation.click();
-  await page.getByRole("button", { name }).click();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name }).click();
 }
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {

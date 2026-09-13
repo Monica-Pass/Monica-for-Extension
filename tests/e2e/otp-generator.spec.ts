@@ -22,7 +22,7 @@ test("OTP transfer and credential generator work in the M3E manager", async ({},
     await page.getByRole("button", { name: "重新生成", exact: true }).last().click();
     await expect(page.locator(".generator-result output")).toHaveText(/^\d{8}$/);
 
-    await page.getByRole("button", { name: /^动态验证码/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^动态验证码/ }).click();
     await page.getByRole("button", { name: "添加验证码" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("名称 *").fill("HOTP E2E");

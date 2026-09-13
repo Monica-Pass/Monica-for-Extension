@@ -149,7 +149,7 @@ function sendRuntime<T = unknown>(page: Page, request: Record<string, unknown>):
 
 async function openMobileSection(page: Page, name: RegExp): Promise<void> {
   await page.getByRole("button", { name: "打开导航" }).click();
-  await page.getByRole("button", { name }).click();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name }).click();
 }
 
 interface EmptyVaultServer {

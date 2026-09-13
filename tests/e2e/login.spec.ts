@@ -89,7 +89,7 @@ test("manager saves a metadata-only SSO login with empty username, password, and
     await manager.getByLabel("SSO 提供商").fill("GOOGLE");
     await manager.screenshot({ path: testInfo.outputPath("metadata-login-editor.png"), fullPage: true });
     await manager.getByRole("button", { name: "加密保存" }).click();
-    await manager.getByRole("button", { name: /^登录项/ }).click();
+    await manager.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await expect(manager.getByText("Company SSO", { exact: true })).toBeVisible();
 
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };

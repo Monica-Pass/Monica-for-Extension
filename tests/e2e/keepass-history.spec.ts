@@ -65,7 +65,7 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await expect.poll(async () => (await listItems(page)).some((item) => item.title === "KeePass history account")).toBe(true);
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     const historyButton = page.getByRole("button", { name: "查看 KeePass history account 的 KeePass 历史" });
     await expectMinimumTarget(historyButton);
     await historyButton.click();
@@ -130,7 +130,7 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "查看 KeePass history account 的 KeePass 历史" }).click();
     const lightDialog = page.getByRole("dialog", { name: "KeePass 历史 · KeePass history account" });
     await expect(lightDialog).toHaveCSS("background-image", "none");

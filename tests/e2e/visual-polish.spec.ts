@@ -145,7 +145,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     const drawerWidth = (await page.locator(".sidebar").boundingBox())?.width || 0;
     expect(drawerWidth).toBeGreaterThanOrEqual(350);
     expect(drawerWidth).toBeLessThanOrEqual(361);
-    const walletNavLabel = page.getByRole("button", { name: /^钱包与身份/ }).locator(":scope > span").first();
+    const walletNavLabel = page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^钱包与身份/ }).locator(":scope > span").first();
     const walletLabelWidth = await walletNavLabel.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(walletLabelWidth.scroll, JSON.stringify(walletLabelWidth)).toBeLessThanOrEqual(walletLabelWidth.client + 1);
 

@@ -43,7 +43,7 @@ test("MDBX2 item attachments support download upload replace delete and narrow M
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     const manageButton = page.getByRole("button", { name: "管理 附件演示账号 的附件" });
     await expect(manageButton).toBeVisible();
     await expectMinimumTarget(manageButton);
@@ -122,7 +122,7 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo)
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "管理 附件演示账号 的附件" }).click();
     const dialog = page.getByRole("dialog", { name: "附件 · 附件演示账号" });
     const evidenceRow = dialog.locator(".provider-attachment-row").filter({ hasText: "evidence.txt" });

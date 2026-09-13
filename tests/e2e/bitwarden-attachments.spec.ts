@@ -90,7 +90,7 @@ test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover 
     await manager.waitForLoadState("load");
 
     await manager.getByRole("button", { name: "打开导航" }).click();
-    await manager.getByRole("button", { name: /^登录项/ }).click();
+    await manager.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     const manage = manager.getByRole("button", { name: "管理 Bitwarden attachment account 的附件" });
     await expect(manage).toBeVisible();
     await manage.click();
