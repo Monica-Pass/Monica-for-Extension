@@ -7,7 +7,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("item-detail-profile"), { channel: "chromium", headless: true, viewport: { width: 1280, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("item-detail-profile"), { channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 1280, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const page = await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
@@ -29,7 +29,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     await expect(page.getByText(/已加密导入 5 个密码库项目/)).toBeVisible();
 
     await page.locator("button.nav-item").filter({ hasText: "登录项" }).click();
-    await page.locator("tr.row-clickable").filter({ hasText: "Detail Login" }).click();
+    await page.getByRole("button", { name: "查看Detail Login详情", exact: true }).click();
     const detail = page.getByRole("dialog", { name: /Detail Login/ });
     await expect(detail).toBeVisible();
     await expect(detail.getByText("joy", { exact: true })).toBeVisible();
@@ -51,7 +51,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     await expect(page.getByRole("dialog", { name: /Detail Login/ })).toHaveCount(0);
 
     await page.locator("button.nav-item").filter({ hasText: "钱包与身份" }).click();
-    await page.locator(".item-card").filter({ hasText: "Detail Card" }).click();
+    await page.getByRole("button", { name: "查看Detail Card详情", exact: true }).click();
     const cardDetail = page.getByRole("dialog", { name: /Detail Card/ });
     await expect(cardDetail.getByText(/•••• 1111/)).toBeVisible();
     await expect(page.getByText("4111111111111111", { exact: true })).toHaveCount(0);
@@ -61,14 +61,14 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     await expect(cardDetail).toHaveCount(0);
 
     await page.locator("button.nav-item").filter({ hasText: "安全笔记" }).click();
-    await page.locator(".item-card").filter({ hasText: "Detail Note" }).click();
+    await page.getByRole("button", { name: "查看Detail Note详情", exact: true }).click();
     const noteDetail = page.getByRole("dialog", { name: /Detail Note/ });
     await expect(noteDetail.getByText("# Recovery steps")).toBeVisible();
     await expect(noteDetail.getByText("工作", { exact: true })).toBeVisible();
     await noteDetail.getByRole("button", { name: "关闭", exact: true }).click();
 
     await page.locator("button.nav-item").filter({ hasText: "动态验证码" }).click();
-    await page.locator(".item-card").filter({ hasText: "Detail OTP" }).click();
+    await page.getByRole("button", { name: "查看Detail OTP详情", exact: true }).click();
     const otpDetail = page.getByRole("dialog", { name: /Detail OTP/ });
     await expect(page.getByText("JBSWY3DPEHPK3PXP", { exact: true })).toHaveCount(0);
     await otpDetail.getByRole("button", { name: "显示密钥" }).click();
@@ -77,7 +77,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
 
     await page.locator("button.nav-item").filter({ hasText: "登录项" }).click();
     
-    await page.locator("tr.row-clickable").filter({ hasText: "Detail Login" }).click();
+    await page.getByRole("button", { name: "查看Detail Login详情", exact: true }).click();
     await page.setViewportSize({ width: 375, height: 812 });
     await expect(page.getByRole("dialog", { name: /Detail Login/ })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

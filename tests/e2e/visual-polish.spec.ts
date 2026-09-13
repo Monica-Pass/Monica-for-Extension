@@ -5,7 +5,7 @@ import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 test("auth card omits the decorative avatar", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("auth-polish-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("auth-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(page.locator(".login-card h1")).toHaveText("创建加密密码库");
@@ -17,7 +17,7 @@ test("auth card omits the decorative avatar", async ({}, testInfo) => {
 test("provider page is compact and decorated icon glyphs are centered", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("provider-polish-profile"), { channel: "chromium", headless: true, colorScheme: "dark", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("provider-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "visual polish master password" }))).toMatchObject({ ok: true });
@@ -69,8 +69,12 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await expect(page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "概览" }).click();
-    await expectCentered(page.locator(".feature-icon"), page.locator(".feature-icon m3e-icon"));
-    await expectAllRoundedAndClipped(page.locator("main m3e-card"));
+    await page.getByRole("button", { name: "自定义首页", exact: true }).click();
+    await expectCentered(page.locator(".home-reorder-actions .home-icon-button").first(), page.locator(".home-reorder-actions m3e-icon").first());
+    await page.locator("#home-customization").press("Escape");
+    await expect(page.locator(".home-module")).toHaveCount(6);
+    await expect(page.locator(".home-type-grid")).toHaveCSS("border-radius", "12px");
+    await expect(page.locator(".home-type-grid")).toHaveCSS("overflow", "hidden");
     await page.getByRole("button", { name: "设置与备份" }).click();
     await expectAllRoundedAndClipped(page.locator("main m3e-card"));
     await page.getByRole("button", { name: "密码源" }).click();
@@ -85,7 +89,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("manager-large-text-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 1280, height: 900 },
@@ -145,10 +149,9 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     const walletLabelWidth = await walletNavLabel.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(walletLabelWidth.scroll, JSON.stringify(walletLabelWidth)).toBeLessThanOrEqual(walletLabelWidth.client + 1);
 
-    const metricBoxes = await Promise.all([0, 1, 2].map((index) => page.locator(".metrics > m3e-card").nth(index).boundingBox()));
-    expect(metricBoxes.every(Boolean)).toBe(true);
-    expect(Math.abs(metricBoxes[0]!.y - metricBoxes[1]!.y)).toBeLessThanOrEqual(1);
-    expect(metricBoxes[2]!.y).toBeGreaterThan(metricBoxes[0]!.y + metricBoxes[0]!.height);
+    await expect(page.locator(".home-module")).toHaveCount(6);
+    await expect(page.locator(".home-type-button")).toHaveCount(8);
+    await expectNoHorizontalOverflow(page.locator(".vault-home"));
 
     const sections = ["概览", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
     for (const section of sections) {
@@ -158,7 +161,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
       await expectVisibleButtonLabelsFit(page.locator("#root"));
     }
 
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     const loginCard = page.locator(".login-data-card");
     await expect(loginCard.locator("thead")).toHaveCSS("display", "none");
     const rows = loginCard.locator("tbody tr");
@@ -196,7 +199,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     await page.getByRole("button", { name: "设置与备份" }).click();
     const appearance = page.locator(".appearance-disclosure");
     await expect(appearance.locator(".appearance-dialog")).toHaveCount(0);
-    await expect(appearance.locator(".appearance-summary-copy small")).toContainText("Monica");
+    await expect(appearance.locator(".appearance-summary-copy small")).toContainText("Nothing");
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-appearance-collapsed.png"), animations: "disabled" });
     await appearance.locator(".appearance-trigger").click();
     await expect(page.locator(".appearance-dialog")).toBeVisible();
@@ -209,12 +212,12 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
   } finally { await context?.close(); }
 });
 
-test("manager keeps wheel scrolling without native scrollbar gutters or horizontal jitter", async ({}, testInfo) => {
+test("manager keeps wheel scrolling with thin scrollbars and without horizontal jitter", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("manager-scrollbar-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 1100, height: 720 },
@@ -246,11 +249,11 @@ test("manager keeps wheel scrolling without native scrollbar gutters or horizont
       };
     });
     expect(initial.documentScrollWidth).toBeLessThanOrEqual(initial.documentClientWidth + 1);
-    expect(initial.documentScrollbarWidth).toBe("none");
-    expect(initial.documentWebkitScrollbarWidth).toBe("0px");
-    expect(initial.documentWebkitScrollbarHeight).toBe("0px");
-    expect(initial.navScrollbarWidth).toBe("none");
-    expect(initial.navWebkitScrollbarWidth).toBe("0px");
+    expect(initial.documentScrollbarWidth).toBe("thin");
+    expect(initial.documentWebkitScrollbarWidth).toBe("6px");
+    expect(initial.documentWebkitScrollbarHeight).toBe("6px");
+    expect(initial.navScrollbarWidth).toBe("thin");
+    expect(initial.navWebkitScrollbarWidth).toBe("6px");
     expect(initial.navScrollbarGutter).toBe("auto");
     expect(initial.navScrollHeight).toBeGreaterThan(initial.navClientHeight);
 
@@ -275,7 +278,7 @@ test("manager keeps wheel scrolling without native scrollbar gutters or horizont
     expect(finalLayout.documentScrollWidth).toBeLessThanOrEqual(finalLayout.documentClientWidth + 1);
     expect(finalLayout.navClientWidth).toBe(initial.navClientWidth);
     expect(finalLayout.sidebarWidth).toBe(initial.sidebarWidth);
-    await page.screenshot({ path: testInfo.outputPath("manager-hidden-scrollbars.png"), animations: "disabled" });
+    await page.screenshot({ path: testInfo.outputPath("manager-scrollbars.png"), animations: "disabled" });
   } finally { await context?.close(); }
 });
 
@@ -284,7 +287,7 @@ test("mobile manager actions remain complete with 200% text", async ({}, testInf
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("m"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },
@@ -323,7 +326,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("d"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },
@@ -401,7 +404,7 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("dialog-large-text-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 800, height: 900 },
@@ -427,7 +430,7 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
     await webDavDialog.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
 
     await page.getByRole("button", { name: "打开导航" }).click();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "添加登录项" }).first().click();
     const editor = page.getByRole("dialog", { name: "添加登录项" });
     await expect(editor).toBeVisible();
@@ -447,7 +450,7 @@ test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", as
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("join-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       deviceScaleFactor: 1.5,
@@ -488,7 +491,7 @@ test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", as
 test("MDBX2 conflict manager is flat explicit and usable at 375px with large text", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-conflict-polish-profile"), { channel: "chromium", headless: true, colorScheme: "dark", viewport: { width: 375, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-conflict-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 375, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 conflict visual password" }))).toMatchObject({ ok: true });
@@ -563,7 +566,7 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
 test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-snapshot-polish-profile"), { channel: "chromium", headless: true, colorScheme: "dark", viewport: { width: 375, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-snapshot-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 375, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "mdbx2 snapshot visual password" }))).toMatchObject({ ok: true });
@@ -685,7 +688,7 @@ for (const width of [375, 768, 1280, 1440]) {
   test(`manager has no horizontal overflow at ${width}px`, async ({}, testInfo) => {
     const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
     try {
-      context = await chromium.launchPersistentContext(testInfo.outputPath(`viewport-${width}-profile`), { channel: "chromium", headless: true, viewport: { width, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+      context = await chromium.launchPersistentContext(testInfo.outputPath(`viewport-${width}-profile`), { channel: "chromium", headless: true, locale: "zh-CN", viewport: { width, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
       const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
       const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
       expect(await page.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "viewport polish password" }))).toMatchObject({ ok: true });
@@ -701,7 +704,7 @@ for (const width of [375, 768, 1280, 1440]) {
 test("compact login list actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("table-polish-profile"), { channel: "chromium", headless: true, viewport: { width: 1280, height: 800 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("table-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 1280, height: 800 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -711,7 +714,7 @@ test("compact login list actions remain fully visible at a 1280px store viewport
       return chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item: { id: "table-login", kind: "login", title: "示例工作账号", username: "demo@example.test", password: "not-a-real-password", uris: ["https://shop-demo.example.test"], customFields: [], favorite: false, notes: "", createdAt, updatedAt: createdAt, providerRefs: [] } });
     }, createdAt)).toMatchObject({ ok: true });
     await page.reload();
-    await page.getByRole("button", { name: /^登录项/ }).click();
+    await page.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     const tableWrap = page.locator(".table-wrap");
     await expect(tableWrap).toBeVisible();
     await expect(page.locator(".login-data-card thead")).toHaveCSS("display", "none");
@@ -768,11 +771,12 @@ async function expectRoundedAndClipped(card: Locator): Promise<void> {
     const base = host.shadowRoot?.querySelector<HTMLElement>(".base");
     return {
       hostRadius: getComputedStyle(host).borderRadius,
+      expectedRadius: getComputedStyle(host).getPropertyValue("--m3e-card-shape").trim(),
       baseRadius: base ? getComputedStyle(base).borderRadius : "missing",
       overflow: getComputedStyle(host).overflow
     };
   });
-  expect(styles.hostRadius).toBe("8px");
+  expect(styles.hostRadius).toBe(styles.expectedRadius);
   expect(styles.hostRadius).toBe(styles.baseRadius);
   expect(["hidden", "clip"]).toContain(styles.overflow);
 }

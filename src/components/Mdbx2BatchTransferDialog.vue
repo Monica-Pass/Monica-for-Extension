@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { locale, tr } from '../i18n';
+
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { ProviderAccount, VaultItem } from "../core/model";
 import { itemIcon, itemKindLabel, itemSafeSummary, itemSearchText } from "../manager/item-metadata";
@@ -58,7 +60,7 @@ const filteredItems = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase();
   return activeItems.value
     .filter((item) => !needle || itemSearchText(item).toLocaleLowerCase().includes(needle))
-    .sort((left, right) => left.title.localeCompare(right.title, "zh-CN", { sensitivity: "base" }) || left.id.localeCompare(right.id));
+    .sort((left, right) => left.title.localeCompare(right.title, locale.value, { sensitivity: "base" }) || left.id.localeCompare(right.id));
 });
 const selectedCount = computed(() => selectedIds.value.size);
 const selectedSignature = computed(() => [...selectedIds.value].sort().join("\u001f"));
@@ -115,16 +117,16 @@ function readyFor(providerId: string): boolean {
 
 function sourceProviderLabel(item: VaultItem): string {
   const references = item.providerRefs.filter((reference) => reference.providerId !== "local");
-  if (!references.length) return "Monica 本地库";
-  const names = references.map((reference) => props.providers.find((provider) => provider.id === reference.providerId)?.name || "未知密码源");
-  return names.length > 1 ? `多个密码源（${names.join("、")}）` : names[0];
+  if (!references.length) return tr('Monica 本地库');
+  const names = references.map((reference) => props.providers.find((provider) => provider.id === reference.providerId)?.name || tr('未知密码源'));
+  return names.length > 1 ? tr('多个密码源（{0}）', { 0: names.join("、") }) : names[0];
 }
 
 function safeSummary(item: VaultItem): string {
   try {
     return itemSafeSummary(item);
   } catch {
-    return "仅显示安全摘要";
+    return tr('仅显示安全摘要');
   }
 }
 
@@ -132,7 +134,7 @@ function toggleItem(itemId: string): void {
   const next = new Set(selectedIds.value);
   if (next.has(itemId)) next.delete(itemId);
   else if (next.size < MAX_SELECTION) next.add(itemId);
-  else selectionNotice.value = `一次最多选择 ${MAX_SELECTION} 个项目。`;
+  else selectionNotice.value = tr('一次最多选择 {0} 个项目。', { 0: MAX_SELECTION });
   selectedIds.value = next;
   if (next.size < MAX_SELECTION) selectionNotice.value = "";
 }
@@ -147,7 +149,7 @@ function toggleFiltered(): void {
       next.add(item.id);
     }
     if (next.size >= MAX_SELECTION && filteredItems.value.some((item) => !selectedIds.value.has(item.id))) {
-      selectionNotice.value = `已选择 ${MAX_SELECTION} 个项目；其余项目未加入。`;
+      selectionNotice.value = tr('已选择 {0} 个项目；其余项目未加入。', { 0: MAX_SELECTION });
     }
   }
   selectedIds.value = next;
@@ -174,7 +176,7 @@ async function loadCollections(): Promise<void> {
       if (token !== collectionRequestToken) return;
       loaded.push(...page.items);
       if (!page.nextCursor) break;
-      if (!page.items.length || seenCursors.has(page.nextCursor)) throw new Error("MDBX2 文件夹分页游标没有前进。");
+      if (!page.items.length || seenCursors.has(page.nextCursor)) throw new Error(tr('MDBX2 文件夹分页游标没有前进。'));
       seenCursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
@@ -188,11 +190,11 @@ async function loadCollections(): Promise<void> {
 
 async function createPlan(): Promise<void> {
   if (!selectedCount.value) {
-    error.value = "请至少选择一个项目。";
+    error.value = tr('请至少选择一个项目。');
     return;
   }
   if (!targetProviderId.value || !targetReady.value) {
-    error.value = "请先解锁一个 MDBX2 目标密码源。";
+    error.value = tr('请先解锁一个 MDBX2 目标密码源。');
     return;
   }
   planning.value = true;
@@ -259,7 +261,7 @@ async function executePlan(): Promise<void> {
       updatedAt: new Date().toISOString()
     };
     emit("completed", result);
-    emit("notice", result.failedCount ? `批量传输完成：${result.completedCount} 个成功，${result.failedCount} 个失败。` : `批量传输完成：${result.completedCount} 个项目。`);
+    emit("notice", result.failedCount ? tr('批量传输完成：{0} 个成功，{1} 个失败。', { 0: result.completedCount, 1: result.failedCount }) : tr('批量传输完成：{0} 个项目。', { 0: result.completedCount }));
   } catch (cause) {
     error.value = errorMessage(cause);
     const status = await vaultClient.mdbx2BatchTransferStatus(plan.operationId).catch(() => undefined);
@@ -312,11 +314,11 @@ function folderLabel(row: Mdbx2CollectionPresentation): string {
 }
 
 function pathLabel(path: string[]): string {
-  return path.length ? path.join(" / ") : "根目录（未分类）";
+  return path.length ? path.join(" / ") : tr('根目录（未分类）');
 }
 
 function phaseLabel(phase: Mdbx2BatchTransferStatus["phase"]): string {
-  return ({ preparing: "准备数据", writing: "写入 MDBX2", attachments: "传输附件", finalizing: "更新本地索引", completed: "已完成", failed: "需要重试" } as const)[phase];
+  return ({ preparing: tr('准备数据'), writing: tr('写入 MDBX2'), attachments: tr('传输附件'), finalizing: tr('更新本地索引'), completed: tr('已完成'), failed: tr('需要重试') } as const)[phase];
 }
 
 function resultIcon(status: "completed" | "blocked" | "failed"): string {
@@ -324,7 +326,7 @@ function resultIcon(status: "completed" | "blocked" | "failed"): string {
 }
 
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "MDBX2 批量传输失败，请重试。";
+  return cause instanceof Error ? cause.message : tr('MDBX2 批量传输失败，请重试。');
 }
 </script>
 
@@ -333,88 +335,88 @@ function errorMessage(cause: unknown): string {
     <section class="editor-dialog mdbx2-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="mdbx2-batch-title">
       <header class="mdbx2-batch-header">
         <div>
-          <span class="dialog-eyebrow"><m3e-icon name="database"></m3e-icon>MDBX2 批量传输</span>
-          <h2 id="mdbx2-batch-title">复制或移动项目</h2>
-          <p>只显示标题、类型和安全摘要。原始字段、附件字节和密码源凭据留在后台。</p>
+          <span class="dialog-eyebrow"><m3e-icon name="database"></m3e-icon>{{ tr('MDBX2 批量传输') }}</span>
+          <h2 id="mdbx2-batch-title">{{ tr('复制或移动项目') }}</h2>
+          <p>{{ tr('只显示标题、类型和安全摘要。原始字段、附件字节和密码源凭据留在后台。') }}</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭批量传输" :disabled="executing" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭批量传输')" :disabled="executing" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
       <div class="mdbx2-batch-scroll">
         <div class="mdbx2-batch-body">
         <section class="batch-panel batch-selection-panel" aria-labelledby="batch-selection-title">
           <div class="batch-panel-heading">
-            <div><h3 id="batch-selection-title">选择项目</h3><p>{{ selectedCount }} / {{ MAX_SELECTION }} 已选择</p></div>
-            <m3e-button variant="text" type="button" :disabled="!selectedCount || planning || executing" @click="clearSelection">清除</m3e-button>
+            <div><h3 id="batch-selection-title">{{ tr('选择项目') }}</h3><p>{{ tr('{0} / {1} 已选择', { 0: selectedCount, 1: MAX_SELECTION }) }}</p></div>
+            <m3e-button variant="text" type="button" :disabled="!selectedCount || planning || executing" @click="clearSelection">{{ tr('清除') }}</m3e-button>
           </div>
-          <label class="batch-search"><m3e-icon name="search"></m3e-icon><span class="visually-hidden">筛选项目</span><input v-model="query" autofocus type="search" placeholder="按名称、类型或密码源筛选" /></label>
+          <label class="batch-search"><m3e-icon name="search"></m3e-icon><span class="visually-hidden">{{ tr('筛选项目') }}</span><input v-model="query" autofocus type="search" :placeholder="tr('按名称、类型或密码源筛选')" /></label>
           <div class="batch-selection-toolbar">
-            <label class="batch-check batch-check-all"><input type="checkbox" :checked="allFilteredSelected" :disabled="!filteredItems.length || planning || executing" @change="toggleFiltered" /><span>{{ allFilteredSelected ? '取消选择当前结果' : '选择当前结果' }}</span></label>
-            <span class="batch-result-count">{{ filteredItems.length }} 个结果</span>
+            <label class="batch-check batch-check-all"><input type="checkbox" :checked="allFilteredSelected" :disabled="!filteredItems.length || planning || executing" @change="toggleFiltered" /><span>{{ allFilteredSelected ? tr('取消选择当前结果') : tr('选择当前结果') }}</span></label>
+            <span class="batch-result-count">{{ tr('{0} 个结果', { 0: filteredItems.length }) }}</span>
           </div>
           <p v-if="selectionNotice" class="batch-inline-note" role="status">{{ selectionNotice }}</p>
-          <div v-if="filteredItems.length" class="batch-item-list" role="list" aria-label="可传输项目">
+          <div v-if="filteredItems.length" class="batch-item-list" role="list" :aria-label="tr('可传输项目')">
             <label v-for="item in filteredItems" :key="item.id" class="batch-item-row" :class="{ selected: selectedIds.has(item.id) }" role="listitem">
               <input type="checkbox" :checked="selectedIds.has(item.id)" :disabled="executing || (!selectedIds.has(item.id) && selectedCount >= MAX_SELECTION)" @change="toggleItem(item.id)" />
               <span class="batch-item-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span>
-              <span class="batch-item-copy"><strong>{{ item.title || '未命名项目' }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ sourceProviderLabel(item) }}</small><small class="batch-safe-summary">{{ safeSummary(item) }}</small></span>
+              <span class="batch-item-copy"><strong>{{ item.title || tr('未命名项目') }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ sourceProviderLabel(item) }}</small><small class="batch-safe-summary">{{ safeSummary(item) }}</small></span>
             </label>
           </div>
-          <div v-else class="batch-empty"><m3e-icon name="search_off"></m3e-icon><p>{{ query ? '没有匹配的项目。' : '密码库中没有可传输项目。' }}</p></div>
+          <div v-else class="batch-empty"><m3e-icon name="search_off"></m3e-icon><p>{{ query ? tr('没有匹配的项目。') : tr('密码库中没有可传输项目。') }}</p></div>
         </section>
 
         <section class="batch-panel batch-target-panel" aria-labelledby="batch-target-title">
-          <div class="batch-panel-heading"><div><h3 id="batch-target-title">传输到</h3><p>目标必须是已解锁的 MDBX2 本机工作副本。</p></div></div>
-          <label class="batch-field"><span>目标密码源</span><select v-model="targetProviderId" :disabled="planning || executing"><option value="" disabled>选择 MDBX2 密码源</option><option v-for="provider in targetProviders" :key="provider.id" :value="provider.id">{{ provider.name }}{{ readyFor(provider.id) ? '' : '（已锁定）' }}</option></select></label>
-          <p v-if="targetProvider && !targetReady" class="batch-warning" role="status"><m3e-icon name="lock"></m3e-icon><span>请先在密码源页面解锁 {{ targetProvider.name }}。</span></p>
+          <div class="batch-panel-heading"><div><h3 id="batch-target-title">{{ tr('传输到') }}</h3><p>{{ tr('目标必须是已解锁的 MDBX2 本机工作副本。') }}</p></div></div>
+          <label class="batch-field"><span>{{ tr('目标密码源') }}</span><select v-model="targetProviderId" :disabled="planning || executing"><option value="" disabled>{{ tr('选择 MDBX2 密码源') }}</option><option v-for="provider in targetProviders" :key="provider.id" :value="provider.id">{{ provider.name }}{{ readyFor(provider.id) ? '' : tr('（已锁定）') }}</option></select></label>
+          <p v-if="targetProvider && !targetReady" class="batch-warning" role="status"><m3e-icon name="lock"></m3e-icon><span>{{ tr('请先在密码源页面解锁 {0}。', { 0: targetProvider.name }) }}</span></p>
 
-          <fieldset class="batch-action-picker"><legend>操作</legend><div class="batch-action-segments"><label><input v-model="action" type="radio" value="copy" :disabled="planning || executing" /><span><m3e-icon name="content_copy"></m3e-icon><strong>复制</strong><small>创建独立项目</small></span></label><label><input v-model="action" type="radio" value="move" :disabled="planning || executing" /><span><m3e-icon name="drive_file_move"></m3e-icon><strong>移动</strong><small>完成后移除来源绑定</small></span></label></div></fieldset>
+          <fieldset class="batch-action-picker"><legend>{{ tr('操作') }}</legend><div class="batch-action-segments"><label><input v-model="action" type="radio" value="copy" :disabled="planning || executing" /><span><m3e-icon name="content_copy"></m3e-icon><strong>{{ tr('复制') }}</strong><small>{{ tr('创建独立项目') }}</small></span></label><label><input v-model="action" type="radio" value="move" :disabled="planning || executing" /><span><m3e-icon name="drive_file_move"></m3e-icon><strong>{{ tr('移动') }}</strong><small>{{ tr('完成后移除来源绑定') }}</small></span></label></div></fieldset>
 
           <div class="batch-folder-section">
-            <div class="batch-subheading"><div><strong>目标文件夹</strong><small>选择根目录或 Android 兼容的 Collection。</small></div><m3e-button variant="text" type="button" :disabled="collectionsLoading || planning || executing || !targetReady" @click="loadCollections"><m3e-icon slot="icon" name="refresh"></m3e-icon>刷新</m3e-button></div>
-            <div v-if="collectionsLoading" class="batch-folder-state" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取文件夹…</span></div>
+            <div class="batch-subheading"><div><strong>{{ tr('目标文件夹') }}</strong><small>{{ tr('选择根目录或 Android 兼容的 Collection。') }}</small></div><m3e-button variant="text" type="button" :disabled="collectionsLoading || planning || executing || !targetReady" @click="loadCollections"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('刷新') }}</m3e-button></div>
+            <div v-if="collectionsLoading" class="batch-folder-state" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取文件夹…') }}</span></div>
             <p v-else-if="collectionsError" class="batch-error" role="alert">{{ collectionsError }}</p>
-            <div v-else class="batch-folder-tree" role="radiogroup" aria-label="目标 MDBX2 文件夹">
-              <label class="batch-folder-row" :class="{ selected: !targetCollectionId }"><input v-model="targetCollectionId" type="radio" value="" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder_open"></m3e-icon></span><span><strong>根目录</strong><small>未分类项目</small></span></label>
-              <label v-for="row in collectionRows" :key="row.item.collectionId" class="batch-folder-row" :class="{ selected: targetCollectionId === row.item.collectionId, incomplete: row.hierarchyState !== 'ready' }" :style="{ '--folder-depth': row.depth }"><input v-model="targetCollectionId" type="radio" :value="row.item.collectionId" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder"></m3e-icon></span><span><strong>{{ folderLabel(row) }}</strong><small>{{ row.hierarchyState === 'ready' ? `${row.item.attachmentCount} 个附件` : row.parentPath }}</small></span></label>
-              <p v-if="!collectionRows.length && targetReady" class="batch-folder-state"><m3e-icon name="folder_off"></m3e-icon><span>还没有自定义文件夹；项目会写入根目录。</span></p>
+            <div v-else class="batch-folder-tree" role="radiogroup" :aria-label="tr('目标 MDBX2 文件夹')">
+              <label class="batch-folder-row" :class="{ selected: !targetCollectionId }"><input v-model="targetCollectionId" type="radio" value="" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder_open"></m3e-icon></span><span><strong>{{ tr('根目录') }}</strong><small>{{ tr('未分类项目') }}</small></span></label>
+              <label v-for="row in collectionRows" :key="row.item.collectionId" class="batch-folder-row" :class="{ selected: targetCollectionId === row.item.collectionId, incomplete: row.hierarchyState !== 'ready' }" :style="{ '--folder-depth': row.depth }"><input v-model="targetCollectionId" type="radio" :value="row.item.collectionId" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder"></m3e-icon></span><span><strong>{{ folderLabel(row) }}</strong><small>{{ row.hierarchyState === 'ready' ? tr('{0} 个附件', { 0: row.item.attachmentCount }) : row.parentPath }}</small></span></label>
+              <p v-if="!collectionRows.length && targetReady" class="batch-folder-state"><m3e-icon name="folder_off"></m3e-icon><span>{{ tr('还没有自定义文件夹；项目会写入根目录。') }}</span></p>
             </div>
           </div>
 
-          <label class="batch-check batch-preserve"><input v-model="preserveCategories" type="checkbox" :disabled="planning || executing" /><span><strong>保留原分类层级</strong><small>按 Android 的文件夹路径创建或复用目标 Collection。</small></span></label>
-          <p v-if="action === 'move'" class="batch-warning"><m3e-icon name="warning"></m3e-icon><span>移动只会在目标项目与附件验证成功后删除来源；失败时来源保留。</span></p>
+          <label class="batch-check batch-preserve"><input v-model="preserveCategories" type="checkbox" :disabled="planning || executing" /><span><strong>{{ tr('保留原分类层级') }}</strong><small>{{ tr('按 Android 的文件夹路径创建或复用目标 Collection。') }}</small></span></label>
+          <p v-if="action === 'move'" class="batch-warning"><m3e-icon name="warning"></m3e-icon><span>{{ tr('移动只会在目标项目与附件验证成功后删除来源；失败时来源保留。') }}</span></p>
         </section>
         </div>
 
         <section v-if="planResult" class="batch-panel batch-plan-panel" aria-labelledby="batch-plan-title">
-        <div class="batch-panel-heading"><div><h3 id="batch-plan-title">兼容性计划</h3><p>{{ planResult.transferableCount }} 个可传输，{{ planResult.blockedCount }} 个被阻断</p></div><span class="operation-chip">操作 {{ planResult.operationId.slice(0, 8) }}</span></div>
+        <div class="batch-panel-heading"><div><h3 id="batch-plan-title">{{ tr('兼容性计划') }}</h3><p>{{ tr('{0} 个可传输，{1} 个被阻断', { 0: planResult.transferableCount, 1: planResult.blockedCount }) }}</p></div><span class="operation-chip">{{ tr('操作 {0}', { 0: planResult.operationId.slice(0, 8) }) }}</span></div>
         <div v-if="planResult.warnings.length" class="batch-warning-list" role="status"><p v-for="warning in planResult.warnings" :key="warning"><m3e-icon name="info"></m3e-icon><span>{{ warning }}</span></p></div>
-        <div class="batch-plan-list" role="list" aria-label="传输计划项目">
-          <div v-for="item in planResult.items" :key="item.sourceItemId" class="batch-plan-row" :class="{ blocked: item.blockedReason }" role="listitem"><m3e-icon :name="item.blockedReason ? 'block' : item.effectiveAction === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ pathLabel(item.sourcePath) }} <m3e-icon name="arrow_forward"></m3e-icon> {{ pathLabel(item.targetPath) }}</small><small v-if="item.blockedReason" class="batch-error">{{ item.blockedReason }}</small><small v-else-if="item.pathIncomplete" class="batch-inline-note">原分类路径不完整，已保留可解析部分。</small></span></div>
+        <div class="batch-plan-list" role="list" :aria-label="tr('传输计划项目')">
+          <div v-for="item in planResult.items" :key="item.sourceItemId" class="batch-plan-row" :class="{ blocked: item.blockedReason }" role="listitem"><m3e-icon :name="item.blockedReason ? 'block' : item.effectiveAction === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ pathLabel(item.sourcePath) }} <m3e-icon name="arrow_forward"></m3e-icon> {{ pathLabel(item.targetPath) }}</small><small v-if="item.blockedReason" class="batch-error">{{ item.blockedReason }}</small><small v-else-if="item.pathIncomplete" class="batch-inline-note">{{ tr('原分类路径不完整，已保留可解析部分。') }}</small></span></div>
         </div>
-        <label v-if="planResult.requiresMoveConfirmation" class="batch-move-confirm"><input v-model="moveConfirmed" type="checkbox" /><span><strong>我确认执行移动</strong><small>目标写入、附件校验和来源删除会按顺序执行；已完成操作可安全重试。</small></span></label>
+        <label v-if="planResult.requiresMoveConfirmation" class="batch-move-confirm"><input v-model="moveConfirmed" type="checkbox" /><span><strong>{{ tr('我确认执行移动') }}</strong><small>{{ tr('目标写入、附件校验和来源删除会按顺序执行；已完成操作可安全重试。') }}</small></span></label>
         </section>
 
         <section v-if="executing || progress" class="batch-panel batch-progress-panel" aria-live="polite" aria-labelledby="batch-progress-title">
-        <div class="batch-progress-heading"><div><h3 id="batch-progress-title">{{ executing ? '正在传输' : progress?.phase === 'failed' ? '传输未完成' : '传输结果' }}</h3><p>{{ progress ? phaseLabel(progress.phase) : '准备中' }} · {{ progress?.processed || 0 }} / {{ progress?.total || planResult?.items.length || 0 }}</p></div><strong>{{ progressPercent }}%</strong></div>
-        <progress max="100" :value="progressPercent" aria-label="批量传输进度"></progress>
+        <div class="batch-progress-heading"><div><h3 id="batch-progress-title">{{ executing ? tr('正在传输') : progress?.phase === 'failed' ? tr('传输未完成') : tr('传输结果') }}</h3><p>{{ progress ? phaseLabel(progress.phase) : tr('准备中') }} · {{ progress?.processed || 0 }} / {{ progress?.total || planResult?.items.length || 0 }}</p></div><strong>{{ progressPercent }}%</strong></div>
+        <progress max="100" :value="progressPercent" :aria-label="tr('批量传输进度')"></progress>
         </section>
 
         <section v-if="executeResult" class="batch-panel batch-result-panel" aria-labelledby="batch-result-title">
-        <div class="batch-panel-heading"><div><h3 id="batch-result-title">处理结果</h3><p>{{ executeResult.completedCount }} 个成功 · {{ executeResult.blockedCount }} 个阻断 · {{ executeResult.failedCount }} 个失败</p></div><m3e-icon :name="executeResult.failedCount ? 'error' : 'check_circle'" :class="executeResult.failedCount ? 'result-danger' : 'result-success'"></m3e-icon></div>
-        <div class="batch-result-list" role="list" aria-label="批量传输结果">
-          <div v-for="item in executeResult.items" :key="item.sourceItemId" class="batch-result-row" :class="`result-${item.status}`" role="listitem"><m3e-icon :name="resultIcon(item.status)"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ item.status === 'completed' ? '已写入目标' : item.error || '未执行' }}</small></span></div>
+        <div class="batch-panel-heading"><div><h3 id="batch-result-title">{{ tr('处理结果') }}</h3><p>{{ tr('{0} 个成功 · {1} 个阻断 · {2} 个失败', { 0: executeResult.completedCount, 1: executeResult.blockedCount, 2: executeResult.failedCount }) }}</p></div><m3e-icon :name="executeResult.failedCount ? 'error' : 'check_circle'" :class="executeResult.failedCount ? 'result-danger' : 'result-success'"></m3e-icon></div>
+        <div class="batch-result-list" role="list" :aria-label="tr('批量传输结果')">
+          <div v-for="item in executeResult.items" :key="item.sourceItemId" class="batch-result-row" :class="`result-${item.status}`" role="listitem"><m3e-icon :name="resultIcon(item.status)"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ item.status === 'completed' ? tr('已写入目标') : item.error || tr('未执行') }}</small></span></div>
         </div>
-        <p v-if="retryableCount" class="batch-inline-note"><m3e-icon name="info"></m3e-icon>重试会重放同一个确定性操作；已完成项目不会重复创建。</p>
+        <p v-if="retryableCount" class="batch-inline-note"><m3e-icon name="info"></m3e-icon>{{ tr('重试会重放同一个确定性操作；已完成项目不会重复创建。') }}</p>
         </section>
 
         <p v-if="error" class="batch-error batch-dialog-error" role="alert">{{ error }}</p>
       </div>
       <footer class="mdbx2-batch-footer">
-        <m3e-button variant="text" type="button" :disabled="executing" @click="closeDialog">关闭</m3e-button>
-        <m3e-button v-if="retryableCount" variant="tonal" type="button" :disabled="executing" @click="retryFailed"><m3e-icon slot="icon" name="refresh"></m3e-icon>重试失败项目</m3e-button>
-        <m3e-button v-if="!hasPlan" variant="filled" type="button" :disabled="planning || executing || !selectedCount || !targetReady" @click="createPlan"><m3e-icon slot="icon" name="rule"></m3e-icon>{{ planning ? '检查兼容性…' : '检查并生成计划' }}</m3e-button>
-        <m3e-button v-else variant="filled" type="button" :disabled="planning || executing || !planCanExecute" @click="executePlan"><m3e-icon slot="icon" :name="executing ? 'progress_activity' : action === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon>{{ executing ? '正在提交…' : planResult?.requiresMoveConfirmation ? '确认并移动' : '执行复制' }}</m3e-button>
+        <m3e-button variant="text" type="button" :disabled="executing" @click="closeDialog">{{ tr('关闭') }}</m3e-button>
+        <m3e-button v-if="retryableCount" variant="tonal" type="button" :disabled="executing" @click="retryFailed"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('重试失败项目') }}</m3e-button>
+        <m3e-button v-if="!hasPlan" variant="filled" type="button" :disabled="planning || executing || !selectedCount || !targetReady" @click="createPlan"><m3e-icon slot="icon" name="rule"></m3e-icon>{{ planning ? tr('检查兼容性…') : tr('检查并生成计划') }}</m3e-button>
+        <m3e-button v-else variant="filled" type="button" :disabled="planning || executing || !planCanExecute" @click="executePlan"><m3e-icon slot="icon" :name="executing ? 'progress_activity' : action === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon>{{ executing ? tr('正在提交…') : planResult?.requiresMoveConfirmation ? tr('确认并移动') : tr('执行复制') }}</m3e-button>
       </footer>
     </section>
   </div>

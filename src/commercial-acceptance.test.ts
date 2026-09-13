@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { localeOptions } from "./i18n/locales";
 
 const root = new URL("../", import.meta.url);
 
@@ -52,10 +53,19 @@ describe("commercial installability and least privilege", () => {
     expect(manifest.options_page).toBe("index.html");
     expect(manifest.content_security_policy.extension_pages).toBe("script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(manifest).not.toHaveProperty("externally_connectable");
-    expect(manifest.web_accessible_resources).toEqual([{ resources: ["icons/logo-256.png"], matches: ["http://*/*", "https://*/*"], use_dynamic_url: true }]);
+    const localeResources = localeOptions.filter((option) => option.value !== "en" && option.value !== "zh-CN").map((option) => `locales/ui-${option.value}.json`);
+    expect(manifest.web_accessible_resources).toEqual([{ resources: ["icons/logo-256.png", ...localeResources], matches: ["http://*/*", "https://*/*"], use_dynamic_url: true }]);
     expect(readme).toContain("运行时不依赖 Monica Server WebUI");
-    expect(appearance).not.toContain("../i18n");
+    expect(appearance).toContain("../i18n");
     expect(appearance).not.toContain("setLocale");
+    for (const option of localeOptions) {
+      const messages = await readJson<Record<string, { message: string }>>(`public/_locales/${option.manifest}/messages.json`);
+      expect(messages.extensionName.message).toContain("Monica");
+      expect(messages.extensionDescription.message.length).toBeLessThanOrEqual(132);
+    }
+    const theme = await read("src/nothing.css");
+    expect(theme).toContain("/fonts/doto-700.ttf");
+    expect(theme).not.toMatch(/url\(['"]?https?:/);
     expect(await read("scripts/package-release.mjs")).toContain('packagedEntries.set("LICENSE"');
   });
 

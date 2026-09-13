@@ -34,7 +34,7 @@ test("MDBX2 batch transfer provides safe M3E planning progress confirmation and 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-batch-transfer-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },

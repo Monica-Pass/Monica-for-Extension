@@ -10,7 +10,7 @@ test("shared provider and Windows Hello actions use secret-free retry-safe M3E c
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("shared-security-ui-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },

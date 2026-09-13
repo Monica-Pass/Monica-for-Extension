@@ -28,7 +28,7 @@ async function confirmFirstPasskey(page: import("@playwright/test").Page): Promi
 test("passkey bridge creates an encrypted ES256 credential and signs a later assertion", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("passkey-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey e2e master password" }))).toMatchObject({ ok: true });
@@ -74,7 +74,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
     }] }
   };
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-import"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-import"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     await context.route("https://import-bw.example.test/**", async (route) => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
@@ -106,7 +106,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
 test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     const masterPassword = "pending passkey lock password";
@@ -128,7 +128,7 @@ test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, 
 test("locking immediately after confirmation keeps the page and vault consistent", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     const masterPassword = "passkey lock race password";
@@ -157,7 +157,7 @@ test("locking immediately after confirmation keeps the page and vault consistent
 test("aborting immediately after confirmation never leaves an orphaned Passkey", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "abort passkey password" }))).toMatchObject({ ok: true });
@@ -183,7 +183,7 @@ test("aborting immediately after confirmation never leaves an orphaned Passkey",
 test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "exclude recheck password" }))).toMatchObject({ ok: true });
@@ -216,7 +216,7 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
   const protectedKey = await new BitwardenClient((() => Promise.reject(new Error("unused"))) as unknown as typeof fetch).protectVaultKey(vaultKey, stretched, Uint8Array.from({ length: 16 }, (_, index) => index));
   let remoteCipher: Record<string, unknown> | undefined; let postCount = 0; let putCount = 0; let deleteCount = 0;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-passkey-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     await context.route("https://bw.example.test/**", async (route) => {
       const request = route.request(); const pathname = new URL(request.url()).pathname;
       if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });

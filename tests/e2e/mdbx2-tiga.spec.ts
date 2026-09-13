@@ -19,7 +19,7 @@ test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-tiga-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1200 },

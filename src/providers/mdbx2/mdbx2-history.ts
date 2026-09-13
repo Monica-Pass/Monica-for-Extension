@@ -1,3 +1,4 @@
+import { tr, locale } from "../../i18n";
 import { MDBX2_MAX_HISTORY_REVERT_ITEMS, type Mdbx2CommitChangeSummary, type Mdbx2CommitDiffItem, type Mdbx2CommitHistoryItem } from "./native-contract";
 
 export type Mdbx2HistoryAction = "created" | "updated" | "moved" | "copied" | "deleted" | "restored" | "merged" | "system";
@@ -53,7 +54,7 @@ export function presentMdbx2History(item: Mdbx2CommitHistoryItem): Mdbx2HistoryP
                 ? "created"
                 : "updated";
   const systemDescription = isSystemCommit ? systemCommitDescription(item) : undefined;
-  const supportingText = systemDescription || countSummary(counts) || item.message || "数据库内容已更新";
+  const supportingText = systemDescription || countSummary(counts) || item.message || tr('数据库内容已更新');
   return {
     title: operationTitle(item, action, objectCount, changes),
     supportingText,
@@ -73,15 +74,15 @@ export function presentMdbx2Diff(item: Mdbx2CommitDiffItem): Mdbx2DiffPresentati
   const objectLabel = mdbx2HistoryObjectTypeLabel(item.objectType, item.contentType);
   const displayTitle = item.currentTitle?.trim() || item.previousTitle?.trim() || objectLabel;
   const details: string[] = [];
-  if (item.previousTitle !== item.currentTitle) details.push("标题已修改");
-  if (item.payloadChanged) details.push("内容已修改");
-  if (item.changedFields.some(isCollectionField)) details.push("位置已修改");
-  if (item.previousDeleted !== item.currentDeleted) details.push(item.currentDeleted ? "已移入回收站" : "已恢复");
+  if (item.previousTitle !== item.currentTitle) details.push(tr('标题已修改'));
+  if (item.payloadChanged) details.push(tr('内容已修改'));
+  if (item.changedFields.some(isCollectionField)) details.push(tr('位置已修改'));
+  if (item.previousDeleted !== item.currentDeleted) details.push(item.currentDeleted ? tr('已移入回收站') : tr('已恢复'));
   const unknownCount = item.changedFields.filter((field) => !knownDiffField(field)).length;
-  if (unknownCount) details.push(`另有 ${unknownCount} 个字段变化`);
+  if (unknownCount) details.push(tr('另有 {0} 个字段变化', { 0: unknownCount }));
   return {
     title: `${diffActionLabel(action)}${objectLabel}`,
-    supportingText: details.join(" · ") || "对象元数据已更新",
+    supportingText: details.join(" · ") || tr('对象元数据已更新'),
     action,
     icon: historyActionIcon(action),
     displayTitle
@@ -91,37 +92,37 @@ export function presentMdbx2Diff(item: Mdbx2CommitDiffItem): Mdbx2DiffPresentati
 export function mdbx2HistoryObjectTypeLabel(objectType: string, contentType?: string): string {
   switch (contentType?.trim().toLocaleLowerCase()) {
     case "login":
-    case "password": return "密码";
-    case "note": return "笔记";
-    case "totp": return "验证器";
-    case "card": return "卡片";
+    case "password": return tr('密码');
+    case "note": return tr('笔记');
+    case "totp": return tr('验证器');
+    case "card": return tr('卡片');
     case "document-ref":
-    case "document": return "证件";
-    case "billing-address": return "地址";
-    case "payment-account": return "支付账户";
-    case "passkey": return "通行密钥";
-    case "steam-mafile": return "Steam 账号";
+    case "document": return tr('证件');
+    case "billing-address": return tr('地址');
+    case "payment-account": return tr('支付账户');
+    case "passkey": return tr('通行密钥');
+    case "steam-mafile": return tr('Steam 账号');
   }
   switch (objectType.trim().toLocaleLowerCase()) {
-    case "entry": return "条目";
+    case "entry": return tr('条目');
     case "project":
-    case "folder": return "文件夹";
-    case "attachment": return "附件";
-    case "passkey": return "通行密钥";
-    case "object-relation": return "关联";
+    case "folder": return tr('文件夹');
+    case "attachment": return tr('附件');
+    case "passkey": return tr('通行密钥');
+    case "object-relation": return tr('关联');
     case "object-label":
-    case "object-label-assignment": return "标签";
-    case "vault-meta": return "数据库设置";
-    case "key-epoch": return "数据库密钥";
-    case "snapshot": return "快照";
-    case "branch": return "同步分支";
-    default: return "对象";
+    case "object-label-assignment": return tr('标签');
+    case "vault-meta": return tr('数据库设置');
+    case "key-epoch": return tr('数据库密钥');
+    case "snapshot": return tr('快照');
+    case "branch": return tr('同步分支');
+    default: return tr('对象');
   }
 }
 
 export function formatMdbx2HistoryTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value.replace("T", " ").replace(/Z$/, "").slice(0, 16) : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value.replace("T", " ").replace(/Z$/, "").slice(0, 16) : date.toLocaleString(locale.value);
 }
 
 function distinctChanges(changes: Mdbx2CommitChangeSummary[]): Mdbx2CommitChangeSummary[] {
@@ -171,41 +172,41 @@ function onlyAction(counts: Mdbx2HistoryActionCounts, action: keyof Omit<Mdbx2Hi
 
 function countSummary(counts: Mdbx2HistoryActionCounts): string {
   return [
-    counts.created ? `新增 ${counts.created}` : "",
-    counts.updated ? `修改 ${counts.updated}` : "",
-    counts.moved ? `移动 ${counts.moved}` : "",
-    counts.copied ? `复制 ${counts.copied}` : "",
-    counts.deleted ? `删除 ${counts.deleted}` : "",
-    counts.restored ? `恢复 ${counts.restored}` : ""
+    counts.created ? tr('新增 {0}', { 0: counts.created }) : "",
+    counts.updated ? tr('修改 {0}', { 0: counts.updated }) : "",
+    counts.moved ? tr('移动 {0}', { 0: counts.moved }) : "",
+    counts.copied ? tr('复制 {0}', { 0: counts.copied }) : "",
+    counts.deleted ? tr('删除 {0}', { 0: counts.deleted }) : "",
+    counts.restored ? tr('恢复 {0}', { 0: counts.restored }) : ""
   ].filter(Boolean).join(" · ");
 }
 
 function operationTitle(item: Mdbx2CommitHistoryItem, action: Mdbx2HistoryAction, objectCount: number, changes: Mdbx2CommitChangeSummary[]): string {
   const operation = item.operationKind?.trim().toLocaleLowerCase();
   switch (operation) {
-    case "monica-initialize": return "初始化数据库";
-    case "monica-create-folder": return "新建文件夹";
-    case "monica-rename-folder": return "重命名文件夹";
-    case "monica-move-folder": return "移动文件夹";
-    case "monica-delete-folder": return "删除文件夹";
-    case "monica-restore-folder": return "恢复文件夹";
-    case "monica-migration-folders": return "导入文件夹";
-    case "monica-project-tags": return "更新文件夹标签";
-    case "revert-commit": return "恢复历史版本";
+    case "monica-initialize": return tr('初始化数据库');
+    case "monica-create-folder": return tr('新建文件夹');
+    case "monica-rename-folder": return tr('重命名文件夹');
+    case "monica-move-folder": return tr('移动文件夹');
+    case "monica-delete-folder": return tr('删除文件夹');
+    case "monica-restore-folder": return tr('恢复文件夹');
+    case "monica-migration-folders": return tr('导入文件夹');
+    case "monica-project-tags": return tr('更新文件夹标签');
+    case "revert-commit": return tr('恢复历史版本');
   }
-  if (operation?.includes("attachment-create")) return actionTitle("created", objectCount, changes, "附件");
-  if (operation?.includes("attachment-replace")) return "更新附件内容";
-  if (operation?.includes("snapshot")) return "更新数据库快照";
-  if (operation?.includes("key") && operation.includes("rotat")) return "轮换数据库密钥";
+  if (operation?.includes("attachment-create")) return actionTitle("created", objectCount, changes, tr('附件'));
+  if (operation?.includes("attachment-replace")) return tr('更新附件内容');
+  if (operation?.includes("snapshot")) return tr('更新数据库快照');
+  if (operation?.includes("key") && operation.includes("rotat")) return tr('轮换数据库密钥');
   return actionTitle(action, objectCount, changes);
 }
 
 function actionTitle(action: Mdbx2HistoryAction, objectCount: number, changes: Mdbx2CommitChangeSummary[], forcedType?: string): string {
-  if (action === "merged") return "合并了数据库变更";
-  if (action === "system") return "数据库系统事件";
+  if (action === "merged") return tr('合并了数据库变更');
+  if (action === "system") return tr('数据库系统事件');
   const labels = [...new Set(changes.map((change) => mdbx2HistoryObjectTypeLabel(change.objectType)))];
-  const objectLabel = forcedType || (labels.length === 1 ? labels[0] : "项目");
-  const quantity = objectCount > 0 ? `${objectCount} 个${objectLabel}` : objectLabel;
+  const objectLabel = forcedType || (labels.length === 1 ? labels[0] : tr('项目'));
+  const quantity = objectCount > 0 ? tr('{0} 个{1}', { 0: objectCount, 1: objectLabel }) : objectLabel;
   return `${diffActionLabel(action)}${quantity}`;
 }
 
@@ -219,12 +220,12 @@ function systemCommit(item: Mdbx2CommitHistoryItem): boolean {
 }
 
 function systemCommitDescription(item: Mdbx2CommitHistoryItem): string {
-  if (item.operationKind?.toLocaleLowerCase() === "monica-initialize") return "建立数据库根目录和初始结构";
-  if (item.commitKind.toLocaleLowerCase() === "key-rotation" || item.changeScope.toLocaleLowerCase() === "key-epoch") return "更新数据库加密密钥或解锁材料";
-  if (item.commitKind.toLocaleLowerCase() === "snapshot" || item.changeScope.toLocaleLowerCase() === "snapshot") return "记录或整理数据库快照";
-  if (item.changeScope.toLocaleLowerCase() === "branch") return "更新数据库同步分支状态";
-  if (item.changeScope.toLocaleLowerCase() === "vault-meta") return "更新数据库设置或安全元数据";
-  return item.message || "此提交记录的是数据库级事件，不包含普通条目变更";
+  if (item.operationKind?.toLocaleLowerCase() === "monica-initialize") return tr('建立数据库根目录和初始结构');
+  if (item.commitKind.toLocaleLowerCase() === "key-rotation" || item.changeScope.toLocaleLowerCase() === "key-epoch") return tr('更新数据库加密密钥或解锁材料');
+  if (item.commitKind.toLocaleLowerCase() === "snapshot" || item.changeScope.toLocaleLowerCase() === "snapshot") return tr('记录或整理数据库快照');
+  if (item.changeScope.toLocaleLowerCase() === "branch") return tr('更新数据库同步分支状态');
+  if (item.changeScope.toLocaleLowerCase() === "vault-meta") return tr('更新数据库设置或安全元数据');
+  return item.message || tr('此提交记录的是数据库级事件，不包含普通条目变更');
 }
 
 function diffAction(item: Mdbx2CommitDiffItem): Mdbx2DiffPresentation["action"] {
@@ -237,14 +238,14 @@ function diffAction(item: Mdbx2CommitDiffItem): Mdbx2DiffPresentation["action"] 
 
 function diffActionLabel(action: Mdbx2HistoryAction): string {
   switch (action) {
-    case "created": return "添加了";
-    case "updated": return "更新了";
-    case "moved": return "移动了";
-    case "copied": return "复制了";
-    case "deleted": return "删除了";
-    case "restored": return "恢复了";
-    case "merged": return "合并了";
-    case "system": return "记录了";
+    case "created": return tr('添加了');
+    case "updated": return tr('更新了');
+    case "moved": return tr('移动了');
+    case "copied": return tr('复制了');
+    case "deleted": return tr('删除了');
+    case "restored": return tr('恢复了');
+    case "merged": return tr('合并了');
+    case "system": return tr('记录了');
   }
 }
 

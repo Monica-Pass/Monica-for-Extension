@@ -10,7 +10,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("provider-resilience-profile"), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     acceptDownloads: true,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
   });

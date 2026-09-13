@@ -5,7 +5,7 @@ async function launch(testInfo: TestInfo): Promise<{ context: BrowserContext; pa
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("site-policy-profile"), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     viewport: { width: 375, height: 720 },
     args: ["--disable-extensions-except=" + extensionPath, "--load-extension=" + extensionPath]
   });

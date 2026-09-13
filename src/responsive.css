@@ -1,0 +1,302 @@
+/* Geometry shared by manager and popup. Scoped selectors keep these constraints
+   independent of Vite's ordering of shared and entry-specific CSS chunks. */
+:root {
+  --app-control-height: max(44px, calc(1.25rem + 16px));
+  --app-field-height: max(48px, calc(1.5rem + 16px));
+  --app-action-gap: 8px;
+  --app-page-gutter: clamp(16px, 2.4vw, 40px);
+}
+
+:is(#root, #popup-root) .language-picker { flex-wrap: wrap; max-width: 100%; }
+:is(#root, #popup-root) .language-picker select { flex: 1 1 10rem; width: 0; min-width: min(100%, 10rem); }
+:is(#root, #popup-root) .language-error { flex-basis: 100%; overflow-wrap: anywhere; }
+#root .auth-preferences .language-picker { width: min(100%, 22rem); }
+
+:is(#root, #popup-root) m3e-button {
+  min-width: 44px;
+  min-height: var(--app-control-height);
+  max-width: 100%;
+  --m3e-button-container-height: var(--app-control-height);
+  --m3e-button-label-text-font-size: .875rem;
+  --m3e-button-label-text-line-height: 1.4;
+  --m3e-button-leading-space: 16px;
+  --m3e-button-trailing-space: 16px;
+  --m3e-button-small-leading-space: 16px;
+  --m3e-button-small-trailing-space: 16px;
+  --m3e-button-icon-label-space: 8px;
+}
+
+:is(#root, #popup-root) m3e-icon-button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
+  --m3e-icon-button-container-height: 44px;
+  --m3e-icon-button-default-leading-space: 10px;
+  --m3e-icon-button-default-trailing-space: 10px;
+  --m3e-icon-button-icon-size: 24px;
+}
+
+:root #root {
+  --app-drawer-width: clamp(256px, 17.5rem, 360px);
+}
+
+#root .sidebar {
+  height: 100dvh;
+  padding: 12px;
+  border-inline-end: 1px solid var(--app-outline);
+  background: var(--app-bg);
+}
+
+#root .sidebar-brand {
+  min-height: 80px;
+  margin: 0 0 8px;
+  padding: 8px 8px 16px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+#root .sidebar-brand .brand-logo { width: 40px; height: 40px; }
+#root .sidebar-brand .sidebar-wordmark { min-width: 0; font: 700 32px/1.1 var(--font-display); }
+#root .sidebar-wordmark small { font: 400 .625rem/1.5 var(--font-data); letter-spacing: .02em; overflow-wrap: anywhere; }
+#root .navigation-close, #root .navigation-scrim { display: none; }
+
+#root .sidebar nav {
+  min-height: 0;
+  gap: 8px;
+  padding: 4px 0 12px;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+#root .sidebar .nav-title { padding: 8px 12px; }
+#root .sidebar .nav-item {
+  min-height: 44px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 8px 12px;
+  line-height: 1.5;
+  transform: none;
+}
+#root .sidebar .nav-count { min-width: 24px; padding: 2px 4px; background: transparent; }
+#root .sidebar-footer { padding: 12px 4px 0; gap: 8px; }
+#root .sidebar-footer .language-picker { justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
+#root .sidebar-footer .local-badge { min-height: 0; padding: 4px 0; font-size: .6875rem; background: transparent; gap: 8px; }
+#root .sidebar-footer > m3e-button { width: 100%; }
+
+#root #main-content {
+  width: min(100%, var(--app-content-max));
+  margin-inline: auto;
+  padding: 0 var(--app-page-gutter) 40px;
+}
+
+#root .page-appbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  margin: 0;
+  padding: 12px 0;
+  background: var(--app-bg);
+}
+#root .page-appbar .appbar-trailing {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 16px;
+}
+#root .page-appbar .search {
+  flex: 1 1 16rem;
+  width: 100%;
+  max-width: 36rem;
+  min-height: var(--app-field-height);
+  gap: 10px;
+  padding: 8px 16px;
+}
+#root .page-appbar .search input { width: 100%; line-height: 1.5; }
+#root .page-appbar .search input::placeholder { color: var(--app-muted); }
+#root .appbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--app-action-gap);
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+#root .appbar-actions:empty { display: none; }
+#root .appbar-actions m3e-button { width: auto; min-width: 88px; max-width: 100%; }
+#root .appbar-action-label { display: inline; }
+#root .page-heading { min-height: 0; padding: 24px 0 28px; }
+#root .page-heading p { font-weight: 400; max-width: 64ch; }
+
+#main-content .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#main-content :is(.metric, .card-head) { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+#main-content :is(.metric, .card-head) > :is(h2, p, strong, small) { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+#main-content .metric > p { padding-inline-end: 32px; }
+#main-content .metric strong.metric-word { font-size: 1.25rem !important; }
+#main-content .getting-started { gap: 20px; }
+#main-content .empty-state { grid-template-columns: minmax(0, 1fr); }
+#main-content .empty-state > :is(h2, p) { min-width: 0; max-width: 100%; overflow-wrap: anywhere; hyphens: auto; }
+#main-content .getting-started-actions { flex-wrap: wrap; gap: var(--app-action-gap); }
+#main-content :is(.source-actions, .detail-actions, .steam-row-actions) { gap: var(--app-action-gap); }
+#main-content :is(.source-actions, .settings-actions) > * { max-width: 100%; }
+#main-content .login-data-card .row-title { width: 100%; min-height: 44px; margin: 0; padding: 0; font-size: .875rem; line-height: 1.4; }
+#main-content .login-data-card .credential-compact-summary { font-size: .75rem; line-height: 1.4; }
+
+@container manager-content (max-width: 48rem) {
+  #main-content .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container manager-content (max-width: 40rem) {
+  #root .page-appbar { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px 12px; }
+  #root .page-appbar .appbar-trailing { display: contents; }
+  #root .page-appbar .search { grid-column: 1 / -1; max-width: none; }
+  #root .appbar-actions { grid-column: 1 / -1; width: 100%; margin: 0; }
+  #root .appbar-actions m3e-button { flex: 0 1 auto; }
+  #main-content .getting-started { grid-template-columns: minmax(0, 1fr); }
+  #main-content .getting-started-actions { width: 100%; }
+}
+@container manager-content (max-width: 24rem) {
+  #main-content .metrics { grid-template-columns: minmax(0, 1fr); }
+  #root .appbar-actions m3e-button { flex: 1 1 0; }
+  #main-content .getting-started-actions m3e-button { flex: 1 1 9rem; }
+  #main-content .source-actions > m3e-button { width: 100%; }
+  #main-content .login-data-card .credential-table tbody tr { grid-template-columns: minmax(0, 1fr); }
+  #main-content .login-data-card .credential-table .item-cell { padding: 8px 12px 4px; }
+  #main-content .login-data-card .credential-table .action-cell { padding: 0 8px 8px; flex-wrap: wrap; }
+}
+
+/* Long editors keep their actions outside the field scroller. */
+#root .editor-dialog { animation: none; }
+#root :is(.login-item-dialog, .vault-item-dialog):has(.editor-with-actions) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+}
+#root .editor-with-actions {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 0;
+}
+#root .editor-fields {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  gap: 16px;
+  padding: 4px 4px 16px;
+  scroll-padding-block: 12px;
+}
+#root .editor-intro { font-size: .8125rem; line-height: 1.5; color: var(--app-muted); }
+#root .editor-with-actions > footer {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--app-action-gap);
+  padding: 12px 0 0;
+  border-top: 1px solid var(--app-outline);
+}
+#root .editor-with-actions > footer m3e-button { min-width: 104px; }
+#root .editor-dialog:has(.editor-with-actions) > header { flex: 0 0 auto; align-items: center; margin-bottom: 12px; gap: 12px; }
+#root .editor-dialog:has(.editor-with-actions) > header h2 { font-size: 1.25rem; line-height: 1.3; }
+#root :is(.editor-form, .provider-form) :is(input:not([type='checkbox']):not([type='radio']), select) { min-height: var(--app-field-height); }
+#root .detail-dialog { container: item-detail / inline-size; }
+#root .detail-field-actions { flex-wrap: wrap; gap: var(--app-action-gap); max-width: 100%; }
+#root .detail-row dd > :not(.detail-field-actions) { max-width: 100%; }
+@container item-detail (max-width: 36rem) {
+  #root .detail-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+
+@media (max-width: 900px) {
+  #root .sidebar { width: min(calc(100vw - 24px), var(--app-drawer-width)); visibility: hidden; pointer-events: none; z-index: 30; }
+  #root .shell.nav-open .sidebar { visibility: visible; pointer-events: auto; box-shadow: none; }
+  #root .navigation-scrim { display: block; position: fixed; inset: 0; background: rgb(0 0 0 / 65%); z-index: 29; }
+  #root .navigation-close { display: inline-grid; }
+  #root .sidebar-brand { grid-template-columns: minmax(0, 1fr) auto; }
+  #root .sidebar-brand > .brand-logo { display: none; }
+  body:has(.shell.nav-open) { overflow-y: hidden; }
+  @container manager-content (max-width: 40rem) {
+    #root .page-appbar .search { grid-column: 2; }
+    #root .page-appbar .mobile-menu { grid-column: 1; grid-row: 1; }
+  }
+}
+
+@media (max-width: 560px) {
+  #root .page-heading { padding: 16px 0 24px; }
+  #root :is(.modal-backdrop, .appearance-modal, .detail-backdrop) { padding: 8px; align-items: center; }
+  #root [role='dialog']:not(.sidebar) { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 16px; }
+  #root :is(.login-item-dialog, .vault-item-dialog):has(.editor-with-actions) { padding: 16px; }
+  #root .editor-with-actions > footer > m3e-button { flex: 1 0 auto; min-width: 0; }
+  #root .editor-fields { padding-inline: 2px; }
+  #root .provider-dialog { padding: 16px; }
+  #root .provider-dialog .provider-actions { gap: 8px; }
+  #root .provider-dialog .provider-actions > m3e-button { flex: 1 1 9rem; }
+}
+
+@media (max-height: 600px) {
+  #root .sidebar { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  #root .sidebar-brand { position: sticky; top: -12px; z-index: 2; min-height: 64px; padding-block: 8px; background: var(--app-bg); }
+  #root .sidebar nav { overflow: visible; }
+  #root .sidebar-footer .local-badge { display: none; }
+  #root .page-appbar { position: static; }
+  #root .page-heading { padding-block: 16px 20px; }
+  #root .editor-dialog:has(.editor-with-actions) { padding-block: 12px; }
+  #root .editor-dialog:has(.editor-with-actions) > header { margin-bottom: 8px; }
+}
+
+/* Standalone popup pages follow the available viewport. */
+html:has(body.popup-body), body.popup-body, body.popup-body #popup-root {
+  width: min(390px, 100vw);
+  min-width: 0;
+  min-height: 0;
+}
+/* A toolbar popup's viewport is itself derived from content width. Using vw
+   for this root creates a circular sizing dependency on a cold open. */
+html.action-popup:has(body.popup-body) {
+  width: 390px;
+}
+body.popup-body .popup-shell {
+  min-height: min(510px, 100dvh);
+  max-height: min(600px, 100dvh);
+  width: 100%;
+  max-width: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  gap: 16px;
+}
+#popup-root .popup-header { gap: 12px; }
+#popup-root .popup-brand { min-width: 0; }
+#popup-root .site-summary { flex-wrap: wrap; gap: 8px; padding: 0; background: transparent; }
+#popup-root .site-summary > div { flex: 1 1 0; min-width: 0; }
+#popup-root .site-summary .ready-badge { margin-inline-start: 46px; max-width: calc(100% - 46px); }
+#popup-root .credential-card { gap: 10px; }
+#popup-root .credential-icon { flex: 0 0 32px; width: 32px; height: 32px; }
+#popup-root .credential-copy strong { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+#popup-root .fill-action { max-width: 30%; font-size: .75rem; color: var(--app-text); }
+#popup-root .popup-unlock { grid-template-columns: minmax(0, 1fr); padding: 16px; min-height: 0; }
+#popup-root .popup-unlock > div { min-width: 0; }
+#popup-root .popup-unlock > .unlock-icon { display: none; }
+#popup-root .popup-unlock input { min-height: var(--app-field-height); }
+#popup-root .popup-footer { gap: 8px 12px; margin-top: auto; padding-inline: 0; }
+#popup-root .popup-footer > button { flex-wrap: wrap; max-width: 100%; color: var(--app-text); padding: 8px 12px; line-height: 1.4; }
+#popup-root .popup-footer > span { width: 100%; text-align: end; }
+#popup-root .language-picker { flex-wrap: wrap; }
+
+@media (max-width: 360px) {
+  body.popup-body .popup-shell { padding: 12px; }
+  #popup-root .popup-footer > button { width: 100%; justify-content: center; border: 1px solid var(--app-outline); }
+}

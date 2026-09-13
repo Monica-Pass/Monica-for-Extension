@@ -25,7 +25,7 @@ test("MDBX2 history recovery keeps one operation identity and remains usable at 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-history-revert-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },

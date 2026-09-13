@@ -7,7 +7,7 @@ test("wallet popup explicitly fills identity address card and payment fields whi
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("wallet-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
@@ -109,7 +109,7 @@ test("manager preserves complete Android card fields and Markdown note metadata"
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("wallet-editor-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");

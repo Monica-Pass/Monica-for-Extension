@@ -18,7 +18,7 @@ test("Bitwarden login completes current prelogin and new-device email verificati
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-auth-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       viewport: { width: 1280, height: 900 },
       args: [`--disable-extensions-except=${path.resolve("dist")}`, `--load-extension=${path.resolve("dist")}`]
     });

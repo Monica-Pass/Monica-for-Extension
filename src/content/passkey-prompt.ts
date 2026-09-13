@@ -1,5 +1,8 @@
+import { createPromptI18n } from "./prompt-i18n";
+import { getUiLocale, tr } from '../i18n/runtime';
 import type { PasskeyPromptContext } from "../runtime/messages";
 import { PROMPT_BASE_STYLES, promptIcon } from "./prompt-styles";
+import { createMonicaLogo } from "./brand-logo";
 
 const HOST_ID = "monica-passkey-prompt-host";
 const TEST_ROOTS = new WeakMap<HTMLElement, ShadowRoot>();
@@ -29,6 +32,7 @@ export function renderPasskeyPrompt(
   rootDocument.getElementById(HOST_ID)?.remove();
   const ViewHTMLElement = rootDocument.defaultView?.HTMLElement;
   const previousFocus = ViewHTMLElement && rootDocument.activeElement instanceof ViewHTMLElement ? rootDocument.activeElement : null;
+  const i18n = createPromptI18n();
   const host = rootDocument.createElement("div");
   host.id = HOST_ID;
   host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;display:block!important;pointer-events:auto!important;background:rgba(0,0,0,.42)!important";
@@ -59,16 +63,20 @@ export function renderPasskeyPrompt(
   card.setAttribute("aria-modal", "true");
   card.setAttribute("aria-labelledby", "monica-passkey-title");
   card.setAttribute("aria-describedby", "monica-passkey-description");
-  const titleText = context.operation === "create" ? "创建 Monica Passkey？" : "使用 Monica Passkey 登录？";
-  card.innerHTML = `<header class="header"><span class="brand-icon">${promptIcon("key")}</span><div class="heading"><strong id="monica-passkey-title" class="title">${titleText}</strong><span class="subtitle"></span></div><button class="icon-button" type="button" aria-label="取消 Passkey 操作">${promptIcon("close")}</button></header>`;
-  (card.querySelector(".subtitle") as HTMLElement).textContent = context.operation === "create" ? "确认网站与保存位置" : "确认网站并选择账户";
+  i18n.attribute(card, "lang", getUiLocale);
+  card.innerHTML = `<header class="header"><div class="heading"><strong id="monica-passkey-title" class="title"></strong><span class="subtitle"></span></div><button class="icon-button" type="button">${promptIcon("close")}</button></header>`;
+  card.querySelector(".header")!.prepend(createMonicaLogo(rootDocument));
+  i18n.text(card.querySelector(".title")!, () => context.operation === "create" ? tr('创建 Monica Passkey？') : tr('使用 Monica Passkey 登录？'));
+  i18n.attribute(card.querySelector(".icon-button")!, "aria-label", () => tr('取消 Passkey 操作'));
+  i18n.text((card.querySelector(".subtitle") as HTMLElement), () => context.operation === "create" ? tr('确认网站与保存位置') : tr('确认网站并选择账户'));
 
   const siteIdentity = rootDocument.createElement("div");
   siteIdentity.className = "site-identity";
-  siteIdentity.innerHTML = `<span class="security-label">已验证 Passkey 范围</span><strong class="rp-id"></strong><span class="rp-name"></span>`;
+  siteIdentity.innerHTML = `<span class="security-label"></span><strong class="rp-id"></strong><span class="rp-name"></span>`;
+  i18n.text(siteIdentity.querySelector(".security-label")!, () => tr('已验证 Passkey 范围'));
   (siteIdentity.querySelector(".rp-id") as HTMLElement).textContent = context.rpId;
   const pageHost = safeHost(context.origin);
-  (siteIdentity.querySelector(".rp-name") as HTMLElement).textContent = [context.rpName && context.rpName !== context.rpId ? context.rpName : "", pageHost && pageHost !== context.rpId ? `当前页面：${pageHost}` : ""].filter(Boolean).join(" · ");
+  i18n.text((siteIdentity.querySelector(".rp-name") as HTMLElement), () => [context.rpName && context.rpName !== context.rpId ? context.rpName : "", pageHost && pageHost !== context.rpId ? tr('当前页面：{0}', { 0: pageHost }) : ""].filter(Boolean).join(" · "));
   card.append(siteIdentity);
 
   let selectedProviderId = context.defaultSaveTargetId;
@@ -77,22 +85,23 @@ export function renderPasskeyPrompt(
     const summary = rootDocument.createElement("div");
     summary.className = "summary";
     summary.innerHTML = `<div class="summary-copy"><strong></strong><span class="muted supporting"></span></div>`;
-    (summary.querySelector("strong") as HTMLElement).textContent = context.userDisplayName || context.userName || "网站未提供用户名";
-    const selectedTargetName = context.saveTargets.find((target) => target.providerId === context.defaultSaveTargetId)?.name;
-    (summary.querySelector(".supporting") as HTMLElement).textContent = [context.userDisplayName && context.userName ? context.userName : "Passkey 账户", context.saveTargets.length === 1 && selectedTargetName ? `保存到 ${selectedTargetName}` : ""].filter(Boolean).join(" · ");
+    i18n.text((summary.querySelector("strong") as HTMLElement), () => context.userDisplayName || context.userName || tr('网站未提供用户名'));
+    const selectedTarget = context.saveTargets.find((target) => target.providerId === context.defaultSaveTargetId);
+    i18n.text((summary.querySelector(".supporting") as HTMLElement), () => [context.userDisplayName && context.userName ? context.userName : tr('Passkey 账户'), context.saveTargets.length === 1 && selectedTarget ? tr('保存到 {0}', { 0: selectedTarget.providerId === "local" ? tr('Monica 本地库') : selectedTarget.name }) : ""].filter(Boolean).join(" · "));
     card.append(summary);
 
     if (context.saveTargets.length > 1) {
       const field = rootDocument.createElement("label");
       field.className = "field";
-      field.innerHTML = `<span class="field-label">保存到</span>`;
+      field.innerHTML = `<span class="field-label"></span>`;
+      i18n.text(field.querySelector(".field-label")!, () => tr('保存到'));
       const select = rootDocument.createElement("select");
       targetSelect = select;
-      select.setAttribute("aria-label", "Passkey 保存位置");
+      i18n.attribute(select, "aria-label", () => tr('Passkey 保存位置'));
       for (const target of context.saveTargets) {
         const option = rootDocument.createElement("option");
         option.value = target.providerId;
-        option.textContent = target.name;
+        i18n.text(option, () => target.providerId === "local" ? tr('Monica 本地库') : target.name);
         option.selected = target.providerId === context.defaultSaveTargetId;
         select.append(option);
       }
@@ -112,7 +121,7 @@ export function renderPasskeyPrompt(
     const choices = rootDocument.createElement("div");
     choices.className = "choices";
     choices.setAttribute("role", "radiogroup");
-    choices.setAttribute("aria-label", "选择 Passkey");
+    i18n.attribute(choices, "aria-label", () => tr('选择 Passkey'));
     context.credentials.forEach((credential, index) => {
       const choice = rootDocument.createElement("button");
       choice.type = "button";
@@ -123,10 +132,10 @@ export function renderPasskeyPrompt(
       choice.tabIndex = index === 0 ? 0 : -1;
       choice.innerHTML = `<span class="choice-copy"><strong></strong><span class="supporting"></span></span><span class="source"></span>`;
       (choice.querySelector("strong") as HTMLElement).textContent = credential.title;
-      (choice.querySelector(".supporting") as HTMLElement).textContent = [credential.userDisplayName || credential.userName || "无用户名", credential.useCount ? `已使用 ${credential.useCount} 次` : "未使用", credential.userVerificationRequired ? "Windows Hello" : "", credential.credentialConflict ? "凭据 ID 重复，请确认密码源" : ""].filter(Boolean).join(" · ");
+      i18n.text((choice.querySelector(".supporting") as HTMLElement), () => [credential.userDisplayName || credential.userName || tr('无用户名'), credential.useCount ? tr('已使用 {0} 次', { 0: credential.useCount }) : tr('未使用'), credential.userVerificationRequired ? "Windows Hello" : "", credential.credentialConflict ? tr('凭据 ID 重复，请确认密码源') : ""].filter(Boolean).join(" · "));
       const source = choice.querySelector(".source") as HTMLElement;
-      source.textContent = credential.providerName;
-      source.title = credential.providerName;
+      i18n.text(source, () => credential.isLocalSource ? tr('Monica 本地库') : credential.providerName);
+      i18n.attribute(source, "title", () => credential.isLocalSource ? tr('Monica 本地库') : credential.providerName);
       const selectChoice = () => {
         selected = credential.itemId;
         for (const item of Array.from(choices.querySelectorAll<HTMLButtonElement>('[role="radio"]'))) {
@@ -161,17 +170,17 @@ export function renderPasskeyPrompt(
   notice.id = "monica-passkey-description";
   notice.className = "notice";
   notice.innerHTML = `${promptIcon("info")}<span></span>`;
-  (notice.querySelector("span") as HTMLElement).textContent = requiresExplicitSelection
-    ? "凭据 ID 重复，请确认密码源。只有明确选择后才会使用对应私钥。"
+  i18n.text((notice.querySelector("span") as HTMLElement), () => requiresExplicitSelection
+    ? tr('凭据 ID 重复，请确认密码源。只有明确选择后才会使用对应私钥。')
     : context.userVerificationRequired
-    ? "确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。"
+    ? tr('确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。')
     : context.operation === "create"
-      ? "私钥会加密保存；Monica 不会把私钥发送给当前网站。"
-      : "只有确认后才会使用所选私钥完成本次签名。";
+      ? tr('私钥会加密保存；Monica 不会把私钥发送给当前网站。')
+      : tr('只有确认后才会使用所选私钥完成本次签名。'));
   const status = rootDocument.createElement("p"); status.className = "status"; status.setAttribute("aria-live", "polite");
   const actions = rootDocument.createElement("footer"); actions.className = "actions";
-  const cancel = rootDocument.createElement("button"); cancel.type = "button"; cancel.className = "secondary"; cancel.textContent = "取消";
-  const confirm = rootDocument.createElement("button"); confirm.type = "button"; confirm.className = "primary"; confirm.textContent = context.operation === "create" ? "创建 Passkey" : "继续登录";
+  const cancel = rootDocument.createElement("button"); cancel.type = "button"; cancel.className = "secondary"; i18n.text(cancel, () => tr('取消'));
+  const confirm = rootDocument.createElement("button"); confirm.type = "button"; confirm.className = "primary"; i18n.text(confirm, () => context.operation === "create" ? tr('创建 Passkey') : tr('继续登录'));
   actions.append(cancel, confirm); card.append(notice, status, actions); shadow.append(card); rootDocument.documentElement.append(host);
 
   let busy = false;
@@ -181,6 +190,7 @@ export function renderPasskeyPrompt(
   const cleanup = () => {
     if (removed) return;
     removed = true;
+    i18n.dispose();
     if (expiryTimer !== undefined) rootDocument.defaultView?.clearTimeout(expiryTimer);
     observer?.disconnect();
     rootDocument.removeEventListener("keydown", onKeyDown, true);
@@ -214,7 +224,7 @@ export function renderPasskeyPrompt(
     if (targetSelect) targetSelect.disabled = true;
     status.className = "status";
     status.removeAttribute("role");
-    status.textContent = context.userVerificationRequired ? "正在等待 Windows Hello…" : context.operation === "create" ? "正在创建并加密保存…" : "正在完成安全签名…";
+    i18n.text(status, () => context.userVerificationRequired ? tr('正在等待 Windows Hello…') : context.operation === "create" ? tr('正在创建并加密保存…') : tr('正在完成安全签名…'));
     void accept(selected, selectedProviderId).then(cleanup).catch((error) => {
       busy = false;
       card.removeAttribute("aria-busy");
@@ -222,7 +232,7 @@ export function renderPasskeyPrompt(
       if (targetSelect) targetSelect.disabled = false;
       status.className = "status error";
       status.setAttribute("role", "alert");
-      status.textContent = error instanceof Error ? error.message : "Passkey 操作失败，请重试。";
+      i18n.text(status, () => error instanceof Error ? error.message : tr('Passkey 操作失败，请重试。'));
       confirm.focus();
     });
   };

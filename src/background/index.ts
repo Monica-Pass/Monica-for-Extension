@@ -1,5 +1,7 @@
 import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type ProviderConflict, type ProviderConflictSummary, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
+import { readInlineAutofillEnabled } from "../autofill/inline-preferences";
+import { assertInlineSessionId, INLINE_SUGGESTION_LIMIT, type InlineAutofillResult } from "../autofill/inline-contract";
 import { resolveLoginOtp } from "../core/login-otp";
 import { projectSteamItem } from "../core/steam-item";
 import { ProviderRegistry, type ProviderSyncResult } from "../core/provider";
@@ -71,14 +73,16 @@ import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from "../security/secure-vault-service";
 import { IndexedDbVaultStorage } from "../security/vault-storage";
 import { ChromeVaultDeviceKeyStore } from "../security/vault-device-key";
+import { IndexedDbLockedAutofillStorage, LockedAutofillCache } from "../security/locked-autofill";
 import { isAutofillBlocked, isSaveBlocked, type AutofillSitePolicy } from "../autofill/site-policy";
 import { normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import type { AutofillFieldContext } from "../content/field-signature";
 import { configureSessionStorageAccess } from "./startup";
+import { runtimeInfo } from "../runtime/version";
 
 const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
 const AUTO_LOCK_ALARM = "monica-vault-auto-lock";
-const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore(), () => Date.now(), new ChromeVaultDeviceKeyStore());
+const service = new SecureVaultService(new IndexedDbVaultStorage(), new ChromeVaultSessionStore(), () => Date.now(), new ChromeVaultDeviceKeyStore(), new LockedAutofillCache(new IndexedDbLockedAutofillStorage()));
 const providers = new ProviderRegistry();
 const monicaWebDavProvider = new MonicaWebDavProvider();
 providers.register(monicaWebDavProvider);
@@ -92,7 +96,8 @@ const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator)
 providers.register(mdbx2Provider);
 
 async function currentAutofillSitePolicy(): Promise<AutofillSitePolicy> {
-  return service.getAutofillSitePolicy();
+  const context = await service.readAutofillContext();
+  return { blockedHosts: context.blockedHosts, saveBlockedHosts: [] };
 }
 
 async function autofillBlocked(pageUrl: string): Promise<boolean> {
@@ -100,7 +105,7 @@ async function autofillBlocked(pageUrl: string): Promise<boolean> {
 }
 
 async function savePromptBlocked(pageUrl: string): Promise<boolean> {
-  return isSaveBlocked(pageUrl, await currentAutofillSitePolicy());
+  return isSaveBlocked(pageUrl, await service.getAutofillSitePolicy());
 }
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
@@ -218,6 +223,9 @@ class PasskeyExcludedError extends Error {}
 class PasskeyCancelledError extends Error {}
 class PasskeyCommitUnknownError extends Error {}
 const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
+  "AUTOFILL_INLINE_QUERY",
+  "AUTOFILL_INLINE_FILL",
+  "AUTOFILL_INLINE_OPEN",
   "CREDENTIAL_USERNAME_REMEMBER",
   "CREDENTIAL_CAPTURE",
   "CREDENTIAL_PENDING",
@@ -229,6 +237,22 @@ const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
 ]);
 
 void configureSessionStorageAccess(chrome.storage.session.setAccessLevel?.bind(chrome.storage.session));
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = changes["monica.secureVault.session.v1"];
+  const previous = change?.oldValue as { rawKey?: unknown } | undefined;
+  const next = change?.newValue as { rawKey?: unknown } | undefined;
+  if (area === "session" && change && (!next || previous?.rawKey !== next.rawKey)) {
+    void dismissInlineMenus();
+  }
+});
+
+async function dismissInlineMenus(): Promise<void> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.allSettled(tabs.filter(tab => tab.id !== undefined).map(tab => chrome.tabs.sendMessage(tab.id!, { type: "MONICA_INLINE_INVALIDATE" })));
+  } catch { /* A closed or restricted tab has no menu to dismiss. */ }
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create(AUTO_LOCK_ALARM, { periodInMinutes: 1 });
@@ -262,7 +286,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse: (response: ExtensionResponse) => void) => {
   handleRequest(message, sender)
-    .then((data) => sendResponse({ ok: true, data }))
+    .then((data) => {
+      if (["VAULT_DELETE_ITEM", "VAULT_UPSERT_ITEM", "VAULT_SET_LOCKED_AUTOFILL", "VAULT_RESTORE_ENCRYPTED", "AUTOFILL_SITE_POLICY_SET", "AUTOFILL_FIELD_POLICY_SET_CURRENT", "AUTOFILL_FIELD_POLICY_REMOVE"].includes(message.type)) void dismissInlineMenus();
+      sendResponse({ ok: true, data });
+    })
     .catch((error: unknown) => {
       const code = error instanceof VaultLockedError
         ? "VAULT_LOCKED"
@@ -287,6 +314,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendRes
 async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.MessageSender): Promise<unknown> {
   if (!WEB_PAGE_REQUEST_TYPES.has(request.type)) assertExtensionPage(sender);
   switch (request.type) {
+    case "RUNTIME_INFO":
+      return runtimeInfo;
     case "VAULT_STATUS":
       return service.status();
     case "VAULT_UNLOCK_HELLO": {
@@ -407,21 +436,57 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_GET_ITEM":
       assertManagerPage(sender);
       return service.getItem(request.itemId);
+    case "VAULT_HOME_GET":
+      assertManagerPage(sender);
+      return service.getHomePreferences();
+    case "VAULT_HOME_SET":
+      assertManagerPage(sender);
+      return service.setHomePreferences(request.preferences);
     case "VAULT_UPSERT_ITEM":
       assertExtensionPage(sender);
-      return service.upsertItem(request.item);
+      if (request.allowLockedAutofill !== undefined) {
+        assertManagerPage(sender);
+        if (typeof request.allowLockedAutofill !== "boolean") throw new Error("免解锁填写标记无效。");
+      }
+      return service.upsertItem(request.item, request.allowLockedAutofill);
+    case "VAULT_LOCKED_AUTOFILL_IDS":
+      assertManagerPage(sender);
+      return service.listLockedAutofillItemIds();
+    case "VAULT_SET_LOCKED_AUTOFILL":
+      assertManagerPage(sender);
+      if (typeof request.enabled !== "boolean") throw new Error("免解锁填写标记无效。");
+      return service.setLockedAutofill(request.itemId, request.enabled);
     case "VAULT_DELETE_ITEM":
       assertExtensionPage(sender);
       return service.deleteItem(request.itemId);
     case "VAULT_RESTORE_ITEM":
       assertManagerPage(sender);
       return service.restoreItem(request.itemId);
+    case "AUTOFILL_INLINE_QUERY":
+      return queryInlineAutofill(sender, request.sessionId);
+    case "AUTOFILL_INLINE_FILL": {
+      const source = assertWebPageSender(sender);
+      assertInlineSessionId(request.sessionId);
+      if (typeof request.itemId !== "string" || !request.itemId || request.itemId.length > 512) throw new Error("登录项标识无效。");
+      return fillLogin(request.itemId, source.tabId, source.frameId, source.documentId, source.origin, request.sessionId);
+    }
+    case "AUTOFILL_INLINE_OPEN": {
+      const source = assertWebPageSender(sender);
+      assertInlineSessionId(request.sessionId);
+      if (!await readInlineAutofillEnabled()) throw new Error("自动填充菜单已失效，请重新选择输入框。");
+      const target = await resolveSensitiveFillTarget(source.tabId, source.frameId, source.documentId, source.origin);
+      await currentFieldRecord(source.tabId, target, request.sessionId);
+      await chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
+      return { opened: true };
+    }
     case "VAULT_MATCH_LOGINS": {
       assertExtensionPage(sender);
-      if (await autofillBlocked(request.pageUrl)) return [];
-      if (request.fieldSignature && await service.isAutofillFieldSignatureBlocked(request.fieldSignature)) return [];
-      const matches = matchingLogins((await service.listItems()).filter(isLoginItem), request.pageUrl);
-      return matches.map(toMatchSummary);
+      if (!isSecureSensitivePageUrl(request.pageUrl)) return [];
+      const context = await service.readAutofillContext();
+      if (isAutofillBlocked(request.pageUrl, { blockedHosts: context.blockedHosts, saveBlockedHosts: [] })) return [];
+      if (request.fieldSignature && context.blockedFieldSignatures.includes(request.fieldSignature)) return [];
+      return matchingLogins(context.items.filter(isLoginItem), request.pageUrl)
+        .map((item) => ({ ...toMatchSummary(item), allowLockedAutofill: context.allowedIds.includes(item.id) }));
     }
     case "VAULT_LIST_LOGIN_SUMMARIES": {
       assertExtensionPage(sender);
@@ -471,7 +536,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return service.listAutofillBlockedFieldSignatures();
     case "AUTOFILL_FIELD_POLICY_STATUS":
       assertExtensionPage(sender);
-      return service.isAutofillFieldSignatureBlocked(request.signature);
+      return (await service.readAutofillContext()).blockedFieldSignatures.includes(request.signature);
     case "AUTOFILL_FIELD_POLICY_SET_CURRENT": {
       assertExtensionPage(sender);
       const target = await resolveSensitiveFillTarget(request.tabId, request.frameId ?? 0, request.documentId, request.expectedOrigin);
@@ -2077,6 +2142,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       await keePassWorkingCopies.delete(request.providerId).catch(() => undefined);
       return service.removeProvider(request.providerId);
   }
+  request satisfies never;
   throw new Error("不支持的 Monica 运行时命令。");
 }
 
@@ -2288,6 +2354,7 @@ async function acceptCredentialCandidate(candidateId: string, requestedProviderI
     itemId: saved.id,
     title: saved.title,
     providerName,
+    isLocalSource: saved.providerRefs.length === 0,
     syncPending: saved.providerRefs.length > 0
   };
 }
@@ -2309,7 +2376,7 @@ function savePromptContext(pending: PendingCredentialCapture, providers: Provide
     const item = logins.find((candidate) => candidate.id === itemId);
     if (!item) return [];
     const providerNames = item.providerRefs.map((reference) => providers.find((provider) => provider.id === reference.providerId)?.name).filter(Boolean);
-    return [{ id: item.id, title: item.title, username: item.username, providerName: providerNames.join("、") || "Monica 本地库" }];
+    return [{ id: item.id, title: item.title, username: item.username, providerName: providerNames.join("、") || "Monica 本地库", isLocalSource: item.providerRefs.length === 0 }];
   });
   return {
     candidateId: pending.id,
@@ -2645,6 +2712,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
         userDisplayName: item.userDisplayName,
         sourceMode: item.sourceMode === "bitwarden" ? "bitwarden" : "browser-local",
         providerName: provider?.name || (item.sourceMode === "bitwarden" ? "Bitwarden" : "Monica 本地库"),
+        isLocalSource: item.sourceMode !== "bitwarden" && (!provider || provider.kind === "local"),
         credentialConflict: duplicateCredentialIds.has(normalizeCredentialId(item.credentialId)),
         userVerificationRequired: item.userVerificationRequired === true,
         useCount: item.useCount || 0,
@@ -2861,9 +2929,12 @@ async function resolveSensitiveFillTarget(tabId: number, frameId = 0, documentId
   return { url: target.url, origin, documentId: target.documentId, frameId };
 }
 
-async function currentFieldRecord(tabId: number, target: SensitiveFillTarget): Promise<BlockedFieldSignatureRecord | undefined> {
-  const response = await chrome.tabs.sendMessage(tabId, { type: "MONICA_GET_FIELD_CONTEXT" }, { documentId: target.documentId }) as { ok?: boolean; context?: AutofillFieldContext };
-  if (!response?.ok || !response.context) return undefined;
+async function currentFieldRecord(tabId: number, target: SensitiveFillTarget, inlineSessionId?: string): Promise<BlockedFieldSignatureRecord | undefined> {
+  const response = await chrome.tabs.sendMessage(tabId, { type: inlineSessionId ? "MONICA_INLINE_GET_FIELD_CONTEXT" : "MONICA_GET_FIELD_CONTEXT", sessionId: inlineSessionId }, { documentId: target.documentId }) as { ok?: boolean; context?: AutofillFieldContext };
+  if (!response?.ok || !response.context) {
+    if (inlineSessionId) throw new Error("自动填充菜单已失效，请重新选择输入框。");
+    return undefined;
+  }
   const record = normalizeBlockedFieldSignature({ ...response.context, blockedAt: new Date().toISOString() });
   if (record.hostname !== new URL(target.url).hostname.toLowerCase() || record.frameScope !== (target.frameId === 0 ? "top-level" : "frame")) {
     throw new Error("页面字段上下文已变化，请重新打开 Monica。");
@@ -2871,24 +2942,53 @@ async function currentFieldRecord(tabId: number, target: SensitiveFillTarget): P
   return record;
 }
 
-async function assertCurrentFieldAllowed(tabId: number, target: SensitiveFillTarget): Promise<void> {
-  const record = await currentFieldRecord(tabId, target);
-  if (record && await service.isAutofillFieldSignatureBlocked(record.signature)) throw new Error("当前字段已禁止使用 Monica 自动填充。");
+async function assertCurrentFieldAllowed(tabId: number, target: SensitiveFillTarget, blockedSignatures?: string[], inlineSessionId?: string): Promise<BlockedFieldSignatureRecord | undefined> {
+  const record = await currentFieldRecord(tabId, target, inlineSessionId);
+  if (record && (blockedSignatures ? blockedSignatures.includes(record.signature) : await service.isAutofillFieldSignatureBlocked(record.signature))) throw new Error("当前字段已禁止使用 Monica 自动填充。");
+  return record;
 }
 
-async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) {
+async function queryInlineAutofill(sender: chrome.runtime.MessageSender, sessionId: string): Promise<InlineAutofillResult> {
+  const source = assertWebPageSender(sender);
+  assertInlineSessionId(sessionId);
+  if (!await readInlineAutofillEnabled()) throw new Error("自动填充菜单已失效，请重新选择输入框。");
+  const target = await resolveSensitiveFillTarget(source.tabId, source.frameId, source.documentId, source.origin);
+  const field = await currentFieldRecord(source.tabId, target, sessionId);
+  if (!field || !["username", "current-password", "totp"].includes(field.role)) throw new Error("当前页面没有与此登录项对应的可填写字段。");
+  const status = await service.status();
+  if (status === "uninitialized") return { sessionId, enabled: true, status, candidates: [], total: 0 };
+  const context = await service.readAutofillContext();
+  const blocked = isAutofillBlocked(target.url, { blockedHosts: context.blockedHosts, saveBlockedHosts: [] }) || context.blockedFieldSignatures.includes(field.signature);
+  const matches = blocked ? [] : matchingLogins(context.items.filter(isLoginItem), target.url)
+    .filter(item => field.role !== "totp" || !context.locked && toMatchSummary(item).hasTotp);
+  const result: InlineAutofillResult = {
+    sessionId, enabled: !blocked, status: context.locked ? "locked" : "unlocked", total: matches.length,
+    candidates: matches.slice(0, INLINE_SUGGESTION_LIMIT).map(item => ({
+      id: item.id, title: item.title.slice(0, 160), username: item.username.slice(0, 160),
+      hasTotp: !context.locked && toMatchSummary(item).hasTotp, allowLockedAutofill: context.allowedIds.includes(item.id)
+    }))
+  };
+  if (!await readInlineAutofillEnabled()) result.enabled = false;
+  return service.dispatchAutofill(context, () => Promise.resolve(result));
+}
+
+async function fillLogin(itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string, inlineSessionId?: string) {
+  if (inlineSessionId && !await readInlineAutofillEnabled()) throw new Error("自动填充菜单已失效，请重新选择输入框。");
   const target = await resolveSensitiveFillTarget(tabId, frameId ?? 0, documentId, expectedOrigin);
-  if (await autofillBlocked(target.url)) throw new Error("此网站已禁止使用 Monica 自动填充。");
-  await assertCurrentFieldAllowed(tabId, target);
-  const item = await service.getItem(itemId);
+  const context = await service.readAutofillContext();
+  if (isAutofillBlocked(target.url, { blockedHosts: context.blockedHosts, saveBlockedHosts: [] })) throw new Error("此网站已禁止使用 Monica 自动填充。");
+  const field = await assertCurrentFieldAllowed(tabId, target, context.blockedFieldSignatures, inlineSessionId);
+  const item = context.items.find((candidate) => candidate.id === itemId);
   if (!item || !isLoginItem(item) || item.deletedAt || item.archivedAt) throw new Error("登录项不存在、已归档或已被删除。");
   if (loginMatchScore(item, target.url) <= 0) throw new Error("登录项与目标页面不匹配，已阻止填充。");
-  const otp = await resolveLoginOtp(item, await service.listItems());
-  const response = (await chrome.tabs.sendMessage(tabId, {
-    type: "MONICA_FILL_CREDENTIAL",
+  const otp = context.locked ? undefined : await resolveLoginOtp(item, context.items);
+  if (inlineSessionId && !await readInlineAutofillEnabled()) throw new Error("自动填充菜单已失效，请重新选择输入框。");
+  const response = (await service.dispatchAutofill(context, () => chrome.tabs.sendMessage(tabId, {
+    type: inlineSessionId ? "MONICA_FILL_INLINE_CREDENTIAL" : "MONICA_FILL_CREDENTIAL",
+    sessionId: inlineSessionId,
     expectedOrigin: target.origin,
-    credential: { username: item.username, password: item.password, totpCode: otp?.code, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
-  }, { documentId: target.documentId })) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
+    credential: inlineSessionId && field?.role === "totp" ? { totpCode: otp?.code } : { username: item.username, password: item.password, totpCode: otp?.code, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
+  }, { documentId: target.documentId }))) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
   if (response.filledTotp && otp?.updatedItem) await service.upsertItem(otp.updatedItem);
   return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp), filledCustomFields: response.filledCustomFields || 0 };
@@ -3727,7 +3827,7 @@ function base64UrlBytes(bytes: Uint8Array): string {
 }
 
 function toMatchSummary(item: LoginItem): LoginMatchSummary {
-  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, hasTotp: Boolean(item.totpSecret) };
+  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, hasTotp: Boolean(item.totpSecret || item.boundTotpItemId) };
 }
 
 async function readLegacyItems(): Promise<VaultItem[]> {

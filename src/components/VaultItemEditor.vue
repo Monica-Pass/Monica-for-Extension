@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { computed, reactive, ref, watch } from "vue";
 import type {
   BillingAddressItem,
@@ -209,24 +211,24 @@ function initialize() {
 function submit() {
   error.value = "";
   const title = fields.title.trim();
-  if (!title) return void (error.value = "请输入名称。");
+  if (!title) return void (error.value = tr('请输入名称。'));
   if (kind.value === "card" && !fields.number.trim())
-    return void (error.value = "请输入银行卡号。");
+    return void (error.value = tr('请输入银行卡号。'));
   if (kind.value === "identity" && !fields.documentNumber.trim())
-    return void (error.value = "请输入证件号码。");
+    return void (error.value = tr('请输入证件号码。'));
   if (kind.value === "billing-address" && !fields.streetAddress.trim())
-    return void (error.value = "请输入街道地址。");
+    return void (error.value = tr('请输入街道地址。'));
   if (
     kind.value === "payment-account" &&
     ![fields.accountName, fields.accountId, fields.iban].some((value) =>
       value.trim(),
     )
   )
-    return void (error.value = "请至少填写账号名称、账号 ID 或 IBAN。");
+    return void (error.value = tr('请至少填写账号名称、账号 ID 或 IBAN。'));
   if (kind.value === "secure-note" && !fields.content.trim())
-    return void (error.value = "请输入笔记内容。");
+    return void (error.value = tr('请输入笔记内容。'));
   if (kind.value === "totp" && !fields.secret.trim())
-    return void (error.value = "请输入验证码密钥。");
+    return void (error.value = tr('请输入验证码密钥。'));
   emit("save", buildItem(title));
 }
 
@@ -629,7 +631,7 @@ function applyOtpTransfer() {
   try {
     const results = parseOtpUris(otpTransferInput.value);
     if (results.length !== 1)
-      throw new Error(`二维码包含 ${results.length} 个验证器，请逐项导入。`);
+      throw new Error(tr('二维码包含 {0} 个验证器，请逐项导入。', { 0: results.length }));
     const value = results[0].parameters;
     Object.assign(fields, {
       secret: value.secret,
@@ -644,10 +646,10 @@ function applyOtpTransfer() {
       period: String(value.period),
       steamSecretEncoding: value.secretEncoding || "base32",
     });
-    otpTransferStatus.value = "OTP URI 已解析，请核对后保存。";
+    otpTransferStatus.value = tr('OTP URI 已解析，请核对后保存。');
   } catch (failure) {
     otpTransferStatus.value =
-      failure instanceof Error ? failure.message : "无法解析 OTP URI。";
+      failure instanceof Error ? failure.message : tr('无法解析 OTP URI。');
   }
 }
 
@@ -659,7 +661,7 @@ async function importOtpQr(event: Event) {
     applyOtpTransfer();
   } catch (failure) {
     otpTransferStatus.value =
-      failure instanceof Error ? failure.message : "无法识别二维码。";
+      failure instanceof Error ? failure.message : tr('无法识别二维码。');
   }
   (event.target as HTMLInputElement).value = "";
 }
@@ -689,10 +691,10 @@ async function exportOtpQr() {
     );
     otpTransferInput.value = uri;
     otpQrDataUrl.value = await createOtpQrDataUrl(uri);
-    otpTransferStatus.value = "二维码已在本机生成。";
+    otpTransferStatus.value = tr('二维码已在本机生成。');
   } catch (failure) {
     otpTransferStatus.value =
-      failure instanceof Error ? failure.message : "无法生成二维码。";
+      failure instanceof Error ? failure.message : tr('无法生成二维码。');
   }
 }
 
@@ -703,7 +705,7 @@ async function importMaFile(event: Event) {
   try {
     const contents = await Promise.all(files.map(async (entry) => ({ name: entry.name, content: await entry.text() })));
     const maFileContent = contents.find((entry) => /\.mafile(?:\.json)?$/i.test(entry.name))?.content || contents.find((entry) => !/manifest\.json$/i.test(entry.name))?.content || "";
-    const password = maFileContent.trim().startsWith("{") ? "" : (window.prompt("请输入 Android 加密 maFile 密码") || "");
+    const password = maFileContent.trim().startsWith("{") ? "" : (window.prompt(tr('请输入 Android 加密 maFile 密码')) || "");
     const value = await parseSteamMaFileBundle(contents, password);
     Object.assign(fields, {
       title: fields.title || value.accountName,
@@ -721,10 +723,10 @@ async function importMaFile(event: Event) {
       steamLoginSecure: value.steamLoginSecure || "",
       steamRawJson: value.rawJson,
     });
-    otpTransferStatus.value = "maFile 已解析，未知字段会保留。";
+    otpTransferStatus.value = tr('maFile 已解析，未知字段会保留。');
   } catch (failure) {
     otpTransferStatus.value =
-      failure instanceof Error ? failure.message : "无法导入 maFile。";
+      failure instanceof Error ? failure.message : tr('无法导入 maFile。');
   }
   (event.target as HTMLInputElement).value = "";
 }
@@ -762,61 +764,62 @@ function exportMaFile() {
         <div>
           <h2 id="vault-item-editor-title">
             {{
-              item ? `编辑${itemKindLabel(kind)}` : `添加${itemKindLabel(kind)}`
+              item ? tr('编辑{0}', { 0: itemKindLabel(kind) }) : tr('添加{0}', { 0: itemKindLabel(kind) })
             }}
           </h2>
-          <p>保存时整个密码库会重新加密；敏感字段不会写入浏览器普通存储。</p>
         </div>
-        <m3e-icon-button aria-label="关闭" @click="emit('cancel')"
+        <m3e-icon-button :aria-label="tr('关闭')" @click="emit('cancel')"
           ><m3e-icon name="close"></m3e-icon
         ></m3e-icon-button>
       </header>
-      <form class="editor-form vault-item-form" @submit.prevent="submit">
+      <form class="editor-form editor-with-actions" @submit.prevent="submit">
+        <div class="editor-fields vault-item-form">
+        <p class="editor-intro field-wide">{{ tr('保存时整个密码库会重新加密；敏感字段不会写入浏览器普通存储。') }}</p>
         <label v-if="!item" class="field field-wide"
-          ><span>项目类型</span
+          ><span>{{ tr('项目类型') }}</span
           ><select v-model="kind">
-            <option value="card">银行卡</option>
-            <option value="identity">证件</option>
-            <option value="billing-address">账单地址</option>
-            <option value="payment-account">支付账号</option>
-            <option value="secure-note">安全笔记</option>
-            <option value="totp">动态验证码</option>
+            <option value="card">{{ tr('银行卡') }}</option>
+            <option value="identity">{{ tr('证件') }}</option>
+            <option value="billing-address">{{ tr('账单地址') }}</option>
+            <option value="payment-account">{{ tr('支付账号') }}</option>
+            <option value="secure-note">{{ tr('安全笔记') }}</option>
+            <option value="totp">{{ tr('动态验证码') }}</option>
           </select></label
         >
         <label class="field field-wide"
-          ><span>名称 *</span
+          ><span>{{ tr('名称 *') }}</span
           ><input v-model="fields.title" autofocus autocomplete="off"
         /></label>
 
         <template v-if="kind === 'card'"
           ><label class="field"
-            ><span>持卡人</span
+            ><span>{{ tr('持卡人') }}</span
             ><input
               v-model="fields.cardholderName"
               autocomplete="cc-name" /></label
           ><label class="field"
-            ><span>卡组织</span
+            ><span>{{ tr('卡组织') }}</span
             ><input v-model="fields.brand" autocomplete="cc-type" /></label
           ><label class="field field-wide"
-            ><span>银行卡号 *</span
+            ><span>{{ tr('银行卡号 *') }}</span
             ><input
               v-model="fields.number"
               inputmode="numeric"
               autocomplete="cc-number" /></label
           ><label class="field"
-            ><span>到期月</span
+            ><span>{{ tr('到期月') }}</span
             ><input
               v-model="fields.expiryMonth"
               inputmode="numeric"
               autocomplete="cc-exp-month" /></label
           ><label class="field"
-            ><span>到期年</span
+            ><span>{{ tr('到期年') }}</span
             ><input
               v-model="fields.expiryYear"
               inputmode="numeric"
               autocomplete="cc-exp-year" /></label
           ><label class="field"
-            ><span>安全码</span
+            ><span>{{ tr('安全码') }}</span
             ><input
               v-model="fields.securityCode"
               type="password"
@@ -825,16 +828,16 @@ function exportMaFile() {
         ></template>
         <template v-if="kind === 'card'"
           ><label class="field"
-            ><span>银行</span><input v-model="fields.bankName" /></label
+            ><span>{{ tr('银行') }}</span><input v-model="fields.bankName" /></label
           ><label class="field"
-            ><span>卡类型</span
+            ><span>{{ tr('卡类型') }}</span
             ><select v-model="fields.cardType">
-              <option value="CREDIT">信用卡</option>
-              <option value="DEBIT">借记卡</option>
-              <option value="PREPAID">预付卡</option>
+              <option value="CREDIT">{{ tr('信用卡') }}</option>
+              <option value="DEBIT">{{ tr('借记卡') }}</option>
+              <option value="PREPAID">{{ tr('预付卡') }}</option>
             </select></label
           ><label class="field"
-            ><span>昵称</span><input v-model="fields.nickname" /></label
+            ><span>{{ tr('昵称') }}</span><input v-model="fields.nickname" /></label
           ><label class="field"
             ><span>PIN</span
             ><input
@@ -842,33 +845,33 @@ function exportMaFile() {
               type="password"
               inputmode="numeric" /></label
           ><label class="field"
-            ><span>生效月</span
+            ><span>{{ tr('生效月') }}</span
             ><input
               v-model="fields.validFromMonth"
               inputmode="numeric" /></label
           ><label class="field"
-            ><span>生效年</span
+            ><span>{{ tr('生效年') }}</span
             ><input v-model="fields.validFromYear" inputmode="numeric" /></label
           ><label class="field"
             ><span>IBAN</span><input v-model="fields.iban" /></label
           ><label class="field"
             ><span>SWIFT/BIC</span><input v-model="fields.swiftBic" /></label
           ><label class="field"
-            ><span>路由号码</span
+            ><span>{{ tr('路由号码') }}</span
             ><input v-model="fields.routingNumber" /></label
           ><label class="field"
-            ><span>账户号码</span
+            ><span>{{ tr('账户号码') }}</span
             ><input v-model="fields.cardAccountNumber" /></label
           ><label class="field"
-            ><span>分行代码</span><input v-model="fields.branchCode" /></label
+            ><span>{{ tr('分行代码') }}</span><input v-model="fields.branchCode" /></label
           ><label class="field"
-            ><span>币种</span
+            ><span>{{ tr('币种') }}</span
             ><input v-model="fields.currency" maxlength="3" /></label
           ><label class="field"
-            ><span>客服电话</span
+            ><span>{{ tr('客服电话') }}</span
             ><input v-model="fields.customerServicePhone" type="tel" /></label
           ><label class="field field-wide"
-            ><span>账单地址 JSON</span
+            ><span>{{ tr('账单地址 JSON') }}</span
             ><textarea
               v-model="fields.billingAddress"
               rows="3"
@@ -877,109 +880,109 @@ function exportMaFile() {
 
         <template v-if="kind === 'identity'"
           ><label class="field"
-            ><span>证件类型</span
+            ><span>{{ tr('证件类型') }}</span
             ><select v-model="fields.documentType">
-              <option value="ID_CARD">身份证</option>
-              <option value="PASSPORT">护照</option>
-              <option value="DRIVER_LICENSE">驾驶证</option>
-              <option value="SOCIAL_SECURITY">社会保障号</option>
-              <option value="OTHER">其他证件</option>
+              <option value="ID_CARD">{{ tr('身份证') }}</option>
+              <option value="PASSPORT">{{ tr('护照') }}</option>
+              <option value="DRIVER_LICENSE">{{ tr('驾驶证') }}</option>
+              <option value="SOCIAL_SECURITY">{{ tr('社会保障号') }}</option>
+              <option value="OTHER">{{ tr('其他证件') }}</option>
             </select></label
           ><label class="field"
-            ><span>证件号码 *</span
+            ><span>{{ tr('证件号码 *') }}</span
             ><input v-model="fields.documentNumber" autocomplete="off" /></label
           ><label class="field"
-            ><span>名</span
+            ><span>{{ tr('名') }}</span
             ><input
               v-model="fields.firstName"
               autocomplete="given-name" /></label
           ><label class="field"
-            ><span>中间名</span
+            ><span>{{ tr('中间名') }}</span
             ><input
               v-model="fields.middleName"
               autocomplete="additional-name" /></label
           ><label class="field"
-            ><span>姓</span
+            ><span>{{ tr('姓') }}</span
             ><input
               v-model="fields.lastName"
               autocomplete="family-name" /></label
           ><label class="field"
-            ><span>完整姓名</span
+            ><span>{{ tr('完整姓名') }}</span
             ><input v-model="fields.fullName" autocomplete="name" /></label
           ><label class="field"
-            ><span>出生日期</span
+            ><span>{{ tr('出生日期') }}</span
             ><input
               v-model="fields.birthDate"
               type="date"
               autocomplete="bday" /></label
           ><label class="field"
-            ><span>国籍</span
+            ><span>{{ tr('国籍') }}</span
             ><input
               v-model="fields.nationality"
               autocomplete="country-name" /></label
           ><label class="field"
-            ><span>签发日期</span
+            ><span>{{ tr('签发日期') }}</span
             ><input v-model="fields.issuedDate" type="date" /></label
           ><label class="field"
-            ><span>到期日期</span
+            ><span>{{ tr('到期日期') }}</span
             ><input v-model="fields.expiryDate" type="date" /></label
           ><label class="field"
-            ><span>签发机关</span><input v-model="fields.issuedBy" /></label
+            ><span>{{ tr('签发机关') }}</span><input v-model="fields.issuedBy" /></label
           ><label class="field"
-            ><span>邮箱</span
+            ><span>{{ tr('邮箱') }}</span
             ><input
               v-model="fields.email"
               type="email"
               autocomplete="email" /></label
           ><label class="field"
-            ><span>电话</span
+            ><span>{{ tr('电话') }}</span
             ><input
               v-model="fields.phone"
               type="tel"
               autocomplete="tel" /></label
           ><label class="field field-wide"
-            ><span>街道地址</span
+            ><span>{{ tr('街道地址') }}</span
             ><input
               v-model="fields.streetAddress"
               autocomplete="street-address" /></label
           ><label class="field"
-            ><span>城市</span
+            ><span>{{ tr('城市') }}</span
             ><input
               v-model="fields.city"
               autocomplete="address-level2" /></label
           ><label class="field"
-            ><span>省/州</span
+            ><span>{{ tr('省/州') }}</span
             ><input
               v-model="fields.stateProvince"
               autocomplete="address-level1" /></label
           ><label class="field"
-            ><span>邮编</span
+            ><span>{{ tr('邮编') }}</span
             ><input
               v-model="fields.postalCode"
               autocomplete="postal-code" /></label
           ><label class="field"
-            ><span>国家</span
+            ><span>{{ tr('国家') }}</span
             ><input
               v-model="fields.country"
               autocomplete="country-name" /></label
         ></template>
         <template v-if="kind === 'identity'"
           ><label class="field"
-            ><span>公司</span><input v-model="fields.company" /></label
+            ><span>{{ tr('公司') }}</span><input v-model="fields.company" /></label
           ><label class="field"
-            ><span>用户名</span><input v-model="fields.username" /></label
+            ><span>{{ tr('用户名') }}</span><input v-model="fields.username" /></label
           ><label class="field"
-            ><span>社会保障号</span><input v-model="fields.ssn" /></label
+            ><span>{{ tr('社会保障号') }}</span><input v-model="fields.ssn" /></label
           ><label class="field"
-            ><span>护照号码</span
+            ><span>{{ tr('护照号码') }}</span
             ><input v-model="fields.passportNumber" /></label
           ><label class="field"
-            ><span>驾驶证号码</span
+            ><span>{{ tr('驾驶证号码') }}</span
             ><input v-model="fields.licenseNumber" /></label
           ><label class="field"
-            ><span>地址第三行</span><input v-model="fields.address3" /></label
+            ><span>{{ tr('地址第三行') }}</span><input v-model="fields.address3" /></label
           ><label class="field field-wide"
-            ><span>其他信息</span
+            ><span>{{ tr('其他信息') }}</span
             ><textarea
               v-model="fields.additionalInfo"
               rows="3"
@@ -988,51 +991,51 @@ function exportMaFile() {
 
         <template v-if="kind === 'billing-address'"
           ><label class="field"
-            ><span>收件人</span
+            ><span>{{ tr('收件人') }}</span
             ><input v-model="fields.fullName" autocomplete="name" /></label
           ><label class="field"
-            ><span>公司</span
+            ><span>{{ tr('公司') }}</span
             ><input
               v-model="fields.company"
               autocomplete="organization" /></label
           ><label class="field field-wide"
-            ><span>街道地址 *</span
+            ><span>{{ tr('街道地址 *') }}</span
             ><input
               v-model="fields.streetAddress"
               autocomplete="street-address" /></label
           ><label class="field"
-            ><span>公寓/房间</span
+            ><span>{{ tr('公寓/房间') }}</span
             ><input
               v-model="fields.apartment"
               autocomplete="address-line2" /></label
           ><label class="field"
-            ><span>城市</span
+            ><span>{{ tr('城市') }}</span
             ><input
               v-model="fields.city"
               autocomplete="address-level2" /></label
           ><label class="field"
-            ><span>省/州</span
+            ><span>{{ tr('省/州') }}</span
             ><input
               v-model="fields.stateProvince"
               autocomplete="address-level1" /></label
           ><label class="field"
-            ><span>邮编</span
+            ><span>{{ tr('邮编') }}</span
             ><input
               v-model="fields.postalCode"
               autocomplete="postal-code" /></label
           ><label class="field"
-            ><span>国家</span
+            ><span>{{ tr('国家') }}</span
             ><input
               v-model="fields.country"
               autocomplete="country-name" /></label
           ><label class="field"
-            ><span>电话</span
+            ><span>{{ tr('电话') }}</span
             ><input
               v-model="fields.phone"
               type="tel"
               autocomplete="tel" /></label
           ><label class="field"
-            ><span>邮箱</span
+            ><span>{{ tr('邮箱') }}</span
             ><input
               v-model="fields.email"
               type="email"
@@ -1040,58 +1043,58 @@ function exportMaFile() {
         ></template>
         <label v-if="kind === 'billing-address'" class="favorite-row field-wide"
           ><input v-model="fields.isDefault" type="checkbox" /><span
-            >设为默认账单地址</span
+            >{{ tr('设为默认账单地址') }}</span
           ></label
         >
 
         <template v-if="kind === 'payment-account'"
           ><label class="field"
-            ><span>支付类型</span
+            ><span>{{ tr('支付类型') }}</span
             ><input
               v-model="fields.paymentType"
               placeholder="BANK / PAYPAL / ALIPAY" /></label
           ><label class="field"
-            ><span>服务商</span
+            ><span>{{ tr('服务商') }}</span
             ><input v-model="fields.paymentProvider" /></label
           ><label class="field"
-            ><span>账号名称</span><input v-model="fields.accountName" /></label
+            ><span>{{ tr('账号名称') }}</span><input v-model="fields.accountName" /></label
           ><label class="field"
-            ><span>账户持有人</span
+            ><span>{{ tr('账户持有人') }}</span
             ><input v-model="fields.accountHolderName" /></label
           ><label class="field"
-            ><span>账号 ID</span><input v-model="fields.accountId" /></label
+            ><span>{{ tr('账号 ID') }}</span><input v-model="fields.accountId" /></label
           ><label class="field"
-            ><span>显示账号</span
+            ><span>{{ tr('显示账号') }}</span
             ><input
               v-model="fields.maskedAccountNumber"
               placeholder="**** 7890" /></label
           ><label class="field"
-            ><span>路由号码</span
+            ><span>{{ tr('路由号码') }}</span
             ><input v-model="fields.routingNumber" inputmode="numeric" /></label
           ><label class="field"
             ><span>IBAN</span><input v-model="fields.iban" /></label
           ><label class="field"
             ><span>SWIFT/BIC</span><input v-model="fields.swiftBic" /></label
           ><label class="field"
-            ><span>币种</span
+            ><span>{{ tr('币种') }}</span
             ><input v-model="fields.currency" maxlength="3" /></label
           ><label class="field"
-            ><span>用户名</span
+            ><span>{{ tr('用户名') }}</span
             ><input v-model="fields.username" autocomplete="username" /></label
           ><label class="field"
-            ><span>邮箱</span
+            ><span>{{ tr('邮箱') }}</span
             ><input
               v-model="fields.email"
               type="email"
               autocomplete="email" /></label
           ><label class="field"
-            ><span>电话</span
+            ><span>{{ tr('电话') }}</span
             ><input
               v-model="fields.phone"
               type="tel"
               autocomplete="tel" /></label
           ><label class="field"
-            ><span>网站</span
+            ><span>{{ tr('网站') }}</span
             ><input
               v-model="fields.website"
               type="url"
@@ -1099,48 +1102,48 @@ function exportMaFile() {
         ></template>
         <template v-if="kind === 'payment-account'"
           ><label class="field"
-            ><span>关联卡尾号</span
+            ><span>{{ tr('关联卡尾号') }}</span
             ><input
               v-model="fields.linkedCardLast4"
               maxlength="4"
               inputmode="numeric" /></label
           ><label class="favorite-row"
             ><input v-model="fields.isDefault" type="checkbox" /><span
-              >设为默认支付账户</span
+              >{{ tr('设为默认支付账户') }}</span
             ></label
           ><label class="field field-wide"
-            ><span>账单地址 JSON</span
+            ><span>{{ tr('账单地址 JSON') }}</span
             ><textarea
               v-model="fields.billingAddress"
               rows="3"
             ></textarea></label
           ><label class="field field-wide"
-            ><span>支付账户备注</span
+            ><span>{{ tr('支付账户备注') }}</span
             ><textarea v-model="fields.paymentNotes" rows="3"></textarea></label
         ></template>
 
         <template v-if="kind === 'secure-note'"
           ><label class="field field-wide"
-            ><span>标签</span
-            ><input v-model="fields.tags" placeholder="工作, 项目" /></label
+            ><span>{{ tr('标签') }}</span
+            ><input v-model="fields.tags" :placeholder="tr('工作, 项目')" /></label
           ><label class="favorite-row field-wide"
             ><input v-model="fields.isMarkdown" type="checkbox" /><span
-              >使用 Markdown</span
+              >{{ tr('使用 Markdown') }}</span
             ></label
           ><label class="field field-wide"
-            ><span>笔记内容 *</span
+            ><span>{{ tr('笔记内容 *') }}</span
             ><textarea v-model="fields.content" rows="12"></textarea></label
         ></template>
 
         <template v-if="kind === 'totp'">
           <fieldset class="editor-fieldset field-wide otp-transfer">
-            <legend>二维码与 URI</legend>
+            <legend>{{ tr('二维码与 URI') }}</legend>
             <label class="field"
               ><span>OTP URI</span
               ><textarea
                 v-model="otpTransferInput"
                 rows="3"
-                placeholder="otpauth://、motp:// 或 migration URI"
+                :placeholder="tr('otpauth://、motp:// 或 migration URI')"
               ></textarea>
             </label>
             <div class="otp-transfer-actions">
@@ -1148,25 +1151,24 @@ function exportMaFile() {
                 variant="tonal"
                 type="button"
                 @click="applyOtpTransfer"
-                ><m3e-icon slot="icon" name="input"></m3e-icon>解析
-                URI</m3e-button
+                ><m3e-icon slot="icon" name="input"></m3e-icon>{{ tr('解析 URI') }}</m3e-button
               ><label class="file-action"
                 ><m3e-icon name="qr_code_scanner"></m3e-icon
-                ><span>识别二维码图片</span
+                ><span>{{ tr('识别二维码图片') }}</span
                 ><input
                   type="file"
                   accept="image/*"
                   @change="importOtpQr" /></label
               ><m3e-button variant="text" type="button" @click="exportOtpQr"
                 ><m3e-icon slot="icon" name="qr_code_2"></m3e-icon
-                >生成二维码</m3e-button
+                >{{ tr('生成二维码') }}</m3e-button
               >
             </div>
             <img
               v-if="otpQrDataUrl"
               class="otp-qr-preview"
               :src="otpQrDataUrl"
-              alt="当前验证器的 OTP 二维码"
+              :alt="tr('当前验证器的 OTP 二维码')"
               width="240"
               height="240"
             />
@@ -1175,7 +1177,7 @@ function exportMaFile() {
             </p>
           </fieldset>
           <label class="field"
-            ><span>验证码类型</span
+            ><span>{{ tr('验证码类型') }}</span
             ><select v-model="fields.otpType">
               <option value="TOTP">TOTP</option>
               <option value="HOTP">HOTP</option>
@@ -1185,7 +1187,7 @@ function exportMaFile() {
             </select></label
           >
           <label v-if="fields.otpType === 'STEAM'" class="field"
-            ><span>Steam 密钥编码</span
+            ><span>{{ tr('Steam 密钥编码') }}</span
             ><select v-model="fields.steamSecretEncoding">
               <option value="base64">Base64（maFile / Android）</option>
               <option value="base32">Base32（OTP URI）</option>
@@ -1197,28 +1199,28 @@ function exportMaFile() {
                 fields.otpType === "STEAM"
                   ? "Steam Shared Secret"
                   : fields.otpType === "MOTP"
-                    ? "mOTP 原始密钥"
-                    : "Base32 密钥"
+                    ? tr('mOTP 原始密钥')
+                    : tr('Base32 密钥')
               }}
               *</span
             ><input
               v-model="fields.secret"
               type="password"
               autocomplete="off"
-            /><small>密钥只保存在加密密码库中；二维码在本机生成。</small></label
+            /><small>{{ tr('密钥只保存在加密密码库中；二维码在本机生成。') }}</small></label
           >
           <label class="field"
-            ><span>签发方</span><input v-model="fields.issuer" /></label
+            ><span>{{ tr('签发方') }}</span><input v-model="fields.issuer" /></label
           ><label class="field"
-            ><span>账户</span><input v-model="fields.accountName"
+            ><span>{{ tr('账户') }}</span><input v-model="fields.accountName"
           /></label>
           <label v-if="fields.otpType === 'HOTP'" class="field"
-            ><span>计数器</span
+            ><span>{{ tr('计数器') }}</span
             ><input v-model="fields.counter" type="number" min="0" /></label
           ><label
             v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'"
             class="field"
-            ><span>PIN {{ fields.otpType === "YANDEX" ? "（4-16 位数字）" : "" }}</span
+            ><span>PIN {{ fields.otpType === "YANDEX" ? tr('（4-16 位数字）') : "" }}</span
             ><input
               v-model="fields.pin"
               type="password"
@@ -1226,13 +1228,13 @@ function exportMaFile() {
               autocomplete="off"
           /></label>
           <label v-if="fields.otpType === 'YANDEX'" class="field"
-            ><span>PIN 长度</span
+            ><span>{{ tr('PIN 长度') }}</span
             ><input v-model="fields.pinLength" type="number" min="4" max="16" inputmode="numeric"
           /></label>
           <label
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"
             class="field"
-            ><span>算法</span
+            ><span>{{ tr('算法') }}</span
             ><select v-model="fields.algorithm">
               <option>SHA1</option>
               <option>SHA256</option>
@@ -1241,7 +1243,7 @@ function exportMaFile() {
           ><label
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"
             class="field"
-            ><span>位数</span
+            ><span>{{ tr('位数') }}</span
             ><input
               v-model="fields.digits"
               type="number"
@@ -1250,37 +1252,36 @@ function exportMaFile() {
           ><label
             v-if="fields.otpType === 'TOTP' || fields.otpType === 'YANDEX'"
             class="field"
-            ><span>周期（秒）</span
+            ><span>{{ tr('周期（秒）') }}</span
             ><input v-model="fields.period" type="number" min="5" max="300"
           /></label>
           <template v-if="fields.otpType === 'STEAM'"
             ><div class="steam-file-actions field-wide">
               <label class="file-action"
-                ><m3e-icon name="upload_file"></m3e-icon><span>导入 maFile</span
+                ><m3e-icon name="upload_file"></m3e-icon><span>{{ tr('导入 maFile') }}</span
                 ><input
                   type="file"
                   accept="application/json,.maFile,.json"
                   multiple
                   @change="importMaFile" /></label
               ><m3e-button variant="tonal" type="button" @click="exportMaFile"
-                ><m3e-icon slot="icon" name="download"></m3e-icon>导出
-                maFile</m3e-button
+                ><m3e-icon slot="icon" name="download"></m3e-icon>{{ tr('导出 maFile') }}</m3e-button
               >
             </div>
             <label class="field"
               ><span>SteamID64</span
               ><input v-model="fields.steamId" inputmode="numeric" /></label
             ><label class="field"
-              ><span>Steam 设备 ID</span
+              ><span>{{ tr('Steam 设备 ID') }}</span
               ><input v-model="fields.steamDeviceId" /></label
             ><label class="field"
-              ><span>Steam 指纹</span
+              ><span>{{ tr('Steam 指纹') }}</span
               ><input v-model="fields.steamFingerprint" /></label
             ><label class="field"
-              ><span>Steam 序列号</span
+              ><span>{{ tr('Steam 序列号') }}</span
               ><input v-model="fields.steamSerialNumber" /></label
             ><label class="field"
-              ><span>撤销代码</span
+              ><span>{{ tr('撤销代码') }}</span
               ><input v-model="fields.steamRevocationCode" /></label
             ><label class="field"
               ><span>Identity Secret</span
@@ -1311,10 +1312,10 @@ function exportMaFile() {
                 type="password"
                 autocomplete="off" /></label
             ><label class="field field-wide"
-              ><span>原始 Steam JSON</span
+              ><span>{{ tr('原始 Steam JSON') }}</span
               ><textarea v-model="fields.steamRawJson" rows="4"></textarea
               ><small
-                >未知字段保持原样，用于 Monica Android 与 maFile 写回。</small
+                >{{ tr('未知字段保持原样，用于 Monica Android 与 maFile 写回。') }}</small
               ></label
             ></template
           >
@@ -1330,7 +1331,7 @@ function exportMaFile() {
           "
           class="editor-fieldset field-wide"
         >
-          <legend>自定义字段</legend>
+          <legend>{{ tr('自定义字段') }}</legend>
           <div class="custom-field-list">
             <div
               v-for="(custom, index) in fields.customFields"
@@ -1339,53 +1340,52 @@ function exportMaFile() {
             >
               <input
                 v-model="custom.name"
-                :aria-label="`自定义字段 ${index + 1} 名称`"
-                placeholder="字段名称"
+                :aria-label="tr('自定义字段 {0} 名称', { 0: index + 1 })"
+                :placeholder="tr('字段名称')"
               /><input
                 v-model="custom.value"
                 :type="custom.fieldType === 'HIDDEN' ? 'password' : 'text'"
-                :aria-label="`自定义字段 ${index + 1} 值`"
-                placeholder="字段值"
+                :aria-label="tr('自定义字段 {0} 值', { 0: index + 1 })"
+                :placeholder="tr('字段值')"
               /><select
                 v-model="custom.fieldType"
-                :aria-label="`自定义字段 ${index + 1} 类型`"
+                :aria-label="tr('自定义字段 {0} 类型', { 0: index + 1 })"
               >
-                <option value="TEXT">文本</option>
-                <option value="HIDDEN">隐藏</option>
-                <option value="BOOLEAN">布尔</option></select
+                <option value="TEXT">{{ tr('文本') }}</option>
+                <option value="HIDDEN">{{ tr('隐藏') }}</option>
+                <option value="BOOLEAN">{{ tr('布尔') }}</option></select
               ><m3e-icon-button
                 type="button"
-                :aria-label="`删除自定义字段 ${index + 1}`"
+                :aria-label="tr('删除自定义字段 {0}', { 0: index + 1 })"
                 @click="removeCustomField(index)"
                 ><m3e-icon name="delete"></m3e-icon
               ></m3e-icon-button>
             </div>
           </div>
           <m3e-button variant="text" type="button" @click="addCustomField"
-            ><m3e-icon slot="icon" name="add"></m3e-icon>添加字段</m3e-button
+            ><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加字段') }}</m3e-button
           >
         </fieldset>
         <div v-if="item?.imagePaths?.length" class="boundary-row field-wide">
           <m3e-icon name="image"></m3e-icon
           ><span
-            >{{ item.imagePaths.length }} 个 Android
-            图片引用已保留；图片字节继续保存在同步信封中。</span
+            >{{ tr('{0} 个 Android 图片引用已保留；图片字节继续保存在同步信封中。', { 0: item.imagePaths.length }) }}</span
           >
         </div>
 
         <label class="field field-wide"
-          ><span>备注</span
+          ><span>{{ tr('备注') }}</span
           ><textarea v-model="fields.notes" rows="3"></textarea>
         </label>
         <label class="field field-wide"
-          ><span>保存到</span
+          ><span>{{ tr('保存到') }}</span
           ><select v-model="fields.providerId" :disabled="Boolean(item)">
             <option
               v-for="provider in eligibleProviders"
               :key="provider.id"
               :value="provider.id"
             >
-              {{ provider.name }}
+              {{ provider.kind === 'local' ? tr('Monica 本地库') : provider.name }}
             </option></select
           ><small
             v-if="
@@ -1393,21 +1393,22 @@ function exportMaFile() {
               kind === 'payment-account' ||
               kind === 'totp'
             "
-            >Bitwarden 不支持该独立记录类型，因此不会显示为目标。</small
+            >{{ tr('Bitwarden 不支持该独立记录类型，因此不会显示为目标。') }}</small
           ></label
         >
         <label class="favorite-row field-wide"
           ><input v-model="fields.favorite" type="checkbox" /><span
-            >收藏并优先显示</span
+            >{{ tr('收藏并优先显示') }}</span
           ></label
         >
         <p v-if="error" class="form-error field-wide" role="alert">
           {{ error }}
         </p>
+        </div>
         <footer class="field-wide">
           <m3e-button variant="text" type="button" @click="emit('cancel')"
-            >取消</m3e-button
-          ><m3e-button variant="filled" type="submit">加密保存</m3e-button>
+            >{{ tr('取消') }}</m3e-button
+          ><m3e-button variant="filled" type="submit">{{ tr('加密保存') }}</m3e-button>
         </footer>
       </form>
     </section>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr, locale } from '../i18n';
+
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { ProviderAccount } from "../core/model";
 import { vaultClient } from "../runtime/client";
@@ -57,10 +59,10 @@ const filteredSends = computed(() => {
   return sends.value.filter((send) => `${send.name} ${send.notes} ${send.fileName || ""} ${send.type}`.toLocaleLowerCase().includes(needle));
 });
 const editingExisting = computed(() => editorMode.value === "edit" ? selectedSend.value : undefined);
-const editorTitle = computed(() => editorMode.value === "edit" ? "编辑安全发送" : editorMode.value === "create-file" ? "新建文件发送" : "新建文本发送");
+const editorTitle = computed(() => editorMode.value === "edit" ? tr('编辑安全发送') : editorMode.value === "create-file" ? tr('新建文件发送') : tr('新建文本发送'));
 const editorDescription = computed(() => editorMode.value === "edit"
-  ? "只更新可表达的字段；未知远端字段和文件内容保持原样。"
-  : "内容在后台使用独立 Send 密钥加密后上传，页面不会接触 Bitwarden Vault key。");
+  ? tr('只更新可表达的字段；未知远端字段和文件内容保持原样。')
+  : tr('内容在后台使用独立 Send 密钥加密后上传，页面不会接触 Bitwarden Vault key。'));
 const uploadPercent = computed(() => selectedFile.value?.size ? Math.min(100, Math.round(uploadProgress.value / selectedFile.value.size * 100)) : uploadProgress.value ? 100 : 0);
 const minimumDate = computed(() => toLocalDateTime(new Date(Date.now() + 2 * 60_000)));
 const maximumDeletionDate = computed(() => toLocalDateTime(new Date(Date.now() + 31 * 24 * 60 * 60_000)));
@@ -198,12 +200,12 @@ function selectFile(event: Event) {
 
 async function submitEditor() {
   editorError.value = "";
-  if (!selectedProviderId.value) return void (editorError.value = "请先连接并选择 Bitwarden 密码源。");
-  if (!form.name.trim()) return void (editorError.value = "请输入 Send 标题。");
-  if (!form.deletionDate) return void (editorError.value = "请选择自动删除时间。");
-  if (form.expirationDate && Date.parse(form.expirationDate) > Date.parse(form.deletionDate)) return void (editorError.value = "到期时间必须早于自动删除时间。");
+  if (!selectedProviderId.value) return void (editorError.value = tr('请先连接并选择 Bitwarden 密码源。'));
+  if (!form.name.trim()) return void (editorError.value = tr('请输入 Send 标题。'));
+  if (!form.deletionDate) return void (editorError.value = tr('请选择自动删除时间。'));
+  if (form.expirationDate && Date.parse(form.expirationDate) > Date.parse(form.deletionDate)) return void (editorError.value = tr('到期时间必须早于自动删除时间。'));
   const maxAccessCount = parseOptionalPositiveInteger(form.maxAccessCount);
-  if (maxAccessCount === null) return void (editorError.value = "访问次数上限必须是正整数。");
+  if (maxAccessCount === null) return void (editorError.value = tr('访问次数上限必须是正整数。'));
   mutationBusy.value = true;
   uploadCancelRequested.value = false;
   try {
@@ -213,10 +215,10 @@ async function submitEditor() {
     editorOpen.value = false;
     form.password = "";
     selectedFile.value = null;
-    showNotice(editorMode.value === "edit" ? "安全发送已更新。" : "安全发送已创建并加密上传。");
+    showNotice(editorMode.value === "edit" ? tr('安全发送已更新。') : tr('安全发送已创建并加密上传。'));
     await loadSends(true);
   } catch (cause) {
-    editorError.value = uploadCancelRequested.value ? "文件上传已取消，请重新选择文件。" : messageOf(cause);
+    editorError.value = uploadCancelRequested.value ? tr('文件上传已取消，请重新选择文件。') : messageOf(cause);
   } finally {
     if (activeTransferId.value && selectedProviderId.value) {
       await vaultClient.abortBitwardenSendFileUpload(selectedProviderId.value, activeTransferId.value).catch(() => undefined);
@@ -229,7 +231,7 @@ async function submitEditor() {
 }
 
 async function createTextSend(maxAccessCount: number | undefined) {
-  if (!form.text.trim()) throw new Error("请输入要安全发送的文本内容。");
+  if (!form.text.trim()) throw new Error(tr('请输入要安全发送的文本内容。'));
   await vaultClient.createBitwardenTextSend(selectedProviderId.value, {
     name: form.name,
     text: form.text,
@@ -246,8 +248,8 @@ async function createTextSend(maxAccessCount: number | undefined) {
 
 async function updateSend(maxAccessCount: number | undefined) {
   const send = editingExisting.value;
-  if (!send) throw new Error("当前 Send 已失效，请刷新后重试。");
-  if (send.hasPassword && form.password) throw new Error("现有 Send 已有密码，请先使用详情页的“移除密码”，再设置新密码。");
+  if (!send) throw new Error(tr('当前 Send 已失效，请刷新后重试。'));
+  if (send.hasPassword && form.password) throw new Error(tr('现有 Send 已有密码，请先使用详情页的“移除密码”，再设置新密码。'));
   await vaultClient.updateBitwardenSend(selectedProviderId.value, {
     sendId: send.sendId,
     expectedRevision: send.revisionDate,
@@ -266,8 +268,8 @@ async function updateSend(maxAccessCount: number | undefined) {
 
 async function createFileSend(maxAccessCount: number | undefined) {
   const file = selectedFile.value;
-  if (!file) throw new Error("请选择要发送的文件。");
-  if (file.size > 100 * 1024 * 1024) throw new Error("文件超过 100 MiB 安全上限。");
+  if (!file) throw new Error(tr('请选择要发送的文件。'));
+  if (file.size > 100 * 1024 * 1024) throw new Error(tr('文件超过 100 MiB 安全上限。'));
   const input: BitwardenSendFileUploadInput = {
     name: form.name,
     fileName: file.name,
@@ -308,12 +310,12 @@ async function cancelUpload() {
 
 async function removePassword() {
   const send = selectedSend.value;
-  if (!send?.hasPassword || !window.confirm(`移除“${send.name}”的访问密码？分享链接仍会保持有效。`)) return;
+  if (!send?.hasPassword || !window.confirm(tr('移除“{0}”的访问密码？分享链接仍会保持有效。', { 0: send.name }))) return;
   mutationBusy.value = true;
   error.value = "";
   try {
     selectedSend.value = await vaultClient.removeBitwardenSendPassword(send.providerId, send.sendId, send.revisionDate);
-    showNotice("Send 访问密码已移除。");
+    showNotice(tr('Send 访问密码已移除。'));
     await loadSends(true);
   } catch (cause) {
     error.value = messageOf(cause);
@@ -324,14 +326,14 @@ async function removePassword() {
 
 async function deleteSend() {
   const send = selectedSend.value;
-  if (!send || !window.confirm(`永久删除安全发送“${send.name}”？此操作无法撤销。`)) return;
+  if (!send || !window.confirm(tr('永久删除安全发送“{0}”？此操作无法撤销。', { 0: send.name }))) return;
   mutationBusy.value = true;
   error.value = "";
   try {
     await vaultClient.deleteBitwardenSend(send.providerId, send.sendId, send.revisionDate);
     selectedSend.value = undefined;
     selectedSendId.value = "";
-    showNotice("安全发送已删除。");
+    showNotice(tr('安全发送已删除。'));
     await loadSends(true);
   } catch (cause) {
     error.value = messageOf(cause);
@@ -345,9 +347,9 @@ async function copyShareUrl() {
   if (!url) return;
   try {
     await navigator.clipboard.writeText(url);
-    showNotice("分享链接已复制。");
+    showNotice(tr('分享链接已复制。'));
   } catch {
-    error.value = "浏览器拒绝写入剪贴板，请手动选择并复制链接。";
+    error.value = tr('浏览器拒绝写入剪贴板，请手动选择并复制链接。');
   }
 }
 
@@ -415,7 +417,7 @@ function toLocalDateTime(date: Date): string {
 
 function toIso(value: string): string {
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) throw new Error("Send 日期格式无效。");
+  if (!Number.isFinite(date.getTime())) throw new Error(tr('Send 日期格式无效。'));
   return date.toISOString();
 }
 
@@ -426,19 +428,19 @@ function parseOptionalPositiveInteger(value: string): number | undefined | null 
 }
 
 function typeLabel(type: BitwardenSendSummary["type"]): string {
-  return type === "text" ? "文本" : type === "file" ? "文件" : "未来类型";
+  return type === "text" ? tr('文本') : type === "file" ? tr('文件') : tr('未来类型');
 }
 
 function authLabel(send: BitwardenSendSummary): string {
-  return send.authMode === "password" ? "密码验证" : send.authMode === "email" ? "邮箱验证" : send.authMode === "none" ? "无需验证" : "未知验证";
+  return send.authMode === "password" ? tr('密码验证') : send.authMode === "email" ? tr('邮箱验证') : send.authMode === "none" ? tr('无需验证') : tr('未知验证');
 }
 
 function formatDate(value?: string): string {
-  return value ? new Date(value).toLocaleString() : "未设置";
+  return value ? new Date(value).toLocaleString(locale.value) : tr('未设置');
 }
 
 function formatBytes(value?: number): string {
-  if (value === undefined) return "未知大小";
+  if (value === undefined) return tr('未知大小');
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
@@ -452,7 +454,7 @@ function showNotice(message: string) {
 }
 
 function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "Bitwarden Send 操作失败，请重试。";
+  return cause instanceof Error ? cause.message : tr('Bitwarden Send 操作失败，请重试。');
 }
 </script>
 
@@ -460,35 +462,35 @@ function messageOf(cause: unknown): string {
   <section class="send-panel" aria-labelledby="bitwarden-send-heading">
     <div class="send-toolbar">
       <label class="provider-select">
-        <span>Bitwarden 密码源</span>
+        <span>{{ tr('Bitwarden 密码源') }}</span>
         <select v-model="selectedProviderId" :disabled="!bitwardenProviders.length || loading || mutationBusy">
           <option v-for="provider in bitwardenProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
         </select>
       </label>
       <div class="toolbar-actions">
-        <m3e-button variant="text" :disabled="!selectedProviderId || loading" @click="loadSends(true)"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ loading ? '刷新中…' : '刷新' }}</m3e-button>
-        <m3e-button variant="tonal" :disabled="!selectedProviderId" @click="openCreateFile"><m3e-icon slot="icon" name="upload_file"></m3e-icon>发送文件</m3e-button>
-        <m3e-button variant="filled" :disabled="!selectedProviderId" @click="openCreateText"><m3e-icon slot="icon" name="add"></m3e-icon>发送文本</m3e-button>
+        <m3e-button variant="text" :disabled="!selectedProviderId || loading" @click="loadSends(true)"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ loading ? tr('刷新中…') : tr('刷新') }}</m3e-button>
+        <m3e-button variant="tonal" :disabled="!selectedProviderId" @click="openCreateFile"><m3e-icon slot="icon" name="upload_file"></m3e-icon>{{ tr('发送文件') }}</m3e-button>
+        <m3e-button variant="filled" :disabled="!selectedProviderId" @click="openCreateText"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('发送文本') }}</m3e-button>
       </div>
     </div>
 
     <p class="send-live-status" aria-live="polite">{{ notice }}</p>
-    <div v-if="error" class="send-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span><button type="button" @click="loadSends(true)">重试</button></div>
+    <div v-if="error" class="send-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span><button type="button" @click="loadSends(true)">{{ tr('重试') }}</button></div>
 
     <div v-if="!bitwardenProviders.length" class="send-empty standalone">
       <m3e-icon name="send"></m3e-icon>
-      <h2 id="bitwarden-send-heading">尚未连接 Bitwarden</h2>
-      <p>安全发送使用 Bitwarden 或 Vaultwarden 的 Send API。请先在“密码源”中完成连接。</p>
+      <h2 id="bitwarden-send-heading">{{ tr('尚未连接 Bitwarden') }}</h2>
+      <p>{{ tr('安全发送使用 Bitwarden 或 Vaultwarden 的 Send API。请先在“密码源”中完成连接。') }}</p>
     </div>
 
     <div v-else class="send-workspace" :aria-busy="loading">
-      <aside class="send-list-pane" aria-label="安全发送列表">
+      <aside class="send-list-pane" :aria-label="tr('安全发送列表')">
         <header>
-          <div><h2 id="bitwarden-send-heading">安全发送</h2><p>{{ filteredSends.length }} / {{ total }} 项</p></div>
+          <div><h2 id="bitwarden-send-heading">{{ tr('安全发送') }}</h2><p>{{ tr('{0} / {1} 项', { 0: filteredSends.length, 1: total }) }}</p></div>
           <span v-if="selectedProvider" class="provider-origin">{{ selectedProvider.name }}</span>
         </header>
-        <div v-if="loading && !sends.length" class="send-list-loading" role="status">正在读取并解密 Send 摘要…</div>
-        <div v-else-if="filteredSends.length" class="send-list" role="listbox" aria-label="选择安全发送">
+        <div v-if="loading && !sends.length" class="send-list-loading" role="status">{{ tr('正在读取并解密 Send 摘要…') }}</div>
+        <div v-else-if="filteredSends.length" class="send-list" role="listbox" :aria-label="tr('选择安全发送')">
           <button
             v-for="send in filteredSends"
             :key="send.sendId"
@@ -501,15 +503,15 @@ function messageOf(cause: unknown): string {
           >
             <span class="send-type-icon"><m3e-icon :name="send.type === 'file' ? 'draft' : send.type === 'text' ? 'text_snippet' : 'help'"></m3e-icon></span>
             <span class="send-list-copy"><strong>{{ send.name }}</strong><small>{{ send.fileName || typeLabel(send.type) }} · {{ authLabel(send) }}</small></span>
-            <span v-if="send.disabled" class="send-state-chip">已停用</span>
+            <span v-if="send.disabled" class="send-state-chip">{{ tr('已停用') }}</span>
             <m3e-icon class="send-row-arrow" name="chevron_right"></m3e-icon>
           </button>
-          <m3e-button v-if="nextCursor" class="load-more" variant="text" :disabled="loadingMore" @click="loadSends(false)">{{ loadingMore ? '加载中…' : '加载更多' }}</m3e-button>
+          <m3e-button v-if="nextCursor" class="load-more" variant="text" :disabled="loadingMore" @click="loadSends(false)">{{ loadingMore ? tr('加载中…') : tr('加载更多') }}</m3e-button>
         </div>
         <div v-else class="send-empty compact">
           <m3e-icon name="outbox"></m3e-icon>
-          <h3>{{ props.query ? '没有匹配的安全发送' : '还没有安全发送' }}</h3>
-          <p>{{ props.query ? '换一个关键词试试。' : '新建文本或文件 Send 后，分享链接会显示在右侧详情。' }}</p>
+          <h3>{{ props.query ? tr('没有匹配的安全发送') : tr('还没有安全发送') }}</h3>
+          <p>{{ props.query ? tr('换一个关键词试试。') : tr('新建文本或文件 Send 后，分享链接会显示在右侧详情。') }}</p>
         </div>
       </aside>
 
@@ -519,72 +521,72 @@ function messageOf(cause: unknown): string {
             <span class="send-type-icon large"><m3e-icon :name="selectedSend.type === 'file' ? 'draft' : selectedSend.type === 'text' ? 'text_snippet' : 'help'"></m3e-icon></span>
             <div><p>{{ typeLabel(selectedSend.type) }} Send</p><h2>{{ selectedSend.name }}</h2></div>
           </div>
-          <div class="detail-chips"><span>{{ authLabel(selectedSend) }}</span><span v-if="selectedSend.disabled">分享已停用</span><span v-if="selectedSend.textHidden">打开后默认隐藏</span></div>
+          <div class="detail-chips"><span>{{ authLabel(selectedSend) }}</span><span v-if="selectedSend.disabled">{{ tr('分享已停用') }}</span><span v-if="selectedSend.textHidden">{{ tr('打开后默认隐藏') }}</span></div>
         </header>
 
         <div v-if="selectedSend.warning" class="compat-warning" role="status"><m3e-icon name="info"></m3e-icon><span>{{ selectedSend.warning }}</span></div>
 
         <section class="detail-section" aria-labelledby="send-share-title">
-          <div class="section-heading"><div><h3 id="send-share-title">分享链接</h3><p>链接包含访问此 Send 所需的 URL 密钥，请只发给可信收件人。</p></div></div>
-          <div class="share-row"><input :value="selectedSend.shareUrl" readonly aria-label="Send 分享链接" @focus="($event.target as HTMLInputElement).select()" /><m3e-button variant="tonal" :disabled="!selectedSend.shareUrl" @click="copyShareUrl"><m3e-icon slot="icon" name="content_copy"></m3e-icon>复制链接</m3e-button></div>
+          <div class="section-heading"><div><h3 id="send-share-title">{{ tr('分享链接') }}</h3><p>{{ tr('链接包含访问此 Send 所需的 URL 密钥，请只发给可信收件人。') }}</p></div></div>
+          <div class="share-row"><input :value="selectedSend.shareUrl" readonly :aria-label="tr('Send 分享链接')" @focus="($event.target as HTMLInputElement).select()" /><m3e-button variant="tonal" :disabled="!selectedSend.shareUrl" @click="copyShareUrl"><m3e-icon slot="icon" name="content_copy"></m3e-icon>{{ tr('复制链接') }}</m3e-button></div>
         </section>
 
         <section v-if="selectedSend.type === 'text'" class="detail-section" aria-labelledby="send-content-title">
-          <div class="section-heading"><div><h3 id="send-content-title">文本内容</h3><p>仅在选择此项目后由后台解密。</p></div></div>
-          <pre class="send-text-content">{{ selectedSend.textContent || '（空内容）' }}</pre>
+          <div class="section-heading"><div><h3 id="send-content-title">{{ tr('文本内容') }}</h3><p>{{ tr('仅在选择此项目后由后台解密。') }}</p></div></div>
+          <pre class="send-text-content">{{ selectedSend.textContent || tr('（空内容）') }}</pre>
         </section>
 
         <section v-else-if="selectedSend.type === 'file'" class="detail-section file-summary" aria-labelledby="send-file-title">
           <span class="file-icon"><m3e-icon name="draft"></m3e-icon></span>
-          <div><h3 id="send-file-title">{{ selectedSend.fileName || '未命名文件' }}</h3><p>{{ formatBytes(selectedSend.fileSizeBytes) }}</p><small>当前版本支持所有者上传与策略管理；文件内容下载仍由 Bitwarden 分享页完成。</small></div>
+          <div><h3 id="send-file-title">{{ selectedSend.fileName || tr('未命名文件') }}</h3><p>{{ formatBytes(selectedSend.fileSizeBytes) }}</p><small>{{ tr('当前版本支持所有者上传与策略管理；文件内容下载仍由 Bitwarden 分享页完成。') }}</small></div>
         </section>
 
-        <section v-if="selectedSend.notes" class="detail-section" aria-labelledby="send-notes-title"><h3 id="send-notes-title">备注</h3><p class="send-notes">{{ selectedSend.notes }}</p></section>
+        <section v-if="selectedSend.notes" class="detail-section" aria-labelledby="send-notes-title"><h3 id="send-notes-title">{{ tr('备注') }}</h3><p class="send-notes">{{ selectedSend.notes }}</p></section>
 
-        <dl class="send-policy-grid" aria-label="Send 访问策略">
-          <div><dt>访问次数</dt><dd>{{ selectedSend.accessCount }}{{ selectedSend.maxAccessCount ? ` / ${selectedSend.maxAccessCount}` : ' / 不限' }}</dd></div>
-          <div><dt>到期时间</dt><dd>{{ formatDate(selectedSend.expirationDate) }}</dd></div>
-          <div><dt>自动删除</dt><dd>{{ formatDate(selectedSend.deletionDate) }}</dd></div>
-          <div><dt>最近修订</dt><dd>{{ formatDate(selectedSend.revisionDate) }}</dd></div>
+        <dl class="send-policy-grid" :aria-label="tr('Send 访问策略')">
+          <div><dt>{{ tr('访问次数') }}</dt><dd>{{ selectedSend.accessCount }}{{ selectedSend.maxAccessCount ? ` / ${selectedSend.maxAccessCount}` : tr(' / 不限') }}</dd></div>
+          <div><dt>{{ tr('到期时间') }}</dt><dd>{{ formatDate(selectedSend.expirationDate) }}</dd></div>
+          <div><dt>{{ tr('自动删除') }}</dt><dd>{{ formatDate(selectedSend.deletionDate) }}</dd></div>
+          <div><dt>{{ tr('最近修订') }}</dt><dd>{{ formatDate(selectedSend.revisionDate) }}</dd></div>
         </dl>
 
         <footer class="detail-actions">
-          <m3e-button variant="tonal" :disabled="!selectedSend.editable || mutationBusy" @click="openEdit"><m3e-icon slot="icon" name="edit"></m3e-icon>编辑</m3e-button>
-          <m3e-button v-if="selectedSend.hasPassword" variant="text" :disabled="mutationBusy" @click="removePassword"><m3e-icon slot="icon" name="password"></m3e-icon>移除密码</m3e-button>
-          <m3e-button class="danger-action" variant="text" :disabled="mutationBusy" @click="deleteSend"><m3e-icon slot="icon" name="delete"></m3e-icon>删除</m3e-button>
+          <m3e-button variant="tonal" :disabled="!selectedSend.editable || mutationBusy" @click="openEdit"><m3e-icon slot="icon" name="edit"></m3e-icon>{{ tr('编辑') }}</m3e-button>
+          <m3e-button v-if="selectedSend.hasPassword" variant="text" :disabled="mutationBusy" @click="removePassword"><m3e-icon slot="icon" name="password"></m3e-icon>{{ tr('移除密码') }}</m3e-button>
+          <m3e-button class="danger-action" variant="text" :disabled="mutationBusy" @click="deleteSend"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ tr('删除') }}</m3e-button>
         </footer>
       </article>
 
-      <div v-else class="send-empty detail-placeholder"><m3e-icon name="send"></m3e-icon><h2>选择一个安全发送</h2><p>查看分享链接、加密内容和访问策略。</p></div>
+      <div v-else class="send-empty detail-placeholder"><m3e-icon name="send"></m3e-icon><h2>{{ tr('选择一个安全发送') }}</h2><p>{{ tr('查看分享链接、加密内容和访问策略。') }}</p></div>
     </div>
 
     <div v-if="editorOpen" class="send-modal-backdrop" role="presentation" @mousedown.self="closeEditor">
       <section ref="editorDialog" class="send-editor" role="dialog" aria-modal="true" aria-labelledby="send-editor-title">
-        <header><div><h2 id="send-editor-title">{{ editorTitle }}</h2><p>{{ editorDescription }}</p></div><m3e-icon-button data-dialog-close aria-label="关闭安全发送编辑器" :disabled="mutationBusy" @click="closeEditor"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
+        <header><div><h2 id="send-editor-title">{{ editorTitle }}</h2><p>{{ editorDescription }}</p></div><m3e-icon-button data-dialog-close :aria-label="tr('关闭安全发送编辑器')" :disabled="mutationBusy" @click="closeEditor"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
         <form novalidate @submit.prevent="submitEditor">
-          <label class="send-field"><span>标题 *</span><input v-model="form.name" autofocus autocomplete="off" /></label>
+          <label class="send-field"><span>{{ tr('标题 *') }}</span><input v-model="form.name" autofocus autocomplete="off" /></label>
 
-          <label v-if="editorMode === 'create-file'" class="send-field field-wide"><span>文件 *</span><span class="send-file-picker"><m3e-icon name="upload_file"></m3e-icon><span>{{ selectedFile ? `${selectedFile.name} · ${formatBytes(selectedFile.size)}` : '选择不超过 100 MiB 的文件' }}</span><input type="file" aria-label="选择安全发送文件" @change="selectFile" /></span></label>
-          <label v-else-if="editorMode === 'create-text' || editingExisting?.type === 'text'" class="send-field field-wide"><span>文本内容 *</span><textarea v-model="form.text" rows="7"></textarea></label>
+          <label v-if="editorMode === 'create-file'" class="send-field field-wide"><span>{{ tr('文件 *') }}</span><span class="send-file-picker"><m3e-icon name="upload_file"></m3e-icon><span>{{ selectedFile ? `${selectedFile.name} · ${formatBytes(selectedFile.size)}` : tr('选择不超过 100 MiB 的文件') }}</span><input type="file" :aria-label="tr('选择安全发送文件')" @change="selectFile" /></span></label>
+          <label v-else-if="editorMode === 'create-text' || editingExisting?.type === 'text'" class="send-field field-wide"><span>{{ tr('文本内容 *') }}</span><textarea v-model="form.text" rows="7"></textarea></label>
 
-          <label class="send-field field-wide"><span>备注</span><textarea v-model="form.notes" rows="3"></textarea></label>
+          <label class="send-field field-wide"><span>{{ tr('备注') }}</span><textarea v-model="form.notes" rows="3"></textarea></label>
 
-          <fieldset class="send-fieldset field-wide"><legend>访问策略</legend>
-            <label class="send-field"><span>自动删除 *</span><input v-model="form.deletionDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="maximumDeletionDate" /></label>
-            <label class="send-field"><span>提前到期</span><input v-model="form.expirationDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="form.deletionDate || maximumDeletionDate" /></label>
-            <label class="send-field"><span>访问次数上限</span><input v-model="form.maxAccessCount" type="number" min="1" step="1" inputmode="numeric" placeholder="不限制" /></label>
-            <label class="send-field"><span>{{ editingExisting?.hasPassword ? '访问密码' : '访问密码（可选）' }}</span><span class="password-input"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" :disabled="Boolean(editingExisting?.hasPassword)" :placeholder="editingExisting?.hasPassword ? '已设置；请先在详情页移除' : ''" /><button type="button" :disabled="Boolean(editingExisting?.hasPassword)" @click="revealPassword = !revealPassword">{{ revealPassword ? '隐藏' : '显示' }}</button></span></label>
+          <fieldset class="send-fieldset field-wide"><legend>{{ tr('访问策略') }}</legend>
+            <label class="send-field"><span>{{ tr('自动删除 *') }}</span><input v-model="form.deletionDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="maximumDeletionDate" /></label>
+            <label class="send-field"><span>{{ tr('提前到期') }}</span><input v-model="form.expirationDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="form.deletionDate || maximumDeletionDate" /></label>
+            <label class="send-field"><span>{{ tr('访问次数上限') }}</span><input v-model="form.maxAccessCount" type="number" min="1" step="1" inputmode="numeric" :placeholder="tr('不限制')" /></label>
+            <label class="send-field"><span>{{ editingExisting?.hasPassword ? tr('访问密码') : tr('访问密码（可选）') }}</span><span class="password-input"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" :disabled="Boolean(editingExisting?.hasPassword)" :placeholder="editingExisting?.hasPassword ? tr('已设置；请先在详情页移除') : ''" /><button type="button" :disabled="Boolean(editingExisting?.hasPassword)" @click="revealPassword = !revealPassword">{{ revealPassword ? tr('隐藏') : tr('显示') }}</button></span></label>
           </fieldset>
 
-          <fieldset class="send-options field-wide"><legend>显示与可用性</legend>
-            <label><input v-model="form.hideEmail" type="checkbox" /><span>向访问者隐藏所有者邮箱</span></label>
-            <label v-if="editorMode !== 'create-file' && editingExisting?.type !== 'file'"><input v-model="form.hiddenText" type="checkbox" /><span>访问页面默认隐藏文本</span></label>
-            <label><input v-model="form.disabled" type="checkbox" /><span>暂时停用分享链接</span></label>
+          <fieldset class="send-options field-wide"><legend>{{ tr('显示与可用性') }}</legend>
+            <label><input v-model="form.hideEmail" type="checkbox" /><span>{{ tr('向访问者隐藏所有者邮箱') }}</span></label>
+            <label v-if="editorMode !== 'create-file' && editingExisting?.type !== 'file'"><input v-model="form.hiddenText" type="checkbox" /><span>{{ tr('访问页面默认隐藏文本') }}</span></label>
+            <label><input v-model="form.disabled" type="checkbox" /><span>{{ tr('暂时停用分享链接') }}</span></label>
           </fieldset>
 
-          <div v-if="activeTransferId" class="upload-status field-wide" role="status" aria-live="polite"><div><strong>正在加密上传文件</strong><span>{{ uploadPercent }}%</span></div><progress :value="uploadProgress" :max="selectedFile?.size || 1"></progress><m3e-button variant="text" type="button" @click="cancelUpload">取消上传</m3e-button></div>
+          <div v-if="activeTransferId" class="upload-status field-wide" role="status" aria-live="polite"><div><strong>{{ tr('正在加密上传文件') }}</strong><span>{{ uploadPercent }}%</span></div><progress :value="uploadProgress" :max="selectedFile?.size || 1"></progress><m3e-button variant="text" type="button" @click="cancelUpload">{{ tr('取消上传') }}</m3e-button></div>
           <p v-if="editorError" class="editor-error field-wide" role="alert">{{ editorError }}</p>
-          <footer class="field-wide"><m3e-button variant="text" type="button" :disabled="mutationBusy" @click="closeEditor">取消</m3e-button><m3e-button variant="filled" type="submit" :disabled="mutationBusy">{{ mutationBusy ? activeTransferId ? `上传中 ${uploadPercent}%` : '保存中…' : editorMode === 'edit' ? '保存修改' : '加密并创建' }}</m3e-button></footer>
+          <footer class="field-wide"><m3e-button variant="text" type="button" :disabled="mutationBusy" @click="closeEditor">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="mutationBusy">{{ mutationBusy ? activeTransferId ? tr('上传中 {0}%', { 0: uploadPercent }) : tr('保存中…') : editorMode === 'edit' ? tr('保存修改') : tr('加密并创建') }}</m3e-button></footer>
         </form>
       </section>
     </div>

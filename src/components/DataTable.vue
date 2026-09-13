@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { computed } from "vue";
 import type { TableColumn, TableRow } from "../lib/modules";
 import { stateClass, stateLabel } from "../lib/modules";

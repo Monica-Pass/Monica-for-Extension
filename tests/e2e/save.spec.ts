@@ -12,7 +12,7 @@ async function launchExtension(testInfo: TestInfo, profileName: string, viewport
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath(profileName), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     viewport,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
   });

@@ -13,7 +13,7 @@ test.describe.configure({ mode: "serial" });
 test.skip(process.platform !== "win32", "Windows Native Messaging registry E2E requires Windows.");
 
 async function extensionId(extensionPath: string, profilePath: string): Promise<string> {
-  const context = await chromium.launchPersistentContext(profilePath, { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+  const context = await chromium.launchPersistentContext(profilePath, { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     return new URL(worker.url()).host;
@@ -73,7 +73,7 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
   process.env.MONICA_FAKE_HELLO_CONTROL = control;
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("uv-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("uv-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
@@ -125,7 +125,7 @@ test("missing Monica Windows Hello Host falls back to the browser platform authe
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("native-fallback-profile"), { channel: "chromium", headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await chromium.launchPersistentContext(testInfo.outputPath("native-fallback-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);

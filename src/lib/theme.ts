@@ -1,7 +1,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 export type SchemePreference = "auto" | "light" | "dark";
-export type ThemePaletteId = "monica" | "ocean" | "forest" | "sakura" | "amber";
+export type ThemePaletteId = "nothing" | "monica" | "ocean" | "forest" | "sakura" | "amber";
 
 export type ThemePalette = {
   id: ThemePaletteId;
@@ -13,6 +13,7 @@ export type ThemePalette = {
 };
 
 export const palettes: ThemePalette[] = [
+  palette("nothing", "#1a1a1a", "#ffffff", "#d71921", ["#f5f5f3", "#ffffff", "#eeeee9", "#e8e8e4"], ["#000000", "#111111", "#1a1a1a", "#252525"]),
   palette("monica", "#0b6f69", "#8de8dc", "#f5c84c", ["#f4f8f6", "#e5efec", "#d7e4e1", "#bfded9"], ["#0f1514", "#17201f", "#1e2b29", "#24403c"]),
   palette("ocean", "#1769aa", "#a9c7ff", "#24c6dc", ["#f4f7fb", "#e3edf5", "#d5e3ee", "#c6d9e8"], ["#0d141b", "#14202a", "#1b2d3b", "#213f55"]),
   palette("forest", "#2f6b3f", "#b5d7b2", "#b6d86f", ["#f5f8f1", "#e6eee0", "#d8e3d0", "#c9dabc"], ["#10160f", "#182218", "#202e21", "#2c3d2c"]),
@@ -56,6 +57,7 @@ function applyTheme() {
   const root = document.documentElement;
   const colors = activePalette.value[activeScheme.value];
   root.dataset.theme = activeScheme.value;
+  root.dataset.palette = paletteId.value;
   root.style.setProperty("--app-bg", colors["bg"]);
   root.style.setProperty("--app-surface", colors["surface"]);
   root.style.setProperty("--app-surface-high", colors["surfaceHigh"]);
@@ -75,7 +77,7 @@ function readScheme(): SchemePreference {
 
 function readPalette(): ThemePaletteId {
   const value = localStorage.getItem(paletteKey);
-  return palettes.some((item) => item.id === value) ? (value as ThemePaletteId) : "monica";
+  return palettes.some((item) => item.id === value) ? (value as ThemePaletteId) : "nothing";
 }
 
 function palette(id: ThemePaletteId, color: string, darkColor: string, accent: string, light: string[], dark: string[]): ThemePalette {

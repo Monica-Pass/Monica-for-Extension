@@ -7,30 +7,30 @@ export interface LoginOtpResolution {
 }
 
 export async function resolveLoginOtp(login: LoginItem, items: VaultItem[], now = Date.now()): Promise<LoginOtpResolution | undefined> {
-  const linked = findBoundTotpItem(login, items);
-  if (linked) {
-    const parameters = parametersFromItem(linked);
-    const code = await generateOtpWithParameters(parameters, now);
-    return {
-      code,
-      updatedItem: parameters.otpType === "HOTP" ? { ...linked, counter: (linked.counter || 0) + 1, updatedAt: new Date(now).toISOString() } : undefined
-    };
-  }
-  if (!login.totpSecret) return undefined;
-  const parameters = parseTotpParameters(login.totpSecret);
+  const source = findBoundTotpItem(login, items) || login;
+  if (source.kind === "login" && !source.totpSecret) return undefined;
+  const parameters = parametersFromItem(source);
   const code = await generateOtpWithParameters(parameters, now);
   return {
     code,
-    updatedItem: parameters.otpType === "HOTP"
-      ? { ...login, totpSecret: generateOtpUri({ ...parameters, counter: (parameters.counter || 0) + 1 }), updatedAt: new Date(now).toISOString() }
-      : undefined
+    updatedItem: parameters.otpType === "HOTP" ? advanceHotpCounter(source, now) : undefined
   };
 }
 
-export function findBoundTotpItem(login: LoginItem, items: VaultItem[]): TotpItem | undefined {
-  if (login.boundTotpItemId) {
-    const explicit = items.find((item): item is TotpItem => item.kind === "totp" && item.id === login.boundTotpItemId && !item.deletedAt);
-    if (explicit) return explicit;
+/** Return a counter update to persist only after the code was successfully used. */
+export function advanceHotpCounter(item: LoginItem | TotpItem, now = Date.now()): LoginItem | TotpItem | undefined {
+  const parameters = parametersFromItem(item);
+  if (parameters.otpType !== "HOTP") return undefined;
+  const counter = (parameters.counter || 0) + 1;
+  const updatedAt = new Date(now).toISOString();
+  return item.kind === "totp"
+    ? { ...item, counter, updatedAt }
+    : { ...item, totpSecret: generateOtpUri({ ...parameters, counter }), updatedAt };
+}
+
+export function findBoundTotpItem(login: LoginItem, items: readonly VaultItem[]): TotpItem | undefined {
+  if (login.boundTotpItemId !== undefined) {
+    return login.boundTotpItemId ? items.find((item): item is TotpItem => item.kind === "totp" && item.id === login.boundTotpItemId && !item.deletedAt) : undefined;
   }
   const androidId = androidPasswordId(login);
   if (androidId == null) return undefined;
@@ -38,7 +38,8 @@ export function findBoundTotpItem(login: LoginItem, items: VaultItem[]): TotpIte
   return items.find((item): item is TotpItem => item.kind === "totp" && !item.deletedAt && item.boundPasswordId === androidId && item.providerRefs.some((reference) => providerIds.has(reference.providerId)));
 }
 
-export function parametersFromItem(item: TotpItem) {
+export function parametersFromItem(item: LoginItem | TotpItem) {
+  if (item.kind === "login") return parseTotpParameters(item.totpSecret || "");
   return {
     secret: item.steamSharedSecretBase64 || item.secret,
     algorithm: item.algorithm,

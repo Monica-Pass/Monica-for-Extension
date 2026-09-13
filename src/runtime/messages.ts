@@ -25,6 +25,7 @@ export interface LoginMatchSummary {
   favorite: boolean;
   uris: string[];
   hasTotp: boolean;
+  allowLockedAutofill?: boolean;
 }
 
 export interface PasskeyMatchSummary {
@@ -102,7 +103,7 @@ export interface PasskeyPromptContext {
   userVerificationRequired?: boolean;
   saveTargets: Array<{ providerId: string; name: string; sourceMode: "browser-local" | "bitwarden" }>;
   defaultSaveTargetId?: string;
-  credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; providerName: string; credentialConflict: boolean; userVerificationRequired?: boolean; useCount: number; lastUsedAt?: string }>;
+  credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; providerName: string; isLocalSource?: boolean; credentialConflict: boolean; userVerificationRequired?: boolean; useCount: number; lastUsedAt?: string }>;
   expiresAt: number;
 }
 
@@ -128,6 +129,7 @@ export interface SavePromptUpdateTarget {
   title: string;
   username: string;
   providerName: string;
+  isLocalSource?: boolean;
 }
 
 export interface SavePromptContext {
@@ -247,6 +249,7 @@ export interface KeePassFileExport {
 }
 
 export type ExtensionRequest =
+  | { type: "RUNTIME_INFO" }
   | { type: "VAULT_STATUS" }
   | { type: "VAULT_SETUP"; masterPassword: string }
   | { type: "VAULT_UNLOCK"; masterPassword: string }
@@ -260,13 +263,20 @@ export type ExtensionRequest =
   | { type: "VAULT_RESTORE_ENCRYPTED"; backup: EncryptedVaultBackup; backupPassword: string; replaceExisting?: boolean; currentPassword?: string }
   | { type: "VAULT_IMPORT_ITEMS"; items: VaultItem[] }
   | { type: "VAULT_LIST_ITEMS" }
+  | { type: "VAULT_HOME_GET" }
+  | { type: "VAULT_HOME_SET"; preferences: Partial<import("../core/home-preferences").HomePreferences> }
   | { type: "VAULT_LIST_ARCHIVED_ITEMS" }
   | { type: "VAULT_LIST_DELETED_ITEMS" }
   | { type: "VAULT_GET_ITEM"; itemId: string }
-  | { type: "VAULT_UPSERT_ITEM"; item: VaultItem }
+  | { type: "VAULT_UPSERT_ITEM"; item: VaultItem; allowLockedAutofill?: boolean }
+  | { type: "VAULT_LOCKED_AUTOFILL_IDS" }
+  | { type: "VAULT_SET_LOCKED_AUTOFILL"; itemId: string; enabled: boolean }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
   | { type: "VAULT_RESTORE_ITEM"; itemId: string }
   | { type: "VAULT_MATCH_LOGINS"; pageUrl: string; fieldSignature?: string }
+  | { type: "AUTOFILL_INLINE_QUERY"; sessionId: string }
+  | { type: "AUTOFILL_INLINE_FILL"; sessionId: string; itemId: string }
+  | { type: "AUTOFILL_INLINE_OPEN"; sessionId: string }
   | { type: "VAULT_LIST_LOGIN_SUMMARIES" }
   | { type: "VAULT_LOGIN_SECRET"; itemId: string; field: "username" | "password" }
   | { type: "VAULT_MATCH_PASSKEYS"; pageUrl: string }

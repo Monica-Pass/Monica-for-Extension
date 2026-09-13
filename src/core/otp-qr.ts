@@ -1,7 +1,6 @@
-import QRCode from "qrcode";
-
 export async function createQrDataUrl(content: string): Promise<string> {
   if (!content.trim()) throw new Error("二维码内容为空。");
+  const { default: QRCode } = await import("qrcode");
   return QRCode.toDataURL(content, { width: 240, margin: 2, errorCorrectionLevel: "M", color: { dark: "#111111ff", light: "#ffffffff" } });
 }
 

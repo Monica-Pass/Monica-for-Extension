@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { ref, watch } from "vue";
 import { vaultClient } from "../runtime/client";
 import { normalizeSitePolicyHost, type AutofillSitePolicy } from "../autofill/site-policy";
@@ -18,7 +20,7 @@ watch(() => props.open, async (open) => {
   error.value = "";
   input.value = "";
   try { [policy.value, blockedFields.value] = await Promise.all([vaultClient.getAutofillSitePolicy(), vaultClient.listAutofillBlockedFields()]); }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : "无法读取排除项。"; }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : tr('无法读取排除项。'); }
 });
 
 function addHost() {
@@ -27,7 +29,7 @@ function addHost() {
     const host = normalizeSitePolicyHost(input.value);
     if (!policy.value[target.value].includes(host)) policy.value[target.value] = [...policy.value[target.value], host].sort();
     input.value = "";
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "网站域名无效。"; }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : tr('网站域名无效。'); }
 }
 
 function removeHost(key: "blockedHosts" | "saveBlockedHosts", host: string) {
@@ -37,18 +39,18 @@ function removeHost(key: "blockedHosts" | "saveBlockedHosts", host: string) {
 async function removeField(signature: string) {
   busy.value = true; error.value = "";
   try { await vaultClient.removeAutofillBlockedField(signature); blockedFields.value = blockedFields.value.filter((item) => item.signature !== signature); emit("saved"); }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : "恢复字段失败。"; }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : tr('恢复字段失败。'); }
   finally { busy.value = false; }
 }
 
 function roleLabel(role: BlockedFieldSignatureRecord["role"]) {
-  return ({ username: "用户名", "current-password": "密码", "new-password": "新密码", totp: "验证码", wallet: "证件或支付" } as const)[role];
+  return ({ username: tr('用户名'), "current-password": tr('密码'), "new-password": tr('新密码'), totp: tr('验证码'), wallet: tr('证件或支付') } as const)[role];
 }
 
 async function save() {
   busy.value = true; error.value = "";
   try { policy.value = await vaultClient.setAutofillSitePolicy(policy.value); emit("saved"); emit("close"); }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : "保存排除项失败。"; }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : tr('保存排除项失败。'); }
   finally { busy.value = false; }
 }
 </script>
@@ -57,19 +59,19 @@ async function save() {
   <Teleport to="body">
     <div v-if="open" class="site-policy-backdrop" role="presentation" @click.self="emit('close')">
       <section class="site-policy-dialog" role="dialog" aria-modal="true" aria-labelledby="site-policy-title">
-        <header><div><h2 id="site-policy-title">自动填充排除项</h2><p>只保存网站域名，不保存路径或浏览记录。</p></div><m3e-icon-button aria-label="关闭" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
+        <header><div><h2 id="site-policy-title">{{ tr('自动填充排除项') }}</h2><p>{{ tr('只保存网站域名，不保存路径或浏览记录。') }}</p></div><m3e-icon-button :aria-label="tr('关闭')" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
         <div class="site-policy-form">
-          <select v-model="target" aria-label="排除类型"><option value="blockedHosts">禁止自动填充</option><option value="saveBlockedHosts">禁止保存提示</option></select>
+          <select v-model="target" :aria-label="tr('排除类型')"><option value="blockedHosts">{{ tr('禁止自动填充') }}</option><option value="saveBlockedHosts">{{ tr('禁止保存提示') }}</option></select>
           <input v-model="input" placeholder="example.com" autocomplete="off" @keydown.enter.prevent="addHost" />
-          <m3e-button variant="tonal" type="button" @click="addHost"><m3e-icon slot="icon" name="add"></m3e-icon>添加</m3e-button>
+          <m3e-button variant="tonal" type="button" @click="addHost"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加') }}</m3e-button>
         </div>
         <div class="site-policy-lists">
-          <div><strong>禁止自动填充</strong><span v-if="!policy.blockedHosts.length" class="empty">暂无</span><ul><li v-for="host in policy.blockedHosts" :key="'a-' + host"><span>{{ host }}</span><m3e-icon-button aria-label="删除网站" @click="removeHost('blockedHosts', host)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></li></ul></div>
-          <div><strong>禁止保存提示</strong><span v-if="!policy.saveBlockedHosts.length" class="empty">暂无</span><ul><li v-for="host in policy.saveBlockedHosts" :key="'s-' + host"><span>{{ host }}</span><m3e-icon-button aria-label="删除网站" @click="removeHost('saveBlockedHosts', host)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></li></ul></div>
-          <div><strong>字段级排除</strong><span v-if="!blockedFields.length" class="empty">暂无</span><ul><li v-for="field in blockedFields" :key="field.signature"><span><b>{{ field.hostname }}</b><small>{{ roleLabel(field.role) }} · {{ field.frameScope === 'frame' ? '嵌入框' : '主页面' }}</small></span><m3e-icon-button :aria-label="`恢复 ${field.hostname} 的${roleLabel(field.role)}字段`" :disabled="busy" @click="removeField(field.signature)"><m3e-icon name="restart_alt"></m3e-icon></m3e-icon-button></li></ul></div>
+          <div><strong>{{ tr('禁止自动填充') }}</strong><span v-if="!policy.blockedHosts.length" class="empty">{{ tr('暂无') }}</span><ul><li v-for="host in policy.blockedHosts" :key="'a-' + host"><span>{{ host }}</span><m3e-icon-button :aria-label="tr('删除网站')" @click="removeHost('blockedHosts', host)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></li></ul></div>
+          <div><strong>{{ tr('禁止保存提示') }}</strong><span v-if="!policy.saveBlockedHosts.length" class="empty">{{ tr('暂无') }}</span><ul><li v-for="host in policy.saveBlockedHosts" :key="'s-' + host"><span>{{ host }}</span><m3e-icon-button :aria-label="tr('删除网站')" @click="removeHost('saveBlockedHosts', host)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></li></ul></div>
+          <div><strong>{{ tr('字段级排除') }}</strong><span v-if="!blockedFields.length" class="empty">{{ tr('暂无') }}</span><ul><li v-for="field in blockedFields" :key="field.signature"><span><b>{{ field.hostname }}</b><small>{{ roleLabel(field.role) }} · {{ field.frameScope === 'frame' ? tr('嵌入框') : tr('主页面') }}</small></span><m3e-icon-button :aria-label="tr('恢复 {0} 的{1}字段', { 0: field.hostname, 1: roleLabel(field.role) })" :disabled="busy" @click="removeField(field.signature)"><m3e-icon name="restart_alt"></m3e-icon></m3e-icon-button></li></ul></div>
         </div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-        <footer><m3e-button variant="text" type="button" @click="emit('close')">取消</m3e-button><m3e-button variant="filled" type="button" :disabled="busy" @click="save">{{ busy ? "保存中…" : "保存" }}</m3e-button></footer>
+        <footer><m3e-button variant="text" type="button" @click="emit('close')">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="button" :disabled="busy" @click="save">{{ busy ? tr('保存中…') : tr('保存') }}</m3e-button></footer>
       </section>
     </div>
   </Teleport>

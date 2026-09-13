@@ -8,7 +8,7 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("steam-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");

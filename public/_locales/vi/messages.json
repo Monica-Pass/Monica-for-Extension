@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Trình quản lý mật khẩu Monica",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "Kho mã hóa có tự động điền và Passkey. Tương thích với Monica Android, KeePass và Bitwarden.",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Tự động điền Monica",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

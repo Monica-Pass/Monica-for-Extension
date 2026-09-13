@@ -9,10 +9,22 @@ import { bytesToBase64, randomBytes } from "./encoding";
 import type { VaultSessionStore } from "./vault-session";
 import type { VaultEnvelopeStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore, type VaultDeviceKeyStore } from "./vault-device-key";
+import { LockedAutofillCache, supportsLockedAutofill } from "./locked-autofill";
 import { normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
 import { addBlockedFieldSignature, normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
+import { normalizeHomePreferences, type HomePreferences } from "../core/home-preferences";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
+
+export interface AutofillContext {
+  locked: boolean;
+  items: VaultItem[];
+  allowedIds: string[];
+  blockedHosts: string[];
+  blockedFieldSignatures: string[];
+  /** Internal revision check; never returned through extension messages. */
+  envelopeVersion: string;
+}
 
 export interface EncryptedVaultBackup {
   magic: "MONICA_EXTENSION_BACKUP";
@@ -55,7 +67,8 @@ export class SecureVaultService {
     private readonly storage: VaultEnvelopeStorage,
     private readonly sessions: VaultSessionStore,
     private readonly now: () => number = () => Date.now(),
-    private readonly deviceKeys: VaultDeviceKeyStore = new MemoryVaultDeviceKeyStore()
+    private readonly deviceKeys: VaultDeviceKeyStore = new MemoryVaultDeviceKeyStore(),
+    private readonly lockedAutofill: LockedAutofillCache = new LockedAutofillCache()
   ) {}
 
   async status(): Promise<VaultLifecycleStatus> {
@@ -142,6 +155,7 @@ export class SecureVaultService {
     }
     await this.startSession(key, state.settings.autoLockMinutes);
     await this.deviceKeys.setAutoUnlockSuspended(false);
+    await this.refreshLockedAutofill(state, await this.requireEnvelope());
     return state;
     });
   }
@@ -199,6 +213,7 @@ export class SecureVaultService {
       }
       await this.startSession(key, state.settings.autoLockMinutes);
       await this.deviceKeys.setAutoUnlockSuspended(false);
+      await this.refreshLockedAutofill(state, await this.requireEnvelope());
       return state;
     });
   }
@@ -317,7 +332,9 @@ export class SecureVaultService {
         await this.deviceKeys.write(device.kdf.keyId, device.rawKey);
       }
       state.updatedAt = new Date(this.now()).toISOString();
-      await this.storage.write(await encryptVaultState(state, newKey, newKdf));
+      const newEnvelope = await encryptVaultState(state, newKey, newKdf);
+      await this.refreshLockedAutofill(state, newEnvelope);
+      await this.storage.write(newEnvelope);
       if (envelope.kdf.name === "DEVICE-KEY" && envelope.kdf.keyId !== (newKdf.name === "DEVICE-KEY" ? newKdf.keyId : "")) await this.deviceKeys.remove(envelope.kdf.keyId);
       await this.deviceKeys.setAutoUnlockSuspended(false);
       try {
@@ -374,6 +391,8 @@ export class SecureVaultService {
       // Windows Hello is bound to the current Windows profile and vault
       // envelope; portable backups must never advertise a foreign binding.
       delete restoredState.settings.windowsHello;
+      // A portable backup cannot grant device-local access on another installation.
+      restoredState.settings.lockedAutofillItemIds = [];
 
       if (existing) {
         try {
@@ -395,6 +414,7 @@ export class SecureVaultService {
         }
       }
       await this.storage.write(restoredEnvelope);
+      await this.refreshLockedAutofill(restoredState, restoredEnvelope);
       try {
         await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
         await this.deviceKeys.setAutoUnlockSuspended(false);
@@ -424,6 +444,21 @@ export class SecureVaultService {
       blockedHosts: [...state.settings.autofillBlockedHosts],
       saveBlockedHosts: [...state.settings.saveBlockedHosts]
     };
+  }
+
+  async getHomePreferences(): Promise<HomePreferences> {
+    return normalizeHomePreferences((await this.readState()).settings.home);
+  }
+
+  async setHomePreferences(input: Partial<HomePreferences>): Promise<HomePreferences> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const preferences = normalizeHomePreferences({ ...normalizeHomePreferences(state.settings.home), ...input });
+      state.settings.home = preferences;
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf);
+      return preferences;
+    });
   }
 
   async setAutofillSitePolicy(input: AutofillSitePolicy): Promise<AutofillSitePolicy> {
@@ -576,6 +611,53 @@ export class SecureVaultService {
 
   async listItems(): Promise<VaultItem[]> {
     return (await this.readState()).items.filter((item) => !item.deletedAt && !item.archivedAt);
+  }
+
+  async listLockedAutofillItemIds(): Promise<string[]> {
+    return [...((await this.readState()).settings.lockedAutofillItemIds || [])];
+  }
+
+  async setLockedAutofill(itemId: string, enabled: boolean): Promise<void> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      this.updateLockedAutofillGrant(state, itemId, enabled);
+      await this.persist(state, key, envelope.kdf, enabled);
+    });
+  }
+
+  /** Background-only projection; the runtime exposes summaries and explicit fills. */
+  async readAutofillContext(): Promise<AutofillContext> {
+    return this.runExclusive(async () => {
+      const envelope = await this.requireEnvelope();
+      const envelopeVersion = JSON.stringify(envelope);
+      const session = await this.sessions.read();
+      if (session && session.expiresAt > this.now()) {
+        const state = await decryptVaultState(envelope, await importVaultKey(session.rawKey));
+        await this.touchSession(state.settings.autoLockMinutes);
+        return {
+          locked: false, envelopeVersion, items: state.items.filter((item) => !item.deletedAt && !item.archivedAt),
+          allowedIds: state.settings.lockedAutofillItemIds || [], blockedHosts: state.settings.autofillBlockedHosts,
+          blockedFieldSignatures: state.settings.autofillBlockedFieldSignatures.map((record) => record.signature)
+        };
+      }
+      const cached = await this.lockedAutofill.read(envelope);
+      return { locked: true, envelopeVersion, items: cached?.logins || [], allowedIds: cached?.logins.map((item) => item.id) || [], blockedHosts: cached?.blockedHosts || [], blockedFieldSignatures: cached?.blockedFieldSignatures || [] };
+    });
+  }
+
+  /** Recheck after asynchronous page inspection and OTP generation, immediately before dispatch. */
+  async dispatchAutofill<T>(context: AutofillContext, dispatch: () => Promise<T>): Promise<T> {
+    const { result } = await this.runExclusive(async () => {
+      const envelope = await this.requireEnvelope();
+      const session = await this.sessions.read();
+      const locked = !session || session.expiresAt <= this.now();
+      if (locked !== context.locked || JSON.stringify(envelope) !== context.envelopeVersion) {
+        throw new Error("填写权限或密码库已变化，请重新打开 Monica 后再填充。");
+      }
+      // Start delivery while authorized, but never hold the vault lock while awaiting a page.
+      return { result: dispatch() };
+    });
+    return result;
   }
 
   async listArchivedItems(): Promise<VaultItem[]> {
@@ -881,7 +963,7 @@ export class SecureVaultService {
     });
   }
 
-  async upsertItem(item: VaultItem): Promise<VaultItem> {
+  async upsertItem(item: VaultItem, allowLockedAutofill?: boolean): Promise<VaultItem> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const now = new Date(this.now()).toISOString();
@@ -893,9 +975,10 @@ export class SecureVaultService {
       providerRefs: item.providerRefs || []
     } as VaultItem;
     state.items = existing ? state.items.map((candidate) => (candidate.id === item.id ? normalized : candidate)) : [normalized, ...state.items];
+    if (allowLockedAutofill !== undefined) this.updateLockedAutofillGrant(state, normalized.id, allowLockedAutofill);
     queueProviderMutations(state, normalized, existing ? "update" : "create", now);
     state.updatedAt = now;
-    await this.persist(state, key, envelope.kdf);
+    await this.persist(state, key, envelope.kdf, allowLockedAutofill === true);
     return normalized;
     });
   }
@@ -1112,8 +1195,30 @@ export class SecureVaultService {
     return { state: await decryptVaultState(envelope, key), envelope, key };
   }
 
-  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters): Promise<void> {
-    await this.storage.write(await encryptVaultState(state, key, kdf));
+  private updateLockedAutofillGrant(state: VaultState, itemId: string, enabled: boolean): void {
+    const item = state.items.find((candidate) => candidate.id === itemId);
+    if (enabled && (!item || !supportsLockedAutofill(item))) throw new Error("免解锁填写仅适用于有密码和匹配网站的未归档登录项。");
+    const ids = new Set(state.settings.lockedAutofillItemIds || []);
+    if (enabled) ids.add(itemId);
+    else ids.delete(itemId);
+    state.settings.lockedAutofillItemIds = [...ids];
+  }
+
+  private async refreshLockedAutofill(state: VaultState, envelope: VaultEnvelope, required = false): Promise<void> {
+    try { await this.lockedAutofill.prepare(state, envelope); }
+    catch (error) {
+      // Normal vault writes still commit: the new envelope invalidates the old cache.
+      // An explicit grant must be fully prepared before reporting success.
+      if (required) throw error;
+    }
+  }
+
+  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters, requireLockedAutofill = false): Promise<void> {
+    const eligible = new Set(state.items.filter(supportsLockedAutofill).map((item) => item.id));
+    state.settings.lockedAutofillItemIds = (state.settings.lockedAutofillItemIds || []).filter((id) => eligible.has(id));
+    const envelope = await encryptVaultState(state, key, kdf);
+    await this.refreshLockedAutofill(state, envelope, requireLockedAutofill);
+    await this.storage.write(envelope);
     try {
       await this.touchSession(state.settings.autoLockMinutes);
     } catch {

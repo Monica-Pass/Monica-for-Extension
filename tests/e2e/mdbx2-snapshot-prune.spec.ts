@@ -22,7 +22,7 @@ test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disc
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-snapshot-prune-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },

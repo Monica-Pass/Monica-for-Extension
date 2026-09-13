@@ -9,7 +9,7 @@ async function launch(testInfo: TestInfo, profile: string, options: { reducedMot
   const profileDir = await mkdtemp(path.join(tmpdir(), `monica-a11y-${profile.slice(0, 8)}-`));
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     reducedMotion: options.reducedMotion,
     colorScheme: options.colorScheme,
     viewport: options.viewport,
@@ -226,7 +226,7 @@ test("manager remains operable with reduced motion, large text, and a narrow vie
       return { clientWidth: viewportWidth, scrollWidth: document.documentElement.scrollWidth, overflowing };
     });
     expect(layout.scrollWidth, `right overflow: ${layout.overflowing.join(", ")}`).toBeLessThanOrEqual(layout.clientWidth);
-    const motion = await launched.page.locator(".motion-card").first().evaluate((element) => getComputedStyle(element).animationDuration);
+    const motion = await launched.page.locator(".home-module").first().evaluate((element) => getComputedStyle(element).animationDuration);
     expect(Number.parseFloat(motion) || 0).toBeLessThanOrEqual(0.001);
     await expectA11y(launched.page, "narrow 200 percent manager");
   } finally {

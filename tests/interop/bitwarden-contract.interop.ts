@@ -59,7 +59,7 @@ describe("Bitwarden official and Vaultwarden server-contract interoperability", 
       const personalCard = requireCard(imported.items, "Personal Contract Card");
       expect(personalLogin).toMatchObject({ username: "personal-user", password: "personal-server-secret" });
       expect(organizationLogin).toMatchObject({ username: "organization-user", password: "organization-server-secret" });
-      expect(passkey).toMatchObject({ signCount: 4, sourceMode: "bitwarden", privateKeyPkcs8: "recorded-pkcs8-material" });
+      expect(passkey).toMatchObject({ signCount: 4, sourceMode: "bitwarden", privateKeyPkcs8: server.passkeyPrivateKeyPkcs8 });
       expect(personalCard).toMatchObject({
         number: "4111111111111111",
         cardholderName: "Personal Card Holder",

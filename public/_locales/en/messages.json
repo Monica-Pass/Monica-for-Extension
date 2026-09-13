@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Monica Password Manager",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "An encrypted password vault with autofill, Passkeys, and support for Monica Android, KeePass and Bitwarden.",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Monica Autofill",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

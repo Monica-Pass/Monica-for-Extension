@@ -27,7 +27,7 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
         uris,
         uriRules: loginUriRules(raw.uriRules, uris),
         totpSecret: optional(raw.totpSecret),
-        boundTotpItemId: optional(raw.boundTotpItemId),
+        boundTotpItemId: raw.boundTotpItemId === "" ? "" : optional(raw.boundTotpItemId),
         customFields: secureCustomFields(raw.customFields),
         loginType: loginType(raw.loginType),
         ssoProvider: optional(raw.ssoProvider),

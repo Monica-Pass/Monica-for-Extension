@@ -1,7 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { PasskeyItem, SecureNoteItem, VaultItem } from "../../core/model";
+import type { LoginItem, PasskeyItem, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import { createAssertion } from "../../passkey/webauthn-core";
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 import { androidFolderKey, androidRecordToItem, deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, listAndroidTimeline, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup } from "./android-backup-codec";
@@ -676,6 +676,88 @@ describe("Android backup ZIP codec", () => {
 
     const output = unzipSync(writeAndroidBackup({ entries: {}, items: [], records: new Map(), warnings: [] }, encrypted.items, "encrypted", { allowPortablePasskeys: true }));
     expect(JSON.parse(strFromU8(output[path])).privateKeyAlias).toBe(P256_PKCS8);
+  });
+
+  it("preserves Android overview settings byte for byte while editing favorites and consuming bound HOTP", () => {
+    const fixture = currentAndroidRecordsFixture();
+    const configPath = "monica_config/page_adjustment_settings.json";
+    const configBytes = strToU8(JSON.stringify({
+      vaultOverviewEnabled: true,
+      vaultOverviewConfig: JSON.stringify({
+        order: ["FAVORITES", "CARDS", "ITEMS", "TYPES", "FOLDERS", "DATABASES", "ARCHIVE", "TRASH"],
+        hidden: ["ITEMS"], collapsed: ["DATABASES"], pinnedCards: ["card:103"], pinnedItems: ["password:101"],
+        recommendCards: false, recommendItems: false, scope: "local", futureAndroidPreference: { keep: true }
+      }),
+      authenticatorLayoutMode: "STANDARD", futurePagePreference: [1, "preserve", null]
+    }, null, 2) + "\n");
+    const document = readAndroidBackup(zipSync({ ...unzipSync(fixture.zip), [configPath]: configBytes }), "overview-interop");
+    const login = document.items.find(item => item.kind === "login")!;
+    const otp = document.items.find(item => item.kind === "totp")!;
+    expect(login).toMatchObject({ boundTotpItemId: otp.id });
+    const changed = document.items.map(item => item.kind === "login" ? { ...item, favorite: false }
+      : item.kind === "totp" ? { ...item, counter: 18 } : item);
+    const bytes = writeAndroidBackup(document, changed, "overview-interop");
+    const output = unzipSync(bytes);
+    expect(output[configPath]).toEqual(configBytes);
+    expect(JSON.parse(strFromU8(output[fixture.paths.password]))).toEqual({ ...fixture.raws.password, isFavorite: false });
+    expect(JSON.parse(JSON.parse(strFromU8(output[fixture.paths.totp])).itemData)).toEqual({ ...fixture.nested.totpData, counter: 18 });
+    const reopened = readAndroidBackup(bytes, "overview-interop");
+    expect(reopened.items.find(item => item.kind === "login")).toMatchObject({ favorite: false, boundTotpItemId: otp.id });
+    expect(reopened.items.find(item => item.kind === "totp")).toMatchObject({ counter: 18, boundPasswordId: 101 });
+  });
+
+  it.each(["bind", "replace", "unlink"] as const)("round-trips an extension OTP binding edit (%s) through Android's reverse reference", action => {
+    const fixture = currentAndroidRecordsFixture();
+    const entries = unzipSync(fixture.zip);
+    const extraPath = "folders/Work/authenticators/totp_202_1700000000000.json";
+    entries[extraPath] = strToU8(JSON.stringify({ ...fixture.raws.totp, id: 202, title: "Another OTP", itemData: JSON.stringify({ ...fixture.nested.totpData, boundPasswordId: null }) }));
+    if (action === "bind") entries[fixture.paths.totp] = strToU8(JSON.stringify({ ...fixture.raws.totp, itemData: JSON.stringify({ ...fixture.nested.totpData, boundPasswordId: null }) }));
+    const document = readAndroidBackup(zipSync(entries), "otp-edit-interop");
+    const oldOtp = document.items.find(item => item.kind === "totp" && item.title === "Current OTP")!;
+    const newOtp = document.items.find(item => item.kind === "totp" && item.title === "Another OTP")!;
+    const targetId = action === "unlink" ? "" : action === "replace" ? newOtp.id : oldOtp.id;
+    const changed = document.items.map(item => item.kind === "login" ? { ...item, boundTotpItemId: targetId, totpSecret: undefined, updatedAt: "2026-09-13T07:00:00.000Z" } : item);
+    const reopened = readAndroidBackup(writeAndroidBackup(document, changed, "otp-edit-interop"), "otp-edit-interop");
+    expect(reopened.items.find(item => item.kind === "login")?.boundTotpItemId).toBe(targetId || undefined);
+    expect(reopened.items.find((item): item is TotpItem => item.kind === "totp" && item.id === oldOtp.id)?.boundPasswordId).toBe(action === "bind" ? 101 : undefined);
+    expect(reopened.items.find((item): item is TotpItem => item.kind === "totp" && item.id === newOtp.id)?.boundPasswordId).toBe(action === "replace" ? 101 : undefined);
+  });
+
+  it("preserves legacy reverse bindings when a login without a forward reference changes", () => {
+    const fixture = currentAndroidRecordsFixture();
+    const document = readAndroidBackup(fixture.zip, "legacy-binding");
+    const changed = document.items.map(item => item.kind === "login" ? { ...item, boundTotpItemId: undefined, favorite: false } : item);
+    const output = writeAndroidBackup(document, changed, "legacy-binding");
+    expect(unzipSync(output)[fixture.paths.totp]).toEqual(unzipSync(fixture.zip)[fixture.paths.totp]);
+    const reopened = readAndroidBackup(output, "legacy-binding");
+    expect(reopened.items.find(item => item.kind === "login")?.boundTotpItemId).toBe(document.items.find(item => item.kind === "totp")?.id);
+  });
+
+  it("assigns an Android reverse binding for a newly created login and authenticator", () => {
+    const document = readAndroidBackup(currentAndroidRecordsFixture().zip, "new-binding");
+    const otp = { ...document.items.find(item => item.kind === "totp")!, id: "new-otp", title: "New OTP", providerRefs: [], boundPasswordId: undefined };
+    const login = { ...document.items.find(item => item.kind === "login")!, id: "new-login", title: "New login", providerRefs: [], boundTotpItemId: otp.id };
+    const output = writeAndroidBackup(document, [...document.items, login, otp], "new-binding");
+    const reopened = readAndroidBackup(output, "new-binding");
+    const restoredOtp = reopened.items.find(item => item.kind === "totp" && item.title === "New OTP")!;
+    expect(reopened.items.find((item): item is LoginItem => item.kind === "login" && item.title === "New login")?.boundTotpItemId).toBe(restoredOtp.id);
+    expect(otp.boundPasswordId).toBeTypeOf("number");
+  });
+
+  it.each(["missing-target", "duplicate-owner", "duplicate-id"] as const)("refuses an unrepresentable OTP relationship (%s) without changing companion records", issue => {
+    const document = readAndroidBackup(currentAndroidRecordsFixture().zip, "invalid-binding");
+    const originalLogin = document.items.find(item => item.kind === "login")!;
+    const otp = document.items.find(item => item.kind === "totp")!;
+    const items = structuredClone(document.items);
+    if (issue === "missing-target") items.find(item => item.kind === "login")!.boundTotpItemId = "another-database-otp";
+    else items.push({ ...originalLogin, id: "another-login", providerRefs: [], boundTotpItemId: otp.id });
+    if (issue === "duplicate-id") {
+      const record = document.records.get(originalLogin.id)!;
+      document.records.set("another-login", { ...record, itemId: "another-login", item: { ...originalLogin, id: "another-login", boundTotpItemId: undefined } });
+    }
+    const snapshot = structuredClone(items);
+    expect(() => writeAndroidBackup(document, items, "invalid-binding")).toThrow(/无法同步|重复绑定/);
+    expect(items).toEqual(snapshot);
   });
 
   it("round-trips every current Android record shape while preserving Android-only fields", () => {

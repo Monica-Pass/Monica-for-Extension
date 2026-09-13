@@ -1,21 +1,22 @@
 export const PROMPT_BASE_STYLES = `
   :host {
     color-scheme: light dark;
-    --monica-primary: #006a64;
+    --monica-primary: #1a1a1a;
     --monica-on-primary: #ffffff;
-    --monica-primary-container: #71f7ed;
-    --monica-on-primary-container: #00201e;
+    --monica-primary-container: #e8e8e4;
+    --monica-on-primary-container: #1a1a1a;
     --monica-surface: #fff;
-    --monica-surface-container: #f2f4f3;
-    --monica-surface-high: #e6e9e7;
-    --monica-text: #191c1c;
-    --monica-muted: #3f4947;
-    --monica-outline: #bec9c7;
-    --monica-error: #ba1a1a;
+    --monica-surface-container: #f5f5f3;
+    --monica-surface-high: #eeeee9;
+    --monica-text: #1a1a1a;
+    --monica-muted: #62625e;
+    --monica-outline: #cdcdc7;
+    --monica-error: #ba151c;
     --monica-success: #146c3a;
     font: 0.875rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; min-width: 0; }
+  p, strong, label, button { overflow-wrap: anywhere; }
   .card {
     pointer-events: auto;
     position: fixed;
@@ -31,21 +32,21 @@ export const PROMPT_BASE_STYLES = `
     border-radius: 16px;
     color: var(--monica-text);
     background: var(--monica-surface);
-    box-shadow: 0 10px 32px rgba(0,0,0,.22);
+    box-shadow: none;
     animation: monica-prompt-in 180ms cubic-bezier(.2,.8,.2,1);
   }
   .header { display: flex; align-items: center; gap: 12px; }
-  .brand-icon {
-    width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center;
-    border-radius: 8px; color: var(--monica-on-primary-container); background: var(--monica-primary-container);
+  .brand-logo {
+    width: 44px; height: 44px; flex: 0 0 44px; display: block; object-fit: contain;
+    border: 0; border-radius: 0; background: transparent; filter: none;
   }
-  .brand-icon svg, .icon-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .heading { min-width: 0; flex: 1; display: grid; gap: 2px; }
   .title { font-size: 1rem; line-height: 1.3; }
   .subtitle, .supporting, .masked { color: var(--monica-muted); font-size: 0.75rem; }
   .subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   button, select { font: inherit; }
-  button { min-height: 44px; border: 0; border-radius: 8px; padding: 0 14px; cursor: pointer; font-weight: 700; }
+  button { min-height: 44px; border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 500; }
   button:focus-visible, select:focus-visible { outline: 3px solid var(--monica-primary); outline-offset: 2px; }
   button:disabled { cursor: wait; opacity: .62; }
   .icon-button { width: 44px; padding: 0; display: grid; place-items: center; color: var(--monica-muted); background: transparent; line-height: 1; }
@@ -62,9 +63,9 @@ export const PROMPT_BASE_STYLES = `
   .secondary { color: var(--monica-primary); background: transparent; }
   .primary { color: var(--monica-on-primary); background: var(--monica-primary); }
   .primary:hover { filter: brightness(.92); }
-  @keyframes monica-prompt-in { from { opacity: 0; transform: translateY(-6px); } }
+  @keyframes monica-prompt-in { from { opacity: 0;  } }
   @media (prefers-color-scheme: dark) {
-    :host { --monica-primary: #4fdbd0; --monica-on-primary: #003733; --monica-primary-container: #00504b; --monica-on-primary-container: #71f7ed; --monica-surface: #191c1c; --monica-surface-container: #242827; --monica-surface-high: #2e3231; --monica-text: #e0e3e2; --monica-muted: #bec9c7; --monica-outline: #3f4947; --monica-error: #ffb4ab; --monica-success: #85d5a5; }
+    :host { --monica-primary: #ffffff; --monica-on-primary: #000000; --monica-primary-container: #252525; --monica-on-primary-container: #e8e8e8; --monica-surface: #111111; --monica-surface-container: #1a1a1a; --monica-surface-high: #252525; --monica-text: #e8e8e8; --monica-muted: #aaaaaa; --monica-outline: #414141; --monica-error: #ff7478; --monica-success: #85d5a5; }
   }
   @media (max-width: 430px) { .card { top: 8px; right: 8px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); } }
   @media (prefers-reduced-motion: reduce) { .card { animation: none; } }

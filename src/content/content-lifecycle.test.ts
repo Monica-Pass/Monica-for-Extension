@@ -20,6 +20,29 @@ async function settle(dom: JSDOM): Promise<void> {
 }
 
 describe("dynamic credential capture lifecycle", () => {
+  it("releases removed shadow roots and resumes capture when the same host is reattached", async () => {
+    const dom = page();
+    const candidates: CredentialCaptureInput[] = [];
+    const stop = installCredentialCapture({ rootDocument: dom.window.document, pageLocation: dom.window.location, onCandidate: (candidate) => { candidates.push(candidate); } });
+    const host = dom.window.document.createElement("login-shell");
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<form><input autocomplete="username" value="returning-user"><input type="password" value="returning-secret"></form>';
+    dom.window.document.body.append(host);
+    await settle(dom);
+    submit(dom, shadow.querySelector("form")!);
+    expect(candidates).toHaveLength(1);
+    host.remove();
+    await settle(dom);
+    submit(dom, shadow.querySelector("form")!);
+    expect(candidates).toHaveLength(1);
+    dom.window.document.body.append(host);
+    await settle(dom);
+    submit(dom, shadow.querySelector("form")!);
+    expect(candidates).toHaveLength(2);
+    stop();
+    dom.window.close();
+  });
+
   it("captures a form inserted after installation", async () => {
     const dom = page();
     const candidates: CredentialCaptureInput[] = [];

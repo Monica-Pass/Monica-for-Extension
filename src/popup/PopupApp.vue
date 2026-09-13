@@ -1,12 +1,17 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import "@m3e/web/theme";
 import "@m3e/web/button";
 import "@m3e/web/icon";
 import "@m3e/web/icon-button";
-import { computed, onMounted, ref } from "vue";
+import LanguagePicker from "../components/LanguagePicker.vue";
+import ListPagination from "../components/ListPagination.vue";
+import { useListPagination } from "../lib/list-pagination";
+import { computed, onMounted, onUnmounted, ref, shallowRef } from "vue";
 import { normalizeHost } from "../core/matching";
 import { activeScheme, themeColor, useThemePreferences } from "../lib/theme";
-import { vaultClient } from "../runtime/client";
+import { ExtensionRuntimeError, vaultClient } from "../runtime/client";
 import type { LoginMatchSummary, PasskeyMatchSummary, WalletFillKind, WalletMatchSummary } from "../runtime/messages";
 import type { VaultLifecycleStatus } from "../security/secure-vault-service";
 import type { AutofillFieldContext } from "../content/field-signature";
@@ -32,49 +37,71 @@ const unlocking = ref(false);
 const fillingId = ref<string | null>(null);
 const status = ref("");
 const error = ref("");
+const runtimeReloadRequired = ref(false);
 const masterPassword = ref("");
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const tabId = ref<number | null>(null);
 const tabUrl = ref("");
 const tabTitle = ref("");
-const scans = ref<PageScan[]>([]);
+const scans = shallowRef<PageScan[]>([]);
 const selectedFrameId = ref(0);
-const matches = ref<LoginMatchSummary[]>([]);
-const passkeys = ref<PasskeyMatchSummary[]>([]);
-const walletItems = ref<WalletMatchSummary[]>([]);
-const allLogins = ref<LoginMatchSummary[]>([]);
+const matches = shallowRef<LoginMatchSummary[]>([]);
+const passkeys = shallowRef<PasskeyMatchSummary[]>([]);
+const walletItems = shallowRef<WalletMatchSummary[]>([]);
+const allLogins = shallowRef<LoginMatchSummary[]>([]);
 const search = ref("");
 const pageUnsupported = ref(false);
 const currentFieldBlocked = ref(false);
 const fieldPolicyBusy = ref(false);
+let initializeRevision = 0;
+let matchRevision = 0;
 
 useThemePreferences();
 const scan = computed(() => scans.value.find((candidate) => candidate.frameId === selectedFrameId.value) || scans.value[0] || null);
 const fillTargets = computed(() => scans.value.filter((candidate) => candidate.hasUsernameField || candidate.hasPasswordField || candidate.hasTotpField || candidate.walletKinds.length));
-const currentHost = computed(() => normalizeHost(scan.value?.url || tabUrl.value) || "当前页面");
+const currentHost = computed(() => normalizeHost(scan.value?.url || tabUrl.value) || tr('当前页面'));
 const fillPageAllowed = computed(() => isSensitivePageAllowed(scan.value?.url || tabUrl.value));
 const canFill = computed(() => !pageUnsupported.value && fillPageAllowed.value && !currentFieldBlocked.value && Boolean(scan.value));
 const readyPasskeys = computed(() => passkeys.value.filter((item) => item.availability === "ready"));
-const capabilityLabel = computed(() => matches.value.length || walletItems.value.length ? "可选择填充" : readyPasskeys.value.length ? "Passkey 已保存" : "");
+const capabilityLabel = computed(() => lifecycle.value === "locked" && matches.value.length ? tr('免解锁填写') : matches.value.length || walletItems.value.length ? tr('可选择填充') : readyPasskeys.value.length ? tr('Passkey 已保存') : "");
 
 onMounted(() => {
   (window as unknown as { __monicaPopupRefresh?: () => Promise<void> }).__monicaPopupRefresh = initialize;
   void initialize();
+  chrome.storage.onChanged.addListener(onSessionChanged);
+});
+onUnmounted(() => {
+  initializeRevision += 1;
+  matchRevision += 1;
+  chrome.storage.onChanged.removeListener(onSessionChanged);
 });
 
-async function initialize() {
+function onSessionChanged(changes: Record<string, chrome.storage.StorageChange>, area: string) {
+  if (area !== "session" || !Object.values(changes).some((change) => change.oldValue?.rawKey !== change.newValue?.rawKey)) return;
+  matchRevision += 1;
+  matches.value = [];
+  passkeys.value = [];
+  walletItems.value = [];
+  allLogins.value = [];
+  search.value = "";
+  masterPassword.value = "";
+  lifecycle.value = "locked";
+  void initialize(true);
+}
+
+async function initialize(preserveTarget = false) {
+  runtimeReloadRequired.value = false;
+  const revision = ++initializeRevision;
+  matchRevision += 1;
   loading.value = true;
   error.value = "";
-  pageUnsupported.value = false;
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab?.id) throw new Error("无法读取当前标签页。");
-    tabId.value = tab.id;
-    tabUrl.value = tab.url || "";
-    tabTitle.value = tab.title || "当前页面";
-    if (!/^https?:\/\//i.test(tabUrl.value)) {
-      pageUnsupported.value = true;
-    } else {
+    const tab = preserveTarget && tabId.value !== null
+      ? await chrome.tabs.get(tabId.value)
+      : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+    if (!tab?.id) throw new Error(tr('无法读取当前标签页。'));
+    let nextScans: PageScan[] = [];
+    if (/^https?:\/\//i.test(tab.url || "")) {
       const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
       const results = await Promise.all(frames.filter((frame) => /^https?:\/\//i.test(frame.url)).map(async (frame) => {
         try {
@@ -84,18 +111,28 @@ async function initialize() {
           return null;
         }
       }));
-      scans.value = results.filter((result): result is PageScan => Boolean(result?.ok));
-      if (!scans.value.length) pageUnsupported.value = true;
-      else selectedFrameId.value = fillTargets.value.find((candidate) => candidate.hasFocusedLoginField)?.frameId
-        ?? fillTargets.value.find((candidate) => candidate.hasPasswordField || candidate.hasTotpField)?.frameId
-        ?? scans.value[0].frameId;
+      nextScans = results.filter((result): result is PageScan => Boolean(result?.ok));
     }
-    lifecycle.value = await vaultClient.status();
-    if (lifecycle.value === "unlocked") await loadMatches();
+    const nextLifecycle = await vaultClient.status();
+    if (revision !== initializeRevision) return;
+    tabId.value = tab.id;
+    tabUrl.value = tab.url || "";
+    tabTitle.value = tab.title || tr('当前页面');
+    scans.value = nextScans;
+    pageUnsupported.value = !nextScans.length;
+    selectedFrameId.value = fillTargets.value.find((candidate) => candidate.hasFocusedLoginField)?.frameId
+      ?? fillTargets.value.find((candidate) => candidate.hasPasswordField || candidate.hasTotpField)?.frameId
+      ?? nextScans[0]?.frameId ?? 0;
+    lifecycle.value = nextLifecycle;
+    if (lifecycle.value !== "uninitialized") await loadMatches();
   } catch (cause) {
-    error.value = errorMessage(cause, "无法连接当前页面，请刷新网页后重试。");
+    if (revision === initializeRevision) {
+      runtimeReloadRequired.value = cause instanceof ExtensionRuntimeError && cause.code === "RUNTIME_RELOAD_REQUIRED";
+      if (runtimeReloadRequired.value) masterPassword.value = "";
+      error.value = errorMessage(cause, tr('无法连接当前页面，请刷新网页后重试。'));
+    }
   } finally {
-    loading.value = false;
+    if (revision === initializeRevision) loading.value = false;
   }
 }
 
@@ -105,24 +142,31 @@ async function unlock() {
   try {
     await vaultClient.unlock(masterPassword.value);
     masterPassword.value = "";
-    lifecycle.value = "unlocked";
-    await loadMatches();
+    await initialize(true);
   } catch (cause) {
-    status.value = errorMessage(cause, "解锁失败。");
+    if (cause instanceof ExtensionRuntimeError && cause.code === "RUNTIME_RELOAD_REQUIRED") {
+      masterPassword.value = "";
+      runtimeReloadRequired.value = true;
+      error.value = cause.message;
+    } else status.value = errorMessage(cause, tr('解锁失败。'));
   } finally {
     unlocking.value = false;
   }
 }
 
 async function loadMatches() {
+  const revision = ++matchRevision;
   const allowFill = isSensitivePageAllowed(scan.value?.url || tabUrl.value) && !pageUnsupported.value;
-  currentFieldBlocked.value = Boolean(scan.value?.currentField?.signature && await vaultClient.isAutofillFieldBlocked(scan.value.currentField.signature));
+  const unlocked = lifecycle.value === "unlocked";
+  const blocked = Boolean(scan.value?.currentField?.signature && await vaultClient.isAutofillFieldBlocked(scan.value.currentField.signature));
   const [loginMatches, passkeyMatches, walletMatches] = await Promise.all([
-    allowFill && !currentFieldBlocked.value ? vaultClient.matchLogins(scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([]),
-    allowFill ? vaultClient.matchPasskeys(tabUrl.value) : Promise.resolve([]),
-    allowFill && !currentFieldBlocked.value ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([])
+    allowFill && !blocked ? vaultClient.matchLogins(scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([]),
+    allowFill && unlocked ? vaultClient.matchPasskeys(tabUrl.value) : Promise.resolve([]),
+    allowFill && unlocked && !blocked ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([])
   ]);
-  const summaries = await vaultClient.listLoginSummaries().catch(() => []);
+  const summaries = unlocked ? await vaultClient.listLoginSummaries().catch(() => []) : [];
+  if (revision !== matchRevision || unlocked !== (lifecycle.value === "unlocked")) return;
+  currentFieldBlocked.value = blocked;
   matches.value = loginMatches;
   passkeys.value = passkeyMatches;
   walletItems.value = walletMatches;
@@ -136,19 +180,28 @@ const filteredLogins = computed(() => {
   if (!query) return base;
   return base.filter((item) => `${item.title}\n${item.username}\n${item.uris.join(" ")}`.toLowerCase().includes(query));
 });
+const visibleMatches = computed(() => {
+  const query = search.value.trim().toLowerCase();
+  return matches.value.filter((item) => !query || `${item.title}\n${item.username}\n${item.uris.join(" ")}`.toLowerCase().includes(query));
+});
+
+const loginPagination = useListPagination(() => filteredLogins.value.length, () => [search.value, allLogins.value], 20);
+const matchPagination = useListPagination(() => visibleMatches.value.length, () => [search.value, matches.value], 20);
+const passkeyPagination = useListPagination(() => passkeys.value.length, () => passkeys.value, 20);
+const walletPagination = useListPagination(() => walletItems.value.length, () => walletItems.value, 20);
 
 async function copyLoginSecret(item: LoginMatchSummary, field: "username" | "password") {
   status.value = "";
   try {
     const { value } = await vaultClient.loginSecret(item.id, field);
     if (!value) {
-      status.value = field === "password" ? "此登录项没有保存密码。" : "此登录项没有用户名。";
+      status.value = field === "password" ? tr('此登录项没有保存密码。') : tr('此登录项没有用户名。');
       return;
     }
     await navigator.clipboard.writeText(value);
-    status.value = `已复制${field === "password" ? "密码" : "用户名"}（${item.title}），剪贴板请妥善保管。`;
+    status.value = tr('已复制{0}（{1}），剪贴板请妥善保管。', { 0: field === "password" ? tr('密码') : tr('用户名'), 1: item.title });
   } catch (cause) {
-    status.value = errorMessage(cause, "复制失败。");
+    status.value = errorMessage(cause, tr('复制失败。'));
   }
 }
 
@@ -158,30 +211,30 @@ async function setCurrentFieldBlocked(blocked: boolean) {
   status.value = "";
   try {
     await vaultClient.setCurrentAutofillFieldBlocked(blocked, tabId.value, selectedFrameId.value, scan.value.documentId, scan.value.origin);
-    await initialize();
-    status.value = blocked ? "已禁止此字段自动填充" : "已恢复此字段自动填充";
+    await initialize(true);
+    status.value = blocked ? tr('已禁止此字段自动填充') : tr('已恢复此字段自动填充');
   } catch (cause) {
-    status.value = errorMessage(cause, "字段排除设置失败。");
+    status.value = errorMessage(cause, tr('字段排除设置失败。'));
   } finally {
     fieldPolicyBusy.value = false;
   }
 }
 
 function fieldRoleLabel() {
-  return ({ username: "用户名字段", "current-password": "密码字段", "new-password": "新密码字段", totp: "验证码字段", wallet: "证件或支付字段" } as const)[scan.value?.currentField?.role || "username"];
+  return ({ username: tr('用户名字段'), "current-password": tr('密码字段'), "new-password": tr('新密码字段'), totp: tr('验证码字段'), wallet: tr('证件或支付字段') } as const)[scan.value?.currentField?.role || "username"];
 }
 
 function passkeyState(item: PasskeyMatchSummary) {
   return ({
-    ready: "已保存，等待网站请求",
-    "android-metadata-only": "仅兼容保留，不能登录",
-    "missing-private-key": "缺少私钥，不能登录",
-    "unsupported-algorithm": "当前版本不支持此算法"
+    ready: tr('已保存，等待网站请求'),
+    "android-metadata-only": tr('仅兼容保留，不能登录'),
+    "missing-private-key": tr('缺少私钥，不能登录'),
+    "unsupported-algorithm": tr('当前版本不支持此算法')
   } as const)[item.availability];
 }
 
 function passkeySource(item: PasskeyMatchSummary) {
-  return item.sourceMode === "bitwarden" ? "Bitwarden" : item.sourceMode === "android-metadata-only" ? "Android" : "浏览器本地";
+  return item.sourceMode === "bitwarden" ? "Bitwarden" : item.sourceMode === "android-metadata-only" ? "Android" : tr('浏览器本地');
 }
 
 async function fillWallet(item: WalletMatchSummary) {
@@ -190,16 +243,16 @@ async function fillWallet(item: WalletMatchSummary) {
   status.value = "";
   try {
     const result = await vaultClient.fillWallet(item.id, tabId.value, selectedFrameId.value, scan.value?.documentId, scan.value?.origin);
-    status.value = `已填充 ${item.title}（${result.filledCount} 个字段）`;
+    status.value = tr('已填充 {0}（{1} 个字段）', { 0: item.title, 1: result.filledCount });
   } catch (cause) {
-    status.value = errorMessage(cause, "填充失败，请刷新网页后重试。");
+    status.value = errorMessage(cause, tr('填充失败，请刷新网页后重试。'));
   } finally {
     fillingId.value = null;
   }
 }
 
 function walletKindLabel(kind: WalletFillKind) {
-  return ({ identity: "证件", "billing-address": "地址", card: "银行卡", "payment-account": "支付方式" } as const)[kind];
+  return ({ identity: tr('证件'), "billing-address": tr('地址'), card: tr('银行卡'), "payment-account": tr('支付方式') } as const)[kind];
 }
 
 function walletIcon(kind: WalletFillKind) {
@@ -212,10 +265,10 @@ async function fill(item: LoginMatchSummary) {
   status.value = "";
   try {
     const result = await vaultClient.fillLogin(item.id, tabId.value, selectedFrameId.value, scan.value?.documentId, scan.value?.origin);
-    const fields = [result.filledUsername && "用户名", result.filledPassword && "密码", result.filledTotp && "验证码"].filter(Boolean).join("、");
-    status.value = `已填充 ${item.title}${fields ? `（${fields}）` : ""}`;
+    const fields = [result.filledUsername && tr('用户名'), result.filledPassword && tr('密码'), result.filledTotp && tr('验证码')].filter(Boolean).join("、");
+    status.value = tr('已填充 {0}{1}', { 0: item.title, 1: fields ? `（${fields}）` : "" });
   } catch (cause) {
-    status.value = errorMessage(cause, "填充失败，请刷新网页后重试。");
+    status.value = errorMessage(cause, tr('填充失败，请刷新网页后重试。'));
   } finally {
     fillingId.value = null;
   }
@@ -230,6 +283,11 @@ async function selectTarget(event: Event) {
 async function openManager() {
   await chrome.runtime.openOptionsPage();
   window.close();
+}
+
+function reloadRuntime() {
+  masterPassword.value = "";
+  chrome.runtime.reload();
 }
 
 function errorMessage(cause: unknown, fallback: string) {
@@ -247,57 +305,65 @@ function isSensitivePageAllowed(raw: string): boolean {
 </script>
 
 <template>
-  <m3e-theme :color="themeColor" :scheme="activeScheme" variant="expressive" motion="expressive" strong-focus>
+  <m3e-theme :color="themeColor" :scheme="activeScheme" variant="monochrome" motion="standard" strong-focus>
     <main class="popup-shell">
-      <header class="popup-header"><div class="popup-brand"><img src="/icons/logo-256.png" alt="" /><div><strong>Monica</strong><small>安全自动填充</small></div></div><m3e-icon-button aria-label="打开密码库管理" @click="openManager"><m3e-icon name="settings"></m3e-icon></m3e-icon-button></header>
+      <header class="popup-header"><div class="popup-brand"><img class="brand-logo" src="/icons/logo-256.png" width="36" height="36" alt="" /><div><strong>Monica</strong><small>{{ tr('安全自动填充') }}</small></div></div><m3e-icon-button :aria-label="tr('打开密码库管理')" @click="openManager"><m3e-icon name="settings"></m3e-icon></m3e-icon-button></header>
 
-      <section class="site-summary" aria-label="当前网站"><span class="site-icon"><m3e-icon name="language"></m3e-icon></span><div><strong>{{ currentHost }}</strong><small>{{ scan?.frameId ? `${scan.hasPasswordField || scan.hasTotpField ? '嵌入登录框' : '嵌入填充框'} · ${scan.title || tabTitle}` : tabTitle || '正在读取当前页面' }}</small></div><span v-if="fillPageAllowed && capabilityLabel" class="ready-badge"><m3e-icon name="check_circle"></m3e-icon>{{ capabilityLabel }}</span></section>
+      <section class="site-summary" :aria-label="tr('当前网站')"><span class="site-icon"><m3e-icon name="language"></m3e-icon></span><div><strong>{{ currentHost }}</strong><small>{{ scan?.frameId ? `${scan.hasPasswordField || scan.hasTotpField ? tr('嵌入登录框') : tr('嵌入填充框')} · ${scan.title || tabTitle}` : tabTitle || tr('正在读取当前页面') }}</small></div><span v-if="fillPageAllowed && capabilityLabel" class="ready-badge"><m3e-icon name="check_circle"></m3e-icon>{{ capabilityLabel }}</span></section>
 
-      <div v-if="loading" class="popup-state" aria-live="polite"><span class="spinner" aria-hidden="true"></span><strong>正在检查页面与密码库…</strong><small>敏感数据尚未发送到网页</small></div>
-      <div v-else-if="error" class="popup-state error-state" role="alert"><m3e-icon name="block"></m3e-icon><strong>当前页面不可用</strong><small>{{ error }}</small><m3e-button variant="tonal" @click="initialize">重试</m3e-button></div>
+      <div v-if="loading" class="popup-state" aria-live="polite"><span class="spinner" aria-hidden="true"></span><strong>{{ tr('正在检查页面与密码库…') }}</strong><small>{{ tr('敏感数据尚未发送到网页') }}</small></div>
+      <div v-else-if="error" class="popup-state error-state" :class="{ 'runtime-reload': runtimeReloadRequired }" role="alert"><m3e-icon name="block"></m3e-icon><strong>{{ runtimeReloadRequired ? tr('重新加载扩展') : tr('当前页面不可用') }}</strong><small>{{ runtimeReloadRequired ? tr('Monica 已更新，请重新加载扩展后再解锁。') : error }}</small><template v-if="runtimeReloadRequired"><small>{{ tr('请先保存其他 Monica 窗口中的修改。重新加载后，再打开 Monica。') }}</small><m3e-button variant="tonal" type="button" @click="reloadRuntime">{{ tr('重新加载扩展') }}</m3e-button></template><m3e-button v-else variant="tonal" @click="initialize(true)">{{ tr('重试') }}</m3e-button></div>
 
-      <div v-else-if="lifecycle === 'uninitialized'" class="popup-state"><m3e-icon name="shield_lock"></m3e-icon><strong>尚未创建加密密码库</strong><small>先在管理页设置主密码，再连接 WebDAV 或 Bitwarden。</small><m3e-button variant="filled" @click="openManager">开始设置</m3e-button></div>
+      <div v-else-if="lifecycle === 'uninitialized'" class="popup-state"><m3e-icon name="shield_lock"></m3e-icon><strong>{{ tr('尚未创建加密密码库') }}</strong><small>{{ tr('先在管理页设置主密码，再连接 WebDAV 或 Bitwarden。') }}</small><m3e-button variant="filled" @click="openManager">{{ tr('开始设置') }}</m3e-button></div>
 
-      <form v-else-if="lifecycle === 'locked'" class="popup-unlock" @submit.prevent="unlock">
-        <span class="unlock-icon"><m3e-icon name="lock"></m3e-icon></span><div><strong>密码库已锁定</strong><small>解锁后才会读取当前网站的匹配项。</small></div>
-        <label><span>主密码（设备密钥模式留空）</span><input v-model="masterPassword" aria-label="主密码" type="password" autocomplete="current-password" autofocus /></label>
-        <m3e-button variant="filled" type="submit" :disabled="unlocking">{{ unlocking ? '解锁中…' : '解锁' }}</m3e-button>
-        <m3e-button variant="text" type="button" :disabled="unlocking" @click="openManager"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>在管理页使用 Windows Hello</m3e-button>
+      <template v-else-if="lifecycle === 'locked'">
+        <section v-if="matches.length" id="popup-locked-matches" tabindex="-1" class="match-section locked-autofill-section" :aria-label="tr('免解锁填写')">
+          <div class="section-title"><h2>{{ tr('免解锁填写') }}</h2><span>{{ matches.length }}</span></div>
+          <p class="section-support">{{ tr('仅显示你在此浏览器标记的匹配账号，密码库保持锁定。') }}</p>
+          <label v-if="fillTargets.length > 1" class="frame-picker"><span>{{ tr('填充目标') }}</span><select :value="selectedFrameId" @change="selectTarget"><option v-for="target in fillTargets" :key="target.frameId" :value="target.frameId">{{ target.frameId === 0 ? tr('主页面') : tr('嵌入框：{0}', { 0: normalizeHost(target.url) }) }}</option></select></label>
+          <div class="match-list"><button v-for="item in matchPagination.slice(matches)" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId) || !canFill" @click="fill(item)"><span class="credential-icon"><m3e-icon name="lock_open"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || tr('无用户名') }}</small></span><span class="fill-action">{{ fillingId === item.id ? tr('填充中') : tr('填充') }}<m3e-icon name="arrow_forward"></m3e-icon></span></button></div>
+        <ListPagination :page="matchPagination.page.value" :total="matches.length" :page-size="20" target="popup-locked-matches" @change="matchPagination.change" /></section>
+      <form class="popup-unlock" @submit.prevent="unlock">
+        <span class="unlock-icon"><m3e-icon name="lock"></m3e-icon></span><div><strong>{{ tr('密码库已锁定') }}</strong><small>{{ matches.length ? tr('解锁可使用验证码、Passkey 和其他项目。') : tr('解锁以使用密码库，或先在管理页为该账号开启免解锁填写。') }}</small></div>
+        <label><span>{{ tr('主密码（设备密钥模式留空）') }}</span><input v-model="masterPassword" :aria-label="tr('主密码')" type="password" autocomplete="current-password" :autofocus="!matches.length" /></label>
+        <m3e-button variant="filled" type="submit" :disabled="unlocking">{{ unlocking ? tr('解锁中…') : tr('解锁') }}</m3e-button>
+        <m3e-button variant="text" type="button" :disabled="unlocking" @click="openManager"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ tr('在管理页使用 Windows Hello') }}</m3e-button>
       </form>
+      </template>
 
       <template v-else>
-        <label v-if="fillTargets.length > 1" class="frame-picker"><span>填充目标</span><select :value="selectedFrameId" @change="selectTarget"><option v-for="target in fillTargets" :key="target.frameId" :value="target.frameId">{{ target.frameId === 0 ? '主页面' : `嵌入框：${normalizeHost(target.url)}` }}{{ target.hasTotpField && !target.hasPasswordField ? '（验证码）' : '' }}</option></select></label>
-        <div v-if="pageUnsupported" class="inline-warning danger-warning"><m3e-icon name="gpp_bad"></m3e-icon><span>此浏览器页面不允许自动填充；可搜索密码库并复制账号密码。</span></div>
-        <div v-else-if="!fillPageAllowed" class="inline-warning danger-warning"><m3e-icon name="gpp_bad"></m3e-icon><span>当前页面不是安全 HTTPS，已禁用密码、证件与支付信息填充。</span></div>
-        <div v-else-if="currentFieldBlocked" class="field-policy-row"><span><m3e-icon name="block"></m3e-icon><span><strong>此字段已排除</strong><small>{{ fieldRoleLabel() }}</small></span></span><button type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(false)">恢复填充</button></div>
-        <button v-else-if="scan?.currentField" class="field-policy-action" type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(true)"><m3e-icon name="do_not_disturb_on"></m3e-icon><span>此字段不再填充</span></button>
-        <div v-else-if="!scan?.hasPasswordField && !scan?.hasTotpField && !scan?.hasUsernameField && !scan?.walletKinds.length && !passkeys.length" class="inline-warning"><m3e-icon name="info"></m3e-icon><span>当前目标暂未检测到可安全填充的字段。</span></div>
+        <label v-if="fillTargets.length > 1" class="frame-picker"><span>{{ tr('填充目标') }}</span><select :value="selectedFrameId" @change="selectTarget"><option v-for="target in fillTargets" :key="target.frameId" :value="target.frameId">{{ target.frameId === 0 ? tr('主页面') : tr('嵌入框：{0}', { 0: normalizeHost(target.url) }) }}{{ target.hasTotpField && !target.hasPasswordField ? tr('（验证码）') : '' }}</option></select></label>
+        <div v-if="pageUnsupported" class="inline-warning danger-warning"><m3e-icon name="gpp_bad"></m3e-icon><span>{{ tr('此浏览器页面不允许自动填充；可搜索密码库并复制账号密码。') }}</span></div>
+        <div v-else-if="!fillPageAllowed" class="inline-warning danger-warning"><m3e-icon name="gpp_bad"></m3e-icon><span>{{ tr('当前页面不是安全 HTTPS，已禁用密码、证件与支付信息填充。') }}</span></div>
+        <div v-else-if="currentFieldBlocked" class="field-policy-row"><span><m3e-icon name="block"></m3e-icon><span><strong>{{ tr('此字段已排除') }}</strong><small>{{ fieldRoleLabel() }}</small></span></span><button type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(false)">{{ tr('恢复填充') }}</button></div>
+        <button v-else-if="scan?.currentField" class="field-policy-action" type="button" :disabled="fieldPolicyBusy" @click="setCurrentFieldBlocked(true)"><m3e-icon name="do_not_disturb_on"></m3e-icon><span>{{ tr('此字段不再填充') }}</span></button>
+        <div v-else-if="!scan?.hasPasswordField && !scan?.hasTotpField && !scan?.hasUsernameField && !scan?.walletKinds.length && !passkeys.length" class="inline-warning"><m3e-icon name="info"></m3e-icon><span>{{ tr('当前目标暂未检测到可安全填充的字段。') }}</span></div>
 
-        <label class="popup-search"><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" placeholder="搜索全部登录项" aria-label="搜索全部登录项" /></label>
-        <section v-if="!currentFieldBlocked && filteredLogins.length" class="match-section"><div class="section-title"><h2>{{ search.trim() ? '搜索结果' : '全部登录项' }}</h2><span>{{ filteredLogins.length }}</span></div><div class="match-list">
-          <div v-for="item in filteredLogins" :key="item.id" class="credential-card login-row">
-            <button class="login-row-main" type="button" :disabled="Boolean(fillingId) || !canFill" :title="canFill ? '填充到当前页面' : '当前页面不可填充，可用右侧复制'" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || '无用户名' }}{{ item.hasTotp ? ' · 含验证码' : '' }}</small></span></button>
+        <label class="popup-search"><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" :placeholder="tr('搜索全部登录项')" :aria-label="tr('搜索全部登录项')" /></label>
+        <section v-if="visibleMatches.length" id="popup-matches" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ tr('匹配的登录项') }}</h2><span>{{ visibleMatches.length }}</span></div><div class="match-list">
+          <button v-for="item in matchPagination.slice(visibleMatches)" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId) || !canFill" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : item.hasTotp && scan?.hasTotpField ? 'timer' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || tr('无用户名') }}{{ item.hasTotp ? tr(' · 含验证码') : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? tr('填充中') : tr('填充') }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
+        </div><ListPagination :page="matchPagination.page.value" :total="visibleMatches.length" :page-size="20" target="popup-matches" @change="matchPagination.change" /></section>
+        <section v-if="!currentFieldBlocked && filteredLogins.length" id="popup-login-results" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ search.trim() ? tr('搜索结果') : tr('全部登录项') }}</h2><span>{{ filteredLogins.length }}</span></div><div class="match-list">
+          <div v-for="item in loginPagination.slice(filteredLogins)" :key="item.id" class="credential-card login-row">
+            <button class="login-row-main" type="button" :disabled="Boolean(fillingId) || !canFill" :title="canFill ? tr('填充到当前页面') : tr('当前页面不可填充，可用右侧复制')" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || tr('无用户名') }}{{ item.hasTotp ? tr(' · 含验证码') : '' }}</small></span></button>
             <span class="row-actions">
-              <m3e-icon-button aria-label="复制用户名" title="复制用户名" @click="copyLoginSecret(item, 'username')"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
-              <m3e-icon-button aria-label="复制密码" title="复制密码" @click="copyLoginSecret(item, 'password')"><m3e-icon name="key"></m3e-icon></m3e-icon-button>
+              <m3e-icon-button :aria-label="tr('复制用户名')" :title="tr('复制用户名')" @click="copyLoginSecret(item, 'username')"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
+              <m3e-icon-button :aria-label="tr('复制密码')" :title="tr('复制密码')" @click="copyLoginSecret(item, 'password')"><m3e-icon name="key"></m3e-icon></m3e-icon-button>
             </span>
           </div>
-        </div></section>
+        </div><ListPagination :page="loginPagination.page.value" :total="filteredLogins.length" :page-size="20" target="popup-login-results" @change="loginPagination.change" /></section>
 
-        <section v-if="matches.length" class="match-section"><div class="section-title"><h2>匹配的登录项</h2><span>{{ matches.length }}</span></div><div class="match-list">
-          <button v-for="item in matches" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fill(item)"><span class="credential-icon"><m3e-icon :name="item.favorite ? 'star' : item.hasTotp && scan?.hasTotpField ? 'timer' : 'key'"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.username || '无用户名' }}{{ item.hasTotp ? ' · 含验证码' : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? '填充中' : '填充' }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
-        </div></section>
-        <section v-if="passkeys.length" class="match-section"><div class="section-title"><h2>Passkey</h2><span>{{ passkeys.length }}</span></div><div class="match-list">
-          <article v-for="item in passkeys" :key="item.id" class="passkey-card"><span class="credential-icon"><m3e-icon name="passkey"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.userName || '无用户名' }} · {{ passkeySource(item) }}</small></span><span class="passkey-state" :class="{ ready: item.availability === 'ready' }"><m3e-icon aria-hidden="true" :name="item.availability === 'ready' ? 'check_circle' : 'info'"></m3e-icon><span>{{ passkeyState(item) }}</span></span></article>
-        </div><p class="section-support">网站发起后 Monica 会显示已验证的 RP ID；要求系统级用户验证的请求会交还浏览器处理。</p></section>
-        <section v-if="walletItems.length" class="match-section"><div class="section-title"><h2>证件与支付方式</h2><span>{{ walletItems.length }}</span></div><div class="match-list">
-          <button v-for="item in walletItems" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fillWallet(item)"><span class="credential-icon"><m3e-icon :name="walletIcon(item.kind)"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ walletKindLabel(item.kind) }} · {{ item.subtitle }}{{ item.sensitive ? ' · 点击后填充敏感信息' : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? '填充中' : '填充' }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
-        </div></section>
-        <div v-if="!matches.length && !passkeys.length && !walletItems.length && !filteredLogins.length" class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>{{ search.trim() ? '没有匹配的登录项' : '密码库还是空的' }}</strong><small>{{ search.trim() ? '换个关键词试试。' : '请在密码库中添加当前页面可使用的登录、Passkey、证件、地址或支付项目。' }}</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>打开密码库</m3e-button></div>
+        <section v-if="passkeys.length" id="popup-passkeys" tabindex="-1" class="match-section"><div class="section-title"><h2>Passkey</h2><span>{{ passkeys.length }}</span></div><div class="match-list">
+          <article v-for="item in passkeyPagination.slice(passkeys)" :key="item.id" class="passkey-card"><span class="credential-icon"><m3e-icon name="passkey"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ item.userName || tr('无用户名') }} · {{ passkeySource(item) }}</small></span><span class="passkey-state" :class="{ ready: item.availability === 'ready' }"><m3e-icon aria-hidden="true" :name="item.availability === 'ready' ? 'check_circle' : 'info'"></m3e-icon><span>{{ passkeyState(item) }}</span></span></article>
+        </div><p class="section-support">{{ tr('网站发起后 Monica 会显示已验证的 RP ID；要求系统级用户验证的请求会交还浏览器处理。') }}</p><ListPagination :page="passkeyPagination.page.value" :total="passkeys.length" :page-size="20" target="popup-passkeys" @change="passkeyPagination.change" /></section>
+        <section v-if="walletItems.length" id="popup-wallet" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ tr('证件与支付方式') }}</h2><span>{{ walletItems.length }}</span></div><div class="match-list">
+          <button v-for="item in walletPagination.slice(walletItems)" :key="item.id" class="credential-card" type="button" :disabled="Boolean(fillingId)" @click="fillWallet(item)"><span class="credential-icon"><m3e-icon :name="walletIcon(item.kind)"></m3e-icon></span><span class="credential-copy"><strong>{{ item.title }}</strong><small>{{ walletKindLabel(item.kind) }} · {{ item.subtitle }}{{ item.sensitive ? tr(' · 点击后填充敏感信息') : '' }}</small></span><span class="fill-action">{{ fillingId === item.id ? tr('填充中') : tr('填充') }}<m3e-icon name="arrow_forward"></m3e-icon></span></button>
+        </div><ListPagination :page="walletPagination.page.value" :total="walletItems.length" :page-size="20" target="popup-wallet" @change="walletPagination.change" /></section>
+        <div v-if="!visibleMatches.length && !passkeys.length && !walletItems.length && !filteredLogins.length" class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>{{ search.trim() ? tr('没有匹配的登录项') : tr('密码库还是空的') }}</strong><small>{{ search.trim() ? tr('换个关键词试试。') : tr('请在密码库中添加当前页面可使用的登录、Passkey、证件、地址或支付项目。') }}</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('打开密码库') }}</m3e-button></div>
       </template>
 
       <p class="popup-status" aria-live="polite">{{ status }}</p>
-      <footer class="popup-footer"><button type="button" @click="openManager"><m3e-icon name="database"></m3e-icon>管理密码库</button><span>仅点击后解密填充</span></footer>
+      <footer class="popup-footer"><LanguagePicker /><button type="button" @click="openManager"><m3e-icon name="database"></m3e-icon>{{ tr('管理密码库') }}</button><span>{{ tr('仅点击后填充') }}</span></footer>
     </main>
   </m3e-theme>
 </template>

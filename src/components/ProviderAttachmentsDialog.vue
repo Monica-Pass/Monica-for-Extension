@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr, locale } from '../i18n';
+
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import type { ProviderAccount, VaultItem } from "../core/model";
 import {
@@ -94,13 +96,13 @@ const regularAttachments = computed(() => {
   return attachments.value.filter((attachment) => !managedNames.has(attachment.fileName));
 });
 const providerDescription = computed(() => {
-  if (selectedProvider.value?.kind === "mdbx2") return "MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。";
-  if (selectedProvider.value?.kind === "bitwarden") return "Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。";
+  if (selectedProvider.value?.kind === "mdbx2") return tr('MDBX2 外部附件会写入加密 Blob，并随现有增量同步发布。');
+  if (selectedProvider.value?.kind === "bitwarden") return tr('Bitwarden 附件使用独立密钥加密；后台会先完成认证校验，再把明文交给管理页下载。');
   if (selectedProvider.value?.kind === "monica-webdav") return readOnlyProvider.value
-    ? "来自 Monica Android 的 portable 附件；设置 WebDAV 备份密码后才能安全写回。"
-    : "Android portable 附件写入已加密 WebDAV 备份，并在下载前校验大小和 SHA-256。";
-  if (selectedProvider.value?.config.sourceMode === "webdav") return "KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。";
-  return "KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。";
+    ? tr('来自 Monica Android 的 portable 附件；设置 WebDAV 备份密码后才能安全写回。')
+    : tr('Android portable 附件写入已加密 WebDAV 备份，并在下载前校验大小和 SHA-256。');
+  if (selectedProvider.value?.config.sourceMode === "webdav") return tr('KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。');
+  return tr('KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。');
 });
 
 watch(selectedProviderId, () => {
@@ -167,15 +169,15 @@ async function handleFileSelection(event: Event) {
   input.value = "";
   if (!file || !selection) return;
   if (selection.managedPhoto && file.type && !file.type.toLocaleLowerCase().startsWith("image/")) {
-    error.value = "正面或背面照片必须是图像文件。";
+    error.value = tr('正面或背面照片必须是图像文件。');
     return;
   }
   if (!selection.managedPhoto && keepassManagedPhotoSlotForFileName(props.item.kind, file.name)) {
-    error.value = "此文件名由 Android 正面或背面照片保留，请使用照片入口。";
+    error.value = tr('此文件名由 Android 正面或背面照片保留，请使用照片入口。');
     return;
   }
   if (file.size > providerLimit.value) {
-    error.value = `附件超过 ${formatBytes(providerLimit.value)} 上限。`;
+    error.value = tr('附件超过 {0} 上限。', { 0: formatBytes(providerLimit.value) });
     return;
   }
   await discardPendingUpload();
@@ -199,7 +201,7 @@ async function runPendingUpload() {
   if (!upload || upload.providerId !== selectedProviderId.value) return;
   uploadBusy.value = true;
   error.value = "";
-  status.value = upload.replaceExisting ? `正在替换 ${upload.displayName}。` : `正在添加 ${upload.displayName}。`;
+  status.value = upload.replaceExisting ? tr('正在替换 {0}。', { 0: upload.displayName }) : tr('正在添加 {0}。', { 0: upload.displayName });
   try {
     const begun = await vaultClient.beginProviderAttachmentUpload(upload.providerId, props.item.id, {
       fileName: upload.fileName,
@@ -211,21 +213,21 @@ async function runPendingUpload() {
     });
     upload.transferId = begun.transferId;
     let offset = begun.nextOffset;
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > upload.file.size) throw new Error("附件上传恢复位置无效，请取消后重新选择文件。");
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > upload.file.size) throw new Error(tr('附件上传恢复位置无效，请取消后重新选择文件。'));
     uploadProgress.value = percentage(offset, upload.file.size);
     while (offset < upload.file.size) {
       const end = Math.min(offset + begun.maxChunkBytes, upload.file.size);
       const bytes = new Uint8Array(await upload.file.slice(offset, end).arrayBuffer());
-      if (!bytes.length || bytes.length > PROVIDER_ATTACHMENT_CHUNK_BYTES) throw new Error("附件上传分块无效，请重新选择文件。");
+      if (!bytes.length || bytes.length > PROVIDER_ATTACHMENT_CHUNK_BYTES) throw new Error(tr('附件上传分块无效，请重新选择文件。'));
       const chunk = await vaultClient.sendProviderAttachmentChunk(upload.providerId, begun.transferId, offset, bytes);
-      if (chunk.nextOffset <= offset || chunk.nextOffset > upload.file.size) throw new Error("附件上传进度无效，请取消后重试。");
+      if (chunk.nextOffset <= offset || chunk.nextOffset > upload.file.size) throw new Error(tr('附件上传进度无效，请取消后重试。'));
       offset = chunk.nextOffset;
       uploadProgress.value = percentage(offset, upload.file.size);
     }
     const completed = await vaultClient.finishProviderAttachmentUpload(upload.providerId, props.item.id, begun.transferId, upload.operationId);
     if (completed.attachment) rememberPlaintextSize(upload.providerId, completed.attachment.attachmentId, completed.attachment.sizeBytes);
     await vaultClient.abortProviderAttachmentUpload(upload.providerId, begun.transferId).catch(() => false);
-    const completedLabel = upload.replaceExisting ? `${upload.displayName} 已替换。` : `${upload.displayName} 已添加。`;
+    const completedLabel = upload.replaceExisting ? tr('{0} 已替换。', { 0: upload.displayName }) : tr('{0} 已添加。', { 0: upload.displayName });
     pendingUpload.value = undefined;
     uploadProgress.value = 100;
     status.value = completedLabel;
@@ -233,7 +235,7 @@ async function runPendingUpload() {
     await loadAttachments(true);
     await loadRecoveryStatus();
   } catch (cause) {
-    error.value = `${errorMessage(cause)} 可使用原文件和原操作标识重试，或取消此次上传。`;
+    error.value = tr('{0} 可使用原文件和原操作标识重试，或取消此次上传。', { 0: errorMessage(cause) });
     status.value = "";
   } finally {
     uploadBusy.value = false;
@@ -252,7 +254,7 @@ async function cancelPendingUpload() {
   if (uploadBusy.value) return;
   await discardPendingUpload();
   error.value = "";
-  status.value = "附件上传已取消。";
+  status.value = tr('附件上传已取消。');
   await loadAttachments(true);
 }
 
@@ -261,7 +263,7 @@ async function downloadAttachment(attachment: ProviderAttachmentSummary) {
   const providerId = selectedProviderId.value;
   downloadingAttachmentId.value = attachment.attachmentId;
   error.value = "";
-  status.value = `正在读取 ${attachment.fileName}。`;
+  status.value = tr('正在读取 {0}。', { 0: attachment.fileName });
   try {
     const begun = await vaultClient.beginProviderAttachmentRead(providerId, props.item.id, attachment.attachmentId);
     activeRead = { providerId, readHandle: begun.readHandle };
@@ -271,13 +273,13 @@ async function downloadAttachment(attachment: ProviderAttachmentSummary) {
     while (offset < begun.sizeBytes) {
       const chunk = await vaultClient.readProviderAttachmentChunk(providerId, begun.readHandle, offset, begun.maxChunkBytes);
       if (chunk.readHandle !== begun.readHandle || chunk.attachmentId !== begun.attachmentId || chunk.offset !== offset || chunk.nextOffset <= offset || chunk.nextOffset > begun.sizeBytes) {
-        throw new Error("附件下载分块与当前读取会话不一致。");
+        throw new Error(tr('附件下载分块与当前读取会话不一致。'));
       }
       const bytes = base64ToBytes(chunk.dataBase64);
-      if (bytes.byteLength !== chunk.nextOffset - chunk.offset) throw new Error("附件下载分块长度无效。");
+      if (bytes.byteLength !== chunk.nextOffset - chunk.offset) throw new Error(tr('附件下载分块长度无效。'));
       parts.push(bytes.slice().buffer);
       offset = chunk.nextOffset;
-      if (chunk.eof !== (offset === begun.sizeBytes)) throw new Error("附件下载结束标记无效。");
+      if (chunk.eof !== (offset === begun.sizeBytes)) throw new Error(tr('附件下载结束标记无效。'));
     }
     const blobUrl = URL.createObjectURL(new Blob(parts, { type: begun.mediaType || "application/octet-stream" }));
     const anchor = document.createElement("a");
@@ -286,7 +288,7 @@ async function downloadAttachment(attachment: ProviderAttachmentSummary) {
     anchor.rel = "noopener";
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
-    status.value = `${begun.fileName} 已交给浏览器下载。`;
+    status.value = tr('{0} 已交给浏览器下载。', { 0: begun.fileName });
   } catch (cause) {
     error.value = errorMessage(cause);
     status.value = "";
@@ -321,8 +323,8 @@ async function confirmDelete() {
     deleteOperationIds.delete(operationKey);
     knownPlaintextSizes.value.delete(attachmentKey(providerId, attachment.attachmentId));
     pendingDelete.value = undefined;
-    status.value = `${attachment.fileName} 已删除。`;
-    emit("notice", `${attachment.fileName} 已删除。`);
+    status.value = tr('{0} 已删除。', { 0: attachment.fileName });
+    emit("notice", tr('{0} 已删除。', { 0: attachment.fileName }));
     await loadAttachments(true);
     await loadRecoveryStatus();
     deleted = true;
@@ -336,7 +338,7 @@ async function confirmDelete() {
     await nextTick();
     const focusTarget = managedPhotoSlot
       ? dialogRoot.value?.querySelector<HTMLElement>(`[data-managed-photo-action="${managedPhotoSlot.id}"]`)
-      : dialogRoot.value?.querySelector<HTMLElement>('[aria-label="刷新附件列表"]');
+      : dialogRoot.value?.querySelector<HTMLElement>('[data-refresh-attachments]');
     focusTarget?.focus();
   }
 }
@@ -370,15 +372,15 @@ async function confirmTransfer() {
   if (!transfer || !sourceProvider || !targetProvider) return;
   const sourceSize = knownAttachmentSize(transfer.attachment);
   if (sourceSize !== undefined && sourceSize > attachmentLimit(targetProvider)) {
-    error.value = `目标密码源单个附件上限为 ${formatBytes(attachmentLimit(targetProvider))}。`;
+    error.value = tr('目标密码源单个附件上限为 {0}。', { 0: formatBytes(attachmentLimit(targetProvider)) });
     return;
   }
   transferBusy.value = true;
   transfer.attempted = true;
   error.value = "";
   status.value = transfer.mode === "move"
-    ? `正在把 ${transfer.attachment.fileName} 移动到 ${targetProvider.name}；来源会在目标逐字节验证后删除。`
-    : `正在把 ${transfer.attachment.fileName} 复制到 ${targetProvider.name}。`;
+    ? tr('正在把 {0} 移动到 {1}；来源会在目标逐字节验证后删除。', { 0: transfer.attachment.fileName, 1: targetProvider.name })
+    : tr('正在把 {0} 复制到 {1}。', { 0: transfer.attachment.fileName, 1: targetProvider.name });
   try {
     const result = await vaultClient.transferProviderAttachment({
       operationId: transfer.operationId,
@@ -391,8 +393,8 @@ async function confirmTransfer() {
       confirmedMove: transfer.mode === "move"
     });
     const message = result.mode === "move"
-      ? `${transfer.attachment.fileName} 已完整写入 ${targetProvider.name} 并从 ${sourceProvider.name} 删除。`
-      : `${transfer.attachment.fileName} 已完整复制到 ${targetProvider.name}。`;
+      ? tr('{0} 已完整写入 {1} 并从 {2} 删除。', { 0: transfer.attachment.fileName, 1: targetProvider.name, 2: sourceProvider.name })
+      : tr('{0} 已完整复制到 {1}。', { 0: transfer.attachment.fileName, 1: targetProvider.name });
     pendingTransfer.value = undefined;
     status.value = message;
     emit("notice", message);
@@ -450,8 +452,8 @@ function attachmentSizeLabel(attachment: ProviderAttachmentSummary): string {
   const provider = selectedProvider.value;
   if (provider?.kind !== "bitwarden") return formatBytes(attachment.sizeBytes);
   const known = knownAttachmentSize(attachment);
-  if (known !== undefined) return `${formatBytes(known)} 明文`;
-  return `${formatBytes(attachment.sizeBytes)} 加密存储`;
+  if (known !== undefined) return tr('{0} 明文', { 0: formatBytes(known) });
+  return tr('{0} 加密存储', { 0: formatBytes(attachment.sizeBytes) });
 }
 
 function knownAttachmentSize(attachment: ProviderAttachmentSummary): number | undefined {
@@ -472,7 +474,7 @@ function managedPhotoAttachment(slot: KeePassManagedPhotoSlot): ProviderAttachme
 
 function managedPhotoStatus(slot: KeePassManagedPhotoSlot): string {
   const attachment = managedPhotoAttachment(slot);
-  return attachment ? `已保存 · ${attachmentSizeLabel(attachment)}` : "未添加";
+  return attachment ? tr('已保存 · {0}', { 0: attachmentSizeLabel(attachment) }) : tr('未添加');
 }
 
 function downloadManagedPhoto(slot: KeePassManagedPhotoSlot): void {
@@ -509,16 +511,16 @@ async function loadRecoveryStatus() {
 
 function recoveryStageLabel(stage: string): string {
   return ({
-    intent: "等待准备",
-    preparing: "准备加密材料",
-    prepared: "等待上传",
-    uploading: "正在上传",
-    verifying: "正在验证",
-    verified: "等待完成",
-    "deleting-old": "正在删除旧附件",
-    deleting: "正在删除",
-    "rolling-back": "正在回滚"
-  } as Record<string, string>)[stage] || "等待恢复";
+    intent: tr('等待准备'),
+    preparing: tr('准备加密材料'),
+    prepared: tr('等待上传'),
+    uploading: tr('正在上传'),
+    verifying: tr('正在验证'),
+    verified: tr('等待完成'),
+    "deleting-old": tr('正在删除旧附件'),
+    deleting: tr('正在删除'),
+    "rolling-back": tr('正在回滚')
+  } as Record<string, string>)[stage] || tr('等待恢复');
 }
 
 function errorMessage(cause: unknown): string {
@@ -529,15 +531,15 @@ function transferErrorMessage(cause: unknown): string {
   const message = errorMessage(cause);
   const code = cause instanceof ExtensionRuntimeError ? cause.code : undefined;
   if (code === "attachment-name-conflict" || code === "attachment-size-invalid" || code === "attachment-transfer-size-invalid") {
-    return `${message} 取消本次操作后可选择其他目标；来源附件保持不变。`;
+    return tr('{0} 取消本次操作后可选择其他目标；来源附件保持不变。', { 0: message });
   }
   if (code === "attachment-transfer-verification-failed" || code === "attachment-transfer-target-mismatch") {
-    return `${message} 请检查目标密码源后重新开始；来源附件保持不变。`;
+    return tr('{0} 请检查目标密码源后重新开始；来源附件保持不变。', { 0: message });
   }
   if (code === "attachment-transfer-source-delete-failed" || code === "attachment-transfer-source-delete-unconfirmed") {
-    return `${message} 可保留当前操作标识重试来源删除；目标副本会继续保留。`;
+    return tr('{0} 可保留当前操作标识重试来源删除；目标副本会继续保留。', { 0: message });
   }
-  return `${message} 可使用同一操作标识重试；来源附件不会被提前删除。`;
+  return tr('{0} 可使用同一操作标识重试；来源附件不会被提前删除。', { 0: message });
 }
 </script>
 
@@ -546,15 +548,15 @@ function transferErrorMessage(cause: unknown): string {
     <section ref="dialogRoot" class="editor-dialog provider-attachments-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-attachments-title">
       <header>
         <div>
-          <h2 id="provider-attachments-title">附件 · {{ item.title }}</h2>
-          <p>附件内容只在管理页按需读取。Popup 与网页内容脚本无法调用此接口。</p>
+          <h2 id="provider-attachments-title">{{ tr('附件 · {0}', { 0: item.title }) }}</h2>
+          <p>{{ tr('附件内容只在管理页按需读取。Popup 与网页内容脚本无法调用此接口。') }}</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭附件管理" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭附件管理')" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
       <div class="attachment-toolbar">
         <label v-if="providers.length > 1" class="attachment-provider-field">
-          <span>密码源</span>
+          <span>{{ tr('密码源') }}</span>
           <select v-model="selectedProviderId" :disabled="interactionLocked">
             <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
           </select>
@@ -563,17 +565,17 @@ function transferErrorMessage(cause: unknown): string {
           <m3e-icon :name="selectedProvider?.kind === 'mdbx2' ? 'database' : selectedProvider?.kind === 'bitwarden' ? 'shield_lock' : 'key'"></m3e-icon>
           <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : selectedProvider?.kind === 'monica-webdav' ? 'Monica Android WebDAV' : 'KeePass' }}</small></span>
         </div>
-        <m3e-button v-if="!readOnlyProvider" variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>添加附件</m3e-button>
-        <input ref="fileInput" class="attachment-file-input" type="file" :accept="fileInputAccept || undefined" aria-label="选择附件文件" @change="handleFileSelection" />
+        <m3e-button v-if="!readOnlyProvider" variant="filled" type="button" :disabled="interactionLocked" @click="chooseAttachmentFile()"><m3e-icon slot="icon" name="attach_file_add"></m3e-icon>{{ tr('添加附件') }}</m3e-button>
+        <input ref="fileInput" class="attachment-file-input" type="file" :accept="fileInputAccept || undefined" :aria-label="tr('选择附件文件')" @change="handleFileSelection" />
       </div>
 
-      <p class="attachment-provider-help">{{ providerDescription }} 单个附件上限 {{ formatBytes(providerLimit) }}。</p>
+      <p class="attachment-provider-help">{{ tr('{0} 单个附件上限 {1}。', { 0: providerDescription, 1: formatBytes(providerLimit) }) }}</p>
 
       <section v-if="managedPhotoSlots.length" class="keepass-managed-photos" aria-labelledby="keepass-managed-photos-title">
         <header>
           <div>
-            <strong id="keepass-managed-photos-title">{{ item.kind === 'card' ? '银行卡照片' : '证件照片' }}</strong>
-            <small>使用 Monica Android 保留的 KDBX 文件名；其他普通附件保持原样。</small>
+            <strong id="keepass-managed-photos-title">{{ item.kind === 'card' ? tr('银行卡照片') : tr('证件照片') }}</strong>
+            <small>{{ tr('使用 Monica Android 保留的 KDBX 文件名；其他普通附件保持原样。') }}</small>
           </div>
           <m3e-icon name="image"></m3e-icon>
         </header>
@@ -591,28 +593,28 @@ function transferErrorMessage(cause: unknown): string {
               :disabled="interactionLocked"
               @click="chooseAttachmentFile(managedPhotoAttachment(slot), slot)"
             >
-              <m3e-icon slot="icon" name="upload_file"></m3e-icon>{{ managedPhotoAttachment(slot) ? '替换' : '添加' }}
+              <m3e-icon slot="icon" name="upload_file"></m3e-icon>{{ managedPhotoAttachment(slot) ? tr('替换') : tr('添加') }}
             </m3e-button>
             <m3e-icon-button
               v-if="managedPhotoAttachment(slot)"
-              :aria-label="`下载${slot.label}`"
+              :aria-label="tr('下载{0}', { 0: slot.label })"
               :disabled="interactionLocked"
               @click="downloadManagedPhoto(slot)"
             ><m3e-icon name="download"></m3e-icon></m3e-icon-button>
             <m3e-icon-button
               v-if="managedPhotoAttachment(slot)"
               class="attachment-delete-button"
-              :aria-label="`删除${slot.label}`"
+              :aria-label="tr('删除{0}', { 0: slot.label })"
               :disabled="interactionLocked"
               @click="requestDeleteManagedPhoto(slot)"
             ><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
           </div>
           <div v-if="pendingDelete?.attachmentId === managedPhotoAttachment(slot)?.attachmentId" class="attachment-delete-confirmation keepass-managed-photo-delete">
             <m3e-icon name="warning"></m3e-icon>
-            <span><strong>删除{{ slot.label }}？</strong><small>删除会移除 Android 保留的 KDBX Binary；其他普通附件不会受到影响。</small></span>
+            <span><strong>{{ tr('删除{0}？', { 0: slot.label }) }}</strong><small>{{ tr('删除会移除 Android 保留的 KDBX Binary；其他普通附件不会受到影响。') }}</small></span>
             <span class="attachment-confirm-actions">
-              <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">取消</m3e-button>
-              <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? '删除中…' : '确认删除' }}</m3e-button>
+              <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">{{ tr('取消') }}</m3e-button>
+              <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? tr('删除中…') : tr('确认删除') }}</m3e-button>
             </span>
           </div>
         </div>
@@ -621,26 +623,26 @@ function transferErrorMessage(cause: unknown): string {
       <section v-if="recovery?.pending.length" class="attachment-recovery-panel" role="status" aria-labelledby="attachment-recovery-title">
         <m3e-icon name="sync_problem"></m3e-icon>
         <div>
-          <strong id="attachment-recovery-title">Bitwarden 有 {{ recovery.pending.length }} 个附件操作待恢复</strong>
-          <small>后台不会重复创建附件。请使用原文件重试；完成前不要清除浏览器站点数据。</small>
+          <strong id="attachment-recovery-title">{{ tr('Bitwarden 有 {0} 个附件操作待恢复', { 0: recovery.pending.length }) }}</strong>
+          <small>{{ tr('后台不会重复创建附件。请使用原文件重试；完成前不要清除浏览器站点数据。') }}</small>
           <ul>
-            <li v-for="record in recovery.pending" :key="record.operationId">{{ record.kind === 'delete' ? '删除' : record.kind === 'replace' ? '替换' : '添加' }} · {{ recoveryStageLabel(record.stage) }} · {{ new Date(record.updatedAt).toLocaleString() }}</li>
+            <li v-for="record in recovery.pending" :key="record.operationId">{{ record.kind === 'delete' ? tr('删除') : record.kind === 'replace' ? tr('替换') : tr('添加') }} · {{ recoveryStageLabel(record.stage) }} · {{ new Date(record.updatedAt).toLocaleString(locale) }}</li>
           </ul>
         </div>
-        <m3e-icon-button aria-label="刷新 Bitwarden 恢复状态" :disabled="interactionLocked" @click="loadRecoveryStatus"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button :aria-label="tr('刷新 Bitwarden 恢复状态')" :disabled="interactionLocked" @click="loadRecoveryStatus"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
       </section>
 
       <div v-if="pendingUpload" class="attachment-upload-panel" aria-labelledby="attachment-upload-title">
         <span class="attachment-file-icon"><m3e-icon name="upload_file"></m3e-icon></span>
         <div>
-          <strong id="attachment-upload-title">{{ pendingUpload.replaceExisting ? `替换 ${pendingUpload.fileName}` : pendingUpload.fileName }}</strong>
-          <small>{{ formatBytes(pendingUpload.file.size) }}<template v-if="pendingUpload.replaceExisting"> · 保留现有文件名与媒体类型</template></small>
-          <progress :value="uploadProgress" max="100" aria-label="附件上传进度"></progress>
+          <strong id="attachment-upload-title">{{ pendingUpload.replaceExisting ? tr('替换 {0}', { 0: pendingUpload.fileName }) : pendingUpload.fileName }}</strong>
+          <small>{{ formatBytes(pendingUpload.file.size) }}<template v-if="pendingUpload.replaceExisting">{{ tr('· 保留现有文件名与媒体类型') }}</template></small>
+          <progress :value="uploadProgress" max="100" :aria-label="tr('附件上传进度')"></progress>
         </div>
         <span class="attachment-progress-value">{{ uploadProgress }}%</span>
         <div v-if="!uploadBusy" class="attachment-upload-actions">
-          <m3e-button variant="tonal" type="button" @click="runPendingUpload"><m3e-icon slot="icon" name="refresh"></m3e-icon>重试</m3e-button>
-          <m3e-button variant="text" type="button" @click="cancelPendingUpload">取消上传</m3e-button>
+          <m3e-button variant="tonal" type="button" @click="runPendingUpload"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('重试') }}</m3e-button>
+          <m3e-button variant="text" type="button" @click="cancelPendingUpload">{{ tr('取消上传') }}</m3e-button>
         </div>
       </div>
 
@@ -649,49 +651,49 @@ function transferErrorMessage(cause: unknown): string {
 
       <section class="attachment-list-shell" aria-labelledby="attachment-list-title">
         <div class="attachment-list-heading">
-          <div><strong id="attachment-list-title">普通附件</strong><small>{{ regularAttachments.length }} 个已加载</small></div>
-          <m3e-icon-button aria-label="刷新附件列表" :disabled="interactionLocked" @click="loadAttachments(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
+          <div><strong id="attachment-list-title">{{ tr('普通附件') }}</strong><small>{{ tr('{0} 个已加载', { 0: regularAttachments.length }) }}</small></div>
+          <m3e-icon-button data-refresh-attachments :aria-label="tr('刷新附件列表')" :disabled="interactionLocked" @click="loadAttachments(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
         </div>
 
-        <div v-if="listBusy && !loaded" class="attachment-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取附件摘要…</span></div>
-        <div v-else-if="loaded && !regularAttachments.length" class="attachment-empty"><m3e-icon name="attach_file_off"></m3e-icon><span>此项目还没有普通附件。</span></div>
+        <div v-if="listBusy && !loaded" class="attachment-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取附件摘要…') }}</span></div>
+        <div v-else-if="loaded && !regularAttachments.length" class="attachment-empty"><m3e-icon name="attach_file_off"></m3e-icon><span>{{ tr('此项目还没有普通附件。') }}</span></div>
         <ul v-else class="attachment-list">
           <li v-for="attachment in regularAttachments" :key="attachment.attachmentId" class="provider-attachment-row">
             <div class="attachment-row-main">
               <span class="attachment-file-icon"><m3e-icon name="draft"></m3e-icon></span>
-              <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ attachmentSizeLabel(attachment) }} · {{ attachment.mediaType || '未知媒体类型' }} · 随密码源加密</small></span>
+              <span class="attachment-copy"><strong>{{ attachment.fileName }}</strong><small>{{ tr('{0} · {1} · 随密码源加密', { 0: attachmentSizeLabel(attachment), 1: attachment.mediaType || tr('未知媒体类型') }) }}</small></span>
               <span class="attachment-row-actions">
-                <m3e-icon-button :aria-label="`下载 ${attachment.fileName}`" :disabled="interactionLocked" @click="downloadAttachment(attachment)"><m3e-icon :name="downloadingAttachmentId === attachment.attachmentId ? 'progress_activity' : 'download'"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button v-if="!readOnlyProvider" :aria-label="`替换 ${attachment.fileName} 的内容`" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button v-if="!readOnlyProvider && transferTargets.length" :aria-label="`复制或移动 ${attachment.fileName} 到其他密码源`" :disabled="interactionLocked" @click="requestTransfer(attachment)"><m3e-icon name="drive_file_move"></m3e-icon></m3e-icon-button>
-                <m3e-icon-button v-if="!readOnlyProvider" class="attachment-delete-button" :aria-label="`删除 ${attachment.fileName}`" :disabled="interactionLocked" @click="requestDelete(attachment)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button :aria-label="tr('下载 {0}', { 0: attachment.fileName })" :disabled="interactionLocked" @click="downloadAttachment(attachment)"><m3e-icon :name="downloadingAttachmentId === attachment.attachmentId ? 'progress_activity' : 'download'"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider" :aria-label="tr('替换 {0} 的内容', { 0: attachment.fileName })" :disabled="interactionLocked" @click="chooseAttachmentFile(attachment)"><m3e-icon name="upload_file"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider && transferTargets.length" :aria-label="tr('复制或移动 {0} 到其他密码源', { 0: attachment.fileName })" :disabled="interactionLocked" @click="requestTransfer(attachment)"><m3e-icon name="drive_file_move"></m3e-icon></m3e-icon-button>
+                <m3e-icon-button v-if="!readOnlyProvider" class="attachment-delete-button" :aria-label="tr('删除 {0}', { 0: attachment.fileName })" :disabled="interactionLocked" @click="requestDelete(attachment)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
               </span>
             </div>
             <div v-if="pendingTransfer?.attachment.attachmentId === attachment.attachmentId" class="attachment-transfer-panel">
               <m3e-icon name="drive_file_move"></m3e-icon>
               <div class="attachment-transfer-content">
-                <div><strong>跨密码源传输</strong><small>文件名和字节保持不变；同名目标不会被静默替换。</small></div>
-                <label class="attachment-transfer-target"><span>目标密码源</span><select v-model="pendingTransfer.targetProviderId" :aria-label="`目标密码源 · ${attachment.fileName}`" :disabled="transferBusy || pendingTransfer.attempted"><option v-for="provider in transferTargets" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
-                <fieldset class="attachment-transfer-mode" :disabled="transferBusy || pendingTransfer.attempted"><legend>操作</legend><label><input v-model="pendingTransfer.mode" type="radio" value="copy" /><span>复制</span></label><label><input v-model="pendingTransfer.mode" type="radio" value="move" /><span>移动</span></label></fieldset>
-                <p><m3e-icon :name="pendingTransfer.mode === 'move' ? 'verified_user' : 'content_copy'"></m3e-icon><span>{{ pendingTransfer.mode === 'move' ? '目标写入并重新读取校验成功后才删除来源；删除失败时保留两个副本。' : '来源保持不变；目标写入后会重新读取并逐字节校验。' }}</span></p>
-                <small v-if="pendingTransferTarget">目标上限 {{ formatBytes(attachmentLimit(pendingTransferTarget)) }} · 原始字节仅在后台传输</small>
+                <div><strong>{{ tr('跨密码源传输') }}</strong><small>{{ tr('文件名和字节保持不变；同名目标不会被静默替换。') }}</small></div>
+                <label class="attachment-transfer-target"><span>{{ tr('目标密码源') }}</span><select v-model="pendingTransfer.targetProviderId" :aria-label="tr('目标密码源 · {0}', { 0: attachment.fileName })" :disabled="transferBusy || pendingTransfer.attempted"><option v-for="provider in transferTargets" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
+                <fieldset class="attachment-transfer-mode" :disabled="transferBusy || pendingTransfer.attempted"><legend>{{ tr('操作') }}</legend><label><input v-model="pendingTransfer.mode" type="radio" value="copy" /><span>{{ tr('复制') }}</span></label><label><input v-model="pendingTransfer.mode" type="radio" value="move" /><span>{{ tr('移动') }}</span></label></fieldset>
+                <p><m3e-icon :name="pendingTransfer.mode === 'move' ? 'verified_user' : 'content_copy'"></m3e-icon><span>{{ pendingTransfer.mode === 'move' ? tr('目标写入并重新读取校验成功后才删除来源；删除失败时保留两个副本。') : tr('来源保持不变；目标写入后会重新读取并逐字节校验。') }}</span></p>
+                <small v-if="pendingTransferTarget">{{ tr('目标上限 {0} · 原始字节仅在后台传输', { 0: formatBytes(attachmentLimit(pendingTransferTarget)) }) }}</small>
               </div>
-              <span class="attachment-transfer-actions"><m3e-button variant="text" type="button" :disabled="transferBusy" @click="cancelTransfer">取消</m3e-button><m3e-button data-confirm-transfer variant="tonal" type="button" :disabled="transferBusy" @click="confirmTransfer">{{ transferBusy ? '传输中…' : pendingTransfer.attempted ? '重试传输' : pendingTransfer.mode === 'move' ? '确认移动' : '确认复制' }}</m3e-button></span>
+              <span class="attachment-transfer-actions"><m3e-button variant="text" type="button" :disabled="transferBusy" @click="cancelTransfer">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-transfer variant="tonal" type="button" :disabled="transferBusy" @click="confirmTransfer">{{ transferBusy ? tr('传输中…') : pendingTransfer.attempted ? tr('重试传输') : pendingTransfer.mode === 'move' ? tr('确认移动') : tr('确认复制') }}</m3e-button></span>
             </div>
             <div v-if="pendingDelete?.attachmentId === attachment.attachmentId" class="attachment-delete-confirmation">
               <m3e-icon name="warning"></m3e-icon>
-               <span><strong>永久删除此附件？</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? '删除会写入 MDBX2，并在下次同步时传播 Tombstone。' : selectedProvider?.kind === 'bitwarden' ? '删除会先确认远端状态；响应中断时可使用同一操作标识重试。' : '删除会写入当前 KeePass 会话；请导出 KDBX 文件保存修改。' }}</small></span>
+               <span><strong>{{ tr('永久删除此附件？') }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? tr('删除会写入 MDBX2，并在下次同步时传播 Tombstone。') : selectedProvider?.kind === 'bitwarden' ? tr('删除会先确认远端状态；响应中断时可使用同一操作标识重试。') : tr('删除会写入当前 KeePass 会话；请导出 KDBX 文件保存修改。') }}</small></span>
               <span class="attachment-confirm-actions">
-                <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">取消</m3e-button>
-                <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? '删除中…' : '确认删除' }}</m3e-button>
+                <m3e-button variant="text" type="button" :disabled="Boolean(deletingAttachmentId)" @click="pendingDelete = undefined">{{ tr('取消') }}</m3e-button>
+                <m3e-button data-confirm-delete class="attachment-confirm-delete" variant="tonal" type="button" :disabled="Boolean(deletingAttachmentId)" @click="confirmDelete">{{ deletingAttachmentId ? tr('删除中…') : tr('确认删除') }}</m3e-button>
               </span>
             </div>
           </li>
         </ul>
-        <div v-if="nextCursor" class="attachment-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadAttachments(false)">加载更多</m3e-button></div>
+        <div v-if="nextCursor" class="attachment-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadAttachments(false)">{{ tr('加载更多') }}</m3e-button></div>
       </section>
 
-      <footer><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">关闭</m3e-button></footer>
+      <footer><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">{{ tr('关闭') }}</m3e-button></footer>
     </section>
   </div>
 </template>

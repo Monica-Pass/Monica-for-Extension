@@ -6,9 +6,31 @@ import { createFieldContextsForRoot } from "./field-signature";
 import { renderSavePrompt } from "./save-prompt";
 import { fillWallet } from "./wallet-dom";
 import { closePasskeyPrompt, renderPasskeyPrompt } from "./passkey-prompt";
+import { initializeUiLocale, translateRuntimeError } from "../i18n/runtime";
+import { installInlineAutofill } from "./inline-autofill";
+import type { InlineAutofillResult } from "../autofill/inline-contract";
 
-chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload; expectedOrigin?: string; candidateId?: string }, sender, sendResponse) => {
+const inlineAutofill = installInlineAutofill({
+  query: sessionId => sendRuntime<InlineAutofillResult>({ type: "AUTOFILL_INLINE_QUERY", sessionId }),
+  fill: (sessionId, itemId) => sendRuntime({ type: "AUTOFILL_INLINE_FILL", sessionId, itemId }),
+  openManager: sessionId => sendRuntime({ type: "AUTOFILL_INLINE_OPEN", sessionId })
+});
+
+chrome.runtime.onMessage.addListener((message: { type?: string; credential?: FillCredentialInput; context?: SavePromptContext; wallet?: WalletFillPayload; expectedOrigin?: string; candidateId?: string; sessionId?: string }, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("")) || sender.tab !== undefined) return false;
+  if (message?.type === "MONICA_INLINE_INVALIDATE") {
+    inlineAutofill.dismiss();
+    return false;
+  }
+  if (message?.type === "MONICA_INLINE_GET_FIELD_CONTEXT" && message.sessionId) {
+    void inlineAutofill.fieldContext(message.sessionId).then(context => sendResponse({ ok: Boolean(context), context })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.type === "MONICA_FILL_INLINE_CREDENTIAL" && message.sessionId) {
+    if (message.expectedOrigin !== location.origin) return void sendResponse({ ok: false, error: "页面来源已变化，已阻止填充。" });
+    sendResponse(inlineAutofill.applyCredential(message.sessionId, message.credential || {}));
+    return false;
+  }
   if (message?.type === "MONICA_SCAN_PAGE") {
     void scanPageWithFieldContext().then(sendResponse).catch(() => sendResponse({ ok: false }));
     return true;
@@ -28,6 +50,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; credential?: Fil
     return false;
   }
   if (message?.type === "MONICA_SHOW_SAVE_PROMPT" && message.context) {
+    inlineAutofill.dismiss();
     showPrompt(message.context);
     return false;
   }
@@ -72,12 +95,14 @@ window.addEventListener("message", (event) => {
 });
 
 async function handlePasskeyRequest(requestId: string, request: PasskeyRequest): Promise<void> {
+  inlineAutofill.dismiss();
   if (currentPasskeyRequestId && currentPasskeyRequestId !== requestId) {
     window.postMessage({ source: "monica-passkey-extension", requestId, error: "已有另一个 Passkey 请求正在处理。", name: "NotAllowedError" }, location.origin);
     return;
   }
   currentPasskeyRequestId = requestId;
   try {
+    await initializeUiLocale();
     const context = await sendRuntime<PasskeyPromptContext>({ type: "PASSKEY_BEGIN", request });
     let settled = false;
     let accepting = false;
@@ -229,7 +254,8 @@ async function restorePendingPrompt(): Promise<void> {
   }
 }
 
-function showPrompt(context: SavePromptContext): void {
+async function showPrompt(context: SavePromptContext): Promise<void> {
+  await initializeUiLocale();
   renderSavePrompt(context, {
     accept: (providerId, existingItemId) => sendRuntime<{ action: "saved" | "updated"; title: string; providerName: string; syncPending: boolean }>({ type: "CREDENTIAL_ACCEPT", candidateId: context.candidateId, providerId, existingItemId }),
     dismiss: () => sendRuntime({ type: "CREDENTIAL_DISMISS", candidateId: context.candidateId })
@@ -238,7 +264,7 @@ function showPrompt(context: SavePromptContext): void {
 
 async function sendRuntime<T>(request: unknown): Promise<T> {
   const response = await chrome.runtime.sendMessage(request) as ExtensionResponse<T>;
-  if (!response?.ok) throw new RuntimeRequestError(response?.error || "Monica 后台操作失败。", response?.code);
+  if (!response?.ok) throw new RuntimeRequestError(translateRuntimeError(response?.error || "Monica 后台操作失败。"), response?.code);
   return response.data;
 }
 

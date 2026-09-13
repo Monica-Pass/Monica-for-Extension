@@ -1,6 +1,7 @@
 import type { LoginItem, LoginUriMatchType, ProviderMutationReceipt, ProviderSourceRecord, VaultItem, VaultState, WindowsHelloBinding } from "./model";
 import { normalizeSitePolicy } from "../autofill/site-policy";
 import { normalizeBlockedFieldSignatures } from "../autofill/field-policy";
+import { normalizeHomePreferences } from "./home-preferences";
 
 const URI_MATCH_TYPES = new Set<LoginUriMatchType>(["base-domain", "domain", "starts-with", "exact", "regex", "never"]);
 const LEGACY_MDBX_MESSAGE = "此密码源使用 Monica Extension 已停用的 MDBX1 实现。请使用 Monica Android 或桌面端升级为 MDBX2 后重新连接。";
@@ -43,7 +44,11 @@ function normalizeSettings(raw: Record<string, unknown>): Record<string, unknown
   return {
     ...raw,
     protectionMode: normalizeProtectionMode(raw.protectionMode),
+    lockedAutofillItemIds: Array.isArray(raw.lockedAutofillItemIds)
+      ? [...new Set(raw.lockedAutofillItemIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 256))]
+      : [],
     windowsHello: normalizeWindowsHelloBinding(raw.windowsHello),
+    ...(raw.home === undefined ? {} : { home: normalizeHomePreferences(raw.home) }),
     autofillBlockedHosts: policy.blockedHosts,
     saveBlockedHosts: policy.saveBlockedHosts,
     autofillBlockedFieldSignatures: normalizeBlockedFieldSignatures(raw.autofillBlockedFieldSignatures === undefined ? [] : raw.autofillBlockedFieldSignatures)

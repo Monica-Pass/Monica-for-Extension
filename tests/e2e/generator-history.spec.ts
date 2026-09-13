@@ -16,7 +16,7 @@ test("Android generator history stays compact masked and deletable", async ({}, 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("generator-history-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       viewport: { width: 1280, height: 900 },
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });

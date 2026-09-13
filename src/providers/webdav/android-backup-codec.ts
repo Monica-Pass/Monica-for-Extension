@@ -228,8 +228,70 @@ function restoreAndroidOtpBindings(items: VaultItem[]): void {
   }
 }
 
+/** Android stores the link on the authenticator; the extension edits it on the login. */
+function synchronizeAndroidOtpBindings(document: AndroidBackupDocument, items: VaultItem[]): void {
+  const logins = items.filter((item): item is LoginItem => item.kind === "login" && !item.deletedAt);
+  const edits = logins.filter(login => {
+    const original = document.records.get(login.id)?.item;
+    // Missing means a legacy record; an empty string records an explicit unlink.
+    return login.boundTotpItemId !== undefined && login.boundTotpItemId !== (original?.kind === "login" ? original.boundTotpItemId : undefined);
+  });
+  if (!edits.length) return;
+
+  const authenticators = items.filter((item): item is TotpItem => item.kind === "totp");
+  const byId = new Map(authenticators.map(item => [item.id, item]));
+  const byPasswordId = new Map<number, TotpItem[]>();
+  for (const item of authenticators) {
+    if (item.boundPasswordId === undefined) continue;
+    const group = byPasswordId.get(item.boundPasswordId) || [];
+    group.push(item);
+    byPasswordId.set(item.boundPasswordId, group);
+  }
+  const ids = new Map(logins.map(login => {
+    const original = document.records.get(login.id)?.raw.id;
+    return [login.id, original === undefined ? numericId(login) : typeof original === "number" || typeof original === "string" ? Number(original) : NaN];
+  }));
+  const idCounts = new Map<number, number>();
+  const owners = new Map<string, number>();
+  for (const login of logins) {
+    const id = ids.get(login.id)!;
+    idCounts.set(id, (idCounts.get(id) || 0) + 1);
+    const original = document.records.get(login.id)?.item;
+    const targetId = login.boundTotpItemId ?? (original?.kind === "login" ? original.boundTotpItemId : undefined);
+    if (targetId) owners.set(targetId, (owners.get(targetId) || 0) + 1);
+  }
+
+  // Validate the whole edit before changing any companion record. A relationship
+  // Android cannot represent must not silently disappear on the next sync.
+  for (const login of edits) {
+    const id = ids.get(login.id)!;
+    if (!Number.isSafeInteger(id) || idCounts.get(id) !== 1) throw new Error("登录项的 Android 标识不唯一或无效，无法同步验证器绑定。");
+    if (!login.boundTotpItemId) continue;
+    const target = byId.get(login.boundTotpItemId);
+    if (!target || target.deletedAt) throw new Error("验证器不在此 WebDAV 数据库中或已删除，无法同步绑定。");
+    if (owners.get(target.id) !== 1) throw new Error("Android 的独立验证器只能绑定一个登录项，请先解除重复绑定。");
+  }
+
+  const changes = new Map<TotpItem, { passwordId?: number; updatedAt: string }>();
+  for (const login of edits) {
+    const id = ids.get(login.id)!;
+    for (const item of byPasswordId.get(id) || []) {
+      if (item.id !== login.boundTotpItemId) changes.set(item, { updatedAt: login.updatedAt });
+    }
+  }
+  for (const login of edits) {
+    if (login.boundTotpItemId) changes.set(byId.get(login.boundTotpItemId)!, { passwordId: ids.get(login.id), updatedAt: login.updatedAt });
+  }
+  for (const [item, change] of changes) {
+    if (item.boundPasswordId === change.passwordId) continue;
+    item.boundPasswordId = change.passwordId;
+    if (Date.parse(change.updatedAt) > Date.parse(item.updatedAt)) item.updatedAt = change.updatedAt;
+  }
+}
+
 export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string, options: AndroidBackupCodecOptions = {}): Uint8Array {
   const entries = { ...document.entries };
+  synchronizeAndroidOtpBindings(document, items);
   synchronizeAndroidCategories(document, items, entries);
   for (const item of items) {
     const existing = document.records.get(item.id);

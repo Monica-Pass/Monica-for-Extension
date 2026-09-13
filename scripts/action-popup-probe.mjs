@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
 const scriptPath = fileURLToPath(import.meta.url);
-if (process.platform === "linux" && !process.env.DISPLAY && !process.argv.includes("--xvfb-child")) {
+const headless = process.argv.includes("--headless");
+if (!headless && process.platform === "linux" && !process.env.DISPLAY && !process.argv.includes("--xvfb-child")) {
   const child = spawnSync("xvfb-run", ["-a", "-s", "-screen 0 1280x720x24", process.execPath, scriptPath, "--xvfb-child"], { stdio: "inherit", env: process.env });
   if (child.error) throw child.error;
   process.exit(child.status ?? 1);
@@ -23,7 +24,7 @@ let attachedBrowser;
 try {
   ownerContext = await chromium.launchPersistentContext(profile, {
     channel: "chromium",
-    headless: false,
+    headless, locale: "zh-CN",
     args: [
       `--remote-debugging-port=${debuggingPort}`,
       "--remote-debugging-address=127.0.0.1",
@@ -54,7 +55,12 @@ try {
   attachedBrowser = await connectToBrowser(debuggingPort);
   const popup = await waitForPopup(attachedBrowser);
   await popup.locator(".popup-shell").waitFor({ state: "attached" });
-  await popup.waitForTimeout(250);
+  // Font readiness and animation frames settle layout without masking a
+  // persistent intrinsic-size failure with an arbitrary startup delay.
+  await popup.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame)));
+  });
   const metrics = await popup.evaluate(() => {
     const rootElement = document.querySelector("#popup-root");
     const shell = document.querySelector(".popup-shell");
@@ -141,6 +147,30 @@ try {
   }
   console.log(`Verified real Action Popup: ${metrics.innerWidth}x${metrics.innerHeight}px, root ${metrics.rootWidth}px, ${icons.length} icons fit at 200% text.`);
 
+  for (const language of ["ja", "ko", "de", "es", "ru", "vi"]) {
+    await popup.evaluate((language) => chrome.storage.local.set({ "monica.locale": language }), language);
+    await popup.waitForFunction((language) => document.documentElement.lang === language, language);
+    const issues = await popup.evaluate(() => {
+      const issues = [];
+      const width = document.documentElement.clientWidth;
+      for (const control of document.querySelectorAll("m3e-button, m3e-icon-button, input, select")) {
+        const box = control.getBoundingClientRect();
+        if (box.width < 1 || box.height < 1) continue;
+        if (box.left < -1 || box.right > width + 1) issues.push(`Outside window: ${control.tagName}`);
+        const label = control.shadowRoot?.querySelector(".label");
+        if (label && (label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1)) issues.push(`Clipped label: ${control.textContent}`);
+      }
+      const copy = document.querySelector(".popup-unlock > div").getBoundingClientRect();
+      const field = document.querySelector(".popup-unlock input").getBoundingClientRect();
+      if (copy.width < field.width - 1) issues.push("Unlock explanation is squeezed");
+      return issues;
+    });
+    assert(!issues.length, `${language} Action Popup layout: ${issues.join(", ")}`);
+  }
+  await popup.evaluate(() => chrome.storage.local.set({ "monica.locale": "zh-CN" }));
+  await popup.waitForFunction(() => document.documentElement.lang === "zh-CN");
+  console.log("Verified six additional offline languages in the real Action Popup at 200% text.");
+
   // Phase 2: unlock, then seed + refresh entirely inside the popup (focus changes close it).
   await popup.getByLabel("主密码").fill("popup icon probe password");
   await popup.getByRole("button", { name: "解锁", exact: true }).click();
@@ -186,7 +216,10 @@ try {
 } finally {
   await attachedBrowser?.close().catch(() => undefined);
   await ownerContext?.close().catch(() => undefined);
-  await rm(profile, { recursive: true, force: true });
+  const resolvedProfile = await realpath(profile);
+  const profileTempRoot = await realpath(tmpdir());
+  assert(dirname(resolvedProfile) === profileTempRoot && basename(resolvedProfile).startsWith("monica-action-popup-"), "Refusing to remove an unexpected Popup profile directory.");
+  await rm(resolvedProfile, { recursive: true, force: true });
 }
 
 async function reservePort() {

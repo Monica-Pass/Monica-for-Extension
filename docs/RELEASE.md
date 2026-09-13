@@ -54,3 +54,15 @@ npm run package:verify
 ```
 
 发布前还应确认版本号、商店文案、隐私政策、截图脱敏和 Git tag/Release 指向同一已验证提交。商店账号提交和签名由账号持有人完成，不在本仓库自动化范围内。
+
+## 本地开发包
+
+需要在提交前加载和检查当前改动时，可使用：
+
+```bash
+npm run build
+node scripts/package-release.mjs --allow-dirty
+node scripts/verify-release.mjs --allow-dirty
+```
+
+此模式仍校验 ZIP、解压目录、文件哈希和两次独立打包的一致性；`SECURITY-EVIDENCE.json` 如实记录未提交工作树，产物只作为本地开发包。默认正式发布门禁仍要求干净工作树。

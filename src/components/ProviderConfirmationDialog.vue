@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 defineProps<{
   title: string;
   message: string;
@@ -20,16 +22,16 @@ const emit = defineEmits<{
     <section class="editor-dialog provider-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-confirm-title" aria-describedby="provider-confirm-description">
       <header>
         <div><h2 id="provider-confirm-title">{{ title }}</h2><p id="provider-confirm-description">{{ message }}</p></div>
-        <m3e-icon-button data-dialog-close aria-label="关闭确认对话框" :disabled="busy" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭确认对话框')" :disabled="busy" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
       <div class="provider-confirm-impact" :class="tone" role="status">
         <m3e-icon :name="tone === 'danger' ? 'warning' : 'sync_problem'" aria-hidden="true"></m3e-icon>
-        <div><strong>影响范围</strong><p>{{ context }}</p></div>
+        <div><strong>{{ tr('影响范围') }}</strong><p>{{ context }}</p></div>
       </div>
       <p v-if="error" class="provider-confirm-error" role="alert"><m3e-icon name="error" aria-hidden="true"></m3e-icon><span>{{ error }}</span></p>
       <footer>
-        <m3e-button data-dialog-close autofocus variant="text" type="button" :disabled="busy" @click="emit('close')">取消</m3e-button>
-        <m3e-button variant="filled" type="button" :disabled="busy" @click="emit('confirm')">{{ busy ? '正在处理…' : confirmLabel }}</m3e-button>
+        <m3e-button data-dialog-close autofocus variant="text" type="button" :disabled="busy" @click="emit('close')">{{ tr('取消') }}</m3e-button>
+        <m3e-button variant="filled" type="button" :disabled="busy" @click="emit('confirm')">{{ busy ? tr('正在处理…') : confirmLabel }}</m3e-button>
       </footer>
     </section>
   </div>

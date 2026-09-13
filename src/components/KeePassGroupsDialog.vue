@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { computed, nextTick, onMounted, ref } from "vue";
 import type { ProviderAccount } from "../core/model";
 import type { KeePassGroupMutationResult, KeePassGroupSummary } from "../providers/keepass/keepass-groups";
@@ -117,12 +119,12 @@ async function showMode(nextMode: GroupMode) {
 
 async function createGroup() {
   const name = createName.value.trim();
-  if (!name) return focusError("请输入分组名称。", createNameInput.value);
+  if (!name) return focusError(tr('请输入分组名称。'), createNameInput.value);
   await runMutation(
     `create:${createParentGroupId.value || "root"}:${name}`,
     "create",
     (operationId) => vaultClient.createKeePassGroup(props.provider.id, operationId, name, createParentGroupId.value || undefined),
-    (result) => result.changed ? `${name} 已创建。` : `${result.group.name} 已经存在，没有重复创建。`
+    (result) => result.changed ? tr('{0} 已创建。', { 0: name }) : tr('{0} 已经存在，没有重复创建。', { 0: result.group.name })
   );
   if (!error.value) {
     createOpen.value = false;
@@ -134,12 +136,12 @@ async function renameGroup() {
   const group = selectedGroup.value;
   const name = renameName.value.trim();
   if (!group) return;
-  if (!name) return focusError("请输入新的分组名称。", dialogRoot.value?.querySelector<HTMLInputElement>('[data-group-mode="rename"] input'));
+  if (!name) return focusError(tr('请输入新的分组名称。'), dialogRoot.value?.querySelector<HTMLInputElement>('[data-group-mode="rename"] input'));
   await runMutation(
     `rename:${group.groupId}:${name}`,
     "rename",
     (operationId) => vaultClient.renameKeePassGroup(props.provider.id, operationId, group.groupId, name),
-    (result) => result.changed ? `${group.name} 已重命名为 ${name}。` : `${group.name} 已经使用该名称。`
+    (result) => result.changed ? tr('{0} 已重命名为 {1}。', { 0: group.name, 1: name }) : tr('{0} 已经使用该名称。', { 0: group.name })
   );
 }
 
@@ -147,13 +149,13 @@ async function moveGroup() {
   const group = selectedGroup.value;
   if (!group) return;
   const targetLabel = moveParentGroupId.value
-    ? groups.value.find((candidate) => candidate.groupId === moveParentGroupId.value)?.displayPath || "所选分组"
+    ? groups.value.find((candidate) => candidate.groupId === moveParentGroupId.value)?.displayPath || tr('所选分组')
     : rootName.value;
   await runMutation(
     `move:${group.groupId}:${moveParentGroupId.value || "root"}`,
     "move",
     (operationId) => vaultClient.moveKeePassGroup(props.provider.id, operationId, group.groupId, moveParentGroupId.value || undefined),
-    (result) => result.changed ? `${group.name} 已移动到 ${targetLabel}。` : `${group.name} 已经位于 ${targetLabel}。`
+    (result) => result.changed ? tr('{0} 已移动到 {1}。', { 0: group.name, 1: targetLabel }) : tr('{0} 已经位于 {1}。', { 0: group.name, 1: targetLabel })
   );
 }
 
@@ -164,7 +166,7 @@ async function deleteGroup() {
     `delete:${group.groupId}`,
     "delete",
     (operationId) => vaultClient.deleteKeePassGroup(props.provider.id, operationId, group.groupId),
-    `${group.name} 已移入 KeePass 回收站。`
+    tr('{0} 已移入 KeePass 回收站。', { 0: group.name })
   );
   if (!error.value) tab.value = "recycle";
 }
@@ -176,7 +178,7 @@ async function restoreGroup() {
     `restore:${group.groupId}:${restoreParentGroupId.value || "previous"}`,
     "restore",
     (operationId) => vaultClient.restoreKeePassGroup(props.provider.id, operationId, group.groupId, restoreParentGroupId.value || undefined),
-    `${group.name} 已恢复。`
+    tr('{0} 已恢复。', { 0: group.name })
   );
   if (!error.value) tab.value = "active";
 }
@@ -198,7 +200,7 @@ async function runMutation(
     mode.value = "";
     status.value = message;
     if (result.changed) {
-      emit("notice", `${message} 需要导出 KDBX 文件才能永久保存。`);
+      emit("notice", tr('{0} 需要导出 KDBX 文件才能永久保存。', { 0: message }));
       emit("changed");
     } else {
       emit("notice", message);
@@ -206,7 +208,7 @@ async function runMutation(
     await loadGroups(true);
     return result;
   } catch (cause) {
-    error.value = `${errorMessage(cause)} 修正输入后会使用新的操作标识；原输入可安全重试。`;
+    error.value = tr('{0} 修正输入后会使用新的操作标识；原输入可安全重试。', { 0: errorMessage(cause) });
     return undefined;
   } finally {
     busy.value = "";
@@ -261,71 +263,71 @@ function errorMessage(cause: unknown): string {
     <section ref="dialogRoot" class="editor-dialog keepass-groups-dialog" role="dialog" aria-modal="true" aria-labelledby="keepass-groups-title">
       <header>
         <div>
-          <h2 id="keepass-groups-title">KeePass 分组 · {{ provider.name }}</h2>
-          <p>分组层级保存在当前 KDBX 会话中；完成后需要导出文件。UUID、条目、历史、附件和未知元数据保持在原生分组树中。</p>
+          <h2 id="keepass-groups-title">{{ tr('KeePass 分组 · {0}', { 0: provider.name }) }}</h2>
+          <p>{{ tr('分组层级保存在当前 KDBX 会话中；完成后需要导出文件。UUID、条目、历史、附件和未知元数据保持在原生分组树中。') }}</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭 KeePass 分组管理" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭 KeePass 分组管理')" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
-      <div class="keepass-groups-boundary"><m3e-icon name="encrypted"></m3e-icon><span>分组接口仅允许管理页调用；Popup 与网页内容脚本无法读取 KDBX 分组名称或结构。</span></div>
+      <div class="keepass-groups-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('分组接口仅允许管理页调用；Popup 与网页内容脚本无法读取 KDBX 分组名称或结构。') }}</span></div>
 
-      <div class="keepass-groups-tabs" role="tablist" aria-label="KeePass 分组范围">
-        <button type="button" role="tab" :aria-selected="tab === 'active'" :class="{ active: tab === 'active' }" @click="tab = 'active'; clearSelection()"><m3e-icon name="folder"></m3e-icon><span>分组</span><small>{{ activeGroups.length }}</small></button>
-        <button type="button" role="tab" :aria-selected="tab === 'recycle'" :class="{ active: tab === 'recycle' }" @click="tab = 'recycle'; clearSelection()"><m3e-icon name="delete"></m3e-icon><span>回收站</span><small>{{ recycledGroups.filter((group) => !group.isRecycleBin).length }}</small></button>
+      <div class="keepass-groups-tabs" role="tablist" :aria-label="tr('KeePass 分组范围')">
+        <button type="button" role="tab" :aria-selected="tab === 'active'" :class="{ active: tab === 'active' }" @click="tab = 'active'; clearSelection()"><m3e-icon name="folder"></m3e-icon><span>{{ tr('分组') }}</span><small>{{ activeGroups.length }}</small></button>
+        <button type="button" role="tab" :aria-selected="tab === 'recycle'" :class="{ active: tab === 'recycle' }" @click="tab = 'recycle'; clearSelection()"><m3e-icon name="delete"></m3e-icon><span>{{ tr('回收站') }}</span><small>{{ recycledGroups.filter((group) => !group.isRecycleBin).length }}</small></button>
       </div>
 
       <div class="keepass-groups-toolbar">
-        <label><span class="sr-only">搜索 KeePass 分组</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" placeholder="搜索分组路径" /></label>
-        <m3e-button v-if="tab === 'active'" variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>新建分组</m3e-button>
+        <label><span class="sr-only">{{ tr('搜索 KeePass 分组') }}</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索分组路径')" /></label>
+        <m3e-button v-if="tab === 'active'" variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>{{ tr('新建分组') }}</m3e-button>
       </div>
 
       <form v-if="createOpen" class="keepass-group-create" @submit.prevent="createGroup">
         <span class="keepass-group-form-icon"><m3e-icon name="create_new_folder"></m3e-icon></span>
-        <label><span>分组名称</span><input ref="createNameInput" v-model="createName" autocomplete="off" :disabled="interactionLocked" /></label>
-        <label><span>父分组</span><select v-model="createParentGroupId" :disabled="interactionLocked"><option value="">{{ rootName }} 根目录</option><option v-for="group in activeGroups" :key="group.groupId" :value="group.groupId">{{ group.displayPath }}</option></select></label>
-        <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false; retryOperation = undefined">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? '创建中…' : '创建' }}</m3e-button></div>
+        <label><span>{{ tr('分组名称') }}</span><input ref="createNameInput" v-model="createName" autocomplete="off" :disabled="interactionLocked" /></label>
+        <label><span>{{ tr('父分组') }}</span><select v-model="createParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('{0} 根目录', { 0: rootName }) }}</option><option v-for="group in activeGroups" :key="group.groupId" :value="group.groupId">{{ group.displayPath }}</option></select></label>
+        <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false; retryOperation = undefined">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? tr('创建中…') : tr('创建') }}</m3e-button></div>
       </form>
 
-      <div v-if="!recycleBinEnabled" class="keepass-groups-warning" role="status"><m3e-icon name="warning"></m3e-icon><span>此 KDBX 关闭了回收站。浏览器仍允许查看和整理分组，但会拒绝不可恢复的分组删除。</span></div>
+      <div v-if="!recycleBinEnabled" class="keepass-groups-warning" role="status"><m3e-icon name="warning"></m3e-icon><span>{{ tr('此 KDBX 关闭了回收站。浏览器仍允许查看和整理分组，但会拒绝不可恢复的分组删除。') }}</span></div>
       <div v-if="error" class="keepass-groups-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span></div>
       <p class="keepass-groups-status" aria-live="polite">{{ status }}</p>
 
       <section class="keepass-groups-list-shell" aria-labelledby="keepass-groups-list-title">
-        <div class="keepass-groups-list-heading"><div><strong id="keepass-groups-list-title">{{ tab === 'active' ? '当前分组' : '回收站分组树' }}</strong><small>{{ displayedGroups.length }} 个已加载<template v-if="nextCursor"> · 尚有更多</template></small></div><m3e-icon-button aria-label="刷新 KeePass 分组" :disabled="interactionLocked" @click="loadGroups(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
-        <div v-if="busy === 'list' && !loaded" class="keepass-groups-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取 KDBX 分组摘要…</span></div>
-        <div v-else-if="loaded && !displayedGroups.length" class="keepass-groups-empty"><m3e-icon :name="tab === 'active' ? 'folder_off' : 'delete_sweep'"></m3e-icon><span>{{ search ? '没有匹配的分组。' : tab === 'active' ? '数据库根目录下还没有分组。' : 'KeePass 回收站中没有可恢复的分组。' }}</span></div>
+        <div class="keepass-groups-list-heading"><div><strong id="keepass-groups-list-title">{{ tab === 'active' ? tr('当前分组') : tr('回收站分组树') }}</strong><small>{{ tr('{0} 个已加载', { 0: displayedGroups.length }) }}<template v-if="nextCursor">{{ tr('· 尚有更多') }}</template></small></div><m3e-icon-button :aria-label="tr('刷新 KeePass 分组')" :disabled="interactionLocked" @click="loadGroups(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
+        <div v-if="busy === 'list' && !loaded" class="keepass-groups-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取 KDBX 分组摘要…') }}</span></div>
+        <div v-else-if="loaded && !displayedGroups.length" class="keepass-groups-empty"><m3e-icon :name="tab === 'active' ? 'folder_off' : 'delete_sweep'"></m3e-icon><span>{{ search ? tr('没有匹配的分组。') : tab === 'active' ? tr('数据库根目录下还没有分组。') : tr('KeePass 回收站中没有可恢复的分组。') }}</span></div>
         <ul v-else class="keepass-groups-list">
           <li v-for="group in displayedGroups" :key="group.groupId">
             <button class="keepass-group-row" type="button" :class="{ selected: selectedGroupId === group.groupId }" :aria-expanded="selectedGroupId === group.groupId" @click="selectGroup(group)">
               <span class="keepass-group-icon" :class="{ recycle: group.inRecycleBin }"><m3e-icon :name="group.isRecycleBin ? 'delete' : group.inRecycleBin ? 'folder_delete' : 'folder'"></m3e-icon></span>
-              <span class="keepass-group-copy"><strong>{{ group.name }}</strong><small>{{ group.displayPath }}</small><small>{{ group.entryCount }} 个直接条目 · {{ group.childGroupCount }} 个子分组<template v-if="group.nameTruncated || group.displayPathTruncated"> · 名称过长，仅显示摘要</template></small></span>
-              <span v-if="group.isRecycleBin" class="keepass-group-state">系统回收站</span><span v-else-if="group.canRestore" class="keepass-group-state">可恢复</span>
+              <span class="keepass-group-copy"><strong>{{ group.name }}</strong><small>{{ group.displayPath }}</small><small>{{ tr('{0} 个直接条目 · {1} 个子分组', { 0: group.entryCount, 1: group.childGroupCount }) }}<template v-if="group.nameTruncated || group.displayPathTruncated">{{ tr('· 名称过长，仅显示摘要') }}</template></small></span>
+              <span v-if="group.isRecycleBin" class="keepass-group-state">{{ tr('系统回收站') }}</span><span v-else-if="group.canRestore" class="keepass-group-state">{{ tr('可恢复') }}</span>
               <m3e-icon name="expand_more"></m3e-icon>
             </button>
 
             <div v-if="selectedGroupId === group.groupId" class="keepass-group-detail">
-              <template v-if="group.isRecycleBin"><p>此分组由 KDBX 元数据指定为回收站。分组树会原样显示，系统回收站自身不能重命名、移动或删除。</p></template>
+              <template v-if="group.isRecycleBin"><p>{{ tr('此分组由 KDBX 元数据指定为回收站。分组树会原样显示，系统回收站自身不能重命名、移动或删除。') }}</p></template>
               <template v-else-if="group.canRestore">
-                <div v-if="mode !== 'restore'" class="keepass-group-actions"><m3e-button variant="tonal" type="button" :disabled="interactionLocked" @click="showMode('restore')"><m3e-icon slot="icon" name="restore_from_trash"></m3e-icon>恢复完整分组树</m3e-button></div>
+                <div v-if="mode !== 'restore'" class="keepass-group-actions"><m3e-button variant="tonal" type="button" :disabled="interactionLocked" @click="showMode('restore')"><m3e-icon slot="icon" name="restore_from_trash"></m3e-icon>{{ tr('恢复完整分组树') }}</m3e-button></div>
                 <form v-else data-group-mode="restore" class="keepass-group-action-form" @submit.prevent="restoreGroup">
-                  <label><span>恢复位置</span><select v-model="restoreParentGroupId" :disabled="interactionLocked"><option value="">原父分组；不存在时使用根目录</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>条目、历史、附件、UUID 与子分组一起恢复。</small></label>
-                  <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'restore' ? '恢复中…' : '确认恢复' }}</m3e-button></div>
+                  <label><span>{{ tr('恢复位置') }}</span><select v-model="restoreParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('原父分组；不存在时使用根目录') }}</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>{{ tr('条目、历史、附件、UUID 与子分组一起恢复。') }}</small></label>
+                  <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'restore' ? tr('恢复中…') : tr('确认恢复') }}</m3e-button></div>
                 </form>
               </template>
               <template v-else-if="!group.inRecycleBin">
-                <div v-if="!mode" class="keepass-group-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>重命名</m3e-button><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('move')"><m3e-icon slot="icon" name="drive_file_move"></m3e-icon>移动</m3e-button><m3e-button class="keepass-group-delete-action" variant="text" type="button" :disabled="interactionLocked || !recycleBinEnabled" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>移入回收站</m3e-button></div>
-                <form v-else-if="mode === 'rename'" data-group-mode="rename" class="keepass-group-action-form" @submit.prevent="renameGroup"><label><span>新名称</span><input v-model="renameName" autocomplete="off" :disabled="interactionLocked" /><small>同级名称按 Monica Android 规则进行不区分大小写的冲突检查。</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? '保存中…' : '保存名称' }}</m3e-button></div></form>
-                <form v-else-if="mode === 'move'" data-group-mode="move" class="keepass-group-action-form" @submit.prevent="moveGroup"><label><span>目标父分组</span><select v-model="moveParentGroupId" :disabled="interactionLocked"><option value="">{{ rootName }} 根目录</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>自身和已加载的子孙分组从列表中排除；后台仍会再次校验完整树。</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'move' ? '移动中…' : '确认移动' }}</m3e-button></div></form>
-                <div v-else-if="mode === 'delete'" class="keepass-group-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>将“{{ group.name }}”移入 KeePass 回收站？</strong><small>整个子树会一起移动，条目、历史、附件和未知字段保持原样。导出 KDBX 后修改才会永久保存。</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button data-confirm-group-delete class="keepass-group-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteGroup">{{ busy === 'delete' ? '处理中…' : '确认移入回收站' }}</m3e-button></div></div>
+                <div v-if="!mode" class="keepass-group-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>{{ tr('重命名') }}</m3e-button><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('move')"><m3e-icon slot="icon" name="drive_file_move"></m3e-icon>{{ tr('移动') }}</m3e-button><m3e-button class="keepass-group-delete-action" variant="text" type="button" :disabled="interactionLocked || !recycleBinEnabled" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ tr('移入回收站') }}</m3e-button></div>
+                <form v-else-if="mode === 'rename'" data-group-mode="rename" class="keepass-group-action-form" @submit.prevent="renameGroup"><label><span>{{ tr('新名称') }}</span><input v-model="renameName" autocomplete="off" :disabled="interactionLocked" /><small>{{ tr('同级名称按 Monica Android 规则进行不区分大小写的冲突检查。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
+                <form v-else-if="mode === 'move'" data-group-mode="move" class="keepass-group-action-form" @submit.prevent="moveGroup"><label><span>{{ tr('目标父分组') }}</span><select v-model="moveParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('{0} 根目录', { 0: rootName }) }}</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>{{ tr('自身和已加载的子孙分组从列表中排除；后台仍会再次校验完整树。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'move' ? tr('移动中…') : tr('确认移动') }}</m3e-button></div></form>
+                <div v-else-if="mode === 'delete'" class="keepass-group-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>{{ tr('将“{0}”移入 KeePass 回收站？', { 0: group.name }) }}</strong><small>{{ tr('整个子树会一起移动，条目、历史、附件和未知字段保持原样。导出 KDBX 后修改才会永久保存。') }}</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-group-delete class="keepass-group-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteGroup">{{ busy === 'delete' ? tr('处理中…') : tr('确认移入回收站') }}</m3e-button></div></div>
               </template>
-              <p v-else>此分组属于回收站内的子树。恢复最外层分组后，完整层级会一起返回。</p>
+              <p v-else>{{ tr('此分组属于回收站内的子树。恢复最外层分组后，完整层级会一起返回。') }}</p>
             </div>
           </li>
         </ul>
-        <div v-if="nextCursor" class="keepass-groups-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadGroups(false)">加载更多分组</m3e-button></div>
+        <div v-if="nextCursor" class="keepass-groups-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadGroups(false)">{{ tr('加载更多分组') }}</m3e-button></div>
       </section>
 
-      <footer><span>所有修改当前只存在于内存会话。</span><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">关闭</m3e-button></footer>
+      <footer><span>{{ tr('所有修改当前只存在于内存会话。') }}</span><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">{{ tr('关闭') }}</m3e-button></footer>
     </section>
   </div>
 </template>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import type { AttachmentRecord, VaultEntry, VaultProject } from "../lib/api";
 import { formatBytes, formatDateTime } from "../lib/format";
 import { kindLabel, projectIcon, stateLabel } from "../lib/modules";

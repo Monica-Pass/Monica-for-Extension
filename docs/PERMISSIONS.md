@@ -5,7 +5,7 @@ Monica 的单一用途是安全管理并按用户明确操作保存、同步和�
 | 权限 | 使用目的 | 不会做什么 |
 | --- | --- | --- |
 | `webNavigation` | 枚举当前标签页的主页面和跨域 frame，使用户能选择正确的登录/支付 frame，并在后台重新核验 frame URL。 | 不跟踪用户跨站导航轨迹。 |
-| `storage` | 使用 `chrome.storage.session` 临时保存解锁会话密钥；读取并删除旧原型的 `chrome.storage.local` 数据以完成一次性安全迁移。 | 不使用同步存储上传密码库。 |
+| `storage` | 使用 `chrome.storage.session` 临时保存解锁会话密钥；在 `chrome.storage.local` 保存界面语言，以及读取并删除旧原型数据以完成一次性安全迁移。 | 不使用同步存储上传密码库。 |
 | `alarms` | 每分钟检查解锁会话是否到期，并在锁定后清除待保存密码、Passkey 请求及 Provider 同步。 | 不用于后台遥测或定时上传。 |
 | `cookies` | 仅在用户明确刷新或处理 Steam 登录/交易确认时，临时设置 Steam Mobile Confirmation 所需 Cookie；请求结束后恢复用户原有 Cookie。 | 不读取、上传或修改其他网站 Cookie，也不会长期保留 Steam 会话 Cookie。 |
 | `identity` | 为用户明确发起的 Bitwarden 企业 SSO 和 WebAuthn 两步验证打开官方 OAuth/connector 窗口，并接收一次性回调。 | 不读取其他扩展的身份数据，不保存 OAuth code、PKCE verifier 或 WebAuthn token。 |
@@ -26,7 +26,7 @@ Popup 与后台会使用 `chrome.tabs.query/get/sendMessage` 访问当前 HTTP/H
 
 - 隔离世界 `content.js` 在所有 HTTP/HTTPS frame 中扫描字段、执行明确填充以及显示保存/Passkey 确认 UI。
 - MAIN world `main-world.js` 在 document-start 安装 WebAuthn/开放 ShadowRoot 桥接。它不包含密码库、Provider 凭据或 Passkey 私钥。
-- 唯一的 web-accessible resource 是 `icons/logo-256.png`，只用于网页内 Monica 保存提示显示品牌图；它不包含代码或用户数据。
+- Web-accessible resources 仅包含品牌图 `icons/logo-256.png` 和明确列出的日、韩、德、西、俄、越六个离线语言 JSON，使用动态 URL。语言文件只含应用文案，供网页内提示按需加载，不包含可执行代码、密码库或用户数据。
 - 所有运行时代码随扩展打包；Content Security Policy 禁止远程脚本和任意对象加载。
 
 更详细的数据流见 [隐私政策](PRIVACY.md) 和 [架构说明](ARCHITECTURE.md)。

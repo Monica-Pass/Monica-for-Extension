@@ -1,3 +1,5 @@
+import { translateRuntimeError } from "../i18n/runtime";
+import { runtimeInfo, type RuntimeInfo } from "./version";
 import type { ProviderAccount, ProviderConflictResolution, ProviderConflictSummary, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import { bytesToBase64 } from "../security/encoding";
@@ -16,11 +18,42 @@ export class ExtensionRuntimeError extends Error {
   }
 }
 
+let runtimeChecked = false;
+let runtimeCheck: Promise<void> | undefined;
+
+function reloadRequired(): ExtensionRuntimeError {
+  runtimeChecked = false;
+  return new ExtensionRuntimeError(translateRuntimeError("Monica 已更新，请重新加载扩展后再解锁。"), "RUNTIME_RELOAD_REQUIRED");
+}
+
+function checkResponse<T>(response: ExtensionResponse<T> | undefined): T {
+  if (!response?.ok) {
+    if (response?.error === "不支持的 Monica 运行时命令。") throw reloadRequired();
+    throw new ExtensionRuntimeError(translateRuntimeError(response?.error || "插件后台没有返回有效响应。"), response?.code);
+  }
+  return response.data;
+}
+
+async function checkRuntime(force: boolean): Promise<void> {
+  if (runtimeChecked && !force) return;
+  if (!runtimeCheck) {
+    runtimeChecked = false;
+    runtimeCheck = (async () => {
+      const response = await chrome.runtime.sendMessage({ type: "RUNTIME_INFO" }) as ExtensionResponse<RuntimeInfo>;
+      const info = checkResponse(response);
+      if (!info || info.version !== runtimeInfo.version || info.protocolVersion !== runtimeInfo.protocolVersion) throw reloadRequired();
+      runtimeChecked = true;
+    })().finally(() => { runtimeCheck = undefined; });
+  }
+  return runtimeCheck;
+}
+
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
+  // Share one initial check across UI reads; recheck before sending a password.
+  await checkRuntime(request.type === "VAULT_SETUP" || request.type === "VAULT_UNLOCK" || request.type === "VAULT_UNLOCK_HELLO");
   const response = (await chrome.runtime.sendMessage(request)) as ExtensionResponse<T>;
-  if (!response?.ok) throw new ExtensionRuntimeError(response?.error || "插件后台没有返回有效响应。", response?.code);
-  return response.data;
+  return checkResponse(response);
 }
 
 export const vaultClient = {
@@ -38,10 +71,14 @@ export const vaultClient = {
     send<VaultItem[]>({ type: "VAULT_RESTORE_ENCRYPTED", backup, backupPassword, replaceExisting, currentPassword }),
   importItems: (items: VaultItem[]) => send<VaultItem[]>({ type: "VAULT_IMPORT_ITEMS", items }),
   listItems: () => send<VaultItem[]>({ type: "VAULT_LIST_ITEMS" }),
+  getHomePreferences: () => send<import("../core/home-preferences").HomePreferences>({ type: "VAULT_HOME_GET" }),
+  setHomePreferences: (preferences: Partial<import("../core/home-preferences").HomePreferences>) => send<import("../core/home-preferences").HomePreferences>({ type: "VAULT_HOME_SET", preferences }),
   listArchivedItems: () => send<VaultItem[]>({ type: "VAULT_LIST_ARCHIVED_ITEMS" }),
   listDeletedItems: () => send<VaultItem[]>({ type: "VAULT_LIST_DELETED_ITEMS" }),
   getItem: (itemId: string) => send<VaultItem | undefined>({ type: "VAULT_GET_ITEM", itemId }),
-  upsertItem: (item: VaultItem) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item }),
+  upsertItem: (item: VaultItem, allowLockedAutofill?: boolean) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item, allowLockedAutofill }),
+  lockedAutofillIds: () => send<string[]>({ type: "VAULT_LOCKED_AUTOFILL_IDS" }),
+  setLockedAutofill: (itemId: string, enabled: boolean) => send<void>({ type: "VAULT_SET_LOCKED_AUTOFILL", itemId, enabled }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
   restoreItem: (itemId: string) => send<VaultItem>({ type: "VAULT_RESTORE_ITEM", itemId }),
   matchLogins: (pageUrl: string, fieldSignature?: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl, fieldSignature }),

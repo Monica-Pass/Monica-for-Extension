@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { ref } from "vue";
 import { paletteId, palettes, schemePreference, setPalette, setScheme, type SchemePreference, type ThemePaletteId } from "../lib/theme";
 
 const schemes: SchemePreference[] = ["auto", "light", "dark"];
-const schemeLabels: Record<SchemePreference, string> = { auto: "跟随系统", light: "浅色", dark: "深色" };
-const paletteLabels: Record<ThemePaletteId, string> = { monica: "Monica", ocean: "海洋", forest: "森林", sakura: "樱花", amber: "琥珀" };
+const schemeLabels: Record<SchemePreference, string> = { get auto() { return tr('跟随系统'); }, get light() { return tr('浅色'); }, get dark() { return tr('深色'); } };
+const paletteLabels: Record<ThemePaletteId, string> = { nothing: "Nothing", monica: "Monica", get ocean() { return tr('海洋'); }, get forest() { return tr('森林'); }, get sakura() { return tr('樱花'); }, get amber() { return tr('琥珀'); } };
 const dialogOpen = ref(false);
 
 function updatePalette(value: ThemePaletteId) {
@@ -17,25 +19,25 @@ function updatePalette(value: ThemePaletteId) {
     <div slot="content" class="appearance-disclosure">
       <button class="appearance-trigger" type="button" @click="dialogOpen = true">
         <span class="appearance-summary-icon"><m3e-icon name="palette"></m3e-icon></span>
-        <span class="appearance-summary-copy"><strong>外观</strong><small>{{ schemeLabels[schemePreference] }} · {{ paletteLabels[paletteId] }}</small></span>
+        <span class="appearance-summary-copy"><strong>{{ tr('外观') }}</strong><small>{{ schemeLabels[schemePreference] }} · {{ paletteLabels[paletteId] }}</small></span>
         <m3e-icon class="appearance-chevron" name="chevron_right" aria-hidden="true"></m3e-icon>
       </button>
       <Teleport to="body">
       <div v-if="dialogOpen" class="appearance-modal" role="presentation" @click.self="dialogOpen = false">
       <section class="appearance-dialog" role="dialog" aria-modal="true" aria-labelledby="appearance-dialog-title">
         <div class="appearance-dialog-header">
-          <div><h2 id="appearance-dialog-title">外观</h2><p>为 Monica 选择显示模式和配色方案。</p></div>
-          <button class="appearance-close" type="button" aria-label="关闭外观设置" @click="dialogOpen = false"><m3e-icon name="close"></m3e-icon></button>
+          <div><h2 id="appearance-dialog-title">{{ tr('外观') }}</h2><p>{{ tr('为 Monica 选择显示模式和配色方案。') }}</p></div>
+          <button class="appearance-close" type="button" :aria-label="tr('关闭外观设置')" @click="dialogOpen = false"><m3e-icon name="close"></m3e-icon></button>
         </div>
         <div class="appearance-controls">
         <fieldset>
-          <legend>显示模式</legend>
-          <div class="scheme-control" role="group" aria-label="显示模式">
+          <legend>{{ tr('显示模式') }}</legend>
+          <div class="scheme-control" role="group" :aria-label="tr('显示模式')">
             <button v-for="item in schemes" :key="item" type="button" :class="{ selected: item === schemePreference }" :aria-pressed="item === schemePreference" @click="setScheme(item)">{{ schemeLabels[item] }}</button>
           </div>
         </fieldset>
         <fieldset>
-          <legend>配色</legend>
+          <legend>{{ tr('配色') }}</legend>
           <div class="palette-list">
           <button
             v-for="item in palettes"

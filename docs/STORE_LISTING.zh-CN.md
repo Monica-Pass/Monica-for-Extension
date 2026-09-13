@@ -5,7 +5,7 @@
 - 名称：`Monica 密码管理器`
 - 简短说明：`独立运行的加密密码库，支持显式自动填充、Monica Android WebDAV、Bitwarden 与 Passkey。`
 - 类别：生产力工具
-- 首发完整界面语言：简体中文（zh-CN）
+- 界面语言：简体中文（zh-CN）、英文（en）、日语（ja）、韩语（ko）、德语（de）、西班牙语（es）、俄语（ru）、越南语（vi）
 
 ## 详细说明
 

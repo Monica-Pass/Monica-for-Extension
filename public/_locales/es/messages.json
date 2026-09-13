@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Gestor de contraseñas Monica",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "Bóveda cifrada con autorrelleno y Passkeys. Compatible con Monica Android, KeePass y Bitwarden.",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Autorrelleno de Monica",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

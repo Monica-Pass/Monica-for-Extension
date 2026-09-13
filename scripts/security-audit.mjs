@@ -17,8 +17,18 @@ for (const directive of ["script-src 'self' 'wasm-unsafe-eval'", "object-src 'no
 }
 if (/unsafe-inline|(?<!wasm-)unsafe-eval/.test(csp)) throw new Error("Release CSP permits unsafe inline or JavaScript eval execution.");
 const accessible = manifest.web_accessible_resources || [];
-if (accessible.length !== 1 || JSON.stringify(accessible[0].resources) !== JSON.stringify(["icons/logo-256.png"]) || accessible[0].use_dynamic_url !== true) {
-  throw new Error("Web-accessible resources are broader than the reviewed dynamic logo resource.");
+const localeResources = ["ja", "ko", "de", "es", "ru", "vi"].map((locale) => `locales/ui-${locale}.json`);
+if (accessible.length !== 1 || JSON.stringify(accessible[0].resources) !== JSON.stringify(["icons/logo-256.png", ...localeResources]) || accessible[0].use_dynamic_url !== true) {
+  throw new Error("Web-accessible resources are broader than the reviewed logo and offline language catalogs.");
+}
+// These public JSON resources contain UI text only. They cannot add executable code,
+// vault data, or an open-ended resource path to the content-script surface.
+const catalogKeys = Object.keys(JSON.parse(await readFile(resolve(root, "src/i18n/ui-en.json"), "utf8"))).sort();
+for (const resource of localeResources) {
+  const catalog = JSON.parse(await readFile(resolve(root, "dist", resource), "utf8"));
+  if (!catalog || typeof catalog !== "object" || Array.isArray(catalog)
+      || JSON.stringify(Object.keys(catalog).sort()) !== JSON.stringify(catalogKeys)
+      || Object.values(catalog).some((value) => typeof value !== "string")) throw new Error(`Invalid public UI catalog: ${resource}`);
 }
 if (JSON.stringify(sourceManifest) !== JSON.stringify(manifest)) throw new Error("Built manifest differs from the reviewed source manifest.");
 const outputFiles = await readdir(resolve(root, "dist"), { recursive: true });

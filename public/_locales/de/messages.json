@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Monica Passwortmanager",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "Verschlüsselter Tresor mit Autofill und Passkeys. Kompatibel mit Monica Android, KeePass und Bitwarden.",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Mit Monica ausfüllen",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

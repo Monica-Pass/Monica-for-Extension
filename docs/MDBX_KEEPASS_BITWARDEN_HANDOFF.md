@@ -2,7 +2,7 @@
 
 > 更新时间：2026-08-09 +08:00
 >
-> 仓库：`C:\Users\joyins\Desktop\Monica-all\monica-extension`
+> 仓库：`Monica-Pass/Monica-for-Extension`（以下路径相对于仓库根目录）
 
 ## 权威来源与约束
 

@@ -1,0 +1,119 @@
+# 性能测量与维护
+
+日期：2026-09-11。相对 0.1.26，本轮主要减少大列表的 DOM、验证码的重复计算、动态网页的节点保留和首次加载的字体资源。Nothing 外观、默认跟随系统主题、八种语言和现有数据协议保持兼容。
+
+## 测量结果
+
+同一台 Windows 机器、Chromium 149.0.7827.55，隔离浏览器配置，德语深色界面，2,000 条合成登录项及 100 条 TOTP。管理页为 1366×900，Popup 测量页为 390×600。每个样本等待两帧、移开鼠标并通过 CDP 请求垃圾回收。
+
+下表为 **保留 V8 堆，单位 MiB（1 MiB = 1,048,576 字节）**。数据来自同条件的单次顺序采样，存在正常运行波动。
+
+| 场景 | 0.1.26 | 0.1.27 | 降幅 |
+| --- | ---: | ---: | ---: |
+| 首次打开管理页、尚未创建密码库 | 5.14 | 5.12 | 0.3% |
+| 导入后概览 | 8.58 | 6.52 | 24.0% |
+| 登录列表 | 59.74 | 8.08 | 86.5% |
+| 验证码页 | 22.52 | 8.92 | 60.4% |
+| 从验证码页锁定后 | 22.07 | 7.88 | 64.3% |
+| Popup | 14.07 | 5.79 | 58.8% |
+
+V8 堆不等于浏览器或扩展总内存。它不包含完整的渲染器原生对象、字体解码、GPU、后台 worker、Native Host 或加密派生峰值。原始记录另列 CDP backing storage 和 DOM 计数；上述表格只比较 `heap`。测试未测量所有网站，也不构成内存上限保证。
+
+| 其他指标 | 0.1.26 | 0.1.27 |
+| --- | ---: | ---: |
+| 登录列表 DOM 节点（含分离节点） | 172,711 | 5,270 |
+| Popup DOM 节点（含分离节点） | 42,240 | 1,279 |
+| 动态网站移除 500 个 Shadow DOM 组件后节点数 | 22,913 | 8 |
+| 验证码页活动 interval 数 | 100 | 1 |
+| 同一验证码周期内 4 秒的额外签名次数 | 400 | 0 |
+| 管理页首次请求的本地资源字节 | 6,309,245 | 2,287,050 |
+| Popup 首次请求的本地资源字节 | 5,532,407 | 1,598,258 |
+| Material Symbols 字体文件字节 | 3,961,284 | 21,164 |
+
+网站节点实验的初始值为 8，优化后回到初始数量。OTP 对比把时钟固定在当前周期中间，避免跨周期干扰；正常跨周期更新、HOTP、mOTP、Steam 与 Yandex 的行为另有测试。资源字节是页面实际请求文件的磁盘大小之和，不是压缩网络传输量或内存占用。
+
+## 实现
+
+- 管理页每页最多渲染 50 条，Popup 每个结果区最多 20 条。全库搜索和筛选先执行，再分页；可选择页码，删除末页后自动回到有效页。所有分页操作支持八种语言、键盘和至少 44px 点击区域。
+- 列表快照使用浅层响应式，避免为整个密码库创建深层代理。锁定时清理界面快照、编辑器、二维码和派生缓存，关闭相关对话框，并拒绝旧异步刷新重新填回数据。
+- 验证码按周期缓存；同一可见页面共享一个计时器，隐藏或无订阅时停止。HOTP 无周期计时器，复制操作再次获取当前值，卸载时释放缓存和提示计时器。
+- 网页组件移除时断开对应 observer、监听器与 ShadowRoot 引用；重新挂载后恢复表单捕获。
+- 英文之外至多保留两套词库；普通网页等到保存提示或 Passkey 流程需要时才初始化语言。生成器、Secure Send 与二维码生成依赖按需加载。
+- 使用实际需要的 221 个图标字体，保留原来的线宽及外观。构建会核对图标覆盖和校验和，浏览器回归逐个检查图标渲染。
+- 工具栏 Popup 显式提供 390px 初始宽度，解决内容与视口互相依赖时缩到 35px 的问题。独立 Popup 窗口继续适配 320px 宽度与短窗口。
+
+主密码派生仍为 Argon2id、64 MiB、3 次迭代。该派生过程需要相应工作内存，本轮没有降低加密参数。分页限制的是渲染数量，已解锁的全库数据与搜索仍会随实际库大小增长；本轮没有更改加密信封或同步格式。
+
+## 复现
+
+安装开发依赖和 Playwright Chromium 后，使用合成数据运行：
+
+```powershell
+npm run build
+node scripts/performance-probe.mjs --extension dist --items 2000 --output .artifacts/performance/after.json
+```
+
+本次基线来自之前已打包的 0.1.26，原始记录保存在 `.artifacts/performance/before.json` 和 `after.json`。若已更新默认解压目录，可把保留的旧 ZIP 解压到独立目录重新比较：
+
+```powershell
+Expand-Archive -LiteralPath release/monica-extension-0.1.26.zip -DestinationPath .artifacts/performance/baseline-0.1.26
+node scripts/performance-probe.mjs --extension .artifacts/performance/baseline-0.1.26 --items 2000 --output .artifacts/performance/before.json
+```
+
+探针在临时浏览器配置中创建和移除测试密码库，不连接真实密码源或修改日常浏览器配置。复测请按顺序运行两版并保持相同浏览器版本、数据量和机器负载。`--items` 可设置 100–10,000 条合成登录项，另固定添加 100 条 TOTP。
+
+相关功能回归：
+
+```powershell
+npx vitest run src/core/otp-display-cache.test.ts src/lib/foreground-clock.test.ts src/content/content-lifecycle.test.ts src/i18n/runtime.test.ts
+npx playwright test tests/e2e/performance.spec.ts tests/e2e/locked-autofill.spec.ts tests/e2e/responsive-layout.spec.ts
+node scripts/action-popup-probe.mjs
+```
+
+新增图标时，运行以下维护命令后一起保存字体、许可证及 inventory；普通构建只运行 Node 校验器，无需 Python：
+
+```powershell
+python -m pip install --target .artifacts/font-tools -r scripts/icon-font-requirements.txt
+python scripts/generate-icon-font.py --tools-dir .artifacts/font-tools
+npm run build
+```
+
+完整验证范围及安装方式见 [0.1.27 验证记录](VALIDATION-0.1.27.md)。
+
+## 0.1.32 首页搜索测量（2026-09-13）
+
+本轮在同一台 Windows 机器、Chromium 149.0.7827.55、1440×1000 英文浅色界面中，对 0.1.31 和 0.1.32 顺序采样。每种数据量使用独立浏览器配置，在十条固定样例之外增加 10,000 或 50,000 条合成登录项，按每批 5,000 条导入。未连接真实密码源。
+
+操作耗时从 DOM 的 input/change 事件派发开始，到目标结果出现并完成两次动画帧回调为止。每类操作连续测量五次，下表列中位数；第一条选卡查询包含按需建立搜索索引的时间。数据库切换测量不包括随后异步保存范围偏好的时间。
+
+| 指标 | 条目增量 | 0.1.31 | 0.1.32 |
+| --- | ---: | ---: | ---: |
+| 选卡搜索中位耗时 | 10,000 | 28.7 ms | 16.8 ms |
+| 选卡搜索中位耗时 | 50,000 | 111.5 ms | 15.5 ms |
+| 选卡搜索最大样本耗时 | 50,000 | 132.1 ms | 41.8 ms |
+| 数据库切换中位耗时 | 10,000 | 17.2 ms | 15.8 ms |
+| 数据库切换中位耗时 | 50,000 | 33.3 ms | 34.8 ms |
+| 原列表搜索中位耗时 | 10,000 | 16.6 ms | 16.5 ms |
+| 原列表搜索中位耗时 | 50,000 | 36.4 ms | 41.0 ms |
+| 已解锁页面冷重载 | 10,000 | 1,449.1 ms | 1,439.1 ms |
+| 已解锁页面冷重载 | 50,000 | 6,679.8 ms | 8,013.4 ms |
+| 返回首页后的保留 V8 堆 | 10,000 | 12.68 MiB | 14.11 MiB |
+| 返回首页后的保留 V8 堆 | 50,000 | 34.31 MiB | 40.77 MiB |
+
+选卡器缓存安全摘要、类型和来源的搜索文本，避免每次输入都重新翻译及拼接全库文本。候选项仍每页八条，手动固定卡片最多 24 张。5 万条场景下，本次选卡搜索中位耗时减少约 86%；此结论仅适用于上述搜索路径。新增交互及缓存存在空间开销，本次测量没有证明启动速度或内存占用改善。
+
+页面冷重载各测一次，包含导航驱动、后台数据读取、消息传输及渲染时间，不等于首次解锁耗时。保留 V8 堆在返回首页并请求垃圾回收后测量，不是浏览器总内存。小样本受机器负载、JIT 和垃圾回收影响，不能用作延迟保证。加密参数、全库存储方式和 Native Host 均未因本次首页优化而更改。
+
+原始记录：
+
+- [0.1.31：1 万条](../.artifacts/home-performance/before-0.1.31.json)
+- [0.1.31：5 万条](../.artifacts/home-performance/before-0.1.31-50k.json)
+- [0.1.32：两种数据量](../.artifacts/home-performance/after-0.1.32.json)
+
+复测时请单独运行探针，避免同时构建或运行其他浏览器测试：
+
+```powershell
+node scripts/home-performance-probe.mjs --extension dist --output .artifacts/home-performance/current.json
+```
+
+默认测量 10,000 和 50,000 条；可用 `--items 50000` 单独测量一种数据量。完整功能验证及交付见 [0.1.32 验证记录](VALIDATION-0.1.32.md)。

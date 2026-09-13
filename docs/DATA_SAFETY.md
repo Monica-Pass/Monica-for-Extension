@@ -32,7 +32,8 @@
 
 - 本地密码库：Argon2id v1.3（64 MiB、3 次）和 AES-256-GCM；旧 PBKDF2 信封在密码验证成功后迁移，迁移失败不会破坏旧信封的可读性。
 - 解锁会话：`chrome.storage.session`，仅可信扩展上下文可访问，并自动过期。
-- Provider 凭据、Token、Vault Key、缓存项目和可导出 Passkey 私钥：只持久化于本地加密信封。
+- Provider 凭据、Token、Vault Key、未授权免解锁的缓存项目和可导出 Passkey 私钥：只持久化于本地加密信封。
+- 免解锁填写（逐项可选）：为所选普通登录项保存独立设备密钥加密的用户名、密码和匹配规则副本；不包含 TOTP、Passkey 私钥、笔记或自定义字段。该副本依赖浏览器配置与操作系统保护，锁定 Monica 后仍可通过用户点击填写，关闭标记即撤销。
 - WebDAV：远程地址强制 HTTPS；只有精确的 localhost、127.0.0.0/8 或 `[::1]` 回环开发地址允许 HTTP。凭据请求禁止重定向。
 - Bitwarden：远程地址强制 HTTPS，仅 localhost/127.0.0.1 允许 HTTP。
 - 不执行远程代码；运行时代码、WASM、字体和资源全部包含在发布包内。

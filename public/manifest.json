@@ -2,11 +2,21 @@
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
   "description": "__MSG_extensionDescription__",
-  "version": "0.1.23",
-  "default_locale": "zh_CN",
+  "version": "0.1.36",
+  "default_locale": "en",
   "minimum_chrome_version": "109",
-  "permissions": ["alarms", "cookies", "identity", "nativeMessaging", "storage", "webNavigation"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": [
+    "alarms",
+    "cookies",
+    "identity",
+    "nativeMessaging",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "action": {
     "default_title": "__MSG_actionTitle__",
     "default_popup": "popup.html",
@@ -22,23 +32,44 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["main-world.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "main-world.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true
     },
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/logo-256.png"],
-      "matches": ["http://*/*", "https://*/*"],
+      "resources": [
+        "icons/logo-256.png",
+        "locales/ui-ja.json",
+        "locales/ui-ko.json",
+        "locales/ui-de.json",
+        "locales/ui-es.json",
+        "locales/ui-ru.json",
+        "locales/ui-vi.json"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
       "use_dynamic_url": true
     }
   ],

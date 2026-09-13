@@ -17,7 +17,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("keepass-history-profile"), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     acceptDownloads: true,
     colorScheme: "dark",
     reducedMotion: "reduce",
@@ -91,6 +91,13 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await expect(dialog.getByRole("heading", { name: "字段" })).toBeVisible();
     await expect(dialog.getByText("old.bin", { exact: true })).toBeVisible();
     await expect(dialog.getByText("自定义元数据").locator("xpath=following-sibling::dd")).toHaveText("1 项");
+
+    await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expectNoHorizontalOverflow(dialog);
+    await page.screenshot({ path: testInfo.outputPath("keepass-history-detail-desktop.png") });
+    await page.setViewportSize({ width: 375, height: 1000 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
     const passwordRow = dialog.locator(".keepass-history-fields li").filter({ has: page.getByText("Password", { exact: true }) });
     await expect(passwordRow).toContainText("受保护字段");

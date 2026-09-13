@@ -50,7 +50,7 @@ test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover 
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-attachments-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       acceptDownloads: true,
       colorScheme: "dark",
       reducedMotion: "reduce",

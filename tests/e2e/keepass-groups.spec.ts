@@ -23,7 +23,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("keepass-group-profile"), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     acceptDownloads: true,
     colorScheme: "dark",
     reducedMotion: "reduce",

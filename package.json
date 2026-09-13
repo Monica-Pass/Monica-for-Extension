@@ -1,7 +1,7 @@
 {
   "name": "monica-browser-extension",
   "private": true,
-  "version": "0.1.23",
+  "version": "0.1.36",
   "packageManager": "npm@10.9.2",
   "engines": {
     "node": ">=22.14.0 <25.0.0",
@@ -32,7 +32,8 @@
     "test:popup-action": "npm run build && node scripts/action-popup-probe.mjs",
     "test:e2e": "npm run build && node scripts/action-popup-probe.mjs && playwright test",
     "capture:store-assets": "npm run build && node scripts/capture-store-assets.mjs",
-    "build": "npm run check && vite build && node scripts/build-workers.mjs && node scripts/verify-extension-pages.mjs",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "build": "npm run check && node scripts/verify-icon-font.mjs && vite build && node scripts/build-workers.mjs && node scripts/verify-extension-pages.mjs",
     "build:mdbx2-host": "cargo build --locked --release --manifest-path native/mdbx2-host/Cargo.toml",
     "validate": "npm test && npm run build",
     "package:release": "npm run build && node scripts/package-release.mjs",
@@ -47,7 +48,8 @@
     "verify:supply-chain": "npm run verify:toolchain && npm run verify:lockfile && npm run verify:workflows && npm run verify:mdbx2-host",
     "release:check": "npm run verify:supply-chain && npm run audit:production && npm run test:mdbx2-host && npm run test:windows-hello:host && npm run lint:mdbx2-host && npm run validate && npm run test:bitwarden-interop && npm run test:security && npm run test:e2e && npm run package:release && npm run package:verify",
     "release:windows": "npm run release:check && npm run package:mdbx2-host && npm run package:verify:mdbx2-host",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "performance:probe": "node scripts/performance-probe.mjs"
   },
   "dependencies": {
     "@m3e/web": "^2.5.8",
@@ -78,7 +80,7 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "@xmldom/xmldom": "0.8.13",
+    "@xmldom/xmldom": "0.8.15",
     "nanoid": ">=3.3.18"
   }
 }

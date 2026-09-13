@@ -17,7 +17,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     acceptDownloads: true,
     colorScheme: "dark",
     reducedMotion: "reduce",
@@ -100,6 +100,13 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await expectMinimumTarget(closeButton);
     await expectCentered(closeButton, closeButton.locator("m3e-icon"));
     await expectVisibleTargetsAtLeast44(dialog);
+
+    await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expectNoHorizontalOverflow(dialog);
+    await page.screenshot({ path: testInfo.outputPath("keepass-attachment-detail-desktop.png") });
+    await page.setViewportSize({ width: 375, height: 1000 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
     const initialDownload = page.waitForEvent("download");
     await dialog.getByRole("button", { name: "下载 original.bin" }).click();

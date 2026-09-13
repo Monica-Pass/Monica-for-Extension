@@ -1,3 +1,4 @@
+import { tr, locale } from "../../i18n";
 import type { Mdbx2CollectionSummary } from "./native-contract";
 
 export interface Mdbx2CollectionPresentation {
@@ -19,24 +20,24 @@ export function presentMdbx2Collections(
     const cached = cache.get(item.collectionId);
     if (cached) return cached;
     if (visiting.has(item.collectionId)) {
-      return { path: item.title, parentPath: "层级异常", depth: 0, hierarchyState: "cycle" };
+      return { path: item.title, parentPath: tr('层级异常'), depth: 0, hierarchyState: "cycle" };
     }
     const nextVisiting = new Set(visiting).add(item.collectionId);
     const parentId = item.groupId;
     if (!parentId) {
-      const result = { path: item.title, parentPath: "顶层", depth: 0, hierarchyState: "ready" as const };
+      const result = { path: item.title, parentPath: tr('顶层'), depth: 0, hierarchyState: "ready" as const };
       cache.set(item.collectionId, result);
       return result;
     }
     const parent = byId.get(parentId);
     if (!parent) {
-      const result = { path: item.title, parentPath: "父级未加载", depth: 0, hierarchyState: "parent-unavailable" as const };
+      const result = { path: item.title, parentPath: tr('父级未加载'), depth: 0, hierarchyState: "parent-unavailable" as const };
       cache.set(item.collectionId, result);
       return result;
     }
     const parentPresentation = resolve(parent, nextVisiting);
     if (parentPresentation.hierarchyState === "cycle") {
-      return { path: item.title, parentPath: "层级异常", depth: 0, hierarchyState: "cycle" };
+      return { path: item.title, parentPath: tr('层级异常'), depth: 0, hierarchyState: "cycle" };
     }
     const result = {
       path: `${parentPresentation.path} / ${item.title}`,
@@ -50,7 +51,7 @@ export function presentMdbx2Collections(
 
   return visible
     .map((item) => ({ item, ...resolve(item) }))
-    .sort((left, right) => left.path.localeCompare(right.path, "zh-CN", { sensitivity: "base" }) || left.item.collectionId.localeCompare(right.item.collectionId));
+    .sort((left, right) => left.path.localeCompare(right.path, locale.value, { sensitivity: "base" }) || left.item.collectionId.localeCompare(right.item.collectionId));
 }
 
 export function mdbx2CollectionDescendantIds(

@@ -7,7 +7,7 @@ test("Windows Hello remains manager-only and exposes a truthful device-key recov
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("windows-hello-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");

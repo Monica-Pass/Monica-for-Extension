@@ -1,6 +1,9 @@
 import { JSDOM } from "jsdom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { passkeyPromptRootForTest, renderPasskeyPrompt } from "./passkey-prompt";
+
+beforeEach(() => vi.stubGlobal("chrome", { runtime: { getURL: (path: string) => `chrome-extension://test/${path}` } }));
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Passkey confirmation prompt", () => {
   it("announces Windows Hello before a UV-required operation", () => {
@@ -15,7 +18,7 @@ describe("Passkey confirmation prompt", () => {
     dom.window.close();
   });
 
-  it("uses a stable vector icon and confirms an explicit create request", async () => {
+  it("uses the original Monica logo and confirms an explicit create request", async () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
     const accept = vi.fn().mockResolvedValue(undefined);
     renderPasskeyPrompt({
@@ -35,7 +38,7 @@ describe("Passkey confirmation prompt", () => {
     const host = dom.window.document.getElementById("monica-passkey-prompt-host")!;
     expect(host.shadowRoot).toBeNull();
     const shadow = passkeyPromptRootForTest(host)!;
-    expect(shadow.querySelector(".brand-icon svg")).not.toBeNull();
+    expect(shadow.querySelector<HTMLImageElement>(".header .brand-logo")?.src).toBe("chrome-extension://test/icons/logo-256.png");
     expect(shadow.textContent).not.toContain("🔑");
     (shadow.querySelector("button.primary") as HTMLButtonElement).click();
     await vi.waitFor(() => expect(accept).toHaveBeenCalledWith(undefined, "local"));
@@ -157,7 +160,7 @@ describe("Passkey confirmation prompt", () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
     const host = renderPasskeyPrompt({ candidateId: "candidate", operation: "create", rpId: "passkey.example.test", rpName: "Example", origin: "https://passkey.example.test", userName: "joy", saveTargets: [{ providerId: "local", name: "Local", sourceMode: "browser-local" }], defaultSaveTargetId: "local", credentials: [], expiresAt: Date.now() + 10_000 }, vi.fn(), vi.fn(), dom.window.document, { allowUntrustedEvents: true });
     const styles = passkeyPromptRootForTest(host)!.querySelector("style")!.textContent!;
-    expect(styles).toContain(".brand-icon svg, .icon-button svg");
+    expect(styles).toContain(".icon-button svg");
     expect(styles).toContain("display: grid; place-items: center");
     expect(styles).toContain("font: 0.875rem/1.45");
     dom.window.close();

@@ -1,3 +1,5 @@
+import type { HomePreferences } from "./home-preferences";
+
 export type VaultItemKind =
   | "login"
   | "secure-note"
@@ -83,7 +85,7 @@ export interface LoginItem extends VaultItemBase {
   uris: string[];
   uriRules?: LoginUriRule[];
   totpSecret?: string;
-  /** Canonical extension link; Android boundPasswordId is resolved to this on import. */
+  /** Android boundPasswordId resolves to this link; empty means explicitly unlinked, absent permits legacy lookup. */
   boundTotpItemId?: string;
   customFields: SecureCustomField[];
   /** Encrypted local marker: this Bitwarden Cipher completed the Android-compatible field adapter. */
@@ -429,7 +431,10 @@ export interface VaultState {
     autofillBlockedHosts: string[];
     saveBlockedHosts: string[];
     autofillBlockedFieldSignatures: BlockedFieldSignatureRecord[];
+    /** Explicit grants on this installation; never imported from a provider. */
+    lockedAutofillItemIds?: string[];
     windowsHello?: WindowsHelloBinding;
+    home?: HomePreferences;
   };
 }
 

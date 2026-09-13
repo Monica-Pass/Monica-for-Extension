@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Менеджер паролей Monica",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "Зашифрованное хранилище с автозаполнением и Passkey. Поддержка Monica Android, KeePass и Bitwarden.",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Автозаполнение Monica",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

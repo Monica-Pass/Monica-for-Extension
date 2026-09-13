@@ -28,7 +28,7 @@ test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route C
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-folders-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },

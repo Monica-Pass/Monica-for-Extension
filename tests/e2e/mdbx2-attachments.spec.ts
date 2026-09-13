@@ -17,7 +17,7 @@ async function launchExtension(testInfo: TestInfo, profileName: string, options:
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath(profileName), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     colorScheme: options.dark ? "dark" : "light",
     reducedMotion: options.reducedMotion,
     viewport: options.viewport,

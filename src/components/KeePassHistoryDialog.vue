@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr, locale } from '../i18n';
+
 import { computed, nextTick, onMounted, ref } from "vue";
 import type { ProviderAccount, VaultItem } from "../core/model";
 import type {
@@ -155,15 +157,15 @@ async function restoreHistory() {
     confirmRestore.value = false;
     clearSelection();
     emit("changed");
-    const message = `已恢复 KeePass 历史版本，并保留 ${result.historyCount} 个历史状态。需要导出 KDBX 才会永久保存。`;
+    const message = tr('已恢复 KeePass 历史版本，并保留 {0} 个历史状态。需要导出 KDBX 才会永久保存。', { 0: result.historyCount });
     status.value = sync.warnings.length ? `${message} ${sync.warnings.join(" ")}` : message;
     emit("notice", message);
     await loadHistory(true);
     await nextTick();
-    dialogRoot.value?.querySelector<HTMLElement>('[aria-label="刷新 KeePass 历史"]')?.focus();
+    dialogRoot.value?.querySelector<HTMLElement>('[data-refresh-history]')?.focus();
   } catch (cause) {
     error.value = committed
-      ? `历史版本已经恢复，但刷新 Monica 密码库失败。使用同一按钮重试不会重复恢复：${errorMessage(cause)}`
+      ? tr('历史版本已经恢复，但刷新 Monica 密码库失败。使用同一按钮重试不会重复恢复：{0}', { 0: errorMessage(cause) })
       : errorMessage(cause);
   } finally {
     busy.value = "";
@@ -190,9 +192,9 @@ function closeDialog() {
 }
 
 function formatDate(value?: string): string {
-  if (!value) return "时间未知";
+  if (!value) return tr('时间未知');
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : "时间未知";
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(locale.value) : tr('时间未知');
 }
 
 function formatBytes(bytes: number): string {
@@ -202,7 +204,7 @@ function formatBytes(bytes: number): string {
 }
 
 function summaryText(item: KeePassHistorySummary): string {
-  return `${item.fieldCount} 个字段 · ${item.protectedFieldCount} 个受保护 · ${item.attachmentCount} 个附件`;
+  return tr('{0} 个字段 · {1} 个受保护 · {2} 个附件', { 0: item.fieldCount, 1: item.protectedFieldCount, 2: item.attachmentCount });
 }
 
 function appendUnique(current: KeePassHistorySummary[], incoming: KeePassHistorySummary[]): KeePassHistorySummary[] {
@@ -220,15 +222,15 @@ function errorMessage(cause: unknown): string {
     <section ref="dialogRoot" class="editor-dialog keepass-history-dialog" role="dialog" aria-modal="true" :aria-labelledby="'keepass-history-title'">
       <header>
         <div>
-          <h2 id="keepass-history-title">KeePass 历史 · {{ item.title }}</h2>
-          <p>历史值按字段逐项读取；恢复前会先保存当前版本，完成后需要导出 KDBX。</p>
+          <h2 id="keepass-history-title">{{ tr('KeePass 历史 · {0}', { 0: item.title }) }}</h2>
+          <p>{{ tr('历史值按字段逐项读取；恢复前会先保存当前版本，完成后需要导出 KDBX。') }}</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭 KeePass 历史" :disabled="restoreBusy" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭 KeePass 历史')" :disabled="restoreBusy" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
-      <div class="keepass-history-boundary"><m3e-icon name="encrypted"></m3e-icon><span>仅 Monica 管理页能够读取历史。Popup 和网页内容脚本无法访问历史字段、附件信息或恢复操作。</span></div>
+      <div class="keepass-history-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('仅 Monica 管理页能够读取历史。Popup 和网页内容脚本无法访问历史字段、附件信息或恢复操作。') }}</span></div>
 
-      <label v-if="providers.length > 1" class="keepass-history-provider"><span>历史来源</span><select v-model="selectedProviderId" :disabled="Boolean(busy)" @change="changeProvider"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
+      <label v-if="providers.length > 1" class="keepass-history-provider"><span>{{ tr('历史来源') }}</span><select v-model="selectedProviderId" :disabled="Boolean(busy)" @change="changeProvider"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
 
       <div v-if="error" class="keepass-history-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span></div>
       <p class="keepass-history-status" aria-live="polite">{{ status }}</p>
@@ -236,64 +238,64 @@ function errorMessage(cause: unknown): string {
       <div class="keepass-history-layout">
         <section class="keepass-history-list-shell" aria-labelledby="keepass-history-list-heading">
           <div class="keepass-history-section-heading">
-            <div><strong id="keepass-history-list-heading">历史版本</strong><small>{{ history.length }} / {{ totalCount }} 个已加载</small></div>
-            <m3e-icon-button aria-label="刷新 KeePass 历史" :disabled="Boolean(busy)" @click="loadHistory(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
+            <div><strong id="keepass-history-list-heading">{{ tr('历史版本') }}</strong><small>{{ tr('{0} / {1} 个已加载', { 0: history.length, 1: totalCount }) }}</small></div>
+            <m3e-icon-button data-refresh-history :aria-label="tr('刷新 KeePass 历史')" :disabled="Boolean(busy)" @click="loadHistory(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
           </div>
-          <div v-if="busy === 'list' && !loaded" class="keepass-history-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取历史摘要…</span></div>
-          <div v-else-if="loaded && !history.length" class="keepass-history-empty"><m3e-icon name="history_toggle_off"></m3e-icon><span>此 KeePass 条目还没有历史版本。</span></div>
+          <div v-if="busy === 'list' && !loaded" class="keepass-history-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取历史摘要…') }}</span></div>
+          <div v-else-if="loaded && !history.length" class="keepass-history-empty"><m3e-icon name="history_toggle_off"></m3e-icon><span>{{ tr('此 KeePass 条目还没有历史版本。') }}</span></div>
           <ol v-else class="keepass-history-list">
             <li v-for="(historyItem, index) in history" :key="historyItem.historyId">
               <button type="button" class="keepass-history-row" :class="{ selected: selectedHistoryId === historyItem.historyId }" :aria-expanded="selectedHistoryId === historyItem.historyId" :disabled="restoreBusy" @click="selectHistory(historyItem)">
                 <span class="keepass-history-icon"><m3e-icon name="history"></m3e-icon></span>
-                <span class="keepass-history-copy"><strong>{{ formatDate(historyItem.modifiedAt) }}</strong><small>{{ index === 0 ? '最近的历史版本' : `更早版本 ${index + 1}` }}</small><small>{{ summaryText(historyItem) }}</small></span>
+                <span class="keepass-history-copy"><strong>{{ formatDate(historyItem.modifiedAt) }}</strong><small>{{ index === 0 ? tr('最近的历史版本') : tr('更早版本 {0}', { 0: index + 1 }) }}</small><small>{{ summaryText(historyItem) }}</small></span>
                 <m3e-icon name="chevron_right"></m3e-icon>
               </button>
             </li>
           </ol>
-          <div v-if="nextCursor" class="keepass-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(busy)" @click="loadHistory(false)">加载更多历史</m3e-button></div>
+          <div v-if="nextCursor" class="keepass-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(busy)" @click="loadHistory(false)">{{ tr('加载更多历史') }}</m3e-button></div>
         </section>
 
         <section class="keepass-history-detail-shell" aria-labelledby="keepass-history-detail-heading">
-          <div class="keepass-history-section-heading"><div><strong id="keepass-history-detail-heading">版本详情</strong><small>字段值默认隐藏</small></div></div>
-          <div v-if="busy === 'detail'" class="keepass-history-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取版本结构…</span></div>
-          <div v-else-if="!detail" class="keepass-history-empty"><m3e-icon name="touch_app"></m3e-icon><span>选择左侧历史版本查看字段和附件摘要。</span></div>
+          <div class="keepass-history-section-heading"><div><strong id="keepass-history-detail-heading">{{ tr('版本详情') }}</strong><small>{{ tr('字段值默认隐藏') }}</small></div></div>
+          <div v-if="busy === 'detail'" class="keepass-history-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取版本结构…') }}</span></div>
+          <div v-else-if="!detail" class="keepass-history-empty"><m3e-icon name="touch_app"></m3e-icon><span>{{ tr('选择左侧历史版本查看字段和附件摘要。') }}</span></div>
           <div v-else class="keepass-history-detail">
             <dl class="keepass-history-facts">
-              <div><dt>修改时间</dt><dd>{{ formatDate(detail.modifiedAt) }}</dd></div>
-              <div><dt>标签</dt><dd>{{ detail.tagCount }} 项</dd></div>
-              <div><dt>自定义元数据</dt><dd>{{ detail.customDataCount }} 项</dd></div>
-              <div><dt>AutoType</dt><dd>{{ detail.autoType.enabled ? '启用' : '关闭' }} · {{ detail.autoType.itemCount }} 条规则</dd></div>
-              <div><dt>质量检查</dt><dd>{{ detail.qualityCheck === undefined ? '未设置' : detail.qualityCheck ? '启用' : '关闭' }}</dd></div>
-              <div><dt>到期</dt><dd>{{ detail.expires ? formatDate(detail.expiryAt) : '永不过期' }}</dd></div>
+              <div><dt>{{ tr('修改时间') }}</dt><dd>{{ formatDate(detail.modifiedAt) }}</dd></div>
+              <div><dt>{{ tr('标签') }}</dt><dd>{{ tr('{0} 项', { 0: detail.tagCount }) }}</dd></div>
+              <div><dt>{{ tr('自定义元数据') }}</dt><dd>{{ tr('{0} 项', { 0: detail.customDataCount }) }}</dd></div>
+              <div><dt>AutoType</dt><dd>{{ tr('{0} · {1} 条规则', { 0: detail.autoType.enabled ? tr('启用') : tr('关闭'), 1: detail.autoType.itemCount }) }}</dd></div>
+              <div><dt>{{ tr('质量检查') }}</dt><dd>{{ detail.qualityCheck === undefined ? tr('未设置') : detail.qualityCheck ? tr('启用') : tr('关闭') }}</dd></div>
+              <div><dt>{{ tr('到期') }}</dt><dd>{{ detail.expires ? formatDate(detail.expiryAt) : tr('永不过期') }}</dd></div>
             </dl>
 
             <section class="keepass-history-fields" aria-labelledby="keepass-history-fields-heading">
-              <h3 id="keepass-history-fields-heading">字段</h3>
+              <h3 id="keepass-history-fields-heading">{{ tr('字段') }}</h3>
               <ul>
                 <li v-for="field in detail.fields" :key="field.fieldId">
-                  <div class="keepass-history-field-head"><span><strong>{{ field.name }}</strong><small>{{ field.protected ? '受保护字段' : '普通字段' }} · {{ formatBytes(field.sizeBytes) }}<template v-if="field.nameTruncated"> · 名称仅显示摘要</template></small></span><m3e-button variant="text" type="button" :disabled="Boolean(busy) && busy !== `field:${field.fieldId}`" @click="toggleField(field.fieldId)"><m3e-icon slot="icon" :name="revealedFields[field.fieldId] ? 'visibility_off' : field.protected ? 'lock_open' : 'visibility'"></m3e-icon>{{ busy === `field:${field.fieldId}` ? '读取中…' : revealedFields[field.fieldId] ? '隐藏' : '查看' }}</m3e-button></div>
+                  <div class="keepass-history-field-head"><span><strong>{{ field.name }}</strong><small>{{ field.protected ? tr('受保护字段') : tr('普通字段') }} · {{ formatBytes(field.sizeBytes) }}<template v-if="field.nameTruncated">{{ tr('· 名称仅显示摘要') }}</template></small></span><m3e-button variant="text" type="button" :disabled="Boolean(busy) && busy !== `field:${field.fieldId}`" @click="toggleField(field.fieldId)"><m3e-icon slot="icon" :name="revealedFields[field.fieldId] ? 'visibility_off' : field.protected ? 'lock_open' : 'visibility'"></m3e-icon>{{ busy === `field:${field.fieldId}` ? tr('读取中…') : revealedFields[field.fieldId] ? tr('隐藏') : tr('查看') }}</m3e-button></div>
                   <pre v-if="revealedFields[field.fieldId]" class="keepass-history-field-value">{{ revealedFields[field.fieldId].value }}</pre>
                 </li>
               </ul>
             </section>
 
             <section class="keepass-history-attachments" aria-labelledby="keepass-history-attachments-heading">
-              <h3 id="keepass-history-attachments-heading">附件摘要</h3>
-              <p v-if="!detail.attachments.length">此版本没有附件。</p>
-              <ul v-else><li v-for="attachment in detail.attachments" :key="`${attachment.fileName}:${attachment.sizeBytes}`"><m3e-icon name="attach_file"></m3e-icon><span><strong>{{ attachment.fileName }}</strong><small>{{ formatBytes(attachment.sizeBytes) }} · {{ attachment.protected ? '受保护' : '普通附件' }}<template v-if="attachment.fileNameTruncated"> · 名称仅显示摘要</template></small></span></li></ul>
+              <h3 id="keepass-history-attachments-heading">{{ tr('附件摘要') }}</h3>
+              <p v-if="!detail.attachments.length">{{ tr('此版本没有附件。') }}</p>
+              <ul v-else><li v-for="attachment in detail.attachments" :key="`${attachment.fileName}:${attachment.sizeBytes}`"><m3e-icon name="attach_file"></m3e-icon><span><strong>{{ attachment.fileName }}</strong><small>{{ formatBytes(attachment.sizeBytes) }} · {{ attachment.protected ? tr('受保护') : tr('普通附件') }}<template v-if="attachment.fileNameTruncated">{{ tr('· 名称仅显示摘要') }}</template></small></span></li></ul>
             </section>
 
-            <div v-if="!confirmRestore" class="keepass-history-restore-action"><m3e-button variant="tonal" type="button" :disabled="Boolean(busy)" @click="prepareRestore"><m3e-icon slot="icon" name="restore"></m3e-icon>准备恢复此版本</m3e-button></div>
+            <div v-if="!confirmRestore" class="keepass-history-restore-action"><m3e-button variant="tonal" type="button" :disabled="Boolean(busy)" @click="prepareRestore"><m3e-icon slot="icon" name="restore"></m3e-icon>{{ tr('准备恢复此版本') }}</m3e-button></div>
             <div v-else class="keepass-history-restore-confirmation">
               <m3e-icon name="warning"></m3e-icon>
-              <span><strong>恢复 {{ formatDate(selectedSummary?.modifiedAt) }} 的版本？</strong><small>当前字段、附件、标签、AutoType 和自定义元数据将被替换；当前版本会先加入历史。修改只在内存中，仍需导出 KDBX。</small></span>
-              <div><m3e-button variant="text" type="button" :disabled="restoreBusy" @click="confirmRestore = false">取消</m3e-button><m3e-button data-confirm-history-restore class="keepass-history-confirm-restore" variant="tonal" type="button" :disabled="restoreBusy" @click="restoreHistory">{{ restoreBusy ? '恢复并同步中…' : '确认恢复此版本' }}</m3e-button></div>
+              <span><strong>{{ tr('恢复 {0} 的版本？', { 0: formatDate(selectedSummary?.modifiedAt) }) }}</strong><small>{{ tr('当前字段、附件、标签、AutoType 和自定义元数据将被替换；当前版本会先加入历史。修改只在内存中，仍需导出 KDBX。') }}</small></span>
+              <div><m3e-button variant="text" type="button" :disabled="restoreBusy" @click="confirmRestore = false">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-history-restore class="keepass-history-confirm-restore" variant="tonal" type="button" :disabled="restoreBusy" @click="restoreHistory">{{ restoreBusy ? tr('恢复并同步中…') : tr('确认恢复此版本') }}</m3e-button></div>
             </div>
           </div>
         </section>
       </div>
 
-      <footer><span>字段值仅在本对话框中按需解密。</span><m3e-button variant="text" type="button" :disabled="restoreBusy" @click="closeDialog">关闭</m3e-button></footer>
+      <footer><span>{{ tr('字段值仅在本对话框中按需解密。') }}</span><m3e-button variant="text" type="button" :disabled="restoreBusy" @click="closeDialog">{{ tr('关闭') }}</m3e-button></footer>
     </section>
   </div>
 </template>

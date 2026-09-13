@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "Monica パスワードマネージャー",
+    "description": "Extension name shown in the browser and store."
+  },
+  "extensionDescription": {
+    "message": "自動入力と Passkey に対応する暗号化保管庫。Monica Android、KeePass、Bitwarden のデータを利用できます。",
+    "description": "Short description of the extension’s purpose."
+  },
+  "actionTitle": {
+    "message": "Monica 自動入力",
+    "description": "Accessible toolbar title and tooltip."
+  }
+}

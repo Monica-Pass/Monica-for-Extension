@@ -6,7 +6,7 @@ test("popup blocks and restores the focused field through the encrypted backgrou
   let context: BrowserContext | undefined;
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("field-policy-profile"), {
-      channel: "chromium", headless: true, viewport: { width: 390, height: 720 },
+      channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 390, height: 720 },
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");

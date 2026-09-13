@@ -70,6 +70,43 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it.each(["bind", "replace", "unlink"] as const)("syncs an OTP binding edit (%s) through an encrypted Android snapshot without reverting or modifying the caller", async action => {
+    const backupPassword = "synthetic-otp-binding-backup";
+    const configPath = "monica_config/page_adjustment_settings.json";
+    const configBytes = strToU8('{ "vaultOverviewEnabled":true, "vaultOverviewConfig":"{\\"scope\\":\\"local\\",\\"collapsed\\":[\\"DATABASES\\"]}", "future": [1,null] }\n');
+    const otpPaths = [7, 8].map(id => `folders/_root/authenticators/totp_${id}_1700000000000.json`);
+    const entries: Record<string, Uint8Array> = { ...unzipSync(androidZip()), [configPath]: configBytes };
+    for (const [index, path] of otpPaths.entries()) entries[path] = strToU8(JSON.stringify({
+      id: 7 + index, itemType: "TOTP", title: `Authenticator ${index}`, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000,
+      itemData: JSON.stringify({ secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", otpType: "HOTP", counter: 17, algorithm: "SHA1", digits: 6, period: 30,
+        boundPasswordId: index === 0 && action !== "bind" ? 42 : null, futureAndroidField: { keep: true } })
+    }));
+    const mock = server(await encryptAndroidBackup(zipSync(entries), backupPassword), multiStatus("monica_backup_20260715_020202.enc.zip"));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const first = await provider.sync(account({ backupPassword }), { now: "2026-09-13T07:00:00.000Z", localItems: [] });
+    const authenticators = first.items.filter(item => item.kind === "totp");
+    const targetId = action === "unlink" ? "" : authenticators[action === "replace" ? 1 : 0]!.id;
+    const localItems = first.items.map(item => item.kind === "login" ? { ...item, boundTotpItemId: targetId, updatedAt: "2026-09-13T07:01:00.000Z" } : item);
+    const snapshot = structuredClone(localItems);
+    const result = await provider.sync(account(first.accountPatch?.config), { now: "2026-09-13T07:02:00.000Z", localItems });
+    expect(result.conflicts).toEqual([]);
+    expect(localItems).toEqual(snapshot);
+    expect(result.items.find(item => item.kind === "login")?.boundTotpItemId).toBe(targetId);
+    for (const [index, item] of result.items.filter(item => item.kind === "totp").entries()) {
+      expect(item.boundPasswordId).toBe(index === (action === "replace" ? 1 : 0) && action !== "unlink" ? 42 : undefined);
+      expect(item.counter).toBe(17);
+    }
+    const output = mock.uploaded()!;
+    expect(isAndroidEncryptedBackup(output)).toBe(true);
+    const decrypted = await decryptAndroidBackup(output, backupPassword);
+    expect(unzipSync(decrypted)[configPath]).toEqual(configBytes);
+    const secondRemote = server(output, multiStatus(result.accountPatch?.config?.lastFileName as string, '"uploaded"'));
+    const reopened = await new MonicaWebDavProvider(secondRemote.fetcher).sync(account(result.accountPatch?.config), { now: "2026-09-13T07:03:00.000Z", localItems: result.items });
+    expect(reopened.conflicts).toEqual([]);
+    expect(reopened.items.find(item => item.kind === "login")?.boundTotpItemId).toBe(targetId || undefined);
+    expect(secondRemote.uploaded()).toBeUndefined();
+  });
+
   it("lists Android generator history from the latest backup", async () => {
     const path = "Monica_20260824_120000_generated_history.json";
     const history = [{ password: "generated-secret", timestamp: 1_700_000_003_000, domain: "example.com", username: "joy", type: "AUTOFILL" }];

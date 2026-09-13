@@ -8,7 +8,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("manager-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
@@ -106,7 +106,7 @@ test("manager rotates the master password and atomically restores an encrypted f
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("lifecycle-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       acceptDownloads: true,
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
@@ -183,7 +183,7 @@ async function launchManager(testInfo: TestInfo, profileName: string): Promise<{
   const extensionPath = path.resolve("dist");
   const context = await chromium.launchPersistentContext(testInfo.outputPath(profileName), {
     channel: "chromium",
-    headless: true,
+    headless: true, locale: "zh-CN",
     acceptDownloads: true,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
   });

@@ -21,7 +21,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-diagnostics-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },

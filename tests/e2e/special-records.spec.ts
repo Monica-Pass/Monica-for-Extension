@@ -13,7 +13,7 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("special-records-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");

@@ -88,6 +88,7 @@ export class RecordedBitwardenContractServer {
   };
   readonly signedAuthorizationHeaders: Array<string | null> = [];
   readonly events: string[] = [];
+  passkeyPrivateKeyPkcs8 = "";
 
   private readonly ciphers = new Map<string, Record<string, unknown>>();
   private readonly attachmentBodies = new Map<string, Uint8Array>();
@@ -155,6 +156,7 @@ export class RecordedBitwardenContractServer {
     this.protectedPrivateKey = "";
     this.organizationKeyCipher = "";
     this.expectedPasswordHash = "";
+    this.passkeyPrivateKeyPkcs8 = "";
   }
 
   private async initializeAuthentication(): Promise<void> {
@@ -223,6 +225,9 @@ export class RecordedBitwardenContractServer {
   }
 
   private async initializeCiphers(): Promise<void> {
+    const passkeyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    this.passkeyPrivateKeyPkcs8 = bytesToBase64(new Uint8Array(await crypto.subtle.exportKey("pkcs8", passkeyPair.privateKey)));
+    const passkeyPublicKey = bytesToBase64(new Uint8Array(await crypto.subtle.exportKey("spki", passkeyPair.publicKey)));
     const personalLogin: LoginItem = {
       ...createLoginItem({
         title: "Personal Contract Login",
@@ -251,8 +256,8 @@ export class RecordedBitwardenContractServer {
       userName: "personal-user",
       userDisplayName: "Personal User",
       algorithm: -7,
-      publicKey: "recorded-spki-material",
-      privateKeyPkcs8: "recorded-pkcs8-material",
+      publicKey: passkeyPublicKey,
+      privateKeyPkcs8: this.passkeyPrivateKeyPkcs8,
       signCount: 4,
       discoverable: true,
       sourceMode: "bitwarden"

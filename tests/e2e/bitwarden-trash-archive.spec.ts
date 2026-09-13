@@ -19,7 +19,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       viewport: { width: 375, height: 1100 },
       colorScheme: "dark",
       reducedMotion: "reduce",
@@ -44,7 +44,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
     await openMobileSection(manager, /^归档/);
     await expect(manager.locator(".item-card").filter({ hasText: "Archived account" })).toBeVisible();
     await expect(manager.getByRole("button", { name: "取消归档 Archived account" })).toBeVisible();
-    await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "8px");
+    await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "12px");
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     await expectNoHorizontalOverflow(manager);
     await expectNoGradients(manager.locator(".lifecycle-page"));
@@ -84,7 +84,7 @@ test("manager requires explicit confirmation before adopting an authenticated em
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("p"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       viewport: { width: 375, height: 1100 },
       colorScheme: "dark",
       reducedMotion: "reduce",

@@ -10,7 +10,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-status-ui-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1000 },

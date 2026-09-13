@@ -21,7 +21,7 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("mdbx2-collections-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },

@@ -5,9 +5,42 @@ coverage/
 playwright-report/
 test-results/
 .tmp/
+.artifacts/
 .codex-tasks/
 .slim/deepwork/
 *.log
 *.tsbuildinfo
 .DS_Store
 native/mdbx2-host/target/
+
+# Local credentials, password databases and browser profiles are never source assets.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.monica/
+/local-data/
+/backups/
+/browser-profile*/
+/chrome-profile*/
+/edge-profile*/
+**/User Data/
+**/Local Extension Settings/
+**/Local Storage/
+**/IndexedDB/
+*.maFile
+*.maFile.json
+*.kdbx
+*.keyx
+*.mdbx
+*.mdbx2
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.pfx
+*.p12
+/vault*.json
+/monica-backup-*.json
+/monica-backup-*.enc

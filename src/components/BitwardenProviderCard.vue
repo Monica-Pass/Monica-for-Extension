@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr, locale } from '../i18n';
+
 import { computed, ref } from "vue";
 import type { ProviderAccount, ProviderConflictResolution, ProviderConflictSummary } from "../core/model";
 
@@ -64,64 +66,64 @@ const stateClass = computed(() => {
 });
 
 const stateLabel = computed(() => {
-  if (!authenticated.value) return "已退出";
-  if (props.activeSync) return "正在同步";
-  if (conflictCount.value > 0) return `${conflictCount.value} 个冲突`;
-  if (props.provider.requiresEmptyRemoteConfirmation) return "等待空库确认";
-  if (errors.value.length || queueFailed.value > 0) return "需要处理";
-  if (queueRecovering.value > 0) return "正在恢复";
-  if (queuePending.value > 0) return `${queuePending.value} 项待同步`;
-  if (compatibilityCount.value > 0) return "兼容模式";
-  return props.provider.lastSyncAt ? "已同步" : "已连接";
+  if (!authenticated.value) return tr('已退出');
+  if (props.activeSync) return tr('正在同步');
+  if (conflictCount.value > 0) return tr('{0} 个冲突', { 0: conflictCount.value });
+  if (props.provider.requiresEmptyRemoteConfirmation) return tr('等待空库确认');
+  if (errors.value.length || queueFailed.value > 0) return tr('需要处理');
+  if (queueRecovering.value > 0) return tr('正在恢复');
+  if (queuePending.value > 0) return tr('{0} 项待同步', { 0: queuePending.value });
+  if (compatibilityCount.value > 0) return tr('兼容模式');
+  return props.provider.lastSyncAt ? tr('已同步') : tr('已连接');
 });
 
 const lastSyncLabel = computed(() => {
-  if (!props.provider.lastSyncAt) return "尚未同步";
+  if (!props.provider.lastSyncAt) return tr('尚未同步');
   const timestamp = new Date(props.provider.lastSyncAt);
-  return Number.isNaN(timestamp.getTime()) ? "时间不可用" : timestamp.toLocaleString();
+  return Number.isNaN(timestamp.getTime()) ? tr('时间不可用') : timestamp.toLocaleString(locale.value);
 });
 
 const serverLabel = computed(() => {
   const raw = typeof props.provider.config.vaultUrl === "string" ? props.provider.config.vaultUrl.trim() : "";
-  if (!raw) return "Bitwarden 服务";
+  if (!raw) return tr('Bitwarden 服务');
   try {
     const url = new URL(raw);
-    return url.host || "Bitwarden 服务";
+    return url.host || tr('Bitwarden 服务');
   } catch {
-    return raw.replace(/^https?:\/\//i, "").split("/")[0] || "Bitwarden 服务";
+    return raw.replace(/^https?:\/\//i, "").split("/")[0] || tr('Bitwarden 服务');
   }
 });
 
 const emailLabel = computed(() => {
   const value = typeof props.provider.config.email === "string" ? props.provider.config.email.trim() : "";
-  return value || "未显示账号邮箱";
+  return value || tr('未显示账号邮箱');
 });
 
 const visibleConflicts = computed(() => conflictsExpanded.value ? props.conflicts : props.conflicts.slice(0, 2));
 
 function queueLabel(): string {
-  if (!props.queue) return "队列状态不可用";
-  if (!queueHasActivity.value) return "没有待处理操作";
+  if (!props.queue) return tr('队列状态不可用');
+  if (!queueHasActivity.value) return tr('没有待处理操作');
   const parts: string[] = [];
-  if (queuePending.value) parts.push(`${queuePending.value} 待同步`);
-  if (queueRecovering.value) parts.push(`${queueRecovering.value} 恢复中`);
-  if (queueFailed.value) parts.push(`${queueFailed.value} 失败`);
+  if (queuePending.value) parts.push(tr('{0} 待同步', { 0: queuePending.value }));
+  if (queueRecovering.value) parts.push(tr('{0} 恢复中', { 0: queueRecovering.value }));
+  if (queueFailed.value) parts.push(tr('{0} 失败', { 0: queueFailed.value }));
   return parts.join(" · ");
 }
 
 function queueDetail(): string {
-  if (!props.queue) return "后台未返回队列详情";
-  if (queueFailed.value) return `失败操作最高已尝试 ${Math.max(1, props.queue.maxAttempts || 1)} 次；失败项会保留并等待手动重试，不会静默覆盖远端数据。`;
-  if (queueRecovering.value) return "正在核对远端响应，避免 MV3 Service Worker 重启造成重复写入。";
-  if (queuePending.value) return "本地修改已加密排队，完成确认前不会宣称同步成功。";
-  return "队列已清空";
+  if (!props.queue) return tr('后台未返回队列详情');
+  if (queueFailed.value) return tr('失败操作最高已尝试 {0} 次；失败项会保留并等待手动重试，不会静默覆盖远端数据。', { 0: Math.max(1, props.queue.maxAttempts || 1) });
+  if (queueRecovering.value) return tr('正在核对远端响应，避免 MV3 Service Worker 重启造成重复写入。');
+  if (queuePending.value) return tr('本地修改已加密排队，完成确认前不会宣称同步成功。');
+  return tr('队列已清空');
 }
 
 function conflictSides(conflict: ProviderConflictSummary): string {
-  if (conflict.local && conflict.remote) return "浏览器版本与 Bitwarden 版本都存在";
-  if (conflict.local) return "浏览器版本存在；远端已删除";
-  if (conflict.remote) return "Bitwarden 版本存在；浏览器版本已删除";
-  return "仅保留冲突元数据，无法安全选择版本";
+  if (conflict.local && conflict.remote) return tr('浏览器版本与 Bitwarden 版本都存在');
+  if (conflict.local) return tr('浏览器版本存在；远端已删除');
+  if (conflict.remote) return tr('Bitwarden 版本存在；浏览器版本已删除');
+  return tr('仅保留冲突元数据，无法安全选择版本');
 }
 
 function toggleConflicts() {
@@ -130,7 +132,7 @@ function toggleConflicts() {
 </script>
 
 <template>
-  <section class="motion-card source-card bitwarden-provider-card" :aria-label="`${provider.name} Bitwarden 密码源`">
+  <section class="motion-card source-card bitwarden-provider-card" :aria-label="tr('{0} Bitwarden 密码源', { 0: provider.name })">
     <div class="stack">
       <div class="bitwarden-source-heading">
         <div class="bitwarden-source-title">
@@ -143,69 +145,69 @@ function toggleConflicts() {
         <span class="state" :class="stateClass" role="status">{{ stateLabel }}</span>
       </div>
 
-      <div class="bitwarden-status-grid" aria-label="Bitwarden 状态摘要">
-        <div><span>最近同步</span><strong>{{ lastSyncLabel }}</strong><small>{{ props.provider.lastSyncAt ? '已收到服务器确认' : '连接成功后首次同步' }}</small></div>
-        <div><span>本地队列</span><strong>{{ queueLabel() }}</strong><small>{{ queue?.maxAttempts ? `最高已尝试 ${queue.maxAttempts} 次` : '后台加密队列' }}</small></div>
-        <div><span>组织</span><strong>{{ organizationCount }} 个</strong><small>Collection 路由按权限处理</small></div>
-        <div><span>策略</span><strong>{{ policyCount }} 个</strong><small>仅保存非敏感摘要</small></div>
+      <div class="bitwarden-status-grid" :aria-label="tr('Bitwarden 状态摘要')">
+        <div><span>{{ tr('最近同步') }}</span><strong>{{ lastSyncLabel }}</strong><small>{{ props.provider.lastSyncAt ? tr('已收到服务器确认') : tr('连接成功后首次同步') }}</small></div>
+        <div><span>{{ tr('本地队列') }}</span><strong>{{ queueLabel() }}</strong><small>{{ queue?.maxAttempts ? tr('最高已尝试 {0} 次', { 0: queue.maxAttempts }) : tr('后台加密队列') }}</small></div>
+        <div><span>{{ tr('组织') }}</span><strong>{{ tr('{0} 个', { 0: organizationCount }) }}</strong><small>{{ tr('Collection 路由按权限处理') }}</small></div>
+        <div><span>{{ tr('策略') }}</span><strong>{{ tr('{0} 个', { 0: policyCount }) }}</strong><small>{{ tr('仅保存非敏感摘要') }}</small></div>
       </div>
 
       <div v-if="errors.length" class="bitwarden-error-panel" role="alert">
         <m3e-icon name="error" aria-hidden="true"></m3e-icon>
-        <div><strong>同步需要处理</strong><ul><li v-for="message in errors" :key="message">{{ message }}</li></ul><p>敏感字段、令牌和附件内容不会出现在此状态中。</p></div>
-        <m3e-button v-if="!activeSync" variant="tonal" type="button" :disabled="busy" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>重试同步</m3e-button>
+        <div><strong>{{ tr('同步需要处理') }}</strong><ul><li v-for="message in errors" :key="message">{{ message }}</li></ul><p>{{ tr('敏感字段、令牌和附件内容不会出现在此状态中。') }}</p></div>
+        <m3e-button v-if="!activeSync" variant="tonal" type="button" :disabled="busy" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ tr('重试同步') }}</m3e-button>
       </div>
 
       <div v-if="provider.requiresEmptyRemoteConfirmation" class="bitwarden-empty-warning" role="alert">
         <m3e-icon name="cloud_off" aria-hidden="true"></m3e-icon>
-        <div><strong>服务器返回空密码库</strong><p>本地已有同步基线。只有确认服务器确实被清空后，才会采用空库结果；未确认前不会移除本地项目。</p></div>
-        <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('emptyRemote', provider)">查看并确认空库</m3e-button>
+        <div><strong>{{ tr('服务器返回空密码库') }}</strong><p>{{ tr('本地已有同步基线。只有确认服务器确实被清空后，才会采用空库结果；未确认前不会移除本地项目。') }}</p></div>
+        <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('emptyRemote', provider)">{{ tr('查看并确认空库') }}</m3e-button>
       </div>
 
       <div v-if="compatibilityCount" class="bitwarden-compatibility-panel" role="status">
         <m3e-icon name="info" aria-hidden="true"></m3e-icon>
-        <div><strong>兼容模式保留 {{ compatibilityCount }} 个项目</strong><p><template v-if="provider.compatibility?.preservedUnsupportedRecords">{{ provider.compatibility.preservedUnsupportedRecords }} 个未来类型仅保存原始 Cipher。</template><template v-if="provider.compatibility?.unreadableRecords">{{ provider.compatibility?.preservedUnsupportedRecords ? ' ' : '' }}{{ provider.compatibility.unreadableRecords }} 个项目暂时无法解密。</template>这些记录不会自动填充或改写。</p></div>
+        <div><strong>{{ tr('兼容模式保留 {0} 个项目', { 0: compatibilityCount }) }}</strong><p><template v-if="provider.compatibility?.preservedUnsupportedRecords">{{ tr('{0} 个未来类型仅保存原始 Cipher。', { 0: provider.compatibility.preservedUnsupportedRecords }) }}</template><template v-if="provider.compatibility?.unreadableRecords">{{ tr('{0}{1} 个项目暂时无法解密。', { 0: provider.compatibility?.preservedUnsupportedRecords ? ' ' : '', 1: provider.compatibility.unreadableRecords }) }}</template>{{ tr('这些记录不会自动填充或改写。') }}</p></div>
       </div>
 
       <div v-if="queueHasActivity" class="bitwarden-recovery-panel" :class="{ failed: queueFailed > 0 }" role="status" aria-live="polite">
         <m3e-icon :name="queueFailed ? 'sync_problem' : queueRecovering ? 'restore' : 'sync'" aria-hidden="true"></m3e-icon>
-        <div><strong>{{ activeSync ? '正在同步 Bitwarden' : queueFailed ? '有同步操作需要恢复' : '修改正在安全排队' }}</strong><p>{{ queueDetail() }}</p></div>
-        <m3e-button v-if="!activeSync" variant="tonal" type="button" :disabled="busy" @click="emit('sync', provider)">{{ queueFailed ? '重试失败操作' : '立即同步' }}</m3e-button>
-        <m3e-button v-else variant="text" type="button" @click="emit('cancel', provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
+        <div><strong>{{ activeSync ? tr('正在同步 Bitwarden') : queueFailed ? tr('有同步操作需要恢复') : tr('修改正在安全排队') }}</strong><p>{{ queueDetail() }}</p></div>
+        <m3e-button v-if="!activeSync" variant="tonal" type="button" :disabled="busy" @click="emit('sync', provider)">{{ queueFailed ? tr('重试失败操作') : tr('立即同步') }}</m3e-button>
+        <m3e-button v-else variant="text" type="button" @click="emit('cancel', provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>{{ tr('取消同步') }}</m3e-button>
       </div>
 
-      <section v-if="conflicts.length" class="bitwarden-conflict-group" :aria-label="`${provider.name} 同步冲突`">
-        <div class="bitwarden-conflict-heading"><div><strong>同步冲突</strong><p>选择一个明确版本；敏感字段不会在此处显示。</p></div><span class="state state-conflict">{{ conflicts.length }} 个</span></div>
+      <section v-if="conflicts.length" class="bitwarden-conflict-group" :aria-label="tr('{0} 同步冲突', { 0: provider.name })">
+        <div class="bitwarden-conflict-heading"><div><strong>{{ tr('同步冲突') }}</strong><p>{{ tr('选择一个明确版本；敏感字段不会在此处显示。') }}</p></div><span class="state state-conflict">{{ tr('{0} 个', { 0: conflicts.length }) }}</span></div>
         <div class="bitwarden-conflict-list">
           <article v-for="conflict in visibleConflicts" :key="conflict.id" class="provider-conflict">
-            <div class="bitwarden-conflict-copy"><strong>{{ conflict.local?.title || conflict.remote?.title || '密码源级冲突' }}</strong><p>{{ conflict.reason }}</p><small>{{ conflictSides(conflict) }} · 检测于 {{ new Date(conflict.detectedAt).toLocaleString() }}</small></div>
+            <div class="bitwarden-conflict-copy"><strong>{{ conflict.local?.title || conflict.remote?.title || tr('密码源级冲突') }}</strong><p>{{ conflict.reason }}</p><small>{{ tr('{0} · 检测于 {1}', { 0: conflictSides(conflict), 1: new Date(conflict.detectedAt).toLocaleString(locale) }) }}</small></div>
             <div v-if="conflict.local || conflict.remote" class="conflict-actions">
-              <m3e-button v-if="conflict.local" variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('resolveConflict', conflict, 'keep-local')">保留浏览器版本</m3e-button>
-              <m3e-button variant="text" type="button" :disabled="busy || activeSync" @click="emit('resolveConflict', conflict, 'use-remote')">{{ conflict.remote ? '采用 Bitwarden 版本' : '接受远端删除' }}</m3e-button>
+              <m3e-button v-if="conflict.local" variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('resolveConflict', conflict, 'keep-local')">{{ tr('保留浏览器版本') }}</m3e-button>
+              <m3e-button variant="text" type="button" :disabled="busy || activeSync" @click="emit('resolveConflict', conflict, 'use-remote')">{{ conflict.remote ? tr('采用 Bitwarden 版本') : tr('接受远端删除') }}</m3e-button>
             </div>
           </article>
         </div>
-        <m3e-button v-if="conflicts.length > 2" class="bitwarden-conflict-toggle" variant="text" type="button" :aria-expanded="conflictsExpanded" @click="toggleConflicts">{{ conflictsExpanded ? '收起其余冲突' : `查看其余 ${conflicts.length - 2} 个冲突` }}</m3e-button>
+        <m3e-button v-if="conflicts.length > 2" class="bitwarden-conflict-toggle" variant="text" type="button" :aria-expanded="conflictsExpanded" @click="toggleConflicts">{{ conflictsExpanded ? tr('收起其余冲突') : tr('查看其余 {0} 个冲突', { 0: conflicts.length - 2 }) }}</m3e-button>
       </section>
 
       <details class="bitwarden-capability-details">
-        <summary><m3e-icon name="info" aria-hidden="true"></m3e-icon><span>支持范围与安全边界</span><m3e-icon class="details-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
-        <p>支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；归档和回收站项目不会进入自动填充。Popup 与内容脚本只收到候选摘要，密钥、令牌、原始 Cipher 和附件只在后台管理边界内解密。</p>
+        <summary><m3e-icon name="info" aria-hidden="true"></m3e-icon><span>{{ tr('支持范围与安全边界') }}</span><m3e-icon class="details-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+        <p>{{ tr('支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；归档和回收站项目不会进入自动填充。Popup 与内容脚本只收到候选摘要，密钥、令牌、原始 Cipher 和附件只在后台管理边界内解密。') }}</p>
       </details>
 
       <div class="bitwarden-source-actions">
         <div class="source-actions-primary">
-          <m3e-button v-if="activeSync" variant="text" type="button" @click="emit('cancel', provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>取消同步</m3e-button>
-          <m3e-button v-else variant="filled" type="button" :disabled="busy || !authenticated" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFailed ? '重试同步' : '立即同步' }}</m3e-button>
+          <m3e-button v-if="activeSync" variant="text" type="button" @click="emit('cancel', provider)"><m3e-icon slot="icon" name="cancel"></m3e-icon>{{ tr('取消同步') }}</m3e-button>
+          <m3e-button v-else variant="filled" type="button" :disabled="busy || !authenticated" @click="emit('sync', provider)"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ queueFailed ? tr('重试同步') : tr('立即同步') }}</m3e-button>
         </div>
-        <div class="source-actions-routing" aria-label="Bitwarden 路由管理">
-          <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('folders', provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>管理文件夹</m3e-button>
-          <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('collections', provider)"><m3e-icon slot="icon" name="folder_shared"></m3e-icon>管理 Collection</m3e-button>
+        <div class="source-actions-routing" :aria-label="tr('Bitwarden 路由管理')">
+          <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('folders', provider)"><m3e-icon slot="icon" name="folder_managed"></m3e-icon>{{ tr('管理文件夹') }}</m3e-button>
+          <m3e-button variant="tonal" type="button" :disabled="busy || activeSync" @click="emit('collections', provider)"><m3e-icon slot="icon" name="folder_shared"></m3e-icon>{{ tr('管理 Collection') }}</m3e-button>
         </div>
-        <div class="source-actions-account" aria-label="Bitwarden 账号操作">
-          <m3e-icon-button aria-label="重新登录 Bitwarden" :disabled="activeSync" @click="emit('relogin', provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button>
-          <m3e-icon-button v-if="authenticated" aria-label="退出 Bitwarden 账户" :disabled="activeSync" @click="emit('logout', provider)"><m3e-icon name="lock"></m3e-icon></m3e-icon-button>
-          <m3e-icon-button aria-label="移除 Bitwarden" :disabled="activeSync" @click="emit('remove', provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
+        <div class="source-actions-account" :aria-label="tr('Bitwarden 账号操作')">
+          <m3e-icon-button :aria-label="tr('重新登录 Bitwarden')" :disabled="activeSync" @click="emit('relogin', provider)"><m3e-icon name="login"></m3e-icon></m3e-icon-button>
+          <m3e-icon-button v-if="authenticated" :aria-label="tr('退出 Bitwarden 账户')" :disabled="activeSync" @click="emit('logout', provider)"><m3e-icon name="lock"></m3e-icon></m3e-icon-button>
+          <m3e-icon-button :aria-label="tr('移除 Bitwarden')" :disabled="activeSync" @click="emit('remove', provider)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
         </div>
       </div>
     </div>

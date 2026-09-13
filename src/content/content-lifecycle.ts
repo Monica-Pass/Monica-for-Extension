@@ -6,7 +6,7 @@ import { OPEN_SHADOW_ROOT_EVENT } from "./shadow-bridge";
 export { OPEN_SHADOW_ROOT_EVENT } from "./shadow-bridge";
 
 const USERNAME_CONTEXT_TTL_MS = 5 * 60 * 1_000;
-const MONICA_UI_HOST_IDS = new Set(["monica-save-prompt-host", "monica-passkey-prompt-host"]);
+const MONICA_UI_HOST_IDS = new Set(["monica-save-prompt-host", "monica-passkey-prompt-host", "monica-inline-autofill-host"]);
 
 interface CaptureOptions {
   rootDocument?: Document;
@@ -109,14 +109,25 @@ export function installCredentialCapture(options: CaptureOptions): () => void {
   };
 
   const registerRoot = (root: Document | ShadowRoot): void => {
-    if (stopped || roots.has(root)) return;
+    if (stopped || roots.has(root) || (root instanceof view.ShadowRoot && !root.host.isConnected)) return;
     roots.add(root);
     root.addEventListener("submit", onSubmit, true);
     root.addEventListener("click", onClick, true);
     const observer = new view.MutationObserver((records) => {
+      if (records.some((record) => record.removedNodes.length)) {
+        for (const tracked of roots) {
+          if (tracked instanceof view.ShadowRoot && !tracked.host.isConnected) {
+            tracked.removeEventListener("submit", onSubmit, true);
+            tracked.removeEventListener("click", onClick, true);
+            observers.get(tracked)?.disconnect();
+            observers.delete(tracked);
+            roots.delete(tracked);
+          }
+        }
+      }
       for (const record of records) {
         for (const node of Array.from(record.addedNodes)) {
-          if (node instanceof view.Element || node instanceof view.DocumentFragment) registerDescendantRoots(node);
+          if (node.isConnected && (node instanceof view.Element || node instanceof view.DocumentFragment)) registerDescendantRoots(node);
         }
       }
     });

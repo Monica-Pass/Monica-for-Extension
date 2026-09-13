@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { tr } from '../i18n';
+
 import { computed, nextTick, onMounted, ref } from "vue";
 import type { ProviderAccount, VaultItem } from "../core/model";
 import type { BitwardenFolderMutationResult, BitwardenFolderSummary } from "../providers/bitwarden/bitwarden-folders";
@@ -105,8 +107,8 @@ async function showMode(next: FolderMode) {
 
 async function createFolder() {
   const name = createName.value.trim();
-  if (!name) return focusError("请输入文件夹名称。", createNameInput.value);
-  await runMutation("create", () => vaultClient.createBitwardenFolder(props.provider.id, name), (result) => result.folder ? `${result.folder.name} 已创建。` : "文件夹已创建。");
+  if (!name) return focusError(tr('请输入文件夹名称。'), createNameInput.value);
+  await runMutation("create", () => vaultClient.createBitwardenFolder(props.provider.id, name), (result) => result.folder ? tr('{0} 已创建。', { 0: result.folder.name }) : tr('文件夹已创建。'));
   if (!error.value) {
     createOpen.value = false;
     createName.value = "";
@@ -117,26 +119,26 @@ async function renameFolder() {
   const folder = selectedFolder.value;
   const name = renameName.value.trim();
   if (!folder) return;
-  if (!folder.readable) return focusError("此文件夹名称无法解密，不能安全重命名。", dialogRoot.value?.querySelector<HTMLInputElement>('[data-folder-mode="rename"] input'));
-  if (!name) return focusError("请输入新的文件夹名称。", dialogRoot.value?.querySelector<HTMLInputElement>('[data-folder-mode="rename"] input'));
-  await runMutation("rename", () => vaultClient.renameBitwardenFolder(props.provider.id, folder.folderId, name, folder.revision), () => `${folder.name} 已重命名为 ${name}。`);
+  if (!folder.readable) return focusError(tr('此文件夹名称无法解密，不能安全重命名。'), dialogRoot.value?.querySelector<HTMLInputElement>('[data-folder-mode="rename"] input'));
+  if (!name) return focusError(tr('请输入新的文件夹名称。'), dialogRoot.value?.querySelector<HTMLInputElement>('[data-folder-mode="rename"] input'));
+  await runMutation("rename", () => vaultClient.renameBitwardenFolder(props.provider.id, folder.folderId, name, folder.revision), () => tr('{0} 已重命名为 {1}。', { 0: folder.name, 1: name }));
 }
 
 async function deleteFolder() {
   const folder = selectedFolder.value;
   if (!folder) return;
-  await runMutation("delete", () => vaultClient.deleteBitwardenFolder(props.provider.id, folder.folderId, folder.revision), () => `${folder.name} 已删除；其中项目已回到无文件夹。`);
+  await runMutation("delete", () => vaultClient.deleteBitwardenFolder(props.provider.id, folder.folderId, folder.revision), () => tr('{0} 已删除；其中项目已回到无文件夹。', { 0: folder.name }));
 }
 
 async function moveCipher() {
   const selected = selectedMoveItem.value;
-  if (!selected) return focusError("请选择要移动的项目。", dialogRoot.value?.querySelector<HTMLElement>("[data-move-item]"));
+  if (!selected) return focusError(tr('请选择要移动的项目。'), dialogRoot.value?.querySelector<HTMLElement>("[data-move-item]"));
   const target = selectedMoveFolder.value;
-  if (target && !target.readable) return focusError("目标文件夹名称无法解密，不能安全移动。", dialogRoot.value?.querySelector<HTMLElement>("[data-move-target]"));
+  if (target && !target.readable) return focusError(tr('目标文件夹名称无法解密，不能安全移动。'), dialogRoot.value?.querySelector<HTMLElement>("[data-move-target]"));
   const currentFolderId = selected.reference.remoteFolderId || "";
   const targetId = moveTargetId.value || undefined;
   if (currentFolderId === (targetId || "")) {
-    status.value = "项目已经位于所选位置。";
+    status.value = tr('项目已经位于所选位置。');
     return;
   }
   await runMutation("move", () => vaultClient.moveBitwardenCipherToFolder(
@@ -145,7 +147,7 @@ async function moveCipher() {
     targetId,
     selected.reference.revision,
     target?.revision
-  ), () => `${selected.item.title} 已移动到 ${target?.name || "无文件夹"}。`);
+  ), () => tr('{0} 已移动到 {1}。', { 0: selected.item.title, 1: target?.name || tr('无文件夹') }));
 }
 
 async function runMutation(
@@ -165,7 +167,7 @@ async function runMutation(
     if (result.changed) emit("changed");
     await loadFolders(true);
   } catch (cause) {
-    error.value = `${errorMessage(cause)} 请刷新后重试；未确认的操作不会被当作成功。`;
+    error.value = tr('{0} 请刷新后重试；未确认的操作不会被当作成功。', { 0: errorMessage(cause) });
   } finally {
     busy.value = "";
   }
@@ -201,60 +203,60 @@ function errorMessage(cause: unknown): string {
     <section ref="dialogRoot" class="editor-dialog bitwarden-folders-dialog" role="dialog" aria-modal="true" aria-labelledby="bitwarden-folders-title">
       <header>
         <div>
-          <h2 id="bitwarden-folders-title">Bitwarden 文件夹 · {{ provider.name }}</h2>
-          <p>名称按 Bitwarden 用户密钥加密；组织项目不放入个人文件夹，Collection 会在后续权限界面中管理。</p>
+          <h2 id="bitwarden-folders-title">{{ tr('Bitwarden 文件夹 · {0}', { 0: provider.name }) }}</h2>
+          <p>{{ tr('名称按 Bitwarden 用户密钥加密；组织项目不放入个人文件夹，Collection 会在后续权限界面中管理。') }}</p>
         </div>
-        <m3e-icon-button data-dialog-close aria-label="关闭 Bitwarden 文件夹管理" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+        <m3e-icon-button data-dialog-close :aria-label="tr('关闭 Bitwarden 文件夹管理')" :disabled="interactionLocked" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
 
-      <div class="bitwarden-folders-boundary"><m3e-icon name="encrypted"></m3e-icon><span>仅管理页可以读取文件夹名称和项目路由；Popup、内容脚本和网页无法调用这些接口。</span></div>
+      <div class="bitwarden-folders-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('仅管理页可以读取文件夹名称和项目路由；Popup、内容脚本和网页无法调用这些接口。') }}</span></div>
 
       <div class="bitwarden-folders-toolbar">
-        <label><span class="sr-only">搜索 Bitwarden 文件夹</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" placeholder="搜索文件夹" /></label>
-        <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>新建文件夹</m3e-button>
+        <label><span class="sr-only">{{ tr('搜索 Bitwarden 文件夹') }}</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索文件夹')" /></label>
+        <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>{{ tr('新建文件夹') }}</m3e-button>
       </div>
 
       <form v-if="createOpen" class="bitwarden-folder-create" @submit.prevent="createFolder">
         <span class="bitwarden-folder-form-icon"><m3e-icon name="create_new_folder"></m3e-icon></span>
-        <label><span>文件夹名称</span><input ref="createNameInput" v-model="createName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /></label>
-        <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? '创建中…' : '创建' }}</m3e-button></div>
+        <label><span>{{ tr('文件夹名称') }}</span><input ref="createNameInput" v-model="createName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /></label>
+        <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? tr('创建中…') : tr('创建') }}</m3e-button></div>
       </form>
 
       <div v-if="error" class="bitwarden-folders-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span></div>
       <p class="bitwarden-folders-status" aria-live="polite">{{ status }}</p>
 
       <section class="bitwarden-folders-list-shell" aria-labelledby="bitwarden-folders-list-title">
-        <div class="bitwarden-folders-list-heading"><div><strong id="bitwarden-folders-list-title">个人文件夹</strong><small>{{ displayedFolders.length }} 个已加载<template v-if="nextCursor"> · 尚有更多</template></small></div><m3e-icon-button aria-label="刷新 Bitwarden 文件夹" :disabled="interactionLocked" @click="loadFolders(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
-        <div v-if="busy === 'list' && !loaded" class="bitwarden-folders-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>正在读取加密文件夹摘要…</span></div>
-        <div v-else-if="loaded && !displayedFolders.length" class="bitwarden-folders-empty"><m3e-icon name="folder_off"></m3e-icon><span>{{ search ? '没有匹配的文件夹。' : '当前密码库还没有个人文件夹。' }}</span></div>
+        <div class="bitwarden-folders-list-heading"><div><strong id="bitwarden-folders-list-title">{{ tr('个人文件夹') }}</strong><small>{{ tr('{0} 个已加载', { 0: displayedFolders.length }) }}<template v-if="nextCursor"> {{ tr('· 尚有更多') }}</template></small></div><m3e-icon-button :aria-label="tr('刷新 Bitwarden 文件夹')" :disabled="interactionLocked" @click="loadFolders(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button></div>
+        <div v-if="busy === 'list' && !loaded" class="bitwarden-folders-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取加密文件夹摘要…') }}</span></div>
+        <div v-else-if="loaded && !displayedFolders.length" class="bitwarden-folders-empty"><m3e-icon name="folder_off"></m3e-icon><span>{{ search ? tr('没有匹配的文件夹。') : tr('当前密码库还没有个人文件夹。') }}</span></div>
         <ul v-else class="bitwarden-folders-list">
           <li v-for="folder in displayedFolders" :key="folder.folderId">
             <button class="bitwarden-folder-row" type="button" :class="{ selected: selectedFolderId === folder.folderId }" :aria-expanded="selectedFolderId === folder.folderId" @click="selectFolder(folder)">
               <span class="bitwarden-folder-icon" :class="{ unreadable: !folder.readable }"><m3e-icon :name="folder.readable ? 'folder' : 'folder_off'"></m3e-icon></span>
-              <span class="bitwarden-folder-copy"><strong>{{ folder.name }}</strong><small>{{ folder.cipherCount }} 个项目<template v-if="!folder.readable"> · 名称无法解密</template></small></span>
+              <span class="bitwarden-folder-copy"><strong>{{ folder.name }}</strong><small>{{ tr('{0} 个项目', { 0: folder.cipherCount }) }}<template v-if="!folder.readable"> {{ tr('· 名称无法解密') }}</template></small></span>
               <m3e-icon name="expand_more"></m3e-icon>
             </button>
             <div v-if="selectedFolderId === folder.folderId" class="bitwarden-folder-detail">
-              <p v-if="!folder.readable" class="bitwarden-folder-warning"><m3e-icon name="warning"></m3e-icon><span>此文件夹不能安全编辑。请使用拥有相同 Vault key 的 Bitwarden 客户端修复后再同步。</span></p>
-              <div v-if="!mode" class="bitwarden-folder-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked || !folder.readable" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>重命名</m3e-button><m3e-button class="bitwarden-folder-delete-action" variant="text" type="button" :disabled="interactionLocked" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>删除</m3e-button></div>
-              <form v-else-if="mode === 'rename'" data-folder-mode="rename" class="bitwarden-folder-action-form" @submit.prevent="renameFolder"><label><span>新名称</span><input v-model="renameName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /><small>保存前会再次检查文件夹 RevisionDate，过期选择会停止写入。</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? '保存中…' : '保存名称' }}</m3e-button></div></form>
-              <div v-else class="bitwarden-folder-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>删除“{{ folder.name }}”？</strong><small>{{ folder.cipherCount ? `${folder.cipherCount} 个项目会回到无文件夹；Cipher、附件、Passkey 和未知字段不会删除。` : '文件夹为空；此操作不可恢复。' }}</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">取消</m3e-button><m3e-button data-confirm-folder-delete class="bitwarden-folder-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteFolder">{{ busy === 'delete' ? '删除中…' : '确认删除' }}</m3e-button></div></div>
+              <p v-if="!folder.readable" class="bitwarden-folder-warning"><m3e-icon name="warning"></m3e-icon><span>{{ tr('此文件夹不能安全编辑。请使用拥有相同 Vault key 的 Bitwarden 客户端修复后再同步。') }}</span></p>
+              <div v-if="!mode" class="bitwarden-folder-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked || !folder.readable" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>{{ tr('重命名') }}</m3e-button><m3e-button class="bitwarden-folder-delete-action" variant="text" type="button" :disabled="interactionLocked" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ tr('删除') }}</m3e-button></div>
+              <form v-else-if="mode === 'rename'" data-folder-mode="rename" class="bitwarden-folder-action-form" @submit.prevent="renameFolder"><label><span>{{ tr('新名称') }}</span><input v-model="renameName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /><small>{{ tr('保存前会再次检查文件夹 RevisionDate，过期选择会停止写入。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
+              <div v-else class="bitwarden-folder-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>{{ tr('删除“{0}”？', { 0: folder.name }) }}</strong><small>{{ folder.cipherCount ? tr('{0} 个项目会回到无文件夹；Cipher、附件、Passkey 和未知字段不会删除。', { 0: folder.cipherCount }) : tr('文件夹为空；此操作不可恢复。') }}</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-folder-delete class="bitwarden-folder-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteFolder">{{ busy === 'delete' ? tr('删除中…') : tr('确认删除') }}</m3e-button></div></div>
             </div>
           </li>
         </ul>
-        <div v-if="nextCursor" class="bitwarden-folders-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadFolders(false)">加载更多文件夹</m3e-button></div>
+        <div v-if="nextCursor" class="bitwarden-folders-more"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="loadFolders(false)">{{ tr('加载更多文件夹') }}</m3e-button></div>
       </section>
 
       <section class="bitwarden-folder-routing" aria-labelledby="bitwarden-folder-routing-title">
-        <div class="bitwarden-folders-list-heading"><div><strong id="bitwarden-folder-routing-title">项目归类</strong><small>只显示个人 Cipher；组织项目请使用 Collection。</small></div><m3e-icon name="drive_file_move"></m3e-icon></div>
+        <div class="bitwarden-folders-list-heading"><div><strong id="bitwarden-folder-routing-title">{{ tr('项目归类') }}</strong><small>{{ tr('只显示个人 Cipher；组织项目请使用 Collection。') }}</small></div><m3e-icon name="drive_file_move"></m3e-icon></div>
         <form class="bitwarden-folder-move-form" @submit.prevent="moveCipher">
-          <label><span>项目</span><select data-move-item v-model="moveItemId" :disabled="interactionLocked"><option value="">选择项目</option><option v-for="entry in moveItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</option></select></label>
-          <label><span>目标文件夹</span><select data-move-target v-model="moveTargetId" :disabled="interactionLocked"><option value="">无文件夹</option><option v-for="folder in folders" :key="folder.folderId" :value="folder.folderId" :disabled="!folder.readable">{{ folder.name }}{{ folder.readable ? '' : '（无法解密）' }}</option></select></label>
-          <m3e-button variant="tonal" type="submit" :disabled="interactionLocked || !moveItemId">{{ busy === 'move' ? '移动中…' : '移动项目' }}</m3e-button>
+          <label><span>{{ tr('项目') }}</span><select data-move-item v-model="moveItemId" :disabled="interactionLocked"><option value="">{{ tr('选择项目') }}</option><option v-for="entry in moveItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</option></select></label>
+          <label><span>{{ tr('目标文件夹') }}</span><select data-move-target v-model="moveTargetId" :disabled="interactionLocked"><option value="">{{ tr('无文件夹') }}</option><option v-for="folder in folders" :key="folder.folderId" :value="folder.folderId" :disabled="!folder.readable">{{ folder.name }}{{ folder.readable ? '' : tr('（无法解密）') }}</option></select></label>
+          <m3e-button variant="tonal" type="submit" :disabled="interactionLocked || !moveItemId">{{ busy === 'move' ? tr('移动中…') : tr('移动项目') }}</m3e-button>
         </form>
       </section>
 
-      <footer><span>移动与文件夹变更会写回 Bitwarden；冲突时保持原路由并要求刷新。</span><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">关闭</m3e-button></footer>
+      <footer><span>{{ tr('移动与文件夹变更会写回 Bitwarden；冲突时保持原路由并要求刷新。') }}</span><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="closeDialog">{{ tr('关闭') }}</m3e-button></footer>
     </section>
   </div>
 </template>

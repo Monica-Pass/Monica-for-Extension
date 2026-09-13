@@ -39,7 +39,7 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-sends-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },
@@ -73,6 +73,12 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     await expect(manager.locator(".send-workspace")).toHaveCSS("border-radius", "8px");
     await expectNoGradients(manager.locator(".send-panel"));
     await expectNoHorizontalOverflow(manager);
+
+    await manager.screenshot({ path: testInfo.outputPath("send-detail-mobile.png") });
+    await manager.setViewportSize({ width: 1440, height: 1000 });
+    await expectNoHorizontalOverflow(manager);
+    await manager.screenshot({ path: testInfo.outputPath("send-detail-desktop.png") });
+    await manager.setViewportSize({ width: 375, height: 1100 });
 
     await manager.getByRole("button", { name: "发送文本" }).click();
     const textDialog = manager.getByRole("dialog", { name: "新建文本发送" });

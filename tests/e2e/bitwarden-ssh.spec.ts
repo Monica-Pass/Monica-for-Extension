@@ -27,7 +27,7 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     const extensionPath = path.resolve("dist");
     context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-ssh-profile"), {
       channel: "chromium",
-      headless: true,
+      headless: true, locale: "zh-CN",
       colorScheme: "dark",
       reducedMotion: "reduce",
       viewport: { width: 375, height: 1100 },

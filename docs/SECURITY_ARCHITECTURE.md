@@ -2,7 +2,7 @@
 
 ## Security claim
 
-Monica Extension is designed so that vault plaintext and private keys are available only while the user has explicitly unlocked the extension. Web pages do not receive vault listings or provider credentials. Autofill and Passkey operations require an extension-controlled user decision and are bound to the requesting page context.
+Monica Extension keeps the full vault and private keys behind explicit unlocking. A user may grant individual password logins permission to fill while locked; only those usernames/passwords are retained in a separately encrypted, device-local cache. Web pages do not receive vault listings or provider credentials. Autofill and Passkey operations require an extension-controlled user decision and are bound to the requesting page context.
 
 This is an engineering security claim, not a claim of formal verification. The repository has automated security gates but has not yet completed an independent third-party audit. See **Assurance status** below.
 
@@ -43,6 +43,8 @@ This is an engineering security claim, not a claim of formal verification. The r
 9. WebDAV credentials must not cross an insecure transport, redirect, origin boundary or attacker-controlled path boundary.
 10. Release artifacts must be reproducible from the committed lockfile and accompanied by verifiable inventory and dependency evidence.
 11. Steam confirmation/login messages accept only an item ID and selected request identifiers; secrets and session tokens are loaded from the unlocked vault by the service worker.
+12. Locked autofill grants are manager-only, opt-in and limited to active ordinary password logins. They never authorize OTP, custom fields, private keys, general vault reads or secret-copy APIs.
+13. Grants live in extension settings, never in provider item fields. Imports cannot grant access, and restoring a portable full-vault backup clears all grants.
 
 ## Threat analysis
 
@@ -90,13 +92,23 @@ AES-GCM, legacy PBKDF2 and ECDSA use platform Web Crypto. Argon2id uses the bund
 
 ## Data lifecycle
 
-- At rest: one authenticated encrypted vault envelope in IndexedDB. Device-key mode stores a separate random key in extension-local browser storage; master-password mode stores no derived key there.
+- At rest: an authenticated encrypted vault envelope in IndexedDB. Device-key mode stores a separate random key in extension-local browser storage; master-password mode stores no derived key there. Opted-in logins have a separate authenticated encrypted projection described below.
 - Unlocked: plaintext exists in the trusted background process memory.
 - Legacy unlock/restore: authentication completes with the bounded legacy KDF, then a fresh Argon2id envelope is committed before the new session key is used; a failed best-effort migration leaves the authenticated legacy envelope usable for retry.
 - Session continuity: only trusted extension contexts may access session key material.
-- Lock: cached vault state, pending captures, pending Passkey requests and provider synchronization are cleared/cancelled.
+- Lock: full-vault session access, pending captures, pending Passkey requests and provider synchronization are cleared/cancelled. Explicitly granted username/password projections remain available for selected fills.
 - Export: vault exports are authenticated encrypted envelopes; Android WebDAV backups preserve the source encryption mode/configuration.
 - Diagnostics: response bodies and credentials are excluded; identifiers are redacted before export.
+
+## Filling selected passwords while locked
+
+`monica-extension-locked-autofill` contains a minimal encrypted projection of selected login identifiers, display summaries, username/password pairs, URI matching rules and autofill exclusions. A non-exportable AES-256-GCM CryptoKey is stored in the same extension-only IndexedDB. It cannot unlock the main vault. Notes, OTP seeds, custom fields, provider tokens and Passkey keys are excluded.
+
+The record is bound to a SHA-256 digest of the complete current encrypted vault envelope. Mutations prepare a replacement projection before committing the vault. A failed preparation cannot enable a grant; ordinary vault writes can still succeed, but the old projection then fails its envelope binding. Deletion, archival, grant revocation, password changes, provider disabling and backup replacement cannot silently reuse a stale copy.
+
+After asynchronous page inspection and OTP generation, the service rechecks the vault version and lock state immediately before dispatch. This rejects fills authorized before a lock or revocation. The exclusive queue is released after starting message delivery, so a stalled webpage cannot prevent the user from locking the vault.
+
+This feature deliberately changes the protection of selected passwords: anyone using the browser profile can fill them while Monica is locked. The key being non-exportable does not protect against a compromised browser process or malicious extension update capable of asking Web Crypto to decrypt. The editor explains this tradeoff before opt-in. Disabling a grant is logical revocation, not a guarantee of forensic erasure from storage hardware or historical filesystem backups.
 
 ## Assurance status
 

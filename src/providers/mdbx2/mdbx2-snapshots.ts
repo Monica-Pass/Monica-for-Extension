@@ -1,3 +1,4 @@
+import { tr, locale } from "../../i18n";
 import { formatMdbx2HistoryTime } from "./mdbx2-history";
 import type { Mdbx2ManagedSnapshotSummary, Mdbx2SnapshotStructureNode } from "./native-contract";
 
@@ -23,13 +24,13 @@ export interface Mdbx2SnapshotNodePresentation {
 }
 
 export function presentMdbx2Snapshot(item: Mdbx2ManagedSnapshotSummary): Mdbx2SnapshotPresentation {
-  const kindLabel = item.kind === "manual" ? "手动" : "自动";
+  const kindLabel = item.kind === "manual" ? tr('手动') : tr('自动');
   const generatedName = generatedSnapshotName(item.name);
-  const completenessLabel = item.isFull ? "完整快照" : "增量快照";
+  const completenessLabel = item.isFull ? tr('完整快照') : tr('增量快照');
   const sizeLabel = formatMdbx2SnapshotBytes(item.payloadBytes);
-  const integrityLabel = item.integrityOk ? "完整性正常" : "完整性失败";
+  const integrityLabel = item.integrityOk ? tr('完整性正常') : tr('完整性失败');
   return {
-    title: generatedName ? `${kindLabel}快照` : item.name.trim() || `${kindLabel}快照`,
+    title: generatedName ? tr('{0}快照', { 0: kindLabel }) : item.name.trim() || tr('{0}快照', { 0: kindLabel }),
     supportingText: `${kindLabel} · ${completenessLabel} · ${sizeLabel} · ${integrityLabel}`,
     kindLabel,
     completenessLabel,
@@ -43,11 +44,11 @@ export function presentMdbx2Snapshot(item: Mdbx2ManagedSnapshotSummary): Mdbx2Sn
 }
 
 export function presentMdbx2SnapshotNode(node: Mdbx2SnapshotStructureNode): Mdbx2SnapshotNodePresentation {
-  const typeLabel = node.nodeType === "folder" ? "文件夹" : "条目";
+  const typeLabel = node.nodeType === "folder" ? tr('文件夹') : tr('条目');
   const statusLabel = snapshotNodeStatusLabel(node.status);
   const title = node.name.trim() || typeLabel;
   const path = node.path.trim();
-  const details = [path && path !== title ? path : "", typeLabel, node.childCount ? `${node.childCount} 个子项` : ""].filter(Boolean);
+  const details = [path && path !== title ? path : "", typeLabel, node.childCount ? tr('{0} 个子项', { 0: node.childCount }) : ""].filter(Boolean);
   return {
     title,
     supportingText: details.join(" · "),
@@ -66,7 +67,7 @@ export function formatMdbx2SnapshotBytes(bytes: number): string {
     value /= 1024;
     unit = units[index];
   }
-  return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)} ${unit}`;
+  return `${new Intl.NumberFormat(locale.value, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)} ${unit}`;
 }
 
 function generatedSnapshotName(value: string): boolean {
@@ -75,10 +76,10 @@ function generatedSnapshotName(value: string): boolean {
 
 function snapshotNodeStatusLabel(status: Mdbx2SnapshotStructureNode["status"]): string {
   switch (status) {
-    case "added": return "新增";
-    case "removed": return "移除";
-    case "modified": return "修改";
-    default: return "未变化";
+    case "added": return tr('新增');
+    case "removed": return tr('移除');
+    case "modified": return tr('修改');
+    default: return tr('未变化');
   }
 }
 
