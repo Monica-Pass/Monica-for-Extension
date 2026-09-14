@@ -7,9 +7,8 @@
   --app-page-gutter: clamp(16px, 2.4vw, 40px);
 }
 
-:is(#root, #popup-root) .language-picker { max-width: 100%; }
-:is(#root, #popup-root) .language-error { overflow-wrap: anywhere; }
-#root .auth-preferences .language-picker { width: min(100%, 22rem); }
+#root .language-picker { max-width: 100%; }
+#root .language-error { overflow-wrap: anywhere; }
 
 #root .settings-language-card .language-picker {
   width: min(100%, 26rem);

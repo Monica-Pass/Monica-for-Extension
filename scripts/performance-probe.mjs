@@ -56,7 +56,7 @@ try {
     window.__monicaPerformance = () => ({ intervals: intervals.size, signatures });
   });
   await manager.goto(`chrome-extension://${id}/index.html`);
-  await expect(manager.locator('.language-picker select')).toBeVisible();
+  await expect(manager.locator('.login-heading h1')).toBeVisible();
   await expect(manager.locator('input[type="password"]')).toHaveCount(2);
   await manager.evaluate(() => document.fonts.ready);
   await sample(manager, 'managerCold');
@@ -90,7 +90,7 @@ try {
   result.otp = { activeIntervals: clock.intervals, signaturesInSamePeriodOverFourSeconds: after.signatures - before.signatures };
   await sample(manager, 'managerOtp');
   await manager.locator('.sidebar-footer > m3e-button').click();
-  await expect(manager.locator('.auth-preferences')).toBeVisible();
+  await expect(manager.locator('.login-heading h1')).toBeVisible();
   await sample(manager, 'managerLocked');
   await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_UNLOCK', masterPassword: 'synthetic performance probe password' }));
   await manager.close();

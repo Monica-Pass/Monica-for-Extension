@@ -68,7 +68,6 @@ img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; obje
 .locked-autofill-badge { display: inline-flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; padding: 4px 8px; background: var(--app-surface-high); border-radius: 8px; font-size: .6875rem; line-height: 1.5; white-space: normal; }
 #root .locked-autofill-badge m3e-icon { --m3e-icon-size: 16px; --app-icon-medium: 16px; }
 .language-picker { min-width: 0; }
-.auth-preferences { display: flex; justify-content: flex-end; padding: 16px; }
 
 @container manager-content (max-width: 48rem) { .create-type-label { display: none; } }
 @container manager-content (max-width: 24rem) {

@@ -29,7 +29,7 @@ async function usable(root: Locator) {
   expect(issues).toEqual([]);
 }
 
-test("language names stay readable on narrow authentication screens", async ({}, testInfo) => {
+test("language names stay readable in settings on narrow screens", async ({}, testInfo) => {
   const context = await chromium.launchPersistentContext(testInfo.outputPath("language-picker-profile"), {
     channel: "chromium", headless: true, locale: "zh-CN", reducedMotion: "reduce",
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
@@ -39,7 +39,12 @@ test("language names stay readable on narrow authentication screens", async ({},
     const manager = await context.newPage();
     await context.setOffline(true);
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
-    const picker = manager.locator(".auth-preferences .language-picker").getByRole("combobox");
+    await expect(manager.getByRole("heading", { name: "创建加密密码库", exact: true })).toBeVisible();
+    await expect(manager.locator(".language-picker")).toHaveCount(0);
+    expect(await manager.evaluate(password => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), password)).toMatchObject({ ok: true });
+    await manager.reload();
+    await manager.getByRole("navigation").getByRole("button", { name: "设置与备份", exact: true }).click();
+    const picker = manager.locator(".settings-page .language-picker").getByRole("combobox");
     for (const [width, height, scale] of [[390, 640, 100], [320, 480, 200]]) {
       await manager.setViewportSize({ width, height });
       await manager.evaluate((scale) => { document.documentElement.style.fontSize = `${scale}%`; }, scale);
@@ -88,7 +93,7 @@ for (const language of extraLanguages) {
       await manager.goto(`chrome-extension://${id}/index.html`);
       await expect(manager.locator("html")).toHaveAttribute("lang", language.value);
       await expect(manager.getByRole("heading", { name: catalog["创建加密密码库"], exact: true })).toBeVisible();
-      await expect(manager.getByLabel(catalog["界面语言"])).toHaveJSProperty("value", "system");
+      await expect(manager.locator(".language-picker")).toHaveCount(0);
       await manager.getByLabel(catalog["主密码"], { exact: true }).fill(password);
       await manager.getByLabel(catalog["确认主密码"], { exact: true }).fill(password);
       await manager.getByRole("button", { name: catalog["创建并解锁"], exact: true }).click();
@@ -137,6 +142,7 @@ for (const language of extraLanguages) {
       await site.bringToFront();
       await popup.goto(`chrome-extension://${id}/popup.html`);
       await expect(popup.locator("html")).toHaveAttribute("lang", language.value);
+      await expect(popup.locator(".language-picker")).toHaveCount(0);
       await popup.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
       const marked = popup.locator(".locked-autofill-section").getByRole("button", { name: /保留原始标题/ });
       await expect(marked).toBeVisible();
@@ -150,10 +156,20 @@ for (const language of extraLanguages) {
       expect([...requestedCatalogs].every((url) => url.startsWith("chrome-extension://") && url.endsWith(`/locales/ui-${language.value}.json`))).toBe(true);
       expect(requestedCatalogs.size).toBeGreaterThan(0);
 
-      await chooseOption(popup.getByLabel(catalog["界面语言"]), "en");
+      await manager.bringToFront();
+      // Reopen the manager using the session unlocked by the independent Popup.
+      await manager.reload();
+      await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+      await expect(manager.locator(".page-heading h1")).toBeVisible();
+      await manager.getByRole("button", { name: catalog["打开导航"], exact: true }).click();
+      await manager.getByRole("navigation").getByRole("button", { name: catalog["设置与备份"], exact: true }).click();
+      await expect(manager.locator(".settings-page").getByLabel(catalog["界面语言"])).toHaveJSProperty("value", "system");
+      await chooseOption(manager.locator(".settings-page").getByLabel(catalog["界面语言"]), "en");
       await expect(manager.locator("html")).toHaveAttribute("lang", "en");
-      await chooseOption(popup.getByLabel("Interface language"), "system");
+      await expect(popup.locator("html")).toHaveAttribute("lang", "en");
+      await chooseOption(manager.locator(".settings-page").getByLabel("Interface language"), "system");
       await expect(manager.locator("html")).toHaveAttribute("lang", language.value);
+      await expect(popup.locator("html")).toHaveAttribute("lang", language.value);
       const items = await manager.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" }));
       expect(items).toMatchObject({ ok: true, data: expect.arrayContaining([expect.objectContaining({ id: fixture.id, title: fixture.title, notes: fixture.notes, password: fixture.password }), expect.objectContaining({ title: "多语言编辑 / " + language.value, notes: "保留原文 <>& {0}" })]) });
       await manager.reload();

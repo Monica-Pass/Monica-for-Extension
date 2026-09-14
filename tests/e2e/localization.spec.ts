@@ -15,6 +15,7 @@ test("browser language initializes the UI, system appearance follows changes, an
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(manager.getByRole("heading", { name: "Create encrypted vault" })).toBeVisible();
+    await expect(manager.locator(".language-picker")).toHaveCount(0);
     await expect(manager.locator("html")).toHaveAttribute("lang", "en");
     await expect(manager.locator("html")).toHaveAttribute("data-palette", "monica");
     await expect(manager.locator("html")).toHaveAttribute("data-theme", "light");
@@ -24,6 +25,7 @@ test("browser language initializes the UI, system appearance follows changes, an
     await manager.getByLabel("Confirm master password", { exact: true }).fill("localized vault master password");
     await manager.getByRole("button", { name: "Create and unlock", exact: true }).click();
     await expect(manager.getByRole("heading", { name: "All items", exact: true })).toBeVisible();
+    await expect(manager.locator(".language-picker")).toHaveCount(0);
     const now = new Date().toISOString();
     expect(await manager.evaluate((item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), {
       id: "localized-note", kind: "secure-note", title: "我的中文笔记", content: "不要翻译我的数据 <>&", notes: "原始备注",
@@ -36,13 +38,16 @@ test("browser language initializes the UI, system appearance follows changes, an
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
     await expect(popup.locator("html")).toHaveAttribute("lang", "en");
+    await expect(popup.locator(".language-picker")).toHaveCount(0);
     await manager.getByRole("navigation").getByRole("button", { name: "Settings and backups", exact: true }).click();
     await expect(manager.locator(".sidebar").getByRole("combobox")).toHaveCount(0);
     await chooseOption(manager.locator(".settings-page").getByLabel("Interface language", { exact: true }), "zh-CN");
     await expect(popup.locator("html")).toHaveAttribute("lang", "zh-CN");
-    await expect(popup.getByLabel("界面语言", { exact: true })).toHaveJSProperty("value", "zh-CN");
-    await chooseOption(popup.getByLabel("界面语言", { exact: true }), "en");
+    await expect(manager.locator(".settings-page").getByLabel("界面语言", { exact: true })).toHaveJSProperty("value", "zh-CN");
+    await expect(popup.getByRole("button", { name: "管理密码库", exact: true })).toBeVisible();
+    await chooseOption(manager.locator(".settings-page").getByLabel("界面语言", { exact: true }), "en");
     await expect(manager.locator("html")).toHaveAttribute("lang", "en");
+    await expect(popup.locator("html")).toHaveAttribute("lang", "en");
     await expect(manager.locator(".settings-page").getByLabel("Interface language", { exact: true })).toHaveJSProperty("value", "en");
     await manager.getByRole("navigation").getByRole("button", { name: /^Secure Note/ }).click();
     await expect(manager.getByText("我的中文笔记", { exact: true })).toBeVisible();
@@ -51,6 +56,12 @@ test("browser language initializes the UI, system appearance follows changes, an
     await manager.reload();
     await manager.getByRole("navigation").getByRole("button", { name: "Settings and backups", exact: true }).click();
     await expect(manager.locator(".settings-page").getByLabel("Interface language", { exact: true })).toHaveJSProperty("value", "en");
+    expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
+    await expect(manager.getByRole("heading", { name: "Unlock Monica", exact: true })).toBeVisible();
+    await expect(manager.locator("html")).toHaveAttribute("lang", "en");
+    await expect(manager.locator(".language-picker")).toHaveCount(0);
+    await expect(popup.locator(".language-picker")).toHaveCount(0);
+    await manager.screenshot({ path: testInfo.outputPath("unlock-settings-language.png"), animations: "disabled" });
   } finally { await context.close(); }
 });
 

@@ -6,7 +6,8 @@ Monica 的单一用途是安全管理并按用户明确操作保存、同步和�
 | --- | --- | --- |
 | `webNavigation` | 枚举当前标签页的主页面和跨域 frame，使用户能选择正确的登录/支付 frame，并在后台重新核验 frame URL。 | 不跟踪用户跨站导航轨迹。 |
 | `storage` | 使用 `chrome.storage.session` 临时保存解锁会话密钥；在 `chrome.storage.local` 保存界面语言，以及读取并删除旧原型数据以完成一次性安全迁移。 | 不使用同步存储上传密码库。 |
-| `alarms` | 每分钟检查解锁会话是否到期，并在锁定后清除待保存密码、Passkey 请求及 Provider 同步。 | 不用于后台遥测或定时上传。 |
+| `alarms` | 每分钟检查解锁会话是否到期，并为用户配置的密码源安排自动同步；锁定后清除待保存密码、Passkey 请求并停止同步。自动同步可在设置中关闭。 | 不用于后台遥测，不向用户未配置的密码源上传密码库。 |
+| `favicon` | 为用户保存的登录网址读取 Chrome／Edge 本地缓存的网站图标，显示于列表、详情与 Popup。 | 不枚举浏览历史，不使用第三方图标服务。未命中时的网站图标请求范围见隐私政策。 |
 | `cookies` | 仅在用户明确刷新或处理 Steam 登录/交易确认时，临时设置 Steam Mobile Confirmation 所需 Cookie；请求结束后恢复用户原有 Cookie。 | 不读取、上传或修改其他网站 Cookie，也不会长期保留 Steam 会话 Cookie。 |
 | `identity` | 为用户明确发起的 Bitwarden 企业 SSO 和 WebAuthn 两步验证打开官方 OAuth/connector 窗口，并接收一次性回调。 | 不读取其他扩展的身份数据，不保存 OAuth code、PKCE verifier 或 WebAuthn token。 |
 | `nativeMessaging` | 由后台 Service Worker 连接本机安装的 `com.monica_pass.mdbx2` Host，在受限消息中执行 MDBX2 格式、加密、Commit 与同步操作。Host 清单只授权安装时写入的精确插件 ID。 | Content Script 与 Popup 无法连接 Host；插件不向 Host 暴露网页来源，也不允许 MDBX1 文件进入 MDBX2 运行环境。 |

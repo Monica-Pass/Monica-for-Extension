@@ -6,7 +6,6 @@ import "@m3e/web/theme";
 import "@m3e/web/button";
 import "@m3e/web/icon";
 import "@m3e/web/icon-button";
-import LanguagePicker from "../components/LanguagePicker.vue";
 import ListPagination from "../components/ListPagination.vue";
 import PopupLoginRow from "./PopupLoginRow.vue";
 import WebsiteIcon from "../components/WebsiteIcon.vue";
@@ -372,7 +371,7 @@ function isSensitivePageAllowed(raw: string): boolean {
       </template>
 
       <p class="popup-status" aria-live="polite">{{ status }}</p>
-      <footer class="popup-footer"><LanguagePicker /><m3e-button variant="text" type="button" @click="openManager"><m3e-icon slot="icon" name="database"></m3e-icon>{{ tr('管理密码库') }}</m3e-button><span>{{ tr('仅点击后填充') }}</span></footer>
+      <footer class="popup-footer"><m3e-button variant="text" type="button" @click="openManager"><m3e-icon slot="icon" name="database"></m3e-icon>{{ tr('管理密码库') }}</m3e-button><span>{{ tr('仅点击后填充') }}</span></footer>
     </main>
   </m3e-theme>
 </template>

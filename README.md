@@ -45,7 +45,7 @@ Monica 的 Chrome/Edge Manifest V3 浏览器插件。管理界面复用并独立
 
 当前版本的登录填充、密码保存/更新、身份与支付填充、WebDAV、Bitwarden 和 Passkey 主流程均有真实 Chromium MV3 E2E 覆盖。
 
-支持 **简体中文、English、日本語、한국어、Deutsch、Español、Русский、Tiếng Việt** 共 8 种语言，与 Android 版的语种保持一致。管理页在“设置与备份 → 界面语言”中切换，也可选择“跟随浏览器”；登录页和 Popup 底部同样提供语言选择。语言包离线提供，Manifest 名称、说明和工具栏文案同步覆盖。字段识别与界面语言独立；切换语言不会修改账号名称、密码或 Android 数据。详见 [本地化支持范围](docs/LOCALIZATION.md)。
+支持 **简体中文、English、日本語、한국어、Deutsch、Español、Русский、Tiếng Việt** 共 8 种语言，与 Android 版的语种保持一致。语言切换仅位于“设置与备份 → 界面语言”，也可选择“跟随浏览器”；创建页、解锁页、Popup 与网页提示自动沿用同一偏好。语言包离线提供，Manifest 名称、说明和工具栏文案同步覆盖。字段识别与界面语言独立；切换语言不会修改账号名称、密码或 Android 数据。详见 [本地化支持范围](docs/LOCALIZATION.md)。
 
 0.1.27 在相同 Chromium、2,000 条合成登录项和 100 条验证码数据下，登录列表的保留 V8 堆由 59.74 MiB 降至 8.08 MiB，Popup 由 14.07 MiB 降至 5.79 MiB。它们是请求垃圾回收后测得的页面 JavaScript 堆，不代表浏览器总内存；主密码派生仍使用 64 MiB Argon2id。测量范围与复现方式见 [性能说明](docs/PERFORMANCE.md)。
 

@@ -2314,7 +2314,6 @@ function errorCode(error: unknown): string | undefined {
 
 <template>
   <m3e-theme :color="themeColor" :scheme="activeScheme" variant="monochrome" motion="standard" strong-focus>
-    <div v-if="lifecycle !== 'unlocked'" class="auth-preferences"><LanguagePicker /></div>
     <div v-if="loading" class="loading">
       <img class="brand-logo" src="/icons/logo-256.png" width="48" height="48" alt="" /><h1>Monica</h1><p>{{ tr('正在检查加密密码库…') }}</p>
     </div>
