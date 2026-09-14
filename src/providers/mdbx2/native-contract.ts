@@ -560,6 +560,9 @@ export interface Mdbx2ObjectRecord {
   payloadJson: string;
   payloadSchemaVersion: number;
   deleted: boolean;
+  /** Android native API token labels, disclosed under the same Tiga policy. */
+  apiTokenMetadataJson?: string;
+  apiTokenFavorite?: boolean;
 }
 
 export type Mdbx2AttachmentStorageMode = "embedded-inline" | "embedded-chunked" | "external-hash-ref";
@@ -641,6 +644,8 @@ export interface Mdbx2ObjectUpsertInput {
   objectTypeId: string;
   title: string;
   payloadJson: string;
+  apiTokenMetadataJson?: string;
+  apiTokenFavorite?: boolean;
 }
 
 export interface Mdbx2ObjectWriteResult {
@@ -868,6 +873,7 @@ export type Mdbx2NativeResponse<T = unknown> =
   | { protocol: typeof MDBX2_NATIVE_PROTOCOL_VERSION; requestId: string; ok: false; error: Mdbx2NativeErrorPayload };
 
 export interface Mdbx2HostCapabilities {
+  supportsApiTokenMetadata?: boolean;
   hostName: typeof MDBX2_NATIVE_HOST_NAME;
   hostVersion: string;
   protocolVersion: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
@@ -1080,6 +1086,7 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     mdbxEngineVersion: MDBX2_ENGINE_VERSION,
     mdbxFormatVersion: MDBX2_FORMAT_VERSION,
     supportsMdbx1: false,
+    ...(value.supportsApiTokenMetadata === true ? { supportsApiTokenMetadata: true } : {}),
     maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
     maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,

@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 
@@ -48,7 +49,7 @@ test("MDBX2 batch transfer provides safe M3E planning progress confirmation and 
     await manager.getByLabel("主密码", { exact: true }).fill("mdbx2 batch transfer password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("mdbx2 batch transfer password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();
-    await expect(manager.getByRole("heading", { name: "密码库概览" })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
 
     const createdAt = "2026-08-06T12:00:00.000Z";
     const common = { favorite: false, notes: "", createdAt, updatedAt: createdAt, providerRefs: [] };
@@ -151,7 +152,7 @@ test("MDBX2 batch transfer provides safe M3E planning progress confirmation and 
     await manager.getByRole("button", { name: "密码源" }).click();
     await manager.getByRole("button", { name: "批量传输" }).click();
 
-    const dialog = manager.getByRole("dialog", { name: "复制或移动项目" });
+    const dialog = dialogContent(manager, { name: "复制或移动项目" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");

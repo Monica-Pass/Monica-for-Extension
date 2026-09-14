@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
@@ -30,29 +31,30 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
 
     await page.locator("button.nav-item").filter({ hasText: "登录项" }).click();
     await page.getByRole("button", { name: "查看Detail Login详情", exact: true }).click();
-    const detail = page.getByRole("dialog", { name: /Detail Login/ });
+    const detail = dialogContent(page, { name: /Detail Login/ });
     await expect(detail).toBeVisible();
     await expect(detail.getByText("joy", { exact: true })).toBeVisible();
     await expect(page.getByText("detail-secret", { exact: true })).toHaveCount(0);
     await detail.getByRole("button", { name: "显示密码" }).click();
     await expect(detail.getByText("detail-secret", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: /^自定义字段/ }).click();
     await expect(detail.getByText("Tenant", { exact: true })).toBeVisible();
     await expect(detail.getByText("example.com")).toBeVisible();
     const accessibility = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
     expect(accessibility.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")).toEqual([]);
     await detail.getByRole("button", { name: "编辑" }).click();
-    await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toBeVisible();
-    await expect(page.getByRole("dialog", { name: /Detail Login/ })).toHaveCount(0);
+    await expect(dialogContent(page, { name: /编辑登录项/ })).toBeVisible();
+    await expect(dialogContent(page, { name: /Detail Login/ })).toHaveCount(0);
     await page.getByRole("button", { name: "取消" }).click();
-    await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toHaveCount(0);
+    await expect(dialogContent(page, { name: /编辑登录项/ })).toHaveCount(0);
     await page.getByRole("button", { name: "编辑登录项" }).click();
-    await expect(page.getByRole("dialog", { name: /编辑登录项/ })).toBeVisible();
+    await expect(dialogContent(page, { name: /编辑登录项/ })).toBeVisible();
     await page.getByRole("button", { name: "取消" }).click();
-    await expect(page.getByRole("dialog", { name: /Detail Login/ })).toHaveCount(0);
+    await expect(dialogContent(page, { name: /Detail Login/ })).toHaveCount(0);
 
     await page.locator("button.nav-item").filter({ hasText: "钱包与身份" }).click();
     await page.getByRole("button", { name: "查看Detail Card详情", exact: true }).click();
-    const cardDetail = page.getByRole("dialog", { name: /Detail Card/ });
+    const cardDetail = dialogContent(page, { name: /Detail Card/ });
     await expect(cardDetail.getByText(/•••• 1111/)).toBeVisible();
     await expect(page.getByText("4111111111111111", { exact: true })).toHaveCount(0);
     await cardDetail.getByRole("button", { name: "显示卡号" }).click();
@@ -62,15 +64,16 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
 
     await page.locator("button.nav-item").filter({ hasText: "安全笔记" }).click();
     await page.getByRole("button", { name: "查看Detail Note详情", exact: true }).click();
-    const noteDetail = page.getByRole("dialog", { name: /Detail Note/ });
+    const noteDetail = dialogContent(page, { name: /Detail Note/ });
     await expect(noteDetail.getByText("# Recovery steps")).toBeVisible();
     await expect(noteDetail.getByText("工作", { exact: true })).toBeVisible();
     await noteDetail.getByRole("button", { name: "关闭", exact: true }).click();
 
     await page.locator("button.nav-item").filter({ hasText: "动态验证码" }).click();
     await page.getByRole("button", { name: "查看Detail OTP详情", exact: true }).click();
-    const otpDetail = page.getByRole("dialog", { name: /Detail OTP/ });
+    const otpDetail = dialogContent(page, { name: /Detail OTP/ });
     await expect(page.getByText("JBSWY3DPEHPK3PXP", { exact: true })).toHaveCount(0);
+    await otpDetail.getByRole("button", { name: /^更多信息/ }).click();
     await otpDetail.getByRole("button", { name: "显示密钥" }).click();
     await expect(otpDetail.getByText("JBSWY3DPEHPK3PXP", { exact: true })).toBeVisible();
     await otpDetail.getByRole("button", { name: "关闭", exact: true }).click();
@@ -79,7 +82,7 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     
     await page.getByRole("button", { name: "查看Detail Login详情", exact: true }).click();
     await page.setViewportSize({ width: 375, height: 812 });
-    await expect(page.getByRole("dialog", { name: /Detail Login/ })).toBeVisible();
+    await expect(dialogContent(page, { name: /Detail Login/ })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("item-detail-mobile.png"), fullPage: true });
   } finally { await context?.close(); }

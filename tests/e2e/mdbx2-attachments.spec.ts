@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type CDPSession, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -49,7 +50,7 @@ test("MDBX2 item attachments support download upload replace delete and narrow M
     await expectMinimumTarget(manageButton);
     await manageButton.click();
 
-    const dialog = page.getByRole("dialog", { name: "附件 · 附件演示账号" });
+    const dialog = dialogContent(page, { name: "附件 · 附件演示账号" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");
@@ -124,7 +125,7 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo)
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "管理 附件演示账号 的附件" }).click();
-    const dialog = page.getByRole("dialog", { name: "附件 · 附件演示账号" });
+    const dialog = dialogContent(page, { name: "附件 · 附件演示账号" });
     const evidenceRow = dialog.locator(".provider-attachment-row").filter({ hasText: "evidence.txt" });
     const transferButton = evidenceRow.getByRole("button", { name: "复制或移动 evidence.txt 到其他密码源" });
     await expectMinimumTarget(transferButton);
@@ -135,9 +136,9 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo)
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("background-image", "none");
     const targetSelect = panel.getByLabel("目标密码源 · evidence.txt");
-    await expect(targetSelect).toHaveValue(KEEPASS_PROVIDER_ID);
-    await expect(targetSelect).toHaveCSS("border-radius", "8px");
-    await expectMinimumTarget(targetSelect);
+    await expect(targetSelect).toHaveJSProperty("value", KEEPASS_PROVIDER_ID);
+    await expect(panel.locator("m3e-form-field")).toHaveAttribute("variant", "filled");
+    await expectMinimumTarget(panel.locator("m3e-form-field"));
     for (const radioTarget of await panel.locator(".attachment-transfer-mode label").all()) await expectMinimumTarget(radioTarget);
     const confirmCopy = panel.getByRole("button", { name: "确认复制" });
     await expect(confirmCopy).toBeFocused();
@@ -166,8 +167,8 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo)
     expect(copyRequests[0].operationId).toMatch(/^[a-f0-9-]{36}$/);
     expect(copyRequests[1].operationId).toBe(copyRequests[0].operationId);
 
-    const providerSelect = dialog.locator(".attachment-provider-field select");
-    await providerSelect.selectOption(KEEPASS_PROVIDER_ID);
+    const providerSelect = dialog.locator(".attachment-provider-field").getByRole("combobox");
+    await chooseOption(providerSelect, KEEPASS_PROVIDER_ID);
     await expect(dialog.getByText("evidence.txt", { exact: true })).toBeVisible();
     const keepassRow = dialog.locator(".provider-attachment-row").filter({ hasText: "keepass-note.txt" });
     await expect(keepassRow).toBeVisible();
@@ -191,7 +192,7 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo)
     });
     expect(allRequests[2].operationId).not.toBe(copyRequests[0].operationId);
 
-    await providerSelect.selectOption(MDBX_PROVIDER_ID);
+    await chooseOption(providerSelect, MDBX_PROVIDER_ID);
     await expect(dialog.getByText("keepass-note.txt", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(dialog);
     await expectNoGradients(dialog);
@@ -260,7 +261,8 @@ async function installAttachmentManagerMock(page: Page): Promise<void> {
     Object.defineProperty(chrome.runtime, "sendMessage", {
       configurable: true,
       value: async (message: Record<string, unknown>) => {
-        if (message.type === "VAULT_LIST_ITEMS") return { ok: true, data: [{
+        if (message.type === "VAULT_LIST_ITEMS" || message.type === "VAULT_ITEM_SNAPSHOT") {
+          const items = [{
           id: itemId,
           kind: "login",
           title: "附件演示账号",
@@ -276,7 +278,9 @@ async function installAttachmentManagerMock(page: Page): Promise<void> {
           password: "secret",
           uris: ["example.test"],
           customFields: []
-        }] };
+          }];
+          return { ok: true, data: message.type === "VAULT_ITEM_SNAPSHOT" ? { items, lockedAutofillIds: [] } : items };
+        }
         if (message.type === "PROVIDER_LIST") {
           const response = await originalSend(message);
           const existing = Array.isArray(response.data) ? response.data : [];

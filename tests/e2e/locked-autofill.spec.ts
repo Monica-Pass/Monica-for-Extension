@@ -1,5 +1,6 @@
 import { chromium, expect, test, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
+import { dialogContent } from "./fixtures/material";
 
 const masterPassword = "locked autofill test master password";
 const site = "https://selected.example.test/login";
@@ -94,7 +95,8 @@ test("editor opt-in fills only the selected password while locked, survives brow
     await fixture.manager.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     const row = fixture.manager.locator(".row-clickable").filter({ hasText: "Marked account" });
     await row.getByRole("button", { name: "编辑登录项", exact: true }).click();
-    const editor = fixture.manager.locator(".editor-dialog");
+    const editor = dialogContent(fixture.manager, { name: "编辑登录项", exact: true });
+    await editor.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "更多选项" }).click();
     await editor.getByRole("checkbox", { name: /允许免解锁填写/ }).check();
     await editor.getByRole("button", { name: "加密保存", exact: true }).click();
     await expect(editor).toBeHidden();

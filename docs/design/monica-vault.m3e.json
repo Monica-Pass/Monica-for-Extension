@@ -1,0 +1,1578 @@
+{
+  "title": "Monica 插件 · Material 3 Expressive",
+  "brief": "Monica 0.1.42 可编辑布局稿。M3 Expressive 主导组件、形状、字体、动效和布局；Nothing 只作为可选的黑白红配色，不改变结构。默认 Monica 青绿色，支持浅色、深色、系统模式。参考 Monica Android 的信息顺序：名称、凭据和常用操作优先，更多字段与来源记录分层。顶部使用随页面切换的拆分新建按钮。示例均为虚构的 example.test 数据；保留 Monica 官方应用图标。插件使用系统字体和本地 Material 图标，不引入 Canvas 编辑器或修改 Android 数据与同步格式。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "vault",
+      "name": "密码库",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1000,
+      "note": "直接进入密码库。顶部左侧新建当前页面或筛选类型，右侧打开所有类型菜单；未限定类型时左侧打开完整选择器。数据库只切换查看范围。"
+    },
+    {
+      "id": "create",
+      "name": "新建类型",
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 1000,
+      "note": "模态选择器用两组连续列表呈现全部 11 种可手动新建的类型。窄窗口两组上下排列，标题和关闭始终可见。"
+    },
+    {
+      "id": "detail",
+      "name": "项目详情",
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 1000,
+      "note": "参考 Monica Android。名称、用户名、密码与绑定验证码优先；更多信息与自定义字段折叠；右侧显示来源记录。窄屏单列，标题和底部操作固定。"
+    },
+    {
+      "id": "editor",
+      "name": "编辑项目",
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 1000,
+      "note": "编辑时不重复显示只读类型。名称和保存位置靠前；账号、网站与验证码分组，附加字段展开后编辑。标题和保存操作固定；同步刷新保留草稿。"
+    },
+    {
+      "id": "narrow",
+      "name": "窄屏密码库",
+      "x": 6080,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "note": "窄窗口中导航收进抽屉。拆分按钮保留两个独立点击区；菜单按可用高度滚动，200% 字体仍可操作，支持减少动态效果。"
+    },
+    {
+      "id": "create-menu",
+      "name": "拆分新建菜单",
+      "x": 6560,
+      "y": 0,
+      "w": 1440,
+      "h": 1000,
+      "note": "左侧新建密码，右侧展开 11 种类型；勾选当前类型。真实菜单支持箭头、Home/End、Escape、外部关闭与焦点恢复。旧浏览器回退完整选择器。"
+    }
+  ],
+  "groups": [
+    {
+      "id": "group-2",
+      "x": 0,
+      "y": 0,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-1",
+          "kind": "navRail",
+          "label": "Monica",
+          "icon": "menu",
+          "variant": "filled",
+          "railExpanded": true,
+          "size2": 1000,
+          "tabs": [
+            {
+              "icon": "list",
+              "label": "全部项目"
+            },
+            {
+              "icon": "password",
+              "label": "登录项"
+            },
+            {
+              "icon": "key",
+              "label": "API 密钥"
+            },
+            {
+              "icon": "wallet",
+              "label": "钱包与身份"
+            },
+            {
+              "icon": "note_stack",
+              "label": "安全笔记"
+            },
+            {
+              "icon": "timer",
+              "label": "动态验证码"
+            },
+            {
+              "icon": "key_vertical",
+              "label": "Passkey"
+            },
+            {
+              "icon": "archive",
+              "label": "归档"
+            },
+            {
+              "icon": "delete",
+              "label": "回收站"
+            },
+            {
+              "icon": "cloud_sync",
+              "label": "密码源"
+            },
+            {
+              "icon": "settings",
+              "label": "设置与备份"
+            }
+          ],
+          "selected": 0,
+          "actions": {
+            "tab:0": {
+              "to": "vault",
+              "transition": "fade"
+            }
+          },
+          "note": "草图展示主要入口；实际插件沿用完整导航与 Monica 官方图标，不以此处通用图标替换品牌。"
+        }
+      ]
+    },
+    {
+      "id": "group-4",
+      "x": 252,
+      "y": 20,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-3",
+          "kind": "searchBar",
+          "label": "搜索当前分类",
+          "icon": null,
+          "variant": "filled",
+          "size": 680
+        }
+      ]
+    },
+    {
+      "id": "group-6",
+      "x": 1136,
+      "y": 20,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-5",
+          "kind": "splitButton",
+          "label": "新建",
+          "icon": "add",
+          "variant": "filled",
+          "size": 176,
+          "action": {
+            "to": "create-menu",
+            "transition": "fade"
+          },
+          "note": "实际插件：左侧新建当前类型，右侧展开其他类型。Canvas 只支持整个组件的动作，因此此节点演示菜单，完整选择器另有页面。"
+        }
+      ]
+    },
+    {
+      "id": "group-8",
+      "x": 252,
+      "y": 112,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-7",
+          "kind": "text",
+          "label": "全部项目",
+          "icon": null,
+          "variant": "filled",
+          "size": 36
+        }
+      ]
+    },
+    {
+      "id": "group-10",
+      "x": 252,
+      "y": 192,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-9",
+          "kind": "select",
+          "label": "全部数据库",
+          "icon": "database",
+          "variant": "filled",
+          "size": 240,
+          "tabs": [
+            {
+              "label": "全部数据库"
+            },
+            {
+              "label": "Monica 本地库"
+            },
+            {
+              "label": "工作数据库"
+            }
+          ],
+          "selected": 0,
+          "note": "只切换列表范围，保持项目原来的数据库归属；高级筛选仍在筛选对话框。"
+        }
+      ]
+    },
+    {
+      "id": "group-12",
+      "x": 516,
+      "y": 192,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-11",
+          "kind": "button",
+          "label": "收藏",
+          "icon": "star",
+          "variant": "text",
+          "size": 112,
+          "toggle": {
+            "icon": "star",
+            "variant": "tonal",
+            "label": "收藏"
+          }
+        }
+      ]
+    },
+    {
+      "id": "group-14",
+      "x": 1190,
+      "y": 212,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-13",
+          "kind": "text",
+          "label": "8 个结果",
+          "icon": null,
+          "variant": "filled",
+          "size": 14
+        }
+      ]
+    },
+    {
+      "id": "group-23",
+      "x": 252,
+      "y": 280,
+      "axis": "y",
+      "items": [
+        {
+          "id": "part-15",
+          "kind": "listItem",
+          "label": "Proton Mail",
+          "icon": "password",
+          "variant": "filled",
+          "icon2": "chevron_right",
+          "size": 1156,
+          "supporting": "studio@example.test · 登录项 · 已收藏 · Monica 本地库",
+          "action": {
+            "to": "detail",
+            "transition": "fade"
+          }
+        },
+        {
+          "id": "part-16",
+          "kind": "listItem",
+          "label": "GitHub · Monica",
+          "icon": "password",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "monica-studio · 登录项 · Monica 本地库"
+        },
+        {
+          "id": "part-17",
+          "kind": "listItem",
+          "label": "Figma · Design workspace",
+          "icon": "password",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "design@example.test · 登录项 · Monica 本地库"
+        },
+        {
+          "id": "part-18",
+          "kind": "listItem",
+          "label": "Monica 开发环境",
+          "icon": "key",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "Example API · API 密钥 · 已收藏 · Monica 本地库"
+        },
+        {
+          "id": "part-19",
+          "kind": "listItem",
+          "label": "日常支付卡",
+          "icon": "credit_card",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "Visa · •••• 1111 · 银行卡 · Monica 本地库"
+        },
+        {
+          "id": "part-20",
+          "kind": "listItem",
+          "label": "账号恢复指引",
+          "icon": "note",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "已加密笔记 · 内容不在列表展开 · Monica 本地库"
+        },
+        {
+          "id": "part-21",
+          "kind": "listItem",
+          "label": "Studio 验证器",
+          "icon": "timer",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "动态验证码 · Monica 本地库"
+        },
+        {
+          "id": "part-22",
+          "kind": "listItem",
+          "label": "示例通行密钥",
+          "icon": "key_vertical",
+          "variant": "filled",
+          "size": 1156,
+          "supporting": "passkey.example.test · Android 元数据，仅可查看"
+        }
+      ]
+    },
+    {
+      "id": "group-25",
+      "x": 1840,
+      "y": 160,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-24",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 800,
+          "size2": 680,
+          "fill": "surfaceContainerLow",
+          "radiusTop": 28,
+          "radiusBottom": 28
+        }
+      ]
+    },
+    {
+      "id": "group-27",
+      "x": 1868,
+      "y": 190,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-26",
+          "kind": "text",
+          "label": "新建项目",
+          "icon": null,
+          "variant": "filled",
+          "size": 28
+        }
+      ]
+    },
+    {
+      "id": "group-29",
+      "x": 1868,
+      "y": 234,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-28",
+          "kind": "text",
+          "label": "选择要保存的内容",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "group-31",
+      "x": 2572,
+      "y": 184,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-30",
+          "kind": "iconButton",
+          "label": "",
+          "icon": "close",
+          "variant": "text",
+          "action": {
+            "to": "back",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "group-33",
+      "x": 1868,
+      "y": 296,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-32",
+          "kind": "text",
+          "label": "账号与安全",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "group-35",
+      "x": 2256,
+      "y": 296,
+      "axis": "x",
+      "items": [
+        {
+          "id": "part-34",
+          "kind": "text",
+          "label": "钱包与其他",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "group-42",
+      "x": 1868,
+      "y": 336,
+      "axis": "y",
+      "items": [
+        {
+          "id": "part-36",
+          "kind": "listItem",
+          "label": "密码",
+          "icon": "password",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "网站与应用账号",
+          "action": {
+            "to": "editor",
+            "transition": "fade"
+          }
+        },
+        {
+          "id": "part-37",
+          "kind": "listItem",
+          "label": "API 密钥",
+          "icon": "key",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "服务商密钥与访问令牌"
+        },
+        {
+          "id": "part-38",
+          "kind": "listItem",
+          "label": "动态验证码",
+          "icon": "timer",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "TOTP、HOTP 与其他验证器"
+        },
+        {
+          "id": "part-39",
+          "kind": "listItem",
+          "label": "Wi-Fi",
+          "icon": "wifi",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "网络密码与连接配置"
+        },
+        {
+          "id": "part-40",
+          "kind": "listItem",
+          "label": "SSH 密钥",
+          "icon": "terminal",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "公钥、私钥与指纹"
+        },
+        {
+          "id": "part-41",
+          "kind": "listItem",
+          "label": "安全笔记",
+          "icon": "note",
+          "variant": "filled",
+          "size": 360,
+          "supporting": "需要加密保存的文字"
+        }
+      ]
+    },
+    {
+      "id": "group-48",
+      "x": 2256,
+      "y": 336,
+      "axis": "y",
+      "items": [
+        {
+          "id": "part-43",
+          "kind": "listItem",
+          "label": "银行卡",
+          "icon": "credit_card",
+          "variant": "filled",
+          "size": 356,
+          "supporting": "卡号与账单信息"
+        },
+        {
+          "id": "part-44",
+          "kind": "listItem",
+          "label": "证件",
+          "icon": "badge",
+          "variant": "filled",
+          "size": 356,
+          "supporting": "身份信息与证件号码"
+        },
+        {
+          "id": "part-45",
+          "kind": "listItem",
+          "label": "账单地址",
+          "icon": "home_pin",
+          "variant": "filled",
+          "size": 356,
+          "supporting": "收件人与联系方式"
+        },
+        {
+          "id": "part-46",
+          "kind": "listItem",
+          "label": "支付账号",
+          "icon": "account_balance",
+          "variant": "filled",
+          "size": 356,
+          "supporting": "付款账户与银行信息"
+        },
+        {
+          "id": "part-47",
+          "kind": "listItem",
+          "label": "条码",
+          "icon": "qr_code_2",
+          "variant": "filled",
+          "size": 356,
+          "supporting": "二维码与条形码内容"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-2",
+      "x": 3240,
+      "y": 96,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-1",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 1040,
+          "size2": 800,
+          "fill": "surfaceContainer",
+          "radiusTop": 28,
+          "radiusBottom": 28
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-4",
+      "x": 3272,
+      "y": 132,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-3",
+          "kind": "text",
+          "label": "Proton Mail",
+          "icon": null,
+          "variant": "filled",
+          "size": 32
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-6",
+      "x": 3272,
+      "y": 184,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-5",
+          "kind": "text",
+          "label": "登录项 · 已收藏 · 日常",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-8",
+      "x": 4204,
+      "y": 124,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-7",
+          "kind": "iconButton",
+          "label": "",
+          "icon": "close",
+          "variant": "text",
+          "action": {
+            "to": "back",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-10",
+      "x": 3272,
+      "y": 254,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-9",
+          "kind": "text",
+          "label": "账号信息",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-15",
+      "x": 3272,
+      "y": 296,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-11",
+          "kind": "listItem",
+          "label": "用户名",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "supporting": "studio@example.test",
+          "icon2": "content_copy"
+        },
+        {
+          "id": "m3e42-item-12",
+          "kind": "listItem",
+          "label": "密码",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "supporting": "••••••••",
+          "icon2": "visibility",
+          "note": "由用户主动显示或复制，设计稿不含真实密码。"
+        },
+        {
+          "id": "m3e42-item-13",
+          "kind": "listItem",
+          "label": "动态验证码",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "supporting": "绑定的 Studio 验证器",
+          "icon2": "content_copy"
+        },
+        {
+          "id": "m3e42-item-14",
+          "kind": "listItem",
+          "label": "网址",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "supporting": "https://mail.example.test",
+          "icon2": "open_in_new"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-17",
+      "x": 3272,
+      "y": 672,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-16",
+          "kind": "listItem",
+          "label": "更多信息",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "icon2": "expand_more",
+          "note": "银行卡账单字段、证件签发信息、OTP 算法、Passkey 技术参数等按类型放入此处，保持字段完整。"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-19",
+      "x": 3272,
+      "y": 736,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-18",
+          "kind": "listItem",
+          "label": "自定义字段",
+          "icon": null,
+          "variant": "filled",
+          "size": 676,
+          "icon2": "expand_more"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-21",
+      "x": 3980,
+      "y": 254,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-20",
+          "kind": "text",
+          "label": "来源与记录",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-25",
+      "x": 3980,
+      "y": 296,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-22",
+          "kind": "listItem",
+          "label": "密码源",
+          "icon": null,
+          "variant": "filled",
+          "size": 268,
+          "supporting": "Monica 本地库"
+        },
+        {
+          "id": "m3e42-item-23",
+          "kind": "listItem",
+          "label": "创建时间",
+          "icon": null,
+          "variant": "filled",
+          "size": 268,
+          "supporting": "2026-09-14"
+        },
+        {
+          "id": "m3e42-item-24",
+          "kind": "listItem",
+          "label": "更新时间",
+          "icon": null,
+          "variant": "filled",
+          "size": 268,
+          "supporting": "2026-09-14"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-27",
+      "x": 3968,
+      "y": 824,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-26",
+          "kind": "button",
+          "label": "关闭",
+          "icon": null,
+          "variant": "text",
+          "size": 120,
+          "action": {
+            "to": "back",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-29",
+      "x": 4104,
+      "y": 824,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-28",
+          "kind": "button",
+          "label": "编辑",
+          "icon": "edit",
+          "variant": "filled",
+          "size": 144,
+          "action": {
+            "to": "editor",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-31",
+      "x": 4900,
+      "y": 32,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-30",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 760,
+          "size2": 936,
+          "fill": "surfaceContainer",
+          "radiusTop": 28,
+          "radiusBottom": 28
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-33",
+      "x": 4928,
+      "y": 68,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-32",
+          "kind": "text",
+          "label": "编辑登录项",
+          "icon": null,
+          "variant": "filled",
+          "size": 28
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-35",
+      "x": 5588,
+      "y": 60,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-34",
+          "kind": "iconButton",
+          "label": "",
+          "icon": "close",
+          "variant": "text",
+          "action": {
+            "to": "back",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-37",
+      "x": 4948,
+      "y": 140,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-36",
+          "kind": "textField",
+          "label": "Proton Mail",
+          "icon": null,
+          "variant": "outlined",
+          "size": 664,
+          "supporting": "名称 · 必填"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-39",
+      "x": 4948,
+      "y": 248,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-38",
+          "kind": "text",
+          "label": "保存到",
+          "icon": null,
+          "variant": "filled",
+          "size": 14
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-41",
+      "x": 5116,
+      "y": 232,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-40",
+          "kind": "select",
+          "label": "Monica 本地库",
+          "icon": null,
+          "variant": "filled",
+          "size": 496,
+          "tabs": [
+            {
+              "label": "Monica 本地库"
+            }
+          ],
+          "selected": 0
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-43",
+      "x": 4924,
+      "y": 320,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-42",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 712,
+          "size2": 292,
+          "fill": "surfaceContainerLow",
+          "radiusTop": 20,
+          "radiusBottom": 20
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-45",
+      "x": 4948,
+      "y": 344,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-44",
+          "kind": "text",
+          "label": "账号信息",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-47",
+      "x": 4948,
+      "y": 388,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-46",
+          "kind": "textField",
+          "label": "studio@example.test",
+          "icon": null,
+          "variant": "outlined",
+          "size": 316,
+          "supporting": "用户名"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-49",
+      "x": 5288,
+      "y": 388,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-48",
+          "kind": "textField",
+          "label": "••••••••",
+          "icon": null,
+          "variant": "outlined",
+          "size": 324,
+          "supporting": "密码",
+          "icon2": "visibility"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-51",
+      "x": 4948,
+      "y": 500,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-50",
+          "kind": "textField",
+          "label": "https://mail.example.test",
+          "icon": null,
+          "variant": "outlined",
+          "size": 664,
+          "supporting": "匹配网站 · 基础域名"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-53",
+      "x": 4924,
+      "y": 628,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-52",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 712,
+          "size2": 208,
+          "fill": "surfaceContainerLow",
+          "radiusTop": 20,
+          "radiusBottom": 20
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-55",
+      "x": 4948,
+      "y": 652,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-54",
+          "kind": "text",
+          "label": "补充信息",
+          "icon": null,
+          "variant": "filled",
+          "size": 16
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-57",
+      "x": 4948,
+      "y": 694,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-56",
+          "kind": "listItem",
+          "label": "两步验证",
+          "icon": null,
+          "variant": "filled",
+          "size": 664,
+          "supporting": "已绑定 Studio 验证器",
+          "icon2": "expand_more"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-59",
+      "x": 4948,
+      "y": 778,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-58",
+          "kind": "listItem",
+          "label": "自定义字段与高级设置",
+          "icon": null,
+          "variant": "filled",
+          "size": 664,
+          "icon2": "expand_more"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-61",
+      "x": 5364,
+      "y": 888,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-60",
+          "kind": "button",
+          "label": "取消",
+          "icon": null,
+          "variant": "text",
+          "size": 112,
+          "action": {
+            "to": "back",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-63",
+      "x": 5496,
+      "y": 888,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-62",
+          "kind": "button",
+          "label": "加密保存",
+          "icon": null,
+          "variant": "filled",
+          "size": 140,
+          "action": {
+            "to": "detail",
+            "transition": "fade"
+          },
+          "note": "草图演示导航。实际保存继续使用现有加密、来源绑定和远端版本检查。"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-65",
+      "x": 6096,
+      "y": 16,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-64",
+          "kind": "iconButton",
+          "label": "",
+          "icon": "menu",
+          "variant": "text"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-67",
+      "x": 6294,
+      "y": 16,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-66",
+          "kind": "splitButton",
+          "label": "新建",
+          "icon": "add",
+          "variant": "filled",
+          "action": {
+            "to": "create-menu",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-69",
+      "x": 6096,
+      "y": 92,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-68",
+          "kind": "searchBar",
+          "label": "搜索当前分类",
+          "icon": null,
+          "variant": "filled",
+          "size": 358
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-71",
+      "x": 6096,
+      "y": 172,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-70",
+          "kind": "text",
+          "label": "全部项目",
+          "icon": null,
+          "variant": "filled",
+          "size": 28
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-73",
+      "x": 6096,
+      "y": 228,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-72",
+          "kind": "select",
+          "label": "全部数据库",
+          "icon": "database",
+          "variant": "filled",
+          "size": 232,
+          "tabs": [
+            {
+              "label": "全部数据库"
+            },
+            {
+              "label": "Monica 本地库"
+            }
+          ],
+          "selected": 0
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-75",
+      "x": 6344,
+      "y": 228,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-74",
+          "kind": "button",
+          "label": "收藏",
+          "icon": "star",
+          "variant": "text",
+          "size": 110
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-81",
+      "x": 6096,
+      "y": 320,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-76",
+          "kind": "listItem",
+          "label": "Proton Mail",
+          "icon": "password",
+          "variant": "filled",
+          "size": 358,
+          "supporting": "studio@example.test · 已收藏",
+          "action": {
+            "to": "detail",
+            "transition": "fade"
+          }
+        },
+        {
+          "id": "m3e42-item-77",
+          "kind": "listItem",
+          "label": "Monica 开发环境",
+          "icon": "key",
+          "variant": "filled",
+          "size": 358,
+          "supporting": "API 密钥 · GitHub"
+        },
+        {
+          "id": "m3e42-item-78",
+          "kind": "listItem",
+          "label": "日常支付卡",
+          "icon": "credit_card",
+          "variant": "filled",
+          "size": 358,
+          "supporting": "Visa · •••• 1111"
+        },
+        {
+          "id": "m3e42-item-79",
+          "kind": "listItem",
+          "label": "账号恢复指引",
+          "icon": "note",
+          "variant": "filled",
+          "size": 358,
+          "supporting": "安全笔记 · 内容已加密"
+        },
+        {
+          "id": "m3e42-item-80",
+          "kind": "listItem",
+          "label": "Studio 验证器",
+          "icon": "timer",
+          "variant": "filled",
+          "size": 358,
+          "supporting": "动态验证码 · Monica 本地库"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-83",
+      "x": 6592,
+      "y": 24,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-82",
+          "kind": "searchBar",
+          "label": "搜索登录项",
+          "icon": null,
+          "variant": "filled",
+          "size": 720
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-85",
+      "x": 7668,
+      "y": 24,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-84",
+          "kind": "splitButton",
+          "label": "新建密码",
+          "icon": "add",
+          "variant": "filled",
+          "action": {
+            "to": "editor",
+            "transition": "fade"
+          },
+          "note": "此帧演示登录页：左边进入登录项编辑器，右边的完整类型菜单已展开。"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-87",
+      "x": 6592,
+      "y": 116,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-86",
+          "kind": "text",
+          "label": "登录项",
+          "icon": null,
+          "variant": "filled",
+          "size": 36
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-91",
+      "x": 6592,
+      "y": 204,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-88",
+          "kind": "listItem",
+          "label": "Proton Mail",
+          "icon": "password",
+          "variant": "filled",
+          "size": 976,
+          "supporting": "studio@example.test · Monica 本地库",
+          "action": {
+            "to": "detail",
+            "transition": "fade"
+          }
+        },
+        {
+          "id": "m3e42-item-89",
+          "kind": "listItem",
+          "label": "GitHub · Monica",
+          "icon": "password",
+          "variant": "filled",
+          "size": 976,
+          "supporting": "monica-studio · Monica 本地库"
+        },
+        {
+          "id": "m3e42-item-90",
+          "kind": "listItem",
+          "label": "Figma · Design workspace",
+          "icon": "password",
+          "variant": "filled",
+          "size": 976,
+          "supporting": "design@example.test · Monica 本地库"
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-93",
+      "x": 7624,
+      "y": 96,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-92",
+          "kind": "box",
+          "label": "",
+          "icon": null,
+          "variant": "filled",
+          "size": 344,
+          "size2": 844,
+          "fill": "surfaceContainerHigh",
+          "radiusTop": 20,
+          "radiusBottom": 20
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-95",
+      "x": 7640,
+      "y": 120,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-94",
+          "kind": "text",
+          "label": "账号与安全",
+          "icon": null,
+          "variant": "filled",
+          "size": 14
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-102",
+      "x": 7632,
+      "y": 152,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-96",
+          "kind": "listItem",
+          "label": "密码",
+          "icon": "password",
+          "variant": "filled",
+          "icon2": "check",
+          "size": 328,
+          "action": {
+            "to": "editor",
+            "transition": "fade"
+          }
+        },
+        {
+          "id": "m3e42-item-97",
+          "kind": "listItem",
+          "label": "API 密钥",
+          "icon": "key",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-98",
+          "kind": "listItem",
+          "label": "动态验证码",
+          "icon": "timer",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-99",
+          "kind": "listItem",
+          "label": "Wi-Fi",
+          "icon": "wifi",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-100",
+          "kind": "listItem",
+          "label": "SSH 密钥",
+          "icon": "terminal",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-101",
+          "kind": "listItem",
+          "label": "安全笔记",
+          "icon": "note",
+          "variant": "filled",
+          "size": 328
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-104",
+      "x": 7640,
+      "y": 558,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-103",
+          "kind": "text",
+          "label": "钱包与其他",
+          "icon": null,
+          "variant": "filled",
+          "size": 14
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-110",
+      "x": 7632,
+      "y": 590,
+      "axis": "y",
+      "items": [
+        {
+          "id": "m3e42-item-105",
+          "kind": "listItem",
+          "label": "银行卡",
+          "icon": "credit_card",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-106",
+          "kind": "listItem",
+          "label": "证件",
+          "icon": "badge",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-107",
+          "kind": "listItem",
+          "label": "账单地址",
+          "icon": "home_pin",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-108",
+          "kind": "listItem",
+          "label": "支付账号",
+          "icon": "account_balance",
+          "variant": "filled",
+          "size": 328
+        },
+        {
+          "id": "m3e42-item-109",
+          "kind": "listItem",
+          "label": "条码",
+          "icon": "qr_code_2",
+          "variant": "filled",
+          "size": 328
+        }
+      ]
+    },
+    {
+      "id": "m3e42-group-112",
+      "x": 6592,
+      "y": 884,
+      "axis": "x",
+      "items": [
+        {
+          "id": "m3e42-item-111",
+          "kind": "button",
+          "label": "查看完整新建选择器",
+          "icon": null,
+          "variant": "tonal",
+          "action": {
+            "to": "create",
+            "transition": "fade"
+          }
+        }
+      ]
+    }
+  ]
+}

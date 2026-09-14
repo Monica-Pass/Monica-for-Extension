@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { createHash, createPublicKey, verify } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as kdbxweb from "kdbxweb";
-import type { CardItem, IdentityItem, LoginItem, ProviderAccount } from "../../src/core/model";
+import type { CardItem, IdentityItem, LoginItem, PasskeyItem, ProviderAccount } from "../../src/core/model";
+import { createAssertion } from "../../src/passkey/webauthn-core";
 import { readKeePassHeader } from "../../src/providers/keepass/keepass-format";
 import { keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
 import { keePassFieldText } from "../../src/providers/keepass/keepass-login-codec";
@@ -30,6 +32,12 @@ const DOCUMENT_RECEIPT_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x3
 const PASSKEY_CREDENTIAL_ID = "YW5kcm9pZC1pbnRlcm9wLWNyZWRlbnRpYWw";
 const PRIVATE_KEY_BASE64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkW37q4De5OLmElVzGV+eVyxKWzUYTgiSmQGGNnkVvqKhRANCAATo31tQ78NEbm2ja6k1Omi1xPfSUGS3V74fv6x7WzvFrNxBDYm+FGmQVEiECyXmpcFTNeV0D/WFBONp8oJJZPn0";
 const PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----\n${PRIVATE_KEY_BASE64}\n-----END PRIVATE KEY-----`;
+const JVM_ANDROID_SOURCES = [
+  "data/PasskeyEntry.kt", "data/SecureItem.kt", "data/LocalKeePassDatabase.kt",
+  "keepass/KeePassChangeSet.kt", "keepass/KeePassSecureItemPhotoAttachments.kt",
+  "keepass/KeePassPasskeySyncCodec.kt", "utils/KeePassCodecSupport.kt",
+  "passkey/PasskeyPrivateKeySupport.kt"
+];
 
 interface SupportedVariant {
   id: "aes" | "chacha20";
@@ -73,13 +81,17 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
 
     const beforeStatus = await runText("git", ["status", "--porcelain=v1", "-uall"], { cwd: androidRepository });
     const androidRevision = await runText("git", ["rev-parse", "HEAD"], { cwd: androidRepository });
+    const standalone = process.env.MONICA_KEEPASS_INTEROP_STANDALONE === "1";
+    const coreSources = join(androidProject, "app/src/main/java/takagi/ru/monica");
+    const sourceHashes = Object.fromEntries(await Promise.all(JVM_ANDROID_SOURCES.map(async file => [file, sha256Hex(await readFile(join(coreSources, file)))])));
     const tempParent = join(extensionRoot, ".tmp", "keepass-android-interop");
     await mkdir(tempParent, { recursive: true });
     const runRoot = await mkdtemp(join(tempParent, "run-"));
     let primaryError: unknown;
     let evidence: Record<string, unknown> | undefined;
     try {
-      await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "generateAndroidKdbxFixtures");
+      const jvmProject = standalone ? await prepareStandaloneJvm(extensionRoot, coreSources, sourceDirectory, runRoot) : undefined;
+      await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "generateAndroidKdbxFixtures", jvmProject);
 
       const variantEvidence: Record<string, unknown>[] = [];
       for (const variant of SUPPORTED_VARIANTS) {
@@ -108,6 +120,11 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         });
         const login = synchronized.items.find((item): item is LoginItem => item.kind === "login" && item.title === "GitHub");
         expect(login).toBeDefined();
+        const passkey = synchronized.items.find((item): item is PasskeyItem => item.kind === "passkey" && item.credentialId === PASSKEY_CREDENTIAL_ID);
+        expect(passkey).toMatchObject({
+          rpId: "github.com", userName: "octocat", privateKeyPkcs8: PRIVATE_KEY_BASE64,
+          signCount: 4, useCount: 3, backupEligible: true, backupState: true
+        });
         const card = synchronized.items.find((item): item is CardItem => item.kind === "card" && item.title === "Android Bank Card");
         expect(card).toBeDefined();
         expect(card).toMatchObject({
@@ -216,6 +233,20 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
           outputSize: exported.length,
           outputSha256: sha256Hex(exported)
         });
+
+        // Keep the unchanged-field fixture above separate from a real Passkey use.
+        // Android must still load and sign with the key after browser usage resets a legacy counter.
+        const challenge = Buffer.alloc(32, variant.id === "aes" ? 33 : 34).toString("base64url");
+        const assertion = await signPortablePasskey(passkey!, challenge);
+        await provider.update(target, {
+          ...passkey!, signCount: assertion.signCount, useCount: 4,
+          lastUsedAt: "2026-09-14T00:00:00.000Z"
+        });
+        await writeFile(join(runRoot, `extension-passkey-${variant.id}.kdbx`), await provider.exportFile(target.id));
+        await writeFile(join(runRoot, `extension-passkey-${variant.id}.json`), JSON.stringify({
+          challenge, publicKeySpki: fixturePublicKey().export({ type: "spki", format: "der" }).toString("base64"),
+          ...assertion.response
+        }));
       }
 
       const twofish = new Uint8Array(await readFile(join(runRoot, "android-twofish.kdbx")));
@@ -232,11 +263,39 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         message: expect.stringContaining("AES-256")
       });
 
-      await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "verifyExtensionKdbxExports");
+      await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "verifyExtensionKdbxExports", jvmProject);
+      for (const variant of SUPPORTED_VARIANTS) {
+        const request = JSON.parse(await readFile(join(runRoot, `extension-passkey-${variant.id}.json`), "utf8"));
+        const signatures: string[] = JSON.parse(await readFile(join(runRoot, `android-passkey-${variant.id}.json`), "utf8"));
+        const signedData = Buffer.concat([
+          Buffer.from(request.authenticatorData, "base64url"),
+          createHash("sha256").update(Buffer.from(request.clientDataJSON, "base64url")).digest()
+        ]);
+        expect(signatures).toHaveLength(2);
+        for (const signature of signatures) expect(verify("sha256", signedData, fixturePublicKey(), Buffer.from(signature, "base64url"))).toBe(true);
+        const returnedProvider = new KeePassProvider();
+        const target = account(`android-returned-${variant.id}`, variant.id === "aes" ? 44 : 45);
+        await returnedProvider.unlock(target, new Uint8Array(await readFile(join(runRoot, `android-passkey-${variant.id}.kdbx`))), { password: PASSWORD });
+        const returned = await returnedProvider.sync(target, { now: "2026-09-14T00:02:00.000Z", localItems: [] });
+        const passkey = returned.items.find((item): item is PasskeyItem => item.kind === "passkey");
+        expect(passkey).toMatchObject({ credentialId: PASSKEY_CREDENTIAL_ID, privateKeyPkcs8: PRIVATE_KEY_BASE64, signCount: 0, useCount: 5, backupEligible: true, backupState: true });
+        await signPortablePasskey(passkey!, request.challenge);
+      }
       evidence = {
         androidRevision,
+        androidExecution: standalone ? "isolated JVM with verbatim Android core sources" : "Android app JVM unit tests",
+        androidSourceSha256: sourceHashes,
         supportedCiphers: variantEvidence,
         rejectedCipher: "Twofish",
+        passkeyPortability: {
+          recognizedWithUsernameAndUrl: true,
+          legacyStoredCounter: 4,
+          assertionCounter: 0,
+          verifiedAndroidSignatures: 4,
+          androidHelpers: ["KeePassPasskeySyncCodec", "PasskeyPrivateKeySupport"],
+          roundTrip: "Android KDBX → browser sign/export → Android decode/sign/export → browser sign",
+          privateKeyAndCredentialIdPreserved: true
+        },
         preserved: [
           "protected fields",
           "OTP parameters",
@@ -260,15 +319,23 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
     const finalErrors: unknown[] = [];
     try {
       const afterStatus = await runText("git", ["status", "--porcelain=v1", "-uall"], { cwd: androidRepository });
-      if (afterStatus !== beforeStatus) {
+      if (!standalone && afterStatus !== beforeStatus) {
         finalErrors.push(new Error("Android repository state changed during KeePass interoperability acceptance."));
+      }
+      for (const [file, hash] of Object.entries(sourceHashes)) {
+        if (sha256Hex(await readFile(join(coreSources, file))) !== hash) finalErrors.push(new Error(`Android core source changed during verification: ${file}`));
       }
     } catch (error) {
       finalErrors.push(error);
     }
     if (process.env.MONICA_KEEPASS_INTEROP_KEEP !== "1") {
       try {
-        await rm(runRoot, { recursive: true, force: true });
+        const resolvedParent = await realpath(tempParent);
+        const resolvedRun = await realpath(runRoot);
+        if (dirname(resolvedRun) !== resolvedParent || !basename(resolvedRun).startsWith("run-")) {
+          throw new Error("Refusing to remove an unexpected interoperability directory.");
+        }
+        await rm(resolvedRun, { recursive: true, force: true });
       } catch (error) {
         finalErrors.push(error);
       }
@@ -283,18 +350,42 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
   });
 });
 
+function fixturePublicKey() {
+  return createPublicKey(PRIVATE_KEY_PEM);
+}
+
+async function signPortablePasskey(item: PasskeyItem, challenge: string) {
+  const assertion = await createAssertion({
+    origin: "https://github.com", challenge, rpId: item.rpId,
+    credentialId: item.credentialId, userHandle: item.userHandle,
+    privateKeyPkcs8: item.privateKeyPkcs8!, signCount: 0,
+    backupEligible: item.backupEligible, backupState: item.backupState, userVerified: true
+  });
+  const authData = Buffer.from(assertion.response.authenticatorData, "base64url");
+  const clientData = Buffer.from(assertion.response.clientDataJSON, "base64url");
+  expect(authData[32]).toBe(0x1d);
+  expect(authData.readUInt32BE(33)).toBe(0);
+  expect(assertion.signCount).toBe(0);
+  expect(verify("sha256", Buffer.concat([authData, createHash("sha256").update(clientData).digest()]), fixturePublicKey(), Buffer.from(assertion.response.signature, "base64url"))).toBe(true);
+  return assertion;
+}
+
 async function runAndroidFixtureMethod(
   androidProject: string,
   initScript: string,
   sourceDirectory: string,
   interopDirectory: string,
-  method: "generateAndroidKdbxFixtures" | "verifyExtensionKdbxExports"
+  method: "generateAndroidKdbxFixtures" | "verifyExtensionKdbxExports",
+  jvmProject?: string
 ): Promise<void> {
   const command = process.platform === "win32" ? ".\\gradlew.bat" : join(androidProject, "gradlew");
+  const projectArgs = jvmProject
+    ? ["--project-dir", jvmProject, "-Pkotlin.compiler.execution.strategy=in-process", "test"]
+    : ["-I", initScript, ":app:testDebugUnitTest"];
+  process.stdout.write(`KEEPASS_ANDROID_FIXTURE ${method} (${jvmProject ? "isolated JVM" : "Android app"})\n`);
   await runCommand(command, [
-    "-I",
-    initScript,
-    ":app:testDebugUnitTest",
+    ...projectArgs,
+    ...(process.env.MONICA_KEEPASS_INTEROP_OFFLINE === "1" ? ["--offline"] : []),
     "--tests",
     `${FIXTURE_CLASS}.${method}`,
     "--no-daemon",
@@ -310,6 +401,22 @@ async function runAndroidFixtureMethod(
     timeoutMs: 15 * 60_000,
     shell: process.platform === "win32"
   });
+}
+
+async function prepareStandaloneJvm(extensionRoot: string, coreSources: string, fixtures: string, runRoot: string): Promise<string> {
+  const apiJar = process.env.MONICA_ANDROID_API_JAR;
+  if (!apiJar || !existsSync(apiJar)) throw new Error("MONICA_ANDROID_API_JAR must name the local Android SDK android.jar for standalone JVM verification.");
+  const project = join(runRoot, "jvm");
+  const template = join(extensionRoot, "tests/interop/android-keepass/jvm");
+  await mkdir(project, { recursive: true });
+  for (const name of ["build.gradle", "settings.gradle"]) await cp(join(template, name), join(project, name));
+  for (const file of JVM_ANDROID_SOURCES) {
+    const target = join(project, "src/main/kotlin/takagi/ru/monica", file);
+    await mkdir(dirname(target), { recursive: true });
+    await cp(join(coreSources, file), target);
+  }
+  await cp(fixtures, join(project, "src/test/kotlin"), { recursive: true });
+  return project;
 }
 
 function account(id: string, databaseId: number): ProviderAccount {

@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
@@ -65,17 +66,17 @@ test("Bitwarden organization Collections are permission-aware, manager-only, and
     await expect(manage).toBeVisible();
     await manage.click();
 
-    const dialog = manager.getByRole("dialog", { name: /Bitwarden Collection/ });
+    const dialog = dialogContent(manager, { name: /Bitwarden Collection/ });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
-    await expect(dialog.locator(".bitwarden-organization-panel")).toHaveCSS("border-radius", "8px");
+    await expect(dialog.locator(".bitwarden-organization-panel")).toHaveCSS("border-radius", "20px");
     await expect(dialog.getByText("只有管理页能读取组织名称", { exact: false })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /^Shared org/ })).toBeVisible();
+    await expect(dialog.getByRole("option", { name: /^Shared org/, selected: true })).toBeVisible();
     await expect(dialog.getByText("Target", { exact: true })).toBeVisible();
     await expect(dialog.getByLabel("选择 Collection Target")).toBeEnabled();
     await expectNoGradients(dialog);
 
-    await dialog.locator("[data-route-item]").selectOption({ label: "Shared account" });
+    await chooseOption(dialog.locator("[data-route-item]"), { label: "Shared account" });
     await dialog.getByLabel("选择 Collection Old").uncheck();
     await dialog.getByLabel("选择 Collection Target").check();
     await dialog.getByRole("button", { name: "保存路由" }).click();

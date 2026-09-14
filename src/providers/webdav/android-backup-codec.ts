@@ -556,6 +556,8 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       algorithm: normalizePasskeyAlgorithm(raw.publicKeyAlgorithm),
       publicKey: stringValue(raw.publicKey),
       signCount: numberValue(raw.signCount, 0),
+      backupEligible: typeof raw.backupEligible === "boolean" ? raw.backupEligible : undefined,
+      backupState: typeof raw.backupState === "boolean" ? raw.backupState : undefined,
       discoverable: raw.isDiscoverable !== false,
       userVerificationRequired: raw.isUserVerificationRequired !== false,
       transports: (stringValue(raw.transports) || "internal").split(",").map((value) => value.trim()).filter(Boolean),
@@ -991,6 +993,8 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
 }
 
 function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem, options: AndroidBackupCodecOptions = {}): { id: number | string; raw: Record<string, unknown> } | null {
+  // Android API tokens are native MDBX2 objects, not Room password backup rows.
+  if (item.kind === "api-token") return null;
   const originalId = original?.id;
   const id: number | string = typeof originalId === "number" || typeof originalId === "string" ? originalId : numericId(item);
   const raw: Record<string, unknown> = { ...(original || {}) };
@@ -1178,6 +1182,8 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("publicKey", item.publicKey, item.publicKey, previous?.publicKey);
       setChanged("createdAt", Date.parse(item.createdAt) || Date.now(), item.createdAt, previous?.createdAt);
       setChanged("signCount", item.signCount, item.signCount, previous?.signCount);
+      if (typeof item.backupEligible === "boolean") setChanged("backupEligible", item.backupEligible, item.backupEligible, previous?.backupEligible);
+      if (typeof item.backupState === "boolean") setChanged("backupState", item.backupState, item.backupState, previous?.backupState);
       setChanged("isDiscoverable", item.discoverable, item.discoverable, previous?.discoverable);
       setChanged("lastUsedAt", Date.parse(item.lastUsedAt || item.updatedAt) || Date.now(), item.lastUsedAt, previous?.lastUsedAt);
       setChanged("useCount", item.useCount || 0, item.useCount, previous?.useCount);
@@ -1220,7 +1226,7 @@ function sameValue(left: unknown, right: unknown): boolean {
 
 function providerPath(item: VaultItem, id: number | string): string {
   const millis = Date.parse(item.createdAt) || Date.now();
-  const mapping: Record<VaultItem["kind"], [string, string]> = {
+  const mapping: Partial<Record<VaultItem["kind"], [string, string]>> = {
     login: ["passwords", "password"],
     "secure-note": ["notes", "note"],
     totp: ["authenticators", "totp"],
@@ -1230,7 +1236,9 @@ function providerPath(item: VaultItem, id: number | string): string {
     "payment-account": ["payment_accounts", "payment_account"],
     passkey: ["passkeys", "passkey"]
   };
-  const [folder, prefix] = mapping[item.kind];
+  const location = mapping[item.kind];
+  if (!location) throw new Error("此项目类型不属于 Android JSON 备份，请使用 MDBX2 同步。");
+  const [folder, prefix] = location;
   const safeId = String(id).replace(/\//g, "_");
   const folderKey = androidFolderKey(item.categoryName);
   if (item.kind === "passkey") return `folders/${folderKey}/${folder}/${prefix}_${safeId}.json`;

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import "@m3e/web/slider";
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { computed, onMounted, reactive, ref, watch } from "vue";
@@ -223,67 +225,67 @@ onMounted(async () => {
 
 <template>
   <section class="generator-panel" aria-labelledby="generator-result-title">
-    <div class="generator-result">
+    <m3e-card variant="filled" class="generator-result"><div slot="content" class="generator-result-content">
       <div><span id="generator-result-title">{{ tr('生成结果') }}</span><output aria-live="polite">{{ result }}</output><small v-if="mode === 'password'">{{ tr('约 {0} bit', { 0: entropy }) }}</small></div>
       <div class="generator-result-actions"><m3e-icon-button :aria-label="tr('重新生成')" :title="tr('重新生成')" @click="generate"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('复制结果')" :title="tr('复制结果')" @click="copyResult"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button></div>
-    </div>
+    </div></m3e-card>
 
-    <div class="generator-modes" role="tablist" :aria-label="tr('生成类型')">
-      <button v-for="entry in ([['password','密码','password'],['word','单词','abc'],['pin','PIN','pin'],['passphrase','短语','text_fields'],['ssh','SSH 密钥','key']] as const)" :key="entry[0]" type="button" role="tab" :aria-selected="mode === entry[0]" :class="{ selected: mode === entry[0] }" @click="changeMode(entry[0])"><m3e-icon :name="entry[2]"></m3e-icon><span>{{ tr(entry[1]) }}</span></button>
-    </div>
+    <m3e-tabs variant="primary" stretch class="generator-tabs" :aria-label="tr('生成类型')">
+      <m3e-tab v-for="entry in ([['password','密码','password'],['word','单词','abc'],['pin','PIN','pin'],['passphrase','短语','text_fields'],['ssh','SSH 密钥','key']] as const)" :key="entry[0]" :selected.prop="mode === entry[0]" @input="changeMode(entry[0])"><m3e-icon slot="icon" :name="entry[2]"></m3e-icon><span>{{ tr(entry[1]) }}</span></m3e-tab>
+    </m3e-tabs>
 
     <div v-if="mode === 'ssh' && sshResult" class="generator-ssh-result field-wide">
       <dl class="generator-ssh-facts">
         <div><dt>{{ tr('算法') }}</dt><dd>{{ tr('{0} · {1} 位', { 0: sshResult.algorithm, 1: sshResult.keySize }) }}</dd></div>
         <div><dt>{{ tr('指纹') }}</dt><dd><code>{{ sshResult.fingerprintSha256 }}</code></dd></div>
       </dl>
-      <label class="field field-wide"><span>{{ tr('公钥（OpenSSH）') }}</span><textarea class="generator-ssh-text" readonly rows="3" :value="sshResult.publicKeyOpenSsh" :aria-label="tr('公钥内容')"></textarea></label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"><label slot="label">{{ tr('公钥（OpenSSH）') }}</label><textarea class="generator-ssh-text" readonly rows="3" :value="sshResult.publicKeyOpenSsh" :aria-label="tr('公钥内容')"></textarea></m3e-form-field>
       <div class="generator-result-actions">
         <m3e-icon-button :aria-label="tr('复制公钥')" :title="tr('复制公钥')" @click="copyText(sshResult.publicKeyOpenSsh)"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
         <m3e-icon-button :aria-label="revealedPrivateKey ? tr('隐藏私钥') : tr('显示私钥')" :title="revealedPrivateKey ? tr('隐藏私钥') : tr('显示私钥')" @click="revealedPrivateKey = !revealedPrivateKey"><m3e-icon :name="revealedPrivateKey ? 'visibility_off' : 'visibility'"></m3e-icon></m3e-icon-button>
         <m3e-icon-button v-if="revealedPrivateKey" :aria-label="tr('复制私钥')" :title="tr('复制私钥')" @click="copyText(sshResult.privateKeyOpenSsh)"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button>
       </div>
-      <label v-if="revealedPrivateKey" class="field field-wide"><span>{{ tr('私钥（OpenSSH，请妥善保管）') }}</span><textarea class="generator-ssh-text" readonly rows="8" :value="sshResult.privateKeyOpenSsh" :aria-label="tr('私钥内容')"></textarea></label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="revealedPrivateKey" class="field field-wide"><label slot="label">{{ tr('私钥（OpenSSH，请妥善保管）') }}</label><textarea class="generator-ssh-text" readonly rows="8" :value="sshResult.privateKeyOpenSsh" :aria-label="tr('私钥内容')"></textarea></m3e-form-field>
       <p class="generator-history-empty">{{ tr('私钥仅保存在本页面内存中，不会写入密码库或同步数据。') }}</p>
     </div>
 
     <form class="generator-form" @submit.prevent="generate">
       <template v-if="mode === 'password'">
-        <label class="field field-wide"><span>{{ tr('长度：{0}', { 0: password.length }) }}</span><input v-model.number="password.length" type="range" min="4" max="64" /></label>
-        <fieldset class="generator-options field-wide"><legend>{{ tr('字符类型') }}</legend><label><input v-model="password.uppercase" type="checkbox" />{{ tr('大写字母') }}</label><label><input v-model="password.lowercase" type="checkbox" />{{ tr('小写字母') }}</label><label><input v-model="password.numbers" type="checkbox" />{{ tr('数字') }}</label><label><input v-model="password.symbols" type="checkbox" />{{ tr('符号') }}</label></fieldset>
-        <fieldset class="generator-options field-wide"><legend>{{ tr('最少数量') }}</legend><label><input v-model.number="password.uppercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.uppercase" :aria-label="tr('大写最少数量')" /><span>{{ tr('大写') }}</span></label><label><input v-model.number="password.lowercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.lowercase" :aria-label="tr('小写最少数量')" /><span>{{ tr('小写') }}</span></label><label><input v-model.number="password.numbersMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.numbers" :aria-label="tr('数字最少数量')" /><span>{{ tr('数字') }}</span></label><label><input v-model.number="password.symbolsMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.symbols" :aria-label="tr('符号最少数量')" /><span>{{ tr('符号') }}</span></label></fieldset>
-        <fieldset class="generator-options field-wide"><legend>{{ tr('符号来源') }}</legend><label><input v-model="symbolSource" type="radio" value="exclusion" name="symbol-source" />{{ tr('排除默认符号') }}</label><label><input v-model="symbolSource" type="radio" value="custom" name="symbol-source" />{{ tr('自定义符号集') }}</label>
+        <div class="field field-wide generator-slider-field"><span>{{ tr('长度：{0}', { 0: password.length }) }}</span><m3e-slider labelled min="4" max="64" step="1"><m3e-slider-thumb :value.prop="password.length" :aria-label="tr('长度：{0}', { 0: password.length })" @input="password.length = ($event.target as HTMLElement &amp; { value: number }).value" /></m3e-slider></div>
+        <fieldset class="generator-options field-wide"><legend>{{ tr('字符类型') }}</legend><label v-choice-label><m3e-checkbox :checked.prop="password.uppercase" @input="password.uppercase = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('大写字母') }}</label><label v-choice-label><m3e-checkbox :checked.prop="password.lowercase" @input="password.lowercase = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('小写字母') }}</label><label v-choice-label><m3e-checkbox :checked.prop="password.numbers" @input="password.numbers = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('数字') }}</label><label v-choice-label><m3e-checkbox :checked.prop="password.symbols" @input="password.symbols = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('符号') }}</label></fieldset>
+        <fieldset class="generator-options field-wide"><legend>{{ tr('最少数量') }}</legend><m3e-form-field v-field-label variant="filled" hide-required-marker><input v-model.number="password.uppercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.uppercase" :aria-label="tr('大写最少数量')" /><label slot="label">{{ tr('大写') }}</label></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><input v-model.number="password.lowercaseMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.lowercase" :aria-label="tr('小写最少数量')" /><label slot="label">{{ tr('小写') }}</label></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><input v-model.number="password.numbersMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.numbers" :aria-label="tr('数字最少数量')" /><label slot="label">{{ tr('数字') }}</label></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><input v-model.number="password.symbolsMin" class="generator-min-input" type="number" min="0" max="32" :disabled="!password.symbols" :aria-label="tr('符号最少数量')" /><label slot="label">{{ tr('符号') }}</label></m3e-form-field></fieldset>
+        <fieldset class="generator-options field-wide"><legend>{{ tr('符号来源') }}</legend><m3e-radio-group class="generator-radio-options" :aria-label="tr('符号来源')"><label v-choice-label><m3e-radio :checked.prop="symbolSource === 'exclusion'" @input="symbolSource = 'exclusion'"   value="exclusion" name="symbol-source" />{{ tr('排除默认符号') }}</label><label v-choice-label><m3e-radio :checked.prop="symbolSource === 'custom'" @input="symbolSource = 'custom'"   value="custom" name="symbol-source" />{{ tr('自定义符号集') }}</label></m3e-radio-group>
           <div v-if="password.useSymbolExclusionMode" class="generator-symbol-grid field-wide">
-            <label v-for="symbol in [...DEFAULT_SYMBOLS]" :key="symbol" class="generator-symbol-chip">
-              <input type="checkbox" :checked="!password.excludedSymbols.includes(symbol)" :aria-label="tr('使用符号 {0}', { 0: symbol })" @change="toggleExcludedSymbol(symbol)" />
+            <label v-choice-label v-for="symbol in [...DEFAULT_SYMBOLS]" :key="symbol" class="generator-symbol-chip">
+              <m3e-checkbox  :checked="!password.excludedSymbols.includes(symbol)" :aria-label="tr('使用符号 {0}', { 0: symbol })" @change="toggleExcludedSymbol(symbol)" />
               <span>{{ symbol }}</span>
             </label>
           </div>
-          <label v-else class="field field-wide"><span>{{ tr('自定义符号集') }}</span><input v-model="password.customSymbols" :aria-label="tr('自定义符号集')" maxlength="256" /></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker v-else class="field field-wide"><label slot="label">{{ tr('自定义符号集') }}</label><input v-model="password.customSymbols" :aria-label="tr('自定义符号集')" maxlength="256" /></m3e-form-field>
         </fieldset>
-        <fieldset class="generator-options field-wide"><legend>{{ tr('可读性') }}</legend><label><input v-model="password.excludeSimilar" type="checkbox" />{{ tr('排除 0 O l 1 I') }}</label><label><input v-model="password.excludeAmbiguous" type="checkbox" />{{ tr('排除模糊符号') }}</label></fieldset>
+        <fieldset class="generator-options field-wide"><legend>{{ tr('可读性') }}</legend><label v-choice-label><m3e-checkbox :checked.prop="password.excludeSimilar" @input="password.excludeSimilar = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('排除 0 O l 1 I') }}</label><label v-choice-label><m3e-checkbox :checked.prop="password.excludeAmbiguous" @input="password.excludeAmbiguous = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('排除模糊符号') }}</label></fieldset>
       </template>
       <template v-else-if="mode === 'word'">
-        <label class="field field-wide"><span>{{ tr('长度：{0}', { 0: words.length }) }}</span><input v-model.number="words.length" type="range" min="4" max="128" :aria-label="tr('单词密码长度')" /></label>
-        <fieldset class="generator-options field-wide"><legend>{{ tr('选项') }}</legend><label><input v-model="words.firstLetterUppercase" type="checkbox" />{{ tr('首字母大写') }}</label><label><input v-model="words.includeNumbers" type="checkbox" />{{ tr('附加数字') }}</label><label><input v-model="words.separatorCountsTowardsLength" type="checkbox" />{{ tr('分隔符计入长度') }}</label></fieldset>
-        <label class="field field-wide"><span>{{ tr('自定义分隔符（可选）') }}</span><input v-model="words.separator" maxlength="8" :aria-label="tr('自定义分隔符')" /></label>
-        <label class="field field-wide"><span>{{ tr('分段长度：{0}', { 0: words.segmentLength }) }}</span><input v-model.number="words.segmentLength" type="range" min="0" max="20" :aria-label="tr('分段长度')" /></label>
+        <div class="field field-wide generator-slider-field"><span>{{ tr('长度：{0}', { 0: words.length }) }}</span><m3e-slider labelled min="4" max="128" step="1"><m3e-slider-thumb :value.prop="words.length" :aria-label="tr('单词密码长度')" @input="words.length = ($event.target as HTMLElement &amp; { value: number }).value" /></m3e-slider></div>
+        <fieldset class="generator-options field-wide"><legend>{{ tr('选项') }}</legend><label v-choice-label><m3e-checkbox :checked.prop="words.firstLetterUppercase" @input="words.firstLetterUppercase = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('首字母大写') }}</label><label v-choice-label><m3e-checkbox :checked.prop="words.includeNumbers" @input="words.includeNumbers = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('附加数字') }}</label><label v-choice-label><m3e-checkbox :checked.prop="words.separatorCountsTowardsLength" @input="words.separatorCountsTowardsLength = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('分隔符计入长度') }}</label></fieldset>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"><label slot="label">{{ tr('自定义分隔符（可选）') }}</label><input v-model="words.separator" maxlength="8" :aria-label="tr('自定义分隔符')" /></m3e-form-field>
+        <div class="field field-wide generator-slider-field"><span>{{ tr('分段长度：{0}', { 0: words.segmentLength }) }}</span><m3e-slider labelled min="0" max="20" step="1"><m3e-slider-thumb :value.prop="words.segmentLength" :aria-label="tr('分段长度')" @input="words.segmentLength = ($event.target as HTMLElement &amp; { value: number }).value" /></m3e-slider></div>
       </template>
-      <template v-else-if="mode === 'pin'"><label class="field field-wide"><span>{{ tr('PIN 长度') }}</span><input v-model.number="pin.length" type="number" min="1" max="128" inputmode="numeric" /></label></template>
+      <template v-else-if="mode === 'pin'"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"><label slot="label">{{ tr('PIN 长度') }}</label><input v-model.number="pin.length" type="number" min="1" max="128" inputmode="numeric" /></m3e-form-field></template>
       <template v-else-if="mode === 'ssh'">
-        <label class="field"><span>{{ tr('算法') }}</span><select v-model="ssh.algorithm" :aria-label="tr('SSH 算法')"><option value="ED25519">Ed25519</option><option value="RSA">RSA</option></select></label>
-        <label v-if="ssh.algorithm === 'RSA'" class="field"><span>{{ tr('RSA 位数') }}</span><select v-model.number="ssh.rsaSize" :aria-label="tr('RSA 位数')"><option value="2048">2048</option><option value="3072">3072</option><option value="4096">4096</option></select></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('算法') }}</label><component :is="materialSelectTag" @input="ssh.algorithm = ($event.target as HTMLElement &amp; { value: string }).value"  :aria-label="tr('SSH 算法')"><component :is="materialOptionTag" :selected.prop="String(ssh.algorithm ?? '') === String('ED25519')" value="ED25519">Ed25519</component><component :is="materialOptionTag" :selected.prop="String(ssh.algorithm ?? '') === String('RSA')" value="RSA">RSA</component></component></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="ssh.algorithm === 'RSA'" class="field"><label slot="label">{{ tr('RSA 位数') }}</label><component :is="materialSelectTag" @input="ssh.rsaSize = Number(($event.target as HTMLElement &amp; { value: string }).value)"  :aria-label="tr('RSA 位数')"><component :is="materialOptionTag" :selected.prop="String(ssh.rsaSize ?? '') === String('2048')" value="2048">2048</component><component :is="materialOptionTag" :selected.prop="String(ssh.rsaSize ?? '') === String('3072')" value="3072">3072</component><component :is="materialOptionTag" :selected.prop="String(ssh.rsaSize ?? '') === String('4096')" value="4096">4096</component></component></m3e-form-field>
       </template>
-      <template v-else><label class="field"><span>{{ tr('单词数') }}</span><input v-model.number="phrase.length" type="number" min="1" max="32" /></label><label class="field"><span>{{ tr('分隔符') }}</span><input v-model="phrase.delimiter" maxlength="8" /></label><label class="field field-wide"><span>{{ tr('自定义单词（可选）') }}</span><input v-model="phrase.customWord" /></label><label class="favorite-row"><input v-model="phrase.capitalize" type="checkbox" />{{ tr('首字母大写') }}</label><label class="favorite-row"><input v-model="phrase.includeNumber" type="checkbox" />{{ tr('附加数字') }}</label></template>
+      <template v-else><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('单词数') }}</label><input v-model.number="phrase.length" type="number" min="1" max="32" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('分隔符') }}</label><input v-model="phrase.delimiter" maxlength="8" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"><label slot="label">{{ tr('自定义单词（可选）') }}</label><input v-model="phrase.customWord" /></m3e-form-field><label v-choice-label class="favorite-row"><m3e-checkbox :checked.prop="phrase.capitalize" @input="phrase.capitalize = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('首字母大写') }}</label><label v-choice-label class="favorite-row"><m3e-checkbox :checked.prop="phrase.includeNumber" @input="phrase.includeNumber = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   />{{ tr('附加数字') }}</label></template>
       <p v-if="status" class="generator-status field-wide" aria-live="polite">{{ status }}</p>
       <footer class="field-wide"><m3e-button variant="filled" type="submit"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('重新生成') }}</m3e-button></footer>
     </form>
 
-    <details class="generator-history">
-      <summary>
-        <span><m3e-icon name="history"></m3e-icon><strong>{{ tr('Android 生成历史') }}</strong></span>
+    <m3e-expansion-panel class="generator-history">
+      <span slot="header">
+        <m3e-icon name="history"></m3e-icon><strong>{{ tr('Android 生成历史') }}</strong>
         <span class="generator-history-count">{{ history.length }}</span>
-      </summary>
+      </span>
       <div class="generator-history-body">
         <div class="generator-history-toolbar">
           <span>{{ props.providers.filter((provider) => provider.kind === 'monica-webdav' && provider.enabled).length ? tr('来自 Monica Android WebDAV') : tr('尚未连接 Android WebDAV') }}</span>
@@ -300,7 +302,7 @@ onMounted(async () => {
             <div class="generator-history-meta"><span>{{ historyContext(entry) }}</span><time :datetime="new Date(entry.timestamp).toISOString()">{{ historyTime(entry.timestamp) }}</time><span>{{ entry.providerName }}</span></div>
             <div class="generator-history-actions">
               <m3e-icon-button :aria-label="revealedHistory.has(entry.id) ? tr('隐藏生成值') : tr('显示生成值')" :title="revealedHistory.has(entry.id) ? tr('隐藏') : tr('显示')" @click="toggleHistorySecret(entry.id)"><m3e-icon :name="revealedHistory.has(entry.id) ? 'visibility_off' : 'visibility'"></m3e-icon></m3e-icon-button>
-              <button v-if="pendingDelete === entry.id" type="button" class="generator-history-confirm" @click="deleteHistoryEntry(entry)">{{ tr('确认删除') }}</button>
+              <m3e-button variant="text" v-if="pendingDelete === entry.id" type="button" class="generator-history-confirm" @click="deleteHistoryEntry(entry)">{{ tr('确认删除') }}</m3e-button>
               <m3e-icon-button v-else :aria-label="tr('删除生成历史')" :title="tr('删除')" @click="deleteHistoryEntry(entry)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
               <m3e-icon-button v-if="pendingDelete === entry.id" :aria-label="tr('取消删除')" :title="tr('取消')" @click="pendingDelete = ''"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
             </div>
@@ -308,6 +310,6 @@ onMounted(async () => {
         </ul>
         <p v-else class="generator-history-empty">{{ tr('没有可读取的 Android 生成历史') }}</p>
       </div>
-    </details>
+    </m3e-expansion-panel>
   </section>
 </template>

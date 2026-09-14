@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "./lib/material-controls";
 import { tr, locale } from './i18n';
 
 import "@m3e/web/theme";
@@ -6,13 +7,17 @@ import "@m3e/web/button";
 import "@m3e/web/card";
 import "@m3e/web/icon";
 import "@m3e/web/icon-button";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, defineAsyncComponent, watch, type ComputedRef } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, defineAsyncComponent, watch, toRaw, type ComputedRef } from "vue";
 import LanguagePicker from "./components/LanguagePicker.vue";
 import ListPagination from "./components/ListPagination.vue";
+import WebsiteIcon from "./components/WebsiteIcon.vue";
+import { websiteIconCache } from "./lib/website-icon-cache";
 import { useListPagination } from "./lib/list-pagination";
 import AppearancePanel from "./components/AppearancePanel.vue";
 import AutofillSitePolicyDialog from "./components/AutofillSitePolicyDialog.vue";
 import InlineAutofillSettings from "./components/InlineAutofillSettings.vue";
+import AutomaticSyncSettings from "./components/AutomaticSyncSettings.vue";
+import { connectLiveVault } from "./runtime/live-vault";
 import BitwardenCollectionsDialog from "./components/BitwardenCollectionsDialog.vue";
 import BitwardenFoldersDialog from "./components/BitwardenFoldersDialog.vue";
 import BitwardenProviderCard from "./components/BitwardenProviderCard.vue";
@@ -27,18 +32,23 @@ import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 import SteamNetworkActions from "./components/SteamNetworkActions.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemDetail from "./components/VaultItemDetail.vue";
-import VaultHome from "./components/VaultHome.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
+import LoginEditorFields from "./components/LoginEditorFields.vue";
+import CreateItemDialog from "./components/CreateItemDialog.vue";
+import CreateSplitButton from "./components/CreateSplitButton.vue";
+import type { CreateItemType } from "./manager/create-items";
+import ApiTokenEditor from "./components/ApiTokenEditor.vue";
+import type { LoginForm } from "./manager/login-form";
 import { normalizeHost } from "./core/matching";
-import { createLoginItem, isLoginItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem, type VaultItemKind } from "./core/model";
+import { createLoginItem, isLoginItem, type ApiTokenItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem, type VaultItemKind } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
 import { advanceHotpCounter, findBoundTotpItem } from "./core/login-otp";
 import { createCode128DataUrl } from "./core/barcode";
 import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
 import { homeItemSummary, itemIcon, itemKindLabel, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
-import { homeFolderKey, homeSourceIds, matchesHomeFolder, matchesHomeSource, type HomeDestination, type HomeFolderRef } from "./manager/home-catalog";
-import { normalizeImportedVaultItem } from "./manager/import-items";
+import { homeSourceIds, matchesHomeSource } from "./manager/home-catalog";
+import { independentImportedPasskey, normalizeImportedVaultItem } from "./manager/import-items";
 import { parseCsvToVaultItems } from "./manager/csv-import";
 import { projectSteamItem } from "./core/steam-item";
 import { passkeyAvailability, passkeyAvailabilityLabel } from "./passkey/source-policy";
@@ -51,33 +61,9 @@ import type { KeePassRemoteManagerStatus, KeePassSessionSummary, Mdbx2ManagerSyn
 import { MIN_MASTER_PASSWORD_LENGTH } from "./security/master-password-policy";
 import type { EncryptedVaultBackup, VaultLifecycleStatus } from "./security/secure-vault-service";
 
-type Section = "overview" | "vault" | VaultManagerSection | "steam" | "sends" | "archive" | "trash" | "timeline" | "generator" | "providers" | "settings";
+type Section = "vault" | VaultManagerSection | "steam" | "sends" | "archive" | "trash" | "timeline" | "generator" | "providers" | "settings";
 type LoginType = NonNullable<LoginItem["loginType"]>;
 type KeePassSourceMode = "local-file" | "webdav";
-
-interface LoginForm {
-  name: string;
-  username: string;
-  password: string;
-  wifiPassword: string;
-  barcodeContent: string;
-  notes: string;
-  favorite: boolean;
-  archived: boolean;
-  allowLockedAutofill: boolean;
-  providerId: string;
-  loginType: LoginType;
-  ssoProvider: string;
-  ssoRefEntryId: string;
-  totpSecret: string;
-  boundTotpItemId: string;
-  uriRules: LoginUriRule[];
-  customFields: SecureCustomField[];
-  wifiMetadataRaw: string;
-  wifi: WifiMetadata;
-  sshKeyDataRaw: string;
-  sshKey: SshKeyMetadata;
-}
 
 interface KeePassFormState {
   sourceMode: KeePassSourceMode;
@@ -124,17 +110,30 @@ const providers = ref<ProviderAccount[]>([]);
 const providerQueues = ref<Array<{ providerId: string; pending: number; failed: number; recovering?: number; maxAttempts: number; lastError?: string }>>([]);
 const providerConflicts = ref<ProviderConflictSummary[]>([]);
 const lifecycle = ref<VaultLifecycleStatus>("locked");
-const activeSection = ref<Section>("overview");
+const activeSection = ref<Section>("vault");
 const query = ref("");
 type AndroidQuickFilter = "favorite" | "two-fa" | "notes" | "passkey" | "uncategorized" | "local-only" | "attachments";
 const activeQuickFilters = ref<AndroidQuickFilter[]>([]);
 const databaseSourceFilter = ref("all");
 const folderFilter = ref("all");
-const homeSourceFilter = ref("all");
-const homeSourceInitialized = ref(false);
-const homeKindFilter = ref<VaultItemKind>();
-const homeFolderFilter = shallowRef<HomeFolderRef>();
-const homeBrowseActive = ref(false);
+const kindFilter = ref<VaultItemKind>();
+const currentCreateType = computed<CreateItemType | undefined>(() => {
+  switch (activeSection.value) {
+    case "passwords": return "PASSWORD";
+    case "api-tokens": return "api-token";
+    case "notes": return "secure-note";
+    case "totp": return "totp";
+    case "wallet": return kindFilter.value && ["card", "identity", "billing-address", "payment-account"].includes(kindFilter.value)
+      ? kindFilter.value as CreateItemType : "card";
+    case "vault": return kindFilter.value === "login" ? "PASSWORD"
+      : kindFilter.value && kindFilter.value !== "passkey" ? kindFilter.value : undefined;
+    default: return undefined;
+  }
+});
+const createButtonLabel = computed(() => activeSection.value === "wallet" ? tr('添加钱包项目')
+  : activeSection.value === "notes" ? tr('添加安全笔记')
+  : activeSection.value === "totp" ? tr('添加验证码') : tr('新建'));
+
 const loading = ref(true);
 const authBusy = ref(false);
 const authError = ref("");
@@ -144,12 +143,16 @@ const navigationMedia = window.matchMedia("(max-width: 900px)");
 const narrowNavigation = ref(navigationMedia.matches);
 const filterDialogOpen = ref(false);
 const editorOpen = ref(false);
+const credentialSaving = ref(false);
+const createDialogOpen = ref(false);
+const apiTokenEditorOpen = ref(false);
+const apiTokenEditorItem = shallowRef<ApiTokenItem>();
 const vaultEditorOpen = ref(false);
 const vaultEditorItem = ref<VaultItem | undefined>();
 const vaultEditorKind = ref<EditableVaultKind>("card");
 const vaultDetailItem = ref<VaultItem | undefined>();
 const editingId = ref<string | null>(null);
-const revealPassword = ref(false);
+const editingCredentialSnapshot = shallowRef<LoginItem>();
 const specialQrDataUrl = ref("");
 const specialQrError = ref("");
 const barcodeRenderMode = ref<"qr" | "code128">("qr");
@@ -255,9 +258,10 @@ useThemePreferences();
 
 const credentials = vaultDerived(() => vaultItems.value.filter(isLoginItem));
 const filteredCredentials = vaultDerived(() => credentials.value.filter(matchesManagerFilters));
+const apiTokenItems = vaultDerived(() => vaultItems.value.filter(item => item.kind === "api-token"));
 const walletItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
 const noteItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "notes"));
-const totpItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "totp"));
+const totpItems = vaultDerived(() => vaultItems.value.filter((item): item is TotpItem => item.kind === "totp"));
 const steamItems = vaultDerived(() => vaultItems.value.flatMap((item) => {
   const projected = item.kind === "login" ? projectSteamItem(item) : undefined;
   return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
@@ -274,14 +278,14 @@ const databaseFolders = vaultDerived(() => {
   return [...categories.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN"));
 });
 const databaseSources = vaultDerived(() => providers.value.filter((provider) => provider.kind !== "local"));
-const filterableSection = computed(() => ["vault", "passwords", "wallet", "notes", "totp", "steam", "passkeys", "archive", "trash"].includes(activeSection.value));
+const filterableSection = computed(() => ["vault", "passwords", "wallet", "notes", "totp", "api-tokens", "steam", "passkeys", "archive", "trash"].includes(activeSection.value));
 const filteredSteamItems = vaultDerived(() => steamItems.value.filter(matchesManagerFilters));
 const archivedCredentials = vaultDerived(() => archivedItems.value.filter(isLoginItem));
 const credentialById = vaultDerived(() => new Map([...credentials.value, ...archivedCredentials.value].map((item) => [item.id, item])));
 const filteredArchiveItems = vaultDerived(() => filterManagerItems(archivedItems.value));
 const filteredDeletedItems = vaultDerived(() => filterManagerItems(deletedItems.value));
 const filteredSectionItems = vaultDerived(() => {
-  if (!["vault", "wallet", "notes", "totp", "passkeys"].includes(activeSection.value)) return [];
+  if (!["vault", "wallet", "notes", "totp", "api-tokens", "passkeys"].includes(activeSection.value)) return [];
   return vaultItems.value.filter((item) => (activeSection.value === "vault" || itemSection(item) === activeSection.value) && matchesManagerFilters(item));
 });
 const webDavProviders = vaultDerived(() => providers.value.filter((provider) => provider.kind === "monica-webdav"));
@@ -299,8 +303,6 @@ const keePassHistoryProviderById = vaultDerived(() => new Map(keePassProviders.v
   .filter((provider) => Boolean(keePassSessions.value[provider.id]))
   .map((provider) => [provider.id, provider])));
 const defaultProviderId = computed(() => providers.value.find((provider) => provider.isDefaultSaveTarget)?.id || providers.value.find((provider) => provider.kind === "local")?.id || "");
-const isWebLoginType = computed(() => form.loginType === "PASSWORD" || form.loginType === "SSO");
-const isSpecialLoginType = computed(() => form.loginType === "WIFI" || form.loginType === "SSH_KEY" || form.loginType === "BARCODE");
 const nativeBitwardenSshEdit = computed(() => credentialById.value.get(editingId.value || "")?.bitwardenSshKeyMode === "native");
 const sshBitwardenFormatHint = computed(() => {
   if (form.loginType !== "SSH_KEY") return "";
@@ -329,32 +331,24 @@ const listTotal = computed(() => {
     case "archive": return filteredArchiveItems.value.length;
     case "trash": return filteredDeletedItems.value.length;
     case "timeline": return androidTimeline.value.length;
-    case "vault": case "wallet": case "notes": case "totp": case "passkeys": return filteredSectionItems.value.length;
+    case "vault": case "wallet": case "notes": case "totp": case "api-tokens": case "passkeys": return filteredSectionItems.value.length;
     default: return 0;
   }
 });
-const listPagination = useListPagination(() => listTotal.value, () => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, homeKindFilter.value, homeFolderFilter.value]));
-const homeViewLabel = vaultDerived(() => homeFolderFilter.value
-  ? homeFolderFilter.value.label || (homeFolderFilter.value.type === "uncategorized" ? tr('未分类') : tr('未命名文件夹'))
-  : homeKindFilter.value ? itemKindLabel(homeKindFilter.value)
-  : hasAndroidFilter("favorite") ? tr('收藏夹') : sectionTitle(activeSection.value));
-const homeSourceLabel = vaultDerived(() => {
-  if (databaseSourceFilter.value === "all") return tr('全部数据库');
-  if (databaseSourceFilter.value === "local") return tr('Monica 本地库');
-  const provider = providers.value.find(provider => provider.id === databaseSourceFilter.value);
-  return provider ? providerDisplayName(provider) : tr('外部密码源');
-});
-watch(folderFilter, value => { if (!value.startsWith("home:")) homeFolderFilter.value = undefined; }, { flush: "sync" });
-watch(databaseSourceFilter, value => {
-  if (homeFolderFilter.value && value !== homeFolderFilter.value.sourceId) {
-    homeFolderFilter.value = undefined;
-    folderFilter.value = "all";
-  }
-}, { flush: "sync" });
-
+const listPagination = useListPagination(() => listTotal.value, () => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, kindFilter.value]));
 onMounted(initialize);
+let disconnectLiveVault: (() => void) | undefined;
+watch(editorOpen, open => { if (!open) editingCredentialSnapshot.value = undefined; });
+onMounted(() => {
+  disconnectLiveVault = connectLiveVault(async () => {
+    if (lifecycle.value !== "unlocked" || loading.value) return;
+    await Promise.all([refreshItems(), refreshProviders()]);
+  }, error => {
+    if (error instanceof ExtensionRuntimeError && error.code === "VAULT_LOCKED") clearVaultView();
+  });
+});
 watch(lifecycle, (status) => {
-  if (status !== "unlocked") mobileNavOpen.value = false;
+  if (status !== "unlocked") { mobileNavOpen.value = false; websiteIconCache.clear(); }
 });
 onMounted(() => {
   navigationMedia.addEventListener("change", updateNavigationLayout);
@@ -362,6 +356,7 @@ onMounted(() => {
   chrome.storage.onChanged.addListener(onVaultSessionChanged);
 });
 onBeforeUnmount(() => {
+  disconnectLiveVault?.();
   navigationMedia.removeEventListener("change", updateNavigationLayout);
   document.removeEventListener("keydown", handleNavigationKeydown, true);
   chrome.storage.onChanged.removeListener(onVaultSessionChanged);
@@ -369,7 +364,9 @@ onBeforeUnmount(() => {
 
 function onVaultSessionChanged(changes: Record<string, chrome.storage.StorageChange>, area: string) {
   const session = changes["monica.secureVault.session.v1"];
-  if (area === "session" && session?.oldValue?.rawKey && !session.newValue?.rawKey) clearVaultView();
+  const previous = session?.oldValue as { rawKey?: unknown } | undefined;
+  const next = session?.newValue as { rawKey?: unknown } | undefined;
+  if (area === "session" && previous?.rawKey && !next?.rawKey) clearVaultView();
 }
 
 function updateNavigationLayout(event: MediaQueryListEvent) {
@@ -403,14 +400,14 @@ function handleNavigationKeydown(event: KeyboardEvent) {
   const index = controls.indexOf(document.activeElement as HTMLElement);
   if (event.shiftKey && index <= 0) {
     event.preventDefault();
-    controls.at(-1)?.focus();
+    controls[controls.length - 1]?.focus();
   } else if (!event.shiftKey && (index < 0 || index === controls.length - 1)) {
     event.preventDefault();
     controls[0]?.focus();
   }
 }
 
-const hasOpenDialog = computed(() => filterDialogOpen.value || editorOpen.value || vaultEditorOpen.value || Boolean(vaultDetailItem.value) || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
+const hasOpenDialog = computed(() => createDialogOpen.value || apiTokenEditorOpen.value || filterDialogOpen.value || editorOpen.value || vaultEditorOpen.value || Boolean(vaultDetailItem.value) || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -424,27 +421,42 @@ watch(hasOpenDialog, async (open, wasOpen) => {
   } else if (!open && wasOpen) {
     document.removeEventListener("keydown", handleDialogKeydown, true);
     await nextTick();
-    dialogTrigger?.focus();
-    dialogTrigger = null;
+    if (!document.querySelector('.dialog-leave-active')) restoreDialogFocus();
   }
 });
 
 onBeforeUnmount(() => document.removeEventListener("keydown", handleDialogKeydown, true));
 
+function restoreDialogFocus() {
+  if (hasOpenDialog.value) return;
+  dialogTrigger?.focus({ preventScroll: true });
+  dialogTrigger = null;
+}
+
+function focusActiveDialog() {
+  const dialog = activeDialog();
+  if (dialog && !dialog.contains(document.activeElement)) {
+    (dialog.querySelector<HTMLElement>('[autofocus]') || focusableDialogElements(dialog)[0])?.focus();
+  }
+}
+
 function activeDialog(): HTMLElement | null {
-  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'));
-  return dialogs.at(-1) || null;
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], m3e-dialog[open]')).filter(dialog => !dialog.closest('.dialog-leave-active'));
+  return dialogs[dialogs.length - 1] || null;
 }
 
 function focusableDialogElements(dialog: HTMLElement | null): HTMLElement[] {
   if (!dialog) return [];
-  const selector = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),m3e-button:not([disabled]),m3e-icon-button:not([disabled])';
+  const selector = 'summary,a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),m3e-button:not([disabled]),m3e-icon-button:not([disabled])';
   return Array.from(dialog.querySelectorAll<HTMLElement>(selector)).filter((element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true");
 }
 
 function handleDialogKeydown(event: KeyboardEvent) {
+  if (CSS.supports('selector(select:open)') && document.querySelector('select:open')) return;
+  if (CSS.supports('selector(:popover-open)') && document.querySelector('m3e-menu:popover-open, m3e-option-panel:popover-open')) return;
   const dialog = activeDialog();
   if (!dialog) return;
+  if (dialog.localName === "m3e-dialog") return;
   if (event.key === "Escape") {
     event.preventDefault();
     if (filterDialogOpen.value) filterDialogOpen.value = false;
@@ -461,8 +473,10 @@ function handleDialogKeydown(event: KeyboardEvent) {
     else if (bitwardenDialogOpen.value) closeBitwardenDialog();
     else if (webDavDialogOpen.value) closeWebDavDialog();
     else if (vaultDetailItem.value) vaultDetailItem.value = undefined;
-    else if (vaultEditorOpen.value) vaultEditorOpen.value = false;
-    else editorOpen.value = false;
+    else if (createDialogOpen.value) createDialogOpen.value = false;
+    else if (apiTokenEditorOpen.value) dialog.querySelector<HTMLElement>('[data-dialog-close]')?.click();
+    else if (vaultEditorOpen.value) dialog.querySelector<HTMLElement>('[data-dialog-close]')?.click();
+    else if (!credentialSaving.value) editorOpen.value = false;
     return;
   }
   if (event.key !== "Tab") return;
@@ -472,7 +486,7 @@ function handleDialogKeydown(event: KeyboardEvent) {
   const index = active ? focusable.indexOf(active) : -1;
   if (event.shiftKey && index <= 0) {
     event.preventDefault();
-    focusable.at(-1)?.focus();
+    focusable[focusable.length - 1]?.focus();
   } else if (!event.shiftKey && (index < 0 || index === focusable.length - 1)) {
     event.preventDefault();
     focusable[0].focus();
@@ -579,7 +593,12 @@ function clearVaultView() {
   lockedAutofillIds.value = [];
   vaultDetailItem.value = undefined;
   vaultEditorItem.value = undefined;
+  apiTokenEditorItem.value = undefined;
+  apiTokenEditorOpen.value = false;
+  createDialogOpen.value = false;
+  credentialSaving.value = false;
   editingId.value = null;
+  editingCredentialSnapshot.value = undefined;
   filterDialogOpen.value = false;
   passwordChangeDialogOpen.value = false;
   autofillSitePolicyDialogOpen.value = false;
@@ -587,9 +606,6 @@ function clearVaultView() {
   selectedEncryptedBackupName.value = "";
   query.value = "";
   clearManagerFilters();
-  homeSourceFilter.value = "all";
-  homeSourceInitialized.value = false;
-  homeBrowseActive.value = false;
   Object.assign(form, emptyLoginForm());
   Object.assign(passwordChange, { currentPassword: "", newPassword: "", confirmation: "" });
   Object.assign(restoreForm, { backupPassword: "", currentPassword: "" });
@@ -598,7 +614,7 @@ function clearVaultView() {
   bitwardenForm.masterPassword = bitwardenForm.twoFactorCode = bitwardenForm.newDeviceOtp = "";
   clearSpecialQr();
   closeExportBackupDialog();
-  activeSection.value = "overview";
+  activeSection.value = "vault";
   editorOpen.value = false;
   vaultEditorOpen.value = false;
   webDavDialogOpen.value = false;
@@ -719,19 +735,19 @@ async function applyWindowsHelloRevocation() {
   }
 }
 
+let itemRefreshRevision = 0;
 async function refreshItems() {
   const revision = vaultViewRevision;
-  const [active, archived, deleted, quickFillIds] = await Promise.all([
-    vaultClient.listItems(),
-    vaultClient.listArchivedItems(),
-    vaultClient.listDeletedItems(),
-    vaultClient.lockedAutofillIds()
-  ]);
-  if (revision !== vaultViewRevision) return;
+  const requestRevision = ++itemRefreshRevision;
+  const snapshot = await vaultClient.itemSnapshot();
+  if (revision !== vaultViewRevision || requestRevision !== itemRefreshRevision) return;
+  const active = snapshot.items.filter(item => !item.deletedAt && !item.archivedAt);
+  const archived = snapshot.items.filter(item => !item.deletedAt && Boolean(item.archivedAt));
+  const deleted = snapshot.items.filter(item => Boolean(item.deletedAt));
   vaultItems.value = active;
   archivedItems.value = archived;
   deletedItems.value = deleted;
-  lockedAutofillIds.value = quickFillIds;
+  lockedAutofillIds.value = snapshot.lockedAutofillIds;
   const detailId = vaultDetailItem.value?.id;
   if (detailId) vaultDetailItem.value = active.find(item => item.id === detailId) || archived.find(item => item.id === detailId) || deleted.find(item => item.id === detailId);
 }
@@ -830,11 +846,7 @@ function webDavEndpointLabel(provider: ProviderAccount): string {
 }
 
 function navigate(section: Section) {
-  if (homeBrowseActive.value) {
-    clearManagerFilters();
-    query.value = "";
-    homeBrowseActive.value = false;
-  }
+  if (section !== activeSection.value) kindFilter.value = undefined;
   activeSection.value = section;
   if (mobileNavOpen.value) closeNavigation(true);
   void nextTick(() => window.scrollTo({ top: 0, behavior: "instant" }));
@@ -847,43 +859,15 @@ function clearManagerFilters() {
   databaseSourceFilter.value = "all";
   folderFilter.value = "all";
   activeQuickFilters.value = [];
-  homeKindFilter.value = undefined;
-  homeFolderFilter.value = undefined;
-}
-
-function openHomeDestination(destination: HomeDestination, search = "") {
-  navigate(destination.section);
-  clearManagerFilters();
-  query.value = search;
-  databaseSourceFilter.value = destination.sourceId || "all";
-  homeKindFilter.value = destination.kind;
-  homeFolderFilter.value = destination.folder;
-  if (destination.folder) folderFilter.value = `home:${homeFolderKey(destination.folder)}`;
-  activeQuickFilters.value = destination.favorite ? ["favorite"] : [];
-  homeBrowseActive.value = true;
-  if (destination.section === "providers" && destination.providerId) {
-    void nextTick(() => {
-      const target = [...document.querySelectorAll<HTMLElement>("[data-home-provider-id]")].find(node => node.dataset.homeProviderId === destination.providerId);
-      target?.scrollIntoView({ block: "center", behavior: "instant" });
-      const heading = target?.querySelector<HTMLElement>("h2");
-      if (heading) {
-        heading.tabIndex = -1;
-        heading.focus({ preventScroll: true });
-      }
-    });
-  }
-}
-
-function searchFromHome() {
-  if (activeSection.value === "overview") openHomeDestination({ section: "vault", sourceId: homeSourceFilter.value }, query.value);
+  kindFilter.value = undefined;
 }
 
 function sectionTitle(section: Section): string {
-  return ({ overview: tr('密码库概览'), vault: tr('全部项目'), passwords: tr('登录项'), wallet: tr('钱包与身份'), notes: tr('安全笔记'), totp: tr('动态验证码'), steam: "Steam", passkeys: "Passkey", sends: tr('安全发送'), archive: tr('归档'), trash: tr('回收站'), timeline: tr('Android 时间线'), generator: tr('生成器'), providers: tr('密码源'), settings: tr('设置与备份') } as const)[section];
+  return ({ vault: tr('全部项目'), 'api-tokens': tr('API 密钥'), passwords: tr('登录项'), wallet: tr('钱包与身份'), notes: tr('安全笔记'), totp: tr('动态验证码'), steam: "Steam", passkeys: "Passkey", sends: tr('安全发送'), archive: tr('归档'), trash: tr('回收站'), timeline: tr('Android 时间线'), generator: tr('生成器'), providers: tr('密码源'), settings: tr('设置与备份') } as const)[section];
 }
 
 function sectionDescription(section: Section): string {
-  return ({ overview: tr('常用、收藏与分类，按你的习惯排列。'), vault: tr('浏览当前范围内的全部项目。'), passwords: tr('登录密码只在解锁后显示和编辑。'), wallet: tr('管理证件、账单地址、银行卡与支付账号。'), notes: tr('只管理加密安全笔记，不混入验证码。'), totp: tr('管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。'), steam: tr('管理 Steam 登录批准、交易确认、库存、市场与授权设备。'), passkeys: tr('查看 Passkey 来源与使用状态；私钥始终保持隐藏。'), sends: tr('创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。'), archive: tr('归档项目从普通分类、自动填充和 Passkey 候选中隐藏，取消归档后恢复使用。'), trash: tr('远端回收站项目保存在加密墓碑中，可恢复且不会被静默永久删除。'), timeline: tr('查看 Android WebDAV 备份中的操作摘要，不显示字段旧值和新值。'), generator: tr('使用浏览器加密随机源生成密码、PIN 与密码短语。'), providers: tr('连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。'), settings: tr('管理外观、导入导出与安全边界。') } as const)[section];
+  return ({ vault: tr('浏览当前范围内的全部项目。'), 'api-tokens': tr('管理服务商密钥、访问令牌与补充信息。'), passwords: tr('登录密码只在解锁后显示和编辑。'), wallet: tr('管理证件、账单地址、银行卡与支付账号。'), notes: tr('只管理加密安全笔记，不混入验证码。'), totp: tr('管理 TOTP、HOTP、Yandex、mOTP 和 Steam Guard 验证器。'), steam: tr('管理 Steam 登录批准、交易确认、库存、市场与授权设备。'), passkeys: tr('查看 Passkey 来源与使用状态；私钥始终保持隐藏。'), sends: tr('创建和管理 Bitwarden 文本与文件 Send；内容只在选择后由后台解密。'), archive: tr('归档项目从普通分类、自动填充和 Passkey 候选中隐藏，取消归档后恢复使用。'), trash: tr('远端回收站项目保存在加密墓碑中，可恢复且不会被静默永久删除。'), timeline: tr('查看 Android WebDAV 备份中的操作摘要，不显示字段旧值和新值。'), generator: tr('使用浏览器加密随机源生成密码、PIN 与密码短语。'), providers: tr('连接 MDBX2、Monica Android WebDAV、KeePass、Bitwarden 或使用本地库。'), settings: tr('管理外观、导入导出与安全边界。') } as const)[section];
 }
 
 async function loadAndroidTimeline() {
@@ -929,11 +913,21 @@ function hasAndroidFilter(filter: AndroidQuickFilter): boolean {
   return activeQuickFilters.value.includes(filter);
 }
 
-const hasActiveManagerFilter = computed(() => databaseSourceFilter.value !== "all" || folderFilter.value !== "all" || activeQuickFilters.value.length > 0 || Boolean(homeKindFilter.value));
+const hasActiveManagerFilter = computed(() => databaseSourceFilter.value !== "all" || folderFilter.value !== "all" || activeQuickFilters.value.length > 0 || Boolean(kindFilter.value));
+const managerFilterSummary = computed(() => {
+  const labels: Record<AndroidQuickFilter, string> = {
+    favorite: tr('收藏'), 'two-fa': tr('验证码'), notes: tr('笔记'), passkey: 'Passkey',
+    uncategorized: tr('未分类'), 'local-only': tr('仅本地'), attachments: tr('附件')
+  };
+  return [
+    kindFilter.value ? itemKindLabel(kindFilter.value) : '',
+    folderFilter.value === 'all' ? '' : folderFilter.value === 'uncategorized' ? tr('未分类') : databaseFolders.value.find(folder => folder.key === folderFilter.value)?.label,
+    ...activeQuickFilters.value.filter(filter => filter !== 'favorite').map(filter => labels[filter])
+  ].filter(Boolean).join(' · ');
+});
 
 function matchesManagerFilters(item: VaultItem): boolean {
-  if (homeKindFilter.value && item.kind !== homeKindFilter.value) return false;
-  if (homeFolderFilter.value && !matchesHomeFolder(item, homeFolderFilter.value, providers.value)) return false;
+  if (kindFilter.value && item.kind !== kindFilter.value) return false;
   const needle = query.value.trim().toLocaleLowerCase();
   if (needle && !itemSearchText(item).toLocaleLowerCase().includes(needle)) return false;
   if (!matchesHomeSource(item, databaseSourceFilter.value, providers.value)) return false;
@@ -1064,11 +1058,32 @@ async function restoreDeletedItem(item: VaultItem) {
   showNotice(tr('{0}已从回收站恢复。', { 0: itemKindLabel(item.kind) }));
 }
 
+function openCreateDialog() {
+  createDialogOpen.value = true;
+}
+
+async function selectCreateType(type: CreateItemType) {
+  createDialogOpen.value = false;
+  if (type === "api-token") {
+    apiTokenEditorItem.value = undefined;
+    apiTokenEditorOpen.value = true;
+  } else if (["PASSWORD", "WIFI", "SSH_KEY", "BARCODE"].includes(type)) {
+    openCreate();
+    form.loginType = type as LoginType;
+  } else {
+    vaultEditorItem.value = undefined;
+    vaultEditorKind.value = type as EditableVaultKind;
+    vaultEditorOpen.value = true;
+  }
+  await nextTick();
+  activeDialog()?.querySelector<HTMLElement>("[autofocus]")?.focus();
+}
+
 function openCreate() {
   editingId.value = null;
+  editingCredentialSnapshot.value = undefined;
   Object.assign(form, emptyLoginForm(defaultProviderId.value));
   formError.value = "";
-  revealPassword.value = false;
   clearSpecialQr();
   barcodeRenderMode.value = "qr";
   editorOpen.value = true;
@@ -1076,6 +1091,7 @@ function openCreate() {
 
 function openEdit(item: LoginItem) {
   editingId.value = item.id;
+  editingCredentialSnapshot.value = structuredClone(toRaw(item));
   Object.assign(form, {
     name: item.title,
     username: item.username,
@@ -1100,21 +1116,24 @@ function openEdit(item: LoginItem) {
     sshKey: parseSshKeyMetadata(item.sshKeyData)
   });
   formError.value = "";
-  revealPassword.value = false;
   clearSpecialQr();
   barcodeRenderMode.value = "qr";
   editorOpen.value = true;
-  if (specialPayloadValue()) void refreshSpecialQr();
 }
 
 function openVaultCreate(section: "wallet" | "notes" | "totp") {
   vaultEditorItem.value = undefined;
-  vaultEditorKind.value = homeKindFilter.value && homeKindFilter.value !== "login" && homeKindFilter.value !== "passkey"
-    ? homeKindFilter.value : section === "wallet" ? "card" : section === "totp" ? "totp" : "secure-note";
+  vaultEditorKind.value = kindFilter.value && kindFilter.value !== "login" && kindFilter.value !== "passkey" && kindFilter.value !== "api-token"
+    ? kindFilter.value : section === "wallet" ? "card" : section === "totp" ? "totp" : "secure-note";
   vaultEditorOpen.value = true;
 }
 
 function openVaultEdit(item: VaultItem) {
+  if (item.kind === "api-token") {
+    apiTokenEditorItem.value = item;
+    apiTokenEditorOpen.value = true;
+    return;
+  }
   if (!isEditableVaultItem(item)) return;
   vaultEditorItem.value = item;
   vaultEditorKind.value = item.kind;
@@ -1132,9 +1151,12 @@ function editFromDetail(item: VaultItem) {
 }
 
 async function saveVaultItem(item: VaultItem) {
-  await vaultClient.upsertItem(item);
+  const original = item.kind === "api-token" ? apiTokenEditorItem.value : vaultEditorItem.value;
+  await vaultClient.upsertItem(item, undefined, original?.id === item.id ? original.updatedAt : undefined);
   await refreshItems();
   vaultEditorOpen.value = false;
+  apiTokenEditorOpen.value = false;
+  apiTokenEditorItem.value = undefined;
   showNotice(tr('{0}已加密保存。', { 0: itemKindLabel(item.kind) }));
 }
 
@@ -1143,14 +1165,15 @@ async function advanceHotpItem(item: LoginItem | TotpItem) {
   if (!updated) return;
   await vaultClient.upsertItem(updated);
   await refreshItems();
-  showNotice(tr('HOTP 已复制，计数器已安全前进。'), 1800);
+  showNotice(tr('HOTP 已复制，计数器已安全前进。'));
 }
 
-function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: EditableVaultKind } {
-  return item.kind === "card" || item.kind === "identity" || item.kind === "billing-address" || item.kind === "payment-account" || item.kind === "secure-note" || item.kind === "totp";
+function isEditableVaultItem(item: VaultItem): item is VaultItem & { kind: EditableVaultKind | "api-token" } {
+  return item.kind === "api-token" || item.kind === "card" || item.kind === "identity" || item.kind === "billing-address" || item.kind === "payment-account" || item.kind === "secure-note" || item.kind === "totp";
 }
 
 async function submitCredential() {
+  if (credentialSaving.value) return;
   if (!form.name.trim()) return void (formError.value = tr('请输入登录项名称。'));
   if (form.loginType === "WIFI" && !validJsonObject(form.wifiMetadataRaw)) return void (formError.value = tr('Wi-Fi Android 元数据必须是有效的 JSON 对象。'));
   if (form.loginType === "SSH_KEY" && !validJsonObject(form.sshKeyDataRaw)) return void (formError.value = tr('SSH Android 元数据必须是有效的 JSON 对象。'));
@@ -1160,7 +1183,7 @@ async function submitCredential() {
   const ssoRefEntryId = form.ssoRefEntryId.trim() ? Number(form.ssoRefEntryId) : undefined;
   if (ssoRefEntryId !== undefined && (!Number.isSafeInteger(ssoRefEntryId) || ssoRefEntryId < 0)) return void (formError.value = tr('SSO 引用条目 ID 必须是非负整数。'));
 
-  const existing = credentialById.value.get(editingId.value || "");
+  const existing = editingCredentialSnapshot.value;
   const wifiMetadata = form.loginType === "WIFI"
     ? serializeWifiMetadata(form.wifiMetadataRaw, form.wifi)
     : existing?.wifiMetadata;
@@ -1196,14 +1219,15 @@ async function submitCredential() {
         favorite: form.favorite,
         providerRefs: providers.value.find((provider) => provider.id === form.providerId)?.kind === "local" || !form.providerId ? [] : [{ providerId: form.providerId }]
       }), ...shared };
+  credentialSaving.value = true;
   try {
-    await vaultClient.upsertItem(item, form.allowLockedAutofill && form.loginType === "PASSWORD" && !form.archived);
+    await vaultClient.upsertItem(item, form.allowLockedAutofill && form.loginType === "PASSWORD" && !form.archived, existing?.updatedAt);
     await refreshItems();
     showNotice(existing ? tr('登录项已加密更新。') : tr('登录项已加密保存。'));
     editorOpen.value = false;
   } catch (cause) {
     formError.value = cause instanceof Error ? cause.message : tr('保存失败，请重试。');
-  }
+  } finally { credentialSaving.value = false; }
 }
 
 function emptyLoginForm(providerId = ""): LoginForm {
@@ -1244,7 +1268,7 @@ async function copySpecialPayload(): Promise<void> {
   const payload = specialPayloadValue();
   if (!payload.trim()) return void (specialQrError.value = tr('没有可复制的内容。'));
   await navigator.clipboard.writeText(payload);
-  showNotice(tr('内容已复制到剪贴板。'), 1800);
+  showNotice(tr('内容已复制到剪贴板。'));
 }
 
 function clearSpecialQr(): void {
@@ -1272,26 +1296,6 @@ function validJsonObject(raw: string): boolean {
 function effectiveLoginUriRules(item: LoginItem): LoginUriRule[] {
   if (item.uriRules?.length) return item.uriRules;
   return item.uris.map((uri) => ({ uri, matchType: "base-domain" }));
-}
-
-function addUriRule() {
-  form.uriRules.push({ uri: "", matchType: "base-domain" });
-}
-
-function removeUriRule(index: number) {
-  form.uriRules.splice(index, 1);
-}
-
-function addCustomField() {
-  form.customFields.push({ name: "", value: "", protected: false, type: "text" });
-}
-
-function removeCustomField(index: number) {
-  form.customFields.splice(index, 1);
-}
-
-function uriMatchTypeLabel(type: LoginUriMatchType): string {
-  return ({ "base-domain": tr('主域名'), domain: tr('域及子域名'), "starts-with": tr('网址开头'), exact: tr('完全相同'), regex: tr('正则表达式'), never: tr('从不匹配') } as const)[type];
 }
 
 async function removeCredential(item: LoginItem) {
@@ -2271,7 +2275,7 @@ async function importVault(event: Event) {
       }
     }
     if (!items.length) throw new Error("no supported items");
-    await vaultClient.importItems(items);
+    await vaultClient.importItems(items.map(independentImportedPasskey));
     await refreshItems();
     showNotice(tr('已加密导入 {0} 个密码库项目。', { 0: items.length }));
   } catch {
@@ -2327,8 +2331,8 @@ function errorCode(error: unknown): string | undefined {
           </div>
           <template v-else>
           <div class="login-heading"><h1>{{ lifecycle === 'uninitialized' ? tr('创建加密密码库') : tr('解锁 Monica') }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? tr('主密码可选，也可使用设备密钥。') : protectionMode === 'device-key' ? tr('设备密钥模式可留空解锁。') : tr('输入主密码解锁。') }}</p></div>
-          <label class="field"><span>{{ tr('主密码{0}', { 0: lifecycle === 'uninitialized' || protectionMode === 'device-key' ? tr('（可选）') : '' }) }}</span><input v-model="auth.masterPassword" :aria-label="tr('主密码')" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></label>
-          <label v-if="lifecycle === 'uninitialized'" class="field"><span>{{ tr('确认主密码') }}</span><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('主密码{0}', { 0: lifecycle === 'uninitialized' || protectionMode === 'device-key' ? tr('（可选）') : '' }) }}</label><input v-model="auth.masterPassword" :aria-label="tr('主密码')" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="lifecycle === 'uninitialized'" class="field"><label slot="label">{{ tr('确认主密码') }}</label><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></m3e-form-field>
           <div v-if="lifecycle === 'locked' && windowsHelloStatus?.unlockAvailable" class="hello-unlock-action">
             <m3e-button variant="tonal" type="button" :disabled="Boolean(windowsHelloBusy) || authBusy" @click="unlockVaultWithWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'verify' ? tr('正在等待 Windows Hello…') : tr('使用 Windows Hello 解锁') }}</m3e-button>
             <small>{{ tr('仅解锁当前浏览器会话。') }}</small>
@@ -2343,7 +2347,7 @@ function errorCode(error: unknown): string | undefined {
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>{{ tr('选择加密整库备份') }}</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">{{ tr('已选择：{0}', { 0: selectedEncryptedBackupName }) }}</p>
-              <label class="field"><span>{{ tr('备份密码') }}</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
+              <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('备份密码') }}</label><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></m3e-form-field>
               <m3e-button variant="tonal" type="button" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? tr('正在恢复…') : lifecycle === 'locked' ? tr('验证备份并替换恢复') : tr('恢复并解锁') }}</m3e-button>
             </template>
             <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
@@ -2362,8 +2366,9 @@ function errorCode(error: unknown): string | undefined {
         <nav :aria-label="tr('主导航')">
           <section>
             <p class="nav-title">{{ tr('密码库') }}</p>
-            <button class="nav-item" :class="{ selected: activeSection === 'overview' }" :aria-current="activeSection === 'overview' ? 'page' : undefined" type="button" @click="navigate('overview')"><m3e-icon name="dashboard"></m3e-icon><span>{{ tr('概览') }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'vault' }" :aria-current="activeSection === 'vault' ? 'page' : undefined" type="button" @click="navigate('vault')"><m3e-icon name="list"></m3e-icon><span>{{ tr('全部项目') }}</span><span class="nav-count">{{ vaultItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'passwords' }" :aria-current="activeSection === 'passwords' ? 'page' : undefined" type="button" @click="navigate('passwords')"><m3e-icon name="password"></m3e-icon><span>{{ tr('登录项') }}</span><span class="nav-count">{{ credentials.length }}</span></button>
+            <button class="nav-item" :class="{ selected: activeSection === 'api-tokens' }" :aria-current="activeSection === 'api-tokens' ? 'page' : undefined" type="button" @click="navigate('api-tokens')"><m3e-icon name="key" /><span>{{ tr('API 密钥') }}</span><span class="nav-count">{{ apiTokenItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'wallet' }" :aria-current="activeSection === 'wallet' ? 'page' : undefined" type="button" @click="navigate('wallet')"><m3e-icon name="wallet"></m3e-icon><span>{{ tr('钱包与身份') }}</span><span class="nav-count">{{ walletItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'notes' }" :aria-current="activeSection === 'notes' ? 'page' : undefined" type="button" @click="navigate('notes')"><m3e-icon name="note_stack"></m3e-icon><span>{{ tr('安全笔记') }}</span><span class="nav-count">{{ noteItems.length }}</span></button>
             <button class="nav-item" :class="{ selected: activeSection === 'totp' }" :aria-current="activeSection === 'totp' ? 'page' : undefined" type="button" @click="navigate('totp')"><m3e-icon name="timer"></m3e-icon><span>{{ tr('动态验证码') }}</span><span class="nav-count">{{ totpItems.length }}</span></button>
@@ -2382,7 +2387,6 @@ function errorCode(error: unknown): string | undefined {
           </section>
         </nav>
         <div class="sidebar-footer">
-          <LanguagePicker />
           <div class="local-badge"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('密码库已加密并解锁') }}</span></div>
           <m3e-button variant="tonal" @click="lockVault"><m3e-icon slot="icon" name="lock"></m3e-icon>{{ tr('立即锁定') }}</m3e-button>
         </div>
@@ -2392,62 +2396,44 @@ function errorCode(error: unknown): string | undefined {
         <header class="page-appbar">
           <m3e-icon-button class="mobile-menu" :aria-label="tr('打开导航')" aria-controls="primary-navigation" :aria-expanded="mobileNavOpen" @click="openNavigation"><m3e-icon name="menu"></m3e-icon></m3e-icon-button>
           <div class="appbar-trailing">
-            <label class="search"><m3e-icon name="search"></m3e-icon><input v-model="query" :aria-label="tr('搜索密码库')" :placeholder="activeSection === 'overview' ? tr('搜索密码库，按 Enter 查看') : tr('搜索当前分类')" @keydown.enter="searchFromHome" /></label>
+            <m3e-search-bar class="appbar-search" clearable :clear-label="tr('清除搜索')" @clear="query = ''"><m3e-icon slot="leading" name="search"></m3e-icon><input slot="input" v-model="query" type="search" autocomplete="off" :spellcheck="false" :aria-label="tr('搜索密码库')" :placeholder="tr('搜索当前分类')" /></m3e-search-bar>
             <div class="appbar-actions">
               <m3e-button v-if="activeSection === 'providers' && syncableBitwardenProviders.length > 1" variant="tonal" :disabled="syncingAllBitwarden || Boolean(activeSyncProviderId)" @click="syncAllBitwarden"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ syncingAllBitwarden ? tr('正在同步') : tr('同步全部') }}</m3e-button>
-              <m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" :aria-label="tr('筛选')" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon><span class="appbar-action-label">{{ tr('筛选') }}</span><span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length + (homeKindFilter ? 1 : 0) }}</span></m3e-button>
-              <m3e-button v-if="activeSection === 'overview' || activeSection === 'vault' || activeSection === 'passwords'" class="appbar-create" variant="filled" :aria-label="tr('新建')" @click="openCreate"><m3e-icon slot="icon" name="add"></m3e-icon><span class="appbar-action-label">{{ tr('新建') }}</span></m3e-button>
-              <m3e-button v-else-if="activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp'" class="appbar-create" variant="filled" :aria-label="activeSection === 'wallet' ? tr('添加钱包项目') : activeSection === 'notes' ? tr('添加安全笔记') : tr('添加验证码')" @click="openVaultCreate(activeSection)"><m3e-icon slot="icon" name="add"></m3e-icon><span class="appbar-action-label">{{ tr('新建') }}</span></m3e-button>
+              <m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" :aria-label="tr('筛选')" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon><span class="appbar-action-label">{{ tr('筛选') }}</span><span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length + (kindFilter ? 1 : 0) }}</span></m3e-button>
+              <CreateSplitButton :context="activeSection" :current-type="currentCreateType" :label="createButtonLabel" @primary="currentCreateType ? selectCreateType(currentCreateType) : openCreateDialog()" @browse="openCreateDialog" @select="selectCreateType" />
             </div>
           </div>
         </header>
 
+        <div :key="activeSection" class="page-view">
         <div class="page-heading">
-          <div><h1>{{ homeBrowseActive ? homeViewLabel : sectionTitle(activeSection) }}</h1><p v-if="activeSection !== 'overview'">{{ sectionDescription(activeSection) }}</p></div>
+          <div><h1>{{ sectionTitle(activeSection) }}</h1><p>{{ sectionDescription(activeSection) }}</p></div>
         </div>
         <p class="sr-status" aria-live="polite">{{ notice }}</p>
-        <div v-if="homeBrowseActive" class="home-context">
-          <button type="button" class="home-button" @click="navigate('overview')"><m3e-icon class="home-chevron-back" name="chevron_right" aria-hidden="true" />{{ tr('返回概览') }}</button>
-          <div class="home-context-copy"><strong>{{ homeSourceLabel }}</strong><span>{{ homeViewLabel }}</span></div>
-          <button v-if="hasActiveManagerFilter" type="button" class="home-button" @click="clearManagerFilters">{{ tr('清除筛选') }}</button>
+        <div v-if="filterableSection" class="vault-browse-bar" role="group" :aria-label="tr('快捷筛选')" :inert="filterDialogOpen">
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="vault-source-select">
+            <m3e-icon slot="prefix" name="database" aria-hidden="true" />
+            <label slot="label">{{ tr('当前数据库') }}</label>
+            <component :is="materialSelectTag" @input="databaseSourceFilter = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(databaseSourceFilter ?? '') === String('all')" value="all">{{ tr('全部数据库') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(databaseSourceFilter ?? '') === String('local')" value="local">{{ tr('Monica 本地库') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(databaseSourceFilter ?? '') === String(source.id)" v-for="source in databaseSources" :key="source.id" :value="source.id">{{ providerDisplayName(source) }}</component>
+            </component>
+          </m3e-form-field>
+          <m3e-button variant="text" type="button" class="vault-quick-filter" toggle :selected.prop="hasAndroidFilter('favorite')" @beforeinput.prevent @click="toggleAndroidQuickFilter('favorite')"><m3e-icon slot="icon" name="star" aria-hidden="true" />{{ tr('收藏') }}</m3e-button>
+          <m3e-button variant="text" v-if="managerFilterSummary" type="button" class="vault-filter-summary" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune" aria-hidden="true" /><span>{{ managerFilterSummary }}</span></m3e-button>
+          <m3e-button variant="text" v-if="hasActiveManagerFilter" type="button" class="vault-clear-filters" @click="clearManagerFilters()">{{ tr('清除筛选') }}</m3e-button>
+          <p class="vault-result-count" role="status">{{ tr('{0} 个结果', { 0: listTotal }) }}</p>
         </div>
-        <div v-if="filterableSection && false" class="manager-filters" :aria-label="tr('快捷筛选')">
-          <span class="filter-caption">{{ tr('密码源') }}</span>
-          <div class="filter-chip-row" role="group" :aria-label="tr('密码源')">
-            <button type="button" :class="{ selected: databaseSourceFilter === 'all' }" :aria-pressed="databaseSourceFilter === 'all'" @click="databaseSourceFilter = 'all'"><m3e-icon name="list"></m3e-icon>{{ tr('全部') }}</button>
-            <button type="button" :class="{ selected: databaseSourceFilter === 'local' }" :aria-pressed="databaseSourceFilter === 'local'" @click="databaseSourceFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>{{ tr('Monica 本地库') }}</button>
-            <button v-for="source in databaseSources" :key="source.id" type="button" :class="{ selected: databaseSourceFilter === source.id }" :aria-pressed="databaseSourceFilter === source.id" @click="databaseSourceFilter = source.id"><m3e-icon :name="source.kind === 'bitwarden' ? 'cloud_sync' : source.kind === 'mdbx2' ? 'storage' : 'key'"></m3e-icon>{{ source.name }}</button>
-          </div>
-          <span class="filter-caption filter-caption-category">{{ tr('分类') }}</span>
-          <div class="filter-chip-row" role="group" :aria-label="tr('Android 分类')">
-            <button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>{{ tr('全部分类') }}</button>
-            <button type="button" :class="{ selected: folderFilter === 'uncategorized' }" :aria-pressed="folderFilter === 'uncategorized'" @click="folderFilter = 'uncategorized'"><m3e-icon name="folder_off"></m3e-icon>{{ tr('未分类') }}</button>
-            <button v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" :aria-pressed="folderFilter === folder.key" @click="folderFilter = folder.key"><m3e-icon name="folder"></m3e-icon>{{ folder.label }}</button>
-          </div>
-          <span class="filter-caption filter-caption-quick">{{ tr('快捷筛选') }}</span>
-          <div class="filter-chip-row" role="group" :aria-label="tr('快捷筛选条件')">
-            <button type="button" :class="{ selected: hasAndroidFilter('favorite') }" :aria-pressed="hasAndroidFilter('favorite')" @click="toggleAndroidQuickFilter('favorite')"><m3e-icon name="star"></m3e-icon>{{ tr('收藏') }}</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('two-fa') }" :aria-pressed="hasAndroidFilter('two-fa')" @click="toggleAndroidQuickFilter('two-fa')"><m3e-icon name="security"></m3e-icon>{{ tr('验证码') }}</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('notes') }" :aria-pressed="hasAndroidFilter('notes')" @click="toggleAndroidQuickFilter('notes')"><m3e-icon name="description"></m3e-icon>{{ tr('笔记') }}</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('passkey') }" :aria-pressed="hasAndroidFilter('passkey')" @click="toggleAndroidQuickFilter('passkey')"><m3e-icon name="key_vertical"></m3e-icon>Passkey</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('uncategorized') }" :aria-pressed="hasAndroidFilter('uncategorized')" @click="toggleAndroidQuickFilter('uncategorized')"><m3e-icon name="folder_off"></m3e-icon>{{ tr('未分类') }}</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('local-only') }" :aria-pressed="hasAndroidFilter('local-only')" @click="toggleAndroidQuickFilter('local-only')"><m3e-icon name="key"></m3e-icon>{{ tr('仅本地') }}</button>
-            <button type="button" :class="{ selected: hasAndroidFilter('attachments') }" :aria-pressed="hasAndroidFilter('attachments')" @click="toggleAndroidQuickFilter('attachments')"><m3e-icon name="attach_file"></m3e-icon>{{ tr('附件') }}</button>
-          </div>
-          <button v-if="hasActiveManagerFilter" type="button" class="filter-reset" @click="clearManagerFilters()">{{ tr('清除筛选') }}</button>
-        </div>
+          <div v-if="filterDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="filterDialogOpen = false"><section class="filter-dialog" role="dialog" aria-modal="true" aria-labelledby="filter-dialog-title"><header><div><h2 id="filter-dialog-title">{{ tr('筛选密码库') }}</h2><p>{{ tr('按密码源、Android 分类和快捷条件组合筛选。') }}</p></div><m3e-icon-button :aria-label="tr('关闭筛选')" @click="filterDialogOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><div class="filter-dialog-body"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field filter-kind-field"><label slot="label">{{ tr('项目类型') }}</label><component :is="materialSelectTag" @input="kindFilter = ($event.target as HTMLElement &amp; { value: string }).value as VaultItemKind || undefined" ><component :is="materialOptionTag" :selected.prop="!kindFilter" value="">{{ tr('全部类型') }}</component><component :is="materialOptionTag" :selected.prop="String(kindFilter ?? '') === String(kind)" v-for="kind in (['login','api-token','card','identity','billing-address','payment-account','secure-note','totp','passkey'] as VaultItemKind[])" :key="kind" :value="kind">{{ itemKindLabel(kind) }}</component></component></m3e-form-field><span class="filter-caption">{{ tr('密码源') }}</span><div class="filter-chip-row" role="group" :aria-label="tr('密码源')"><m3e-button variant="text" type="button" :class="{ selected: databaseSourceFilter === 'all' }" toggle :selected.prop="databaseSourceFilter === 'all'" @beforeinput.prevent @click="databaseSourceFilter = 'all'"><m3e-icon slot="icon" name="list"></m3e-icon>{{ tr('全部') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: databaseSourceFilter === 'local' }" toggle :selected.prop="databaseSourceFilter === 'local'" @beforeinput.prevent @click="databaseSourceFilter = 'local'"><m3e-icon slot="icon" name="smartphone"></m3e-icon>{{ tr('Monica 本地库') }}</m3e-button><m3e-button variant="text" v-for="source in databaseSources" :key="source.id" type="button" :class="{ selected: databaseSourceFilter === source.id }" toggle :selected.prop="databaseSourceFilter === source.id" @beforeinput.prevent @click="databaseSourceFilter = source.id"><m3e-icon slot="icon" :name="source.kind === 'bitwarden' ? 'cloud_sync' : source.kind === 'mdbx2' ? 'storage' : 'key'"></m3e-icon><span class="filter-label">{{ providerDisplayName(source) }}</span></m3e-button></div><span class="filter-caption">{{ tr('分类') }}</span><div class="filter-chip-row" role="group" :aria-label="tr('Android 分类')"><m3e-button variant="text" type="button" :class="{ selected: folderFilter === 'all' }" toggle :selected.prop="folderFilter === 'all'" @beforeinput.prevent @click="folderFilter = 'all'"><m3e-icon slot="icon" name="list"></m3e-icon>{{ tr('全部分类') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: folderFilter === 'uncategorized' }" toggle :selected.prop="folderFilter === 'uncategorized'" @beforeinput.prevent @click="folderFilter = 'uncategorized'"><m3e-icon slot="icon" name="folder_off"></m3e-icon>{{ tr('未分类') }}</m3e-button><m3e-button variant="text" v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" toggle :selected.prop="folderFilter === folder.key" @beforeinput.prevent @click="folderFilter = folder.key"><m3e-icon slot="icon" name="folder"></m3e-icon>{{ folder.label }}</m3e-button></div><span class="filter-caption">{{ tr('快捷筛选') }}</span><div class="filter-chip-row filter-dialog-quick" role="group" :aria-label="tr('快捷筛选条件')"><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('favorite') }" toggle :selected.prop="hasAndroidFilter('favorite')" @beforeinput.prevent @click="toggleAndroidQuickFilter('favorite')"><m3e-icon slot="icon" name="star"></m3e-icon>{{ tr('收藏') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('two-fa') }" toggle :selected.prop="hasAndroidFilter('two-fa')" @beforeinput.prevent @click="toggleAndroidQuickFilter('two-fa')"><m3e-icon slot="icon" name="security"></m3e-icon>{{ tr('验证码') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('notes') }" toggle :selected.prop="hasAndroidFilter('notes')" @beforeinput.prevent @click="toggleAndroidQuickFilter('notes')"><m3e-icon slot="icon" name="description"></m3e-icon>{{ tr('笔记') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('passkey') }" toggle :selected.prop="hasAndroidFilter('passkey')" @beforeinput.prevent @click="toggleAndroidQuickFilter('passkey')"><m3e-icon slot="icon" name="key_vertical"></m3e-icon>Passkey</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('uncategorized') }" toggle :selected.prop="hasAndroidFilter('uncategorized')" @beforeinput.prevent @click="toggleAndroidQuickFilter('uncategorized')"><m3e-icon slot="icon" name="folder_off"></m3e-icon>{{ tr('未分类') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('local-only') }" toggle :selected.prop="hasAndroidFilter('local-only')" @beforeinput.prevent @click="toggleAndroidQuickFilter('local-only')"><m3e-icon slot="icon" name="key"></m3e-icon>{{ tr('仅本地') }}</m3e-button><m3e-button variant="text" type="button" :class="{ selected: hasAndroidFilter('attachments') }" toggle :selected.prop="hasAndroidFilter('attachments')" @beforeinput.prevent @click="toggleAndroidQuickFilter('attachments')"><m3e-icon slot="icon" name="attach_file"></m3e-icon>{{ tr('附件') }}</m3e-button></div></div><footer><m3e-button variant="text" @click="clearManagerFilters()">{{ tr('清除筛选') }}</m3e-button><m3e-button variant="filled" @click="filterDialogOpen = false">{{ tr('完成') }}</m3e-button></footer></section></div>
 
-          <div v-if="filterDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="filterDialogOpen = false"><section class="filter-dialog" role="dialog" aria-modal="true" aria-labelledby="filter-dialog-title"><header><div><h2 id="filter-dialog-title">{{ tr('筛选密码库') }}</h2><p>{{ tr('按密码源、Android 分类和快捷条件组合筛选。') }}</p></div><m3e-icon-button :aria-label="tr('关闭筛选')" @click="filterDialogOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><div class="filter-dialog-body"><div v-if="homeKindFilter || homeFolderFilter" class="filter-chip-row"><button v-if="homeKindFilter" type="button" @click="homeKindFilter = undefined">{{ itemKindLabel(homeKindFilter) }}<m3e-icon name="close" aria-hidden="true" /></button><button v-if="homeFolderFilter" type="button" @click="folderFilter = 'all'">{{ homeFolderFilter.label || tr('未分类') }}<m3e-icon name="close" aria-hidden="true" /></button></div><span class="filter-caption">{{ tr('密码源') }}</span><div class="filter-chip-row" role="group" :aria-label="tr('密码源')"><button type="button" :class="{ selected: databaseSourceFilter === 'all' }" :aria-pressed="databaseSourceFilter === 'all'" @click="databaseSourceFilter = 'all'"><m3e-icon name="list"></m3e-icon>{{ tr('全部') }}</button><button type="button" :class="{ selected: databaseSourceFilter === 'local' }" :aria-pressed="databaseSourceFilter === 'local'" @click="databaseSourceFilter = 'local'"><m3e-icon name="smartphone"></m3e-icon>{{ tr('Monica 本地库') }}</button><button v-for="source in databaseSources" :key="source.id" type="button" :class="{ selected: databaseSourceFilter === source.id }" :aria-pressed="databaseSourceFilter === source.id" @click="databaseSourceFilter = source.id"><m3e-icon :name="source.kind === 'bitwarden' ? 'cloud_sync' : source.kind === 'mdbx2' ? 'storage' : 'key'"></m3e-icon><span class="filter-label">{{ providerDisplayName(source) }}</span></button></div><span class="filter-caption">{{ tr('分类') }}</span><div class="filter-chip-row" role="group" :aria-label="tr('Android 分类')"><button type="button" :class="{ selected: folderFilter === 'all' }" :aria-pressed="folderFilter === 'all'" @click="folderFilter = 'all'"><m3e-icon name="list"></m3e-icon>{{ tr('全部分类') }}</button><button type="button" :class="{ selected: folderFilter === 'uncategorized' }" :aria-pressed="folderFilter === 'uncategorized'" @click="folderFilter = 'uncategorized'"><m3e-icon name="folder_off"></m3e-icon>{{ tr('未分类') }}</button><button v-for="folder in databaseFolders" :key="folder.key" type="button" :class="{ selected: folderFilter === folder.key }" :aria-pressed="folderFilter === folder.key" @click="folderFilter = folder.key"><m3e-icon name="folder"></m3e-icon>{{ folder.label }}</button></div><span class="filter-caption">{{ tr('快捷筛选') }}</span><div class="filter-chip-row filter-dialog-quick" role="group" :aria-label="tr('快捷筛选条件')"><button type="button" :class="{ selected: hasAndroidFilter('favorite') }" :aria-pressed="hasAndroidFilter('favorite')" @click="toggleAndroidQuickFilter('favorite')"><m3e-icon name="star"></m3e-icon>{{ tr('收藏') }}</button><button type="button" :class="{ selected: hasAndroidFilter('two-fa') }" :aria-pressed="hasAndroidFilter('two-fa')" @click="toggleAndroidQuickFilter('two-fa')"><m3e-icon name="security"></m3e-icon>{{ tr('验证码') }}</button><button type="button" :class="{ selected: hasAndroidFilter('notes') }" :aria-pressed="hasAndroidFilter('notes')" @click="toggleAndroidQuickFilter('notes')"><m3e-icon name="description"></m3e-icon>{{ tr('笔记') }}</button><button type="button" :class="{ selected: hasAndroidFilter('passkey') }" :aria-pressed="hasAndroidFilter('passkey')" @click="toggleAndroidQuickFilter('passkey')"><m3e-icon name="key_vertical"></m3e-icon>Passkey</button><button type="button" :class="{ selected: hasAndroidFilter('uncategorized') }" :aria-pressed="hasAndroidFilter('uncategorized')" @click="toggleAndroidQuickFilter('uncategorized')"><m3e-icon name="folder_off"></m3e-icon>{{ tr('未分类') }}</button><button type="button" :class="{ selected: hasAndroidFilter('local-only') }" :aria-pressed="hasAndroidFilter('local-only')" @click="toggleAndroidQuickFilter('local-only')"><m3e-icon name="key"></m3e-icon>{{ tr('仅本地') }}</button><button type="button" :class="{ selected: hasAndroidFilter('attachments') }" :aria-pressed="hasAndroidFilter('attachments')" @click="toggleAndroidQuickFilter('attachments')"><m3e-icon name="attach_file"></m3e-icon>{{ tr('附件') }}</button></div></div><footer><m3e-button variant="text" @click="clearManagerFilters()">{{ tr('清除筛选') }}</m3e-button><m3e-button variant="filled" @click="filterDialogOpen = false">{{ tr('完成') }}</m3e-button></footer></section></div>
-
-        <VaultHome v-if="activeSection === 'overview'" v-model:source-id="homeSourceFilter" :source-initialized="homeSourceInitialized" :items="vaultItems" :archived="archivedItems" :deleted="deletedItems" :providers="providers" :queues="providerQueues" :conflicts="providerConflicts" :syncing-provider-id="activeSyncProviderId" :consume-otp="advanceHotpItem" @source-initialized="homeSourceInitialized = true" @open="openHomeDestination" @detail="openVaultDetail" />
 
         <section v-else-if="activeSection === 'passwords'" class="content-grid">
-          <m3e-card variant="filled" class="data-card login-data-card motion-card">
-            <div slot="header" class="card-head"><h2>{{ tr('全部登录项') }}</h2><p>{{ tr('{0} 个结果', { 0: filteredCredentials.length }) }}</p></div>
+          <m3e-card variant="filled" class="data-card login-data-card vault-list-card motion-card">
             <div v-if="filteredCredentials.length" class="table-wrap"><table class="credential-table" :aria-label="tr('登录项列表')"><thead><tr><th>{{ tr('名称') }}</th><th>{{ tr('用户名') }}</th><th>{{ tr('匹配网站') }}</th><th>{{ tr('更新时间') }}</th><th><span class="visually-hidden">{{ tr('操作') }}</span></th></tr></thead><tbody>
-              <tr v-for="item in listPagination.slice(filteredCredentials)" :key="item.id" class="row-clickable" @click="openVaultDetail(item)"><td class="item-cell" :data-label="tr('名称')"><button class="row-title" type="button" :aria-label="tr('查看{0}详情', { 0: item.title })" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : 'language'"></m3e-icon></span><span class="row-title-copy"><strong :title="item.title">{{ item.title }}</strong><span v-if="lockedAutofillIds.includes(item.id)" class="locked-autofill-badge"><m3e-icon name="lock_open"></m3e-icon>{{ tr('免解锁填写') }}</span><small class="credential-compact-summary" :title="credentialCompactSummary(item)">{{ credentialCompactSummary(item) }}</small></span></button></td><td class="credential-detail-cell" :data-label="tr('用户名')">{{ item.username || '—' }}</td><td class="credential-detail-cell" :data-label="tr('匹配网站')"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td class="credential-detail-cell" :data-label="tr('更新时间')">{{ new Date(item.updatedAt).toLocaleString(locale) }}</td><td class="action-cell" @click.stop><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="tr('查看 {0} 的 KeePass 历史', { 0: item.title })" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="tr('管理 {0} 的附件', { 0: item.title })" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('编辑登录项')" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('删除登录项')" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
+              <tr v-for="item in listPagination.slice(filteredCredentials)" :key="item.id" class="row-clickable" @click="openVaultDetail(item)"><td class="item-cell" :data-label="tr('名称')"><m3e-list-action role="presentation" class="row-title" v-list-action="tr('查看{0}详情', { 0: item.title })" @click.stop="openVaultDetail(item)"><WebsiteIcon slot="leading" class="row-icon" :item="item" /><strong :title="item.title">{{ item.title }}</strong><span v-if="lockedAutofillIds.includes(item.id)" slot="supporting-text" class="locked-autofill-badge"><m3e-icon name="lock_open"></m3e-icon>{{ tr('免解锁填写') }}</span><small slot="supporting-text" class="credential-compact-summary" :title="credentialCompactSummary(item)">{{ credentialCompactSummary(item) }}</small></m3e-list-action></td><td class="credential-detail-cell" :data-label="tr('用户名')">{{ item.username || '—' }}</td><td class="credential-detail-cell" :data-label="tr('匹配网站')"><span class="url-list">{{ item.uris.join(' · ') }}</span></td><td class="credential-detail-cell" :data-label="tr('更新时间')">{{ new Date(item.updatedAt).toLocaleString(locale) }}</td><td class="action-cell" @click.stop><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="tr('查看 {0} 的 KeePass 历史', { 0: item.title })" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="tr('管理 {0} 的附件', { 0: item.title })" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('编辑登录项')" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('删除登录项')" @click="removeCredential(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></td></tr>
             </tbody></table></div>
-            <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query ? tr('没有匹配的登录项') : tr('加密密码库还是空的') }}</h2><p>{{ query ? tr('换一个关键词试试。') : tr('添加第一个账号后即可在 Popup 中匹配。') }}</p><m3e-button v-if="!query" variant="filled" @click="openCreate">{{ tr('添加登录项') }}</m3e-button></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon name="key_off"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配的登录项') : tr('加密密码库还是空的') }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('添加第一个账号后即可在 Popup 中匹配。') }}</p><m3e-button v-if="!query && !hasActiveManagerFilter" variant="filled" @click="openCreate">{{ tr('添加登录项') }}</m3e-button></div>
           </m3e-card>
         </section>
 
@@ -2472,41 +2458,39 @@ function errorCode(error: unknown): string | undefined {
         </section>
 
         <section v-else-if="activeSection === 'archive' || activeSection === 'trash'" class="content-grid lifecycle-page">
-          <m3e-card variant="filled" class="data-card motion-card">
-            <div slot="header" class="card-head"><h2>{{ activeSection === 'archive' ? tr('已归档项目') : tr('回收站项目') }}</h2><p>{{ tr('{0} 个结果', { 0: activeSection === 'archive' ? filteredArchiveItems.length : filteredDeletedItems.length }) }}</p></div>
+          <m3e-card variant="filled" class="data-card vault-list-card motion-card">
             <div v-if="(activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems).length" slot="content" class="item-grid">
               <article v-for="item in listPagination.slice((activeSection === 'archive' ? filteredArchiveItems : filteredDeletedItems))" :key="item.id" class="item-card row-clickable" @click="openVaultDetail(item)">
-                <button class="item-card-main" type="button" :aria-label="tr('查看{0}详情', { 0: item.title })" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="itemIcon(item.kind)"></m3e-icon></span><span class="item-card-copy"><strong :title="item.title">{{ item.title }}</strong><small>{{ item.kind === 'passkey' ? tr(passkeyAvailabilityLabel(passkeyAvailability(item))) : itemKindLabel(item.kind) }}</small></span></button>
+                <m3e-list-action role="presentation" class="item-card-main" v-list-action="tr('查看{0}详情', { 0: item.title })" @click.stop="openVaultDetail(item)"><WebsiteIcon slot="leading" class="row-icon" :item="item" :fallback="itemIcon(item.kind)" /><strong :title="item.title">{{ item.title }}</strong><small slot="supporting-text">{{ item.kind === 'passkey' ? tr(passkeyAvailabilityLabel(passkeyAvailability(item))) : itemKindLabel(item.kind) }}</small></m3e-list-action>
                 <div class="item-card-summary"><span class="item-summary-text" :title="homeItemSummary(item)">{{ homeItemSummary(item) }}</span></div>
                 <div class="item-card-meta"><span :title="providerName(item)">{{ providerName(item) }}</span><time :datetime="item.deletedAt || item.archivedAt || item.updatedAt">{{ new Date(item.deletedAt || item.archivedAt || item.updatedAt).toLocaleDateString(locale) }}</time></div>
-                <div class="item-card-actions" @click.stop><m3e-icon-button v-if="activeSection === 'archive' && item.kind === 'login'" :aria-label="tr('编辑归档的 {0}', { 0: item.title })" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive' && isEditableVaultItem(item) && item.kind !== 'login'" :aria-label="tr('编辑归档的 {0}', { 0: item.title })" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="tr('取消归档 {0}', { 0: item.title })" @click="unarchiveItem(item)"><m3e-icon name="unarchive"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="tr('删除归档的 {0}', { 0: item.title })" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button><m3e-icon-button v-else :aria-label="tr('恢复 {0}', { 0: item.title })" @click="restoreDeletedItem(item)"><m3e-icon name="restore"></m3e-icon></m3e-icon-button></div>
+                <div class="item-card-actions" @click.stop><m3e-icon-button v-if="activeSection === 'archive' && item.kind === 'login'" :aria-label="tr('编辑归档的 {0}', { 0: item.title })" @click="openEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive' && isEditableVaultItem(item)" :aria-label="tr('编辑归档的 {0}', { 0: item.title })" @click="openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="tr('取消归档 {0}', { 0: item.title })" @click="unarchiveItem(item)"><m3e-icon name="unarchive"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="activeSection === 'archive'" :aria-label="tr('删除归档的 {0}', { 0: item.title })" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button><m3e-icon-button v-else :aria-label="tr('恢复 {0}', { 0: item.title })" @click="restoreDeletedItem(item)"><m3e-icon name="restore"></m3e-icon></m3e-icon-button></div>
               </article>
             </div>
-            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'archive' ? 'archive' : 'delete'" /><h2>{{ query ? tr('没有匹配项目') : activeSection === 'archive' ? tr('还没有归档项目') : tr('回收站为空') }}</h2><p>{{ query ? tr('换一个关键词试试。') : activeSection === 'archive' ? tr('归档项目会从普通列表和自动填充候选中隐藏。') : tr('Bitwarden 软删除项目会保留在这里，恢复前不会永久清除。') }}</p></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'archive' ? 'archive' : 'delete'" /><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'archive' ? tr('还没有归档项目') : tr('回收站为空') }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : activeSection === 'archive' ? tr('归档项目会从普通列表和自动填充候选中隐藏。') : tr('Bitwarden 软删除项目会保留在这里，恢复前不会永久清除。') }}</p></div>
           </m3e-card>
         </section>
 
-        <section v-else-if="activeSection === 'vault' || activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
-          <m3e-card variant="filled" class="data-card motion-card">
-            <div slot="header" class="card-head"><h2>{{ homeBrowseActive ? homeViewLabel : sectionTitle(activeSection) }}</h2><p>{{ tr('{0} 个结果', { 0: filteredSectionItems.length }) }}</p></div>
+        <section v-else-if="activeSection === 'vault' || activeSection === 'api-tokens' || activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
+          <m3e-card variant="filled" class="data-card vault-list-card motion-card">
             <div v-if="filteredSectionItems.length" slot="content" class="item-grid">
               <article v-for="item in listPagination.slice(filteredSectionItems)" :key="item.id" class="item-card row-clickable" @click="openVaultDetail(item)">
-                <button class="item-card-main" type="button" :aria-label="tr('查看{0}详情', { 0: item.title })" @click="openVaultDetail(item)"><span class="row-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span><span class="item-card-copy"><strong :title="item.title">{{ item.title }}</strong><small>{{ vaultItemStatus(item) }}<template v-if="item.favorite">{{ tr('· 已收藏') }}</template></small></span></button>
+                <m3e-list-action role="presentation" class="item-card-main" v-list-action="tr('查看{0}详情', { 0: item.title })" @click.stop="openVaultDetail(item)"><WebsiteIcon slot="leading" class="row-icon" :item="item" :fallback="itemIcon(item.kind)" /><strong :title="item.title">{{ item.title }}</strong><small slot="supporting-text">{{ item.kind === 'passkey' ? vaultItemStatus(item) : itemKindLabel(item.kind) }}<template v-if="item.favorite">{{ tr('· 已收藏') }}</template></small></m3e-list-action>
                 <div class="item-card-summary"><template v-if="item.kind === 'totp'"><span class="item-card-otp" @click.stop><TotpCodeCell :item="item" allow-use :consume-code="advanceHotpItem" /></span></template><span v-else class="item-summary-text" :title="homeItemSummary(item)">{{ homeItemSummary(item) }}</span></div>
                 <div class="item-card-meta"><span :title="providerName(item)">{{ providerName(item) }}</span><time :datetime="item.updatedAt">{{ new Date(item.updatedAt).toLocaleDateString(locale) }}</time></div>
                 <div class="item-card-actions" @click.stop><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="tr('查看 {0} 的 KeePass 历史', { 0: item.title })" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="tr('管理 {0} 的附件', { 0: item.title })" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="item.kind === 'login' || isEditableVaultItem(item)" :aria-label="item.kind === 'login' ? tr('编辑登录项') : tr('编辑{0}', { 0: itemKindLabel(item.kind) })" @click="item.kind === 'login' ? openEdit(item) : openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button :aria-label="tr('删除{0}', { 0: itemKindLabel(item.kind) })" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
               </article>
             </div>
-            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query ? tr('没有匹配项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'vault' ? tr('还没有保存的项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
           </m3e-card>
         </section>
 
         <section v-else-if="activeSection === 'providers'" class="provider-page">
           <div class="provider-connect-grid" :aria-label="tr('添加密码源')">
-            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openMdbx2Dialog()"><span class="connect-icon"><m3e-icon name="database"></m3e-icon></span><span><strong>{{ tr('连接 MDBX2 保险库') }}</strong><small>{{ tr('打开本机文件或从 WebDAV 增量加入') }}</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
-            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="newWebDav"><span class="connect-icon"><m3e-icon name="folder_copy"></m3e-icon></span><span><strong>{{ tr('连接 Monica Android WebDAV') }}</strong><small>{{ tr('读取并无损写回 Monica_Backups 快照') }}</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
-            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openKeePassDialog()"><span class="connect-icon"><m3e-icon name="key"></m3e-icon></span><span><strong>{{ tr('连接 KeePass') }}</strong><small>{{ tr('打开本地 KDBX 或连接 WebDAV 文件') }}</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
-            <m3e-card variant="filled" class="motion-card connect-source-card"><button class="connect-source" type="button" @click="openBitwarden()"><span class="connect-icon"><m3e-icon name="shield"></m3e-icon></span><span><strong>{{ tr('连接 Bitwarden') }}</strong><small>{{ tr('官方 US/EU 或标准自托管服务') }}</small></span><m3e-icon class="connect-arrow" name="arrow_forward"></m3e-icon></button></m3e-card>
+            <m3e-card variant="filled" class="connect-source-card"><m3e-action-list slot="content"><m3e-list-action class="connect-source" @click="openMdbx2Dialog()"><span slot="leading" class="connect-icon"><m3e-icon name="database" /></span>{{ tr('连接 MDBX2 保险库') }}<span slot="supporting-text">{{ tr('打开本机文件或从 WebDAV 增量加入') }}</span><m3e-icon slot="trailing" name="chevron_right" /></m3e-list-action></m3e-action-list></m3e-card>
+            <m3e-card variant="filled" class="connect-source-card"><m3e-action-list slot="content"><m3e-list-action class="connect-source" @click="newWebDav"><span slot="leading" class="connect-icon"><m3e-icon name="folder_copy" /></span>{{ tr('连接 Monica Android WebDAV') }}<span slot="supporting-text">{{ tr('读取并无损写回 Monica_Backups 快照') }}</span><m3e-icon slot="trailing" name="chevron_right" /></m3e-list-action></m3e-action-list></m3e-card>
+            <m3e-card variant="filled" class="connect-source-card"><m3e-action-list slot="content"><m3e-list-action class="connect-source" @click="openKeePassDialog()"><span slot="leading" class="connect-icon"><m3e-icon name="key" /></span>{{ tr('连接 KeePass') }}<span slot="supporting-text">{{ tr('打开本地 KDBX 或连接 WebDAV 文件') }}</span><m3e-icon slot="trailing" name="chevron_right" /></m3e-list-action></m3e-action-list></m3e-card>
+            <m3e-card variant="filled" class="connect-source-card"><m3e-action-list slot="content"><m3e-list-action class="connect-source" @click="openBitwarden()"><span slot="leading" class="connect-icon"><m3e-icon name="shield" /></span>{{ tr('连接 Bitwarden') }}<span slot="supporting-text">{{ tr('官方 US/EU 或标准自托管服务') }}</span><m3e-icon slot="trailing" name="chevron_right" /></m3e-list-action></m3e-action-list></m3e-card>
           </div>
 
           <div class="provider-list" :aria-label="tr('已连接的密码源')">
@@ -2616,19 +2600,17 @@ function errorCode(error: unknown): string | undefined {
         </section>
 
         <section v-else class="settings-grid settings-page">
+          <m3e-card variant="filled" class="motion-card settings-language-card"><div slot="content"><LanguagePicker :label="tr('界面语言')" /></div></m3e-card>
           <AppearancePanel class="motion-card" />
+          <AutomaticSyncSettings class="motion-card" />
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
             <InlineAutofillSettings />
-            <button class="settings-entry" type="button" @click="openAutofillSitePolicyDialog">
-              <span class="settings-entry-icon"><m3e-icon name="domain_disabled" aria-hidden="true"></m3e-icon></span>
-              <span><strong>{{ tr('自动填充排除项') }}</strong><small>{{ tr('自动填充 {0} 个 · 保存提示 {1} 个', { 0: autofillSitePolicy.blockedHosts.length, 1: autofillSitePolicy.saveBlockedHosts.length }) }}</small></span>
-              <m3e-icon class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon>
-            </button>
+            <m3e-action-list class="settings-actions"><m3e-list-action @click="openAutofillSitePolicyDialog"><span slot="leading" class="settings-entry-icon"><m3e-icon name="domain_disabled" aria-hidden="true"></m3e-icon></span><strong>{{ tr('自动填充排除项') }}</strong><small slot="supporting-text">{{ tr('自动填充 {0} 个 · 保存提示 {1} 个', { 0: autofillSitePolicy.blockedHosts.length, 1: autofillSitePolicy.saveBlockedHosts.length }) }}</small><m3e-icon slot="trailing" class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon></m3e-list-action></m3e-action-list>
           </div></m3e-card>
           <AutofillSitePolicyDialog :open="autofillSitePolicyDialogOpen" @close="autofillSitePolicyDialogOpen = false" @saved="refreshAutofillSitePolicy" />
           <m3e-card variant="filled" class="motion-card windows-hello-card"><div slot="content" class="stack">
-            <details class="settings-disclosure hello-disclosure">
-              <summary><span><strong>Windows Hello</strong><small>{{ windowsHelloStatus?.native.available ? tr('设备可用') : tr('设备不可用') }} · {{ windowsHelloProtectionMode === 'device-key' ? tr('设备密钥') : windowsHelloProtectionMode === 'master-password' ? tr('主密码') : tr('保护方式未知') }}</small></span><span class="settings-entry-icon"><m3e-icon name="fingerprint" aria-hidden="true"></m3e-icon></span><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+            <m3e-expansion-panel class="settings-disclosure hello-disclosure">
+              <span slot="header"><span><strong>Windows Hello</strong><small>{{ windowsHelloStatus?.native.available ? tr('设备可用') : tr('设备不可用') }} · {{ windowsHelloProtectionMode === 'device-key' ? tr('设备密钥') : windowsHelloProtectionMode === 'master-password' ? tr('主密码') : tr('保护方式未知') }}</small></span><span class="settings-entry-icon"><m3e-icon name="fingerprint" aria-hidden="true"></m3e-icon></span></span>
               <div class="settings-disclosure-content">
             <p class="supporting">{{ tr('使用 Windows Hello 保护设备密钥；私钥不离开本机。') }}</p>
             <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? tr('设备可用') : tr('设备不可用') }}</strong><small>{{ tr('平台验证器') }}</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? windowsHelloStatus.bindingConsistent ? tr('已注册') : tr('绑定异常') : tr('未注册') }}</strong><small>{{ tr('当前密码库') }}</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? tr('设备密钥') : windowsHelloStatus.protectionMode === 'master-password' ? tr('主密码') : tr('未知') }}</strong><small>{{ tr('保护方式') }}</small></span></div>
@@ -2640,34 +2622,34 @@ function errorCode(error: unknown): string | undefined {
             <div class="source-actions"><m3e-button v-if="!windowsHelloStatus?.vaultEnrolled" variant="filled" :aria-label="tr('注册 Windows Hello 本机凭据')" :disabled="Boolean(windowsHelloBusy) || windowsHelloStatus?.protectionMode !== 'device-key' || !windowsHelloStatus?.native.available" @click="enrollWindowsHello"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ windowsHelloBusy === 'enroll' ? tr('正在注册…') : tr('注册本机凭据') }}</m3e-button><m3e-button v-else variant="text" :disabled="Boolean(windowsHelloBusy)" @click="revokeWindowsHello"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ windowsHelloBusy === 'revoke' ? tr('正在撤销…') : tr('撤销本机绑定') }}</m3e-button><m3e-button variant="text" :disabled="Boolean(windowsHelloBusy)" @click="refreshWindowsHelloStatus"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('刷新状态') }}</m3e-button></div>
             <p v-if="windowsHelloError" class="form-error" role="alert">{{ windowsHelloError }}</p>
               </div>
-            </details>
+            </m3e-expansion-panel>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content">
-            <details class="settings-disclosure backup-disclosure">
-              <summary><span><strong>{{ tr('加密整库备份') }}</strong><small>{{ tr('导出或恢复完整密码库') }}</small></span><span class="settings-entry-icon"><m3e-icon name="encrypted" aria-hidden="true"></m3e-icon></span><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+            <m3e-expansion-panel class="settings-disclosure backup-disclosure">
+              <span slot="header"><span><strong>{{ tr('加密整库备份') }}</strong><small>{{ tr('导出或恢复完整密码库') }}</small></span><span class="settings-entry-icon"><m3e-icon name="encrypted" aria-hidden="true"></m3e-icon></span></span>
               <div class="settings-disclosure-content">
             <p class="supporting">{{ tr('使用独立密码加密备份。') }}</p>
             <m3e-button variant="tonal" :aria-label="tr('导出加密整库备份')" :disabled="Boolean(securityBusy)" @click="openExportBackupDialog"><m3e-icon slot="icon" name="encrypted"></m3e-icon>{{ securityBusy === 'export' ? tr('正在导出…') : tr('导出备份') }}</m3e-button>
             <label class="file-action"><m3e-icon name="upload"></m3e-icon><span>{{ tr('选择加密整库备份') }}</span><input type="file" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
             <template v-if="selectedEncryptedBackup">
               <p class="supporting">{{ tr('已选择：{0}', { 0: selectedEncryptedBackupName }) }}</p>
-              <label class="field"><span>{{ tr('备份密码') }}</span><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></label>
-              <label class="field"><span>{{ tr('恢复前的当前主密码') }}</span><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /><small>{{ restoreCurrentPasswordHint }}</small></label>
+              <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('备份密码') }}</label><input v-model="restoreForm.backupPassword" type="password" autocomplete="current-password" /></m3e-form-field>
+              <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field"><label slot="label">{{ tr('恢复前的当前主密码') }}</label><input v-model="restoreForm.currentPassword" type="password" autocomplete="current-password" /><small slot="hint">{{ restoreCurrentPasswordHint }}</small></m3e-form-field>
               <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="restoreEncryptedVault">{{ securityBusy === 'restore' ? tr('正在验证并恢复…') : tr('验证并替换当前密码库') }}</m3e-button>
             </template>
               </div>
-            </details>
+            </m3e-expansion-panel>
           </div></m3e-card>
           <m3e-card variant="filled" class="motion-card"><div slot="content" class="stack">
-            <button class="settings-entry" type="button" @click="passwordChangeDialogOpen = true"><span class="settings-entry-icon"><m3e-icon name="key_vertical" aria-hidden="true"></m3e-icon></span><span><strong>{{ tr('更改保护方式') }}</strong><small>{{ tr('留空使用设备密钥；填写则使用 Argon2id。') }}</small></span><m3e-icon class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon></button>
+            <m3e-action-list class="settings-actions"><m3e-list-action @click="passwordChangeDialogOpen = true"><span slot="leading" class="settings-entry-icon"><m3e-icon name="key_vertical" aria-hidden="true"></m3e-icon></span><strong>{{ tr('更改保护方式') }}</strong><small slot="supporting-text">{{ tr('留空使用设备密钥；填写则使用 Argon2id。') }}</small><m3e-icon slot="trailing" class="settings-entry-chevron" name="chevron_right" aria-hidden="true"></m3e-icon></m3e-list-action></m3e-action-list>
             <Teleport to="body">
             <div v-if="passwordChangeDialogOpen" class="settings-modal" role="presentation" @click.self="passwordChangeDialogOpen = false">
               <section class="settings-modal-panel" role="dialog" aria-modal="true" aria-labelledby="password-change-title">
-                <header class="settings-modal-header"><div><h2 id="password-change-title">{{ tr('更改保护方式') }}</h2><p>{{ tr('留空使用设备密钥；填写则使用 Argon2id。') }}</p></div><button class="settings-modal-close" type="button" :aria-label="tr('关闭更改保护方式')" @click="passwordChangeDialogOpen = false"><m3e-icon name="close"></m3e-icon></button></header>
+                <header class="settings-modal-header"><div><h2 id="password-change-title">{{ tr('更改保护方式') }}</h2><p>{{ tr('留空使用设备密钥；填写则使用 Argon2id。') }}</p></div><m3e-icon-button class="settings-modal-close" type="button" :aria-label="tr('关闭更改保护方式')" @click="passwordChangeDialogOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
                 <div class="settings-modal-content">
-                <label class="field"><span>{{ tr('当前主密码（设备密钥模式留空）') }}</span><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></label>
-                <label class="field"><span>{{ tr('新主密码（可选）') }}</span><input v-model="passwordChange.newPassword" type="password" :minlength="passwordChange.newPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
-                <label class="field"><span>{{ tr('确认新主密码') }}</span><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></label>
+                <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('当前主密码（设备密钥模式留空）') }}</label><input v-model="passwordChange.currentPassword" type="password" autocomplete="current-password" /></m3e-form-field>
+                <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('新主密码（可选）') }}</label><input v-model="passwordChange.newPassword" type="password" :minlength="passwordChange.newPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></m3e-form-field>
+                <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('确认新主密码') }}</label><input v-model="passwordChange.confirmation" type="password" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></m3e-form-field>
                 <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? tr('正在重新加密…') : tr('更改主密码') }}</m3e-button>
                 <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
                 </div>
@@ -2675,17 +2657,34 @@ function errorCode(error: unknown): string | undefined {
             </div>
             </Teleport>
           </div></m3e-card>
-          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><details class="settings-disclosure"><summary><span><strong>{{ tr('明文手动迁移') }}</strong><small>{{ tr('导出项目或导入 JSON / CSV') }}</small></span><span class="settings-entry-icon"><m3e-icon name="swap_vert" aria-hidden="true"></m3e-icon></span><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary><div class="settings-disclosure-content"><p class="supporting">{{ tr('明文文件不包含密码源，请保存到可信位置。') }}</p><m3e-button variant="tonal" :aria-label="tr('导出明文 JSON')" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>{{ tr('导出 JSON') }}</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>{{ tr('导入明文 JSON / CSV') }}</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></details></div></m3e-card>
-          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><details class="settings-disclosure"><summary><span><strong>{{ tr('安全边界') }}</strong><small>{{ tr('AES-256-GCM · 会话级解锁') }}</small></span><span class="settings-entry-icon"><m3e-icon name="security" aria-hidden="true"></m3e-icon></span><m3e-icon class="settings-disclosure-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary><div class="settings-disclosure-content"><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('持久数据使用 AES-256-GCM 加密') }}</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>{{ tr('解锁密钥仅保留在浏览器会话存储') }}</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>{{ tr('内容脚本无法读取完整密码库') }}</span></div></div></details></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><m3e-expansion-panel class="settings-disclosure"><span slot="header"><span><strong>{{ tr('明文手动迁移') }}</strong><small>{{ tr('导出项目或导入 JSON / CSV') }}</small></span><span class="settings-entry-icon"><m3e-icon name="swap_vert" aria-hidden="true"></m3e-icon></span></span><div class="settings-disclosure-content"><p class="supporting">{{ tr('明文文件不包含密码源，请保存到可信位置。') }}</p><m3e-button variant="tonal" :aria-label="tr('导出明文 JSON')" @click="exportVault"><m3e-icon slot="icon" name="download"></m3e-icon>{{ tr('导出 JSON') }}</m3e-button><label class="file-action"><m3e-icon name="upload"></m3e-icon><span>{{ tr('导入明文 JSON / CSV') }}</span><input type="file" accept="application/json,.json,.csv,text/csv" @change="importVault" /></label></div></m3e-expansion-panel></div></m3e-card>
+          <m3e-card variant="filled" class="motion-card settings-list-card"><div slot="content"><m3e-expansion-panel class="settings-disclosure"><span slot="header"><span><strong>{{ tr('安全边界') }}</strong><small>{{ tr('AES-256-GCM · 会话级解锁') }}</small></span><span class="settings-entry-icon"><m3e-icon name="security" aria-hidden="true"></m3e-icon></span></span><div class="settings-disclosure-content"><div class="boundary-row"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('持久数据使用 AES-256-GCM 加密') }}</span></div><div class="boundary-row"><m3e-icon name="timer"></m3e-icon><span>{{ tr('解锁密钥仅保留在浏览器会话存储') }}</span></div><div class="boundary-row"><m3e-icon name="visibility_off"></m3e-icon><span>{{ tr('内容脚本无法读取完整密码库') }}</span></div></div></m3e-expansion-panel></div></m3e-card>
           <p v-if="securityError" class="form-error settings-message" role="alert">{{ securityError }}</p>
         </section>
         <ListPagination :page="listPagination.page.value" :total="listTotal" target="main-content" @change="listPagination.change" />
+        </div>
       </main>
     </div>
 
-    <VaultItemDetail v-if="vaultDetailItem" :key="vaultDetailItem.id" :item="vaultDetailItem" :items="[...vaultItems, ...archivedItems]" :providers="providers" :consume-otp="advanceHotpItem" @close="vaultDetailItem = undefined" @edit="editFromDetail" />
+    <Transition name="dialog" mode="out-in" :css="lifecycle === 'unlocked'" @after-enter="focusActiveDialog" @after-leave="restoreDialogFocus">
+    <CreateItemDialog v-if="createDialogOpen" @cancel="createDialogOpen = false" @select="selectCreateType" />
+    <ApiTokenEditor v-else-if="apiTokenEditorOpen" :item="apiTokenEditorItem" :providers="providers" :save-item="saveVaultItem" @cancel="apiTokenEditorOpen = false; apiTokenEditorItem = undefined" />
 
-    <VaultItemEditor v-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" @cancel="vaultEditorOpen = false" @save="saveVaultItem" />
+    <VaultItemDetail v-else-if="vaultDetailItem" :key="vaultDetailItem.id" :item="vaultDetailItem" :items="[...vaultItems, ...archivedItems]" :providers="providers" :consume-otp="advanceHotpItem" @close="vaultDetailItem = undefined" @edit="editFromDetail" />
+
+    <VaultItemEditor v-else-if="vaultEditorOpen" :item="vaultEditorItem" :initial-kind="vaultEditorKind" :providers="providers" :save-item="saveVaultItem" @cancel="vaultEditorOpen = false" />
+
+
+      <m3e-dialog v-material-dialog v-else-if="editorOpen" open class="material-dialog material-editor-dialog" :disableClose.prop="credentialSaving" :dismissible="!credentialSaving" :close-label="tr('关闭')" @closed.self="editorOpen = false">
+<h2 slot="header" :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? tr('编辑登录项') : tr('添加登录项') }}</h2>
+<form id="login-item-form" class="material-editor-form editor-form editor-with-actions" @submit.prevent="submitCredential">
+            <div class="editor-fields login-item-form structured-editor"><LoginEditorFields :form="form" :editing="Boolean(editingId)" :providers="providers" :totp-items="totpItems" :ssh-format-hint="sshBitwardenFormatHint" :native-bitwarden-ssh="nativeBitwardenSshEdit" :qr-data-url="specialQrDataUrl" :qr-error="specialQrError" v-model:barcode-mode="barcodeRenderMode" @apply-raw="applySpecialRaw" @copy-payload="copySpecialPayload" @generate-qr="refreshSpecialQr" @clear-qr="clearSpecialQr" /></div>
+
+          </form>
+<footer slot="actions" end><p v-if="formError" class="form-error editor-footer-status" role="alert">{{ formError }}</p><m3e-button variant="text" type="button" :disabled="credentialSaving" @click="editorOpen = false">{{ tr('取消') }}</m3e-button><m3e-button form="login-item-form" variant="filled" type="submit" :disabled="credentialSaving">{{ credentialSaving ? tr('正在保存…') : tr('加密保存') }}</m3e-button></footer>
+</m3e-dialog>
+
+    </Transition>
 
     <Mdbx2BatchTransferDialog
       v-if="mdbx2BatchTransferDialogOpen"
@@ -2761,12 +2760,12 @@ function errorCode(error: unknown): string | undefined {
 
     <div v-if="webDavDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeWebDavDialog"><section class="editor-dialog provider-dialog" role="dialog" aria-modal="true" aria-labelledby="webdav-dialog-title"><header><div><h2 id="webdav-dialog-title">{{ editingWebDavId ? tr('编辑 WebDAV') : tr('连接 Monica Android WebDAV') }}</h2><p>{{ tr('读取并无损写回 Android 的 Monica_Backups 快照。') }}</p></div><m3e-icon-button :aria-label="tr('关闭 WebDAV 设置')" @click="closeWebDavDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
       <form class="provider-form" @submit.prevent="saveWebDav">
-        <label class="field"><span>{{ tr('显示名称') }}</span><input v-model="webDavForm.name" autocomplete="off" placeholder="Monica Android WebDAV" /></label>
-        <label class="field field-wide"><span>{{ tr('WebDAV 地址 *') }}</span><input v-model="webDavForm.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small>{{ tr('可以填写服务器根路径，也可以直接填写 Monica_Backups 路径。') }}</small></label>
-        <label class="field"><span>{{ tr('用户名') }}</span><input v-model="webDavForm.username" autocomplete="username" /></label>
-        <label class="field"><span>{{ tr('WebDAV 密码') }}</span><input v-model="webDavForm.password" type="password" autocomplete="current-password" :placeholder="webDavForm.passwordConfigured ? tr('已加密保存；留空保持不变') : ''" /></label>
-        <label class="field field-wide"><span>{{ tr('Android 备份加密密码（可选）') }}</span><input v-model="webDavForm.backupPassword" type="password" autocomplete="new-password" :placeholder="webDavForm.backupPasswordConfigured ? tr('已加密保存；留空保持不变') : tr('留空使用普通 ZIP')" /><small>{{ tr('留空时读写普通 ZIP；填写任意长度密码后，后续快照使用 MONICA_ENC_V1。导入加密快照时需要填写对应密码。') }}</small></label>
-        <label class="favorite-row field-wide"><input v-model="webDavForm.isDefaultSaveTarget" type="checkbox" /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('显示名称') }}</label><input v-model="webDavForm.name" autocomplete="off" placeholder="Monica Android WebDAV" /></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"><label slot="label">{{ tr('WebDAV 地址 *') }}</label><input v-model="webDavForm.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small slot="hint">{{ tr('可以填写服务器根路径，也可以直接填写 Monica_Backups 路径。') }}</small></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('用户名') }}</label><input v-model="webDavForm.username" autocomplete="username" /></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('WebDAV 密码') }}</label><input v-model="webDavForm.password" type="password" autocomplete="current-password" :placeholder="webDavForm.passwordConfigured ? tr('已加密保存；留空保持不变') : ''" /></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"><label slot="label">{{ tr('Android 备份加密密码（可选）') }}</label><input v-model="webDavForm.backupPassword" type="password" autocomplete="new-password" :placeholder="webDavForm.backupPasswordConfigured ? tr('已加密保存；留空保持不变') : tr('留空使用普通 ZIP')" /><small slot="hint">{{ tr('留空时读写普通 ZIP；填写任意长度密码后，后续快照使用 MONICA_ENC_V1。导入加密快照时需要填写对应密码。') }}</small></m3e-form-field>
+        <label v-choice-label class="favorite-row field-wide"><m3e-checkbox :checked.prop="webDavForm.isDefaultSaveTarget" @input="webDavForm.isDefaultSaveTarget = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
         <p v-if="webDavError" class="form-error field-wide" role="alert">{{ webDavError }}</p>
         <footer class="provider-actions field-wide"><m3e-button variant="text" type="button" @click="closeWebDavDialog">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="button" :disabled="Boolean(webDavBusy)" @click="testWebDav">{{ webDavBusy === 'test' ? tr('测试中…') : tr('测试连接') }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(webDavBusy)">{{ webDavBusy === 'save' ? tr('保存中…') : tr('加密保存') }}</m3e-button></footer>
       </form>
@@ -2774,23 +2773,23 @@ function errorCode(error: unknown): string | undefined {
 
     <div v-if="keePassDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeKeePassDialog"><section class="editor-dialog provider-dialog keepass-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="keepass-dialog-title"><header><div><h2 id="keepass-dialog-title">{{ keePassDialogTitle }}</h2><p>{{ keePassForm.sourceMode === 'webdav' ? tr('WebDAV 与 KDBX 凭据会加密保存在 Monica 密码库中，本机工作副本仅保存 KDBX 密文。') : tr('本地文件密码和密钥文件仅用于当前后台会话。') }}</p></div><m3e-icon-button :aria-label="tr('关闭 KeePass 设置')" :disabled="keePassBusy === 'open'" @click="closeKeePassDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
       <form class="provider-form" @submit.prevent="connectKeePass">
-        <fieldset class="login-type-picker keepass-source-picker field-wide"><legend>{{ tr('来源') }}</legend><div class="login-type-segments keepass-source-segments"><label><input v-model="keePassForm.sourceMode" type="radio" value="local-file" @change="keePassError = ''; keePassDialogNotice = ''" /><span>{{ tr('本地文件') }}</span></label><label><input v-model="keePassForm.sourceMode" type="radio" value="webdav" @change="keePassError = ''; keePassDialogNotice = ''" /><span>{{ tr('WebDAV 文件') }}</span></label></div></fieldset>
-        <label class="field"><span>{{ tr('显示名称') }}</span><input v-model="keePassForm.name" autofocus autocomplete="off" placeholder="KeePass" /></label>
+        <fieldset class="login-type-picker keepass-source-picker field-wide"><legend>{{ tr('来源') }}</legend><m3e-radio-group class="login-type-segments keepass-source-segments" :aria-label="tr('来源')"><label v-choice-label><m3e-radio :checked.prop="keePassForm.sourceMode === 'local-file'" @input="keePassForm.sourceMode = 'local-file'"   value="local-file" @change="keePassError = ''; keePassDialogNotice = ''" /><span>{{ tr('本地文件') }}</span></label><label v-choice-label><m3e-radio :checked.prop="keePassForm.sourceMode === 'webdav'" @input="keePassForm.sourceMode = 'webdav'"   value="webdav" @change="keePassError = ''; keePassDialogNotice = ''" /><span>{{ tr('WebDAV 文件') }}</span></label></m3e-radio-group></fieldset>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('显示名称') }}</label><input v-model="keePassForm.name" autofocus autocomplete="off" placeholder="KeePass" /></m3e-form-field>
         <div class="field"><span>{{ tr('当前保护方式') }}</span><div class="protection-preview" aria-live="polite"><m3e-icon :name="keePassKeyFile || keePassForm.keyFileConfigured ? 'key' : 'password'"></m3e-icon><strong>{{ keePassProtectionPreview }}</strong></div><small>{{ tr('密码允许留空；数据库必须与密码和密钥文件组合匹配。') }}</small></div>
 
         <template v-if="keePassForm.sourceMode === 'local-file'">
           <div class="field field-wide"><span>{{ tr('KeePass 数据库文件 *') }}</span><label class="file-action provider-file-action"><m3e-icon name="folder_open"></m3e-icon><span>{{ keePassDatabaseFile?.name || (keePassForm.currentFileName ? tr('重新选择 ') + keePassForm.currentFileName : tr('选择 .kdbx 文件')) }}</span><input ref="keePassFileInput" type="file" accept=".kdbx,application/octet-stream" :aria-label="tr('KeePass 数据库文件')" @change="selectKeePassDatabase" /></label><small>{{ tr('浏览器不会保存文件内容或可写句柄；后台重启后需要重新选择。') }}</small></div>
         </template>
         <template v-else>
-          <label class="field"><span>{{ tr('WebDAV 地址') }}</span><input v-model="keePassForm.baseUrl" autocomplete="off" placeholder="https://dav.example.com/files" /></label>
-          <label class="field"><span>{{ tr('用户名') }}</span><input v-model="keePassForm.username" autocomplete="username" /></label>
-          <label class="field"><span>{{ tr('WebDAV 密码') }}</span><input v-model="keePassForm.webDavPassword" type="password" autocomplete="current-password" :placeholder="keePassForm.webDavPasswordConfigured ? tr('已加密保存；留空保持不变') : ''" /></label>
-          <label class="field"><span>{{ tr('远端 .kdbx 位置') }}</span><input v-model="keePassForm.remotePath" autocomplete="off" placeholder="vaults/main.kdbx" /></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('WebDAV 地址') }}</label><input v-model="keePassForm.baseUrl" autocomplete="off" placeholder="https://dav.example.com/files" /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('用户名') }}</label><input v-model="keePassForm.username" autocomplete="username" /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('WebDAV 密码') }}</label><input v-model="keePassForm.webDavPassword" type="password" autocomplete="current-password" :placeholder="keePassForm.webDavPasswordConfigured ? tr('已加密保存；留空保持不变') : ''" /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('远端 .kdbx 位置') }}</label><input v-model="keePassForm.remotePath" autocomplete="off" placeholder="vaults/main.kdbx" /></m3e-form-field>
         </template>
 
         <div class="field field-wide"><span>{{ tr('密钥文件（可选）') }}</span><label class="file-action provider-file-action secondary"><m3e-icon name="key"></m3e-icon><span>{{ keePassKeyFile?.name || (keePassForm.sourceMode === 'webdav' && keePassForm.keyFileConfigured ? tr('已加密保存；选择新文件可替换') : tr('选择 .key / .keyx / XML / 二进制密钥文件')) }}</span><input ref="keePassKeyFileInput" type="file" :aria-label="tr('密钥文件（可选）')" @change="selectKeePassKeyFile" /></label><small>{{ tr('兼容 KeePass XML v1/v2、32 字节二进制、64 位十六进制文本及任意文件哈希模式。') }}</small></div>
-        <label class="field field-wide"><span>{{ tr('数据库密码（可留空）') }}</span><div class="password-field"><input v-model="keePassForm.password" :type="revealKeePassPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="keePassForm.sourceMode === 'webdav' && keePassForm.databaseCredentialStored ? tr('已加密保存；留空保持不变') : ''" /><button type="button" @click="revealKeePassPassword = !revealKeePassPassword">{{ revealKeePassPassword ? tr('隐藏') : tr('显示') }}</button></div><small>{{ tr('长度不受限制；编辑远端来源时留空沿用现有加密凭据。') }}</small></label>
-        <label class="favorite-row field-wide"><input v-model="keePassForm.isDefaultSaveTarget" type="checkbox" /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"><label slot="label">{{ tr('数据库密码（可留空）') }}</label><input v-model="keePassForm.password" :type="revealKeePassPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="keePassForm.sourceMode === 'webdav' && keePassForm.databaseCredentialStored ? tr('已加密保存；留空保持不变') : ''" /><m3e-button slot="suffix" variant="text" type="button" @click="revealKeePassPassword = !revealKeePassPassword">{{ revealKeePassPassword ? tr('隐藏') : tr('显示') }}</m3e-button><small slot="hint">{{ tr('长度不受限制；编辑远端来源时留空沿用现有加密凭据。') }}</small></m3e-form-field>
+        <label v-choice-label class="favorite-row field-wide"><m3e-checkbox :checked.prop="keePassForm.isDefaultSaveTarget" @input="keePassForm.isDefaultSaveTarget = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
         <div class="provider-boundaries field-wide" :aria-label="tr('KeePass 浏览器能力边界')">
           <div class="boundary-row"><m3e-icon name="info"></m3e-icon><span>{{ keePassForm.sourceMode === 'webdav' ? tr('远端写入使用精确 ETag；字段或结构冲突会停止覆盖，并保留本机加密工作副本。') : tr('本地文件只在内存编辑，需要导出覆盖原 KDBX；Twofish 需先转换为 AES-256。') }}</span></div>
         </div>
@@ -2800,58 +2799,17 @@ function errorCode(error: unknown): string | undefined {
       </form>
     </section></div>
 
-    <div v-if="editorOpen" class="modal-backdrop" role="presentation" @mousedown.self="editorOpen = false"><section class="editor-dialog login-item-dialog" role="dialog" aria-modal="true" :aria-labelledby="editingId ? 'editor-title-edit' : 'editor-title-new'"><header><div><h2 :id="editingId ? 'editor-title-edit' : 'editor-title-new'">{{ editingId ? tr('编辑登录项') : tr('添加登录项') }}</h2></div><m3e-icon-button :aria-label="tr('关闭')" @click="editorOpen = false"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form editor-with-actions" @submit.prevent="submitCredential"><div class="editor-fields login-item-form"><p class="editor-intro field-wide">{{ tr('空用户名、空密码和无网址项目均可保存。') }}</p>
-      <label class="field"><span>{{ tr('名称 *') }}</span><input v-model="form.name" autofocus autocomplete="off" :placeholder="tr('例如：GitHub 工作账号')" /></label>
-      <fieldset class="login-type-picker field-wide"><legend>{{ tr('登录类型') }}</legend><div class="login-type-segments"><label><input v-model="form.loginType" type="radio" value="PASSWORD" /><span>{{ tr('密码') }}</span></label><label><input v-model="form.loginType" type="radio" value="SSO" /><span>SSO</span></label><label><input v-model="form.loginType" type="radio" value="WIFI" /><span>Wi-Fi</span></label><label><input v-model="form.loginType" type="radio" value="SSH_KEY" /><span>{{ tr('SSH 密钥') }}</span></label><label><input v-model="form.loginType" type="radio" value="BARCODE" /><span>{{ tr('条码') }}</span></label></div></fieldset>
-      <label v-if="form.loginType !== 'SSH_KEY' && form.loginType !== 'BARCODE'" class="field"><span>{{ form.loginType === 'WIFI' ? tr('企业身份（Identity）') : tr('用户名') }}</span><input v-model="form.username" autocomplete="username" :placeholder="form.loginType === 'WIFI' ? tr('企业网络可选') : 'name@example.com'" /></label>
-      <label v-if="form.loginType === 'WIFI'" class="field"><span>{{ tr('Wi-Fi 密码') }}</span><div class="password-field"><input v-model="form.wifiPassword" :type="revealPassword ? 'text' : 'password'" autocomplete="off" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? tr('隐藏') : tr('显示') }}</button></div></label>
-      <label v-else-if="form.loginType !== 'SSH_KEY' && form.loginType !== 'BARCODE'" class="field"><span>{{ tr('密码') }}</span><div class="password-field"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" /><button type="button" @click="revealPassword = !revealPassword">{{ revealPassword ? tr('隐藏') : tr('显示') }}</button></div></label>
-      <template v-if="form.loginType === 'SSO'"><label class="field"><span>{{ tr('SSO 提供商') }}</span><input v-model="form.ssoProvider" autocomplete="off" placeholder="GOOGLE" /></label><label class="field"><span>{{ tr('引用条目 ID') }}</span><input v-model="form.ssoRefEntryId" inputmode="numeric" :placeholder="tr('可选')" /></label></template>
-      <template v-if="form.loginType === 'WIFI'">
-        <fieldset class="editor-fieldset special-record-fields field-wide"><legend>{{ tr('Wi-Fi 配置') }}</legend>
-          <label class="field"><span>SSID</span><input v-model="form.wifi.ssid" autocomplete="off" /></label>
-          <label class="field"><span>{{ tr('安全类型') }}</span><select v-model="form.wifi.security"><option value="NONE">{{ tr('开放网络') }}</option><option value="WEP">WEP</option><option value="WPA_WPA2">WPA/WPA2</option><option value="WPA2_WPA3">WPA2/WPA3</option><option value="WPA3">WPA3</option><option value="WPA2_ENTERPRISE">{{ tr('WPA2 企业') }}</option><option value="WPA3_ENTERPRISE">{{ tr('WPA3 企业') }}</option></select></label>
-          <label class="field"><span>BSSID</span><input v-model="form.wifi.bssid" autocomplete="off" :placeholder="tr('可选')" /></label>
-          <label class="favorite-row"><input v-model="form.wifi.hiddenNetwork" type="checkbox" /><span>{{ tr('隐藏网络') }}</span></label>
-          <details class="special-advanced field-wide"><summary>{{ tr('Android 原始元数据') }}</summary><label class="field"><span>JSON</span><textarea v-model="form.wifiMetadataRaw" rows="6" spellcheck="false"></textarea><small>{{ tr('代理、静态 IP、EAP 和未来字段保留在此对象中；应用后同步到上方已知字段。') }}</small></label><m3e-button variant="tonal" type="button" @click="applySpecialRaw">{{ tr('应用原始元数据') }}</m3e-button></details>
-        </fieldset>
-      </template>
-      <template v-else-if="form.loginType === 'SSH_KEY'">
-        <fieldset class="editor-fieldset special-record-fields field-wide"><legend>{{ tr('SSH 密钥') }}</legend>
-          <p v-if="sshBitwardenFormatHint" class="ssh-format-hint">{{ sshBitwardenFormatHint }}</p>
-          <label class="field"><span>{{ tr('算法') }}</span><input v-model="form.sshKey.algorithm" list="ssh-algorithms" autocomplete="off" :readonly="nativeBitwardenSshEdit" /><datalist id="ssh-algorithms"><option value="ED25519"></option><option value="RSA"></option></datalist></label>
-          <label class="field"><span>{{ tr('密钥位数') }}</span><input v-model.number="form.sshKey.keySize" type="number" min="0" step="1" inputmode="numeric" /></label>
-          <label class="field field-wide"><span>{{ tr('OpenSSH 公钥') }}</span><textarea v-model="form.sshKey.publicKeyOpenSsh" rows="3" spellcheck="false"></textarea></label>
-          <label class="field field-wide"><span>{{ tr('OpenSSH 私钥') }}</span><textarea v-model="form.sshKey.privateKeyOpenSsh" rows="7" spellcheck="false"></textarea></label>
-          <label class="field"><span>{{ tr('SHA-256 指纹') }}</span><input v-model="form.sshKey.fingerprintSha256" autocomplete="off" /></label>
-          <label class="field"><span>{{ tr('注释') }}</span><input v-model="form.sshKey.comment" autocomplete="off" /></label>
-          <label class="field"><span>{{ tr('格式') }}</span><input v-model="form.sshKey.format" autocomplete="off" /></label>
-          <details class="special-advanced field-wide"><summary>{{ tr('Android 原始元数据') }}</summary><label class="field"><span>JSON</span><textarea v-model="form.sshKeyDataRaw" rows="6" spellcheck="false"></textarea><small>{{ tr('未知字段逐项保留；应用后同步到上方已知字段。') }}</small></label><m3e-button variant="tonal" type="button" @click="applySpecialRaw">{{ tr('应用原始元数据') }}</m3e-button></details>
-        </fieldset>
-      </template>
-      <label v-else-if="form.loginType === 'BARCODE'" class="field field-wide"><span>{{ tr('条码内容') }}</span><input v-model="form.barcodeContent" :aria-label="tr('条码内容')" autocomplete="off" spellcheck="false" /><small>{{ tr('按 Monica Android 格式保存到密码字段。') }}</small></label>
-      <fieldset v-if="isSpecialLoginType" class="editor-fieldset special-transfer field-wide"><legend>{{ form.loginType === 'BARCODE' ? tr('复制与条码') : tr('复制与二维码') }}</legend><div v-if="form.loginType === 'BARCODE'" class="barcode-render-modes" role="radiogroup" :aria-label="tr('条码显示方式')"><label><input v-model="barcodeRenderMode" type="radio" value="qr" @change="clearSpecialQr" /><span>QR</span></label><label><input v-model="barcodeRenderMode" type="radio" value="code128" @change="clearSpecialQr" /><span>Code 128</span></label></div><div class="special-transfer-actions"><m3e-button variant="tonal" type="button" @click="copySpecialPayload"><m3e-icon slot="icon" name="content_copy"></m3e-icon>{{ tr('复制') }}</m3e-button><m3e-button variant="text" type="button" @click="refreshSpecialQr"><m3e-icon slot="icon" :name="form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? 'barcode' : 'qr_code_2'"></m3e-icon>{{ form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? tr('生成条码') : tr('生成二维码') }}</m3e-button></div><img v-if="specialQrDataUrl" :class="{ 'barcode-linear-preview': form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' }" :src="specialQrDataUrl" :alt="form.loginType === 'BARCODE' ? `BARCODE ${barcodeRenderMode === 'code128' ? tr('Code 128 条码') : tr('QR 二维码')}` : tr('{0} 二维码', { 0: form.loginType })" width="240" :height="form.loginType === 'BARCODE' && barcodeRenderMode === 'code128' ? 96 : 240" /><p v-if="specialQrError" class="form-error" role="alert">{{ specialQrError }}</p></fieldset>
-      <template v-if="isWebLoginType">
-        <label class="field"><span>{{ tr('绑定独立验证器') }}</span><select v-model="form.boundTotpItemId"><option value="">{{ tr('不绑定独立项目') }}</option><option v-for="item in totpItems" :key="item.id" :value="item.id">{{ item.title }} · {{ item.otpType || 'TOTP' }}</option></select></label>
-        <label class="field"><span>{{ tr('内嵌验证码密钥') }}</span><input v-model="form.totpSecret" :disabled="Boolean(form.boundTotpItemId)" autocomplete="off" :placeholder="tr('Base32 或 otpauth URI')" /><small>{{ tr('独立验证器优先；可在登录项详情查看和复制验证码。') }}</small></label>
-        <fieldset class="editor-fieldset field-wide"><legend>{{ tr('匹配网站（可选）') }}</legend><div class="uri-rule-list"><div v-for="(rule, index) in form.uriRules" :key="index" class="uri-rule-row"><select v-model="rule.matchType" :aria-label="tr('网址 {0} 匹配方式', { 0: index + 1 })"><option v-for="type in (['base-domain','domain','starts-with','exact','regex','never'] as LoginUriMatchType[])" :key="type" :value="type">{{ uriMatchTypeLabel(type) }}</option></select><input v-model="rule.uri" :aria-label="tr('网址 {0}', { 0: index + 1 })" placeholder="https://accounts.example.com" /><m3e-icon-button type="button" :aria-label="tr('删除网址 {0}', { 0: index + 1 })" @click="removeUriRule(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addUriRule"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加网址') }}</m3e-button></fieldset>
-      </template>
-      <fieldset class="editor-fieldset field-wide"><legend>{{ tr('自定义字段') }}</legend><div class="custom-field-list"><div v-for="(field, index) in form.customFields" :key="index" class="custom-field-row"><input v-model="field.name" :aria-label="tr('自定义字段 {0} 名称', { 0: index + 1 })" :placeholder="tr('字段名称')" /><input v-model="field.value" :type="field.protected ? 'password' : 'text'" :aria-label="tr('自定义字段 {0} 值', { 0: index + 1 })" :placeholder="tr('字段值')" /><label class="compact-check"><input v-model="field.protected" type="checkbox" /><span>{{ tr('隐藏') }}</span></label><m3e-icon-button type="button" :aria-label="tr('删除自定义字段 {0}', { 0: index + 1 })" @click="removeCustomField(index)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div></div><m3e-button variant="text" type="button" @click="addCustomField"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加字段') }}</m3e-button></fieldset>
-      <label class="field field-wide"><span>{{ tr('备注') }}</span><textarea v-model="form.notes" rows="3" :placeholder="tr('可选备注')"></textarea></label>
-      <label class="field field-wide"><span>{{ tr('保存到') }}</span><select v-model="form.providerId" :disabled="Boolean(editingId)"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.kind === 'local' ? tr('Monica 本地库') : provider.name }}</option></select><small>{{ editingId ? tr('已有项目保留原密码源。') : tr('外部密码源项目会在下次同步时写入。') }}</small></label>
-      <label v-if="form.loginType === 'PASSWORD' && !form.archived" class="locked-autofill-option field-wide"><input v-model="form.allowLockedAutofill" type="checkbox" /><span><strong>{{ tr('允许免解锁填写') }}</strong><small>{{ tr('在此浏览器保存独立加密副本。锁定后，使用此浏览器的人仍可点击填写该账号的用户名和密码；验证码和 Passkey 仍需解锁。') }}</small></span></label>
-      <label class="favorite-row"><input v-model="form.favorite" type="checkbox" /><span>{{ tr('收藏并优先显示') }}</span></label><label class="favorite-row"><input v-model="form.archived" type="checkbox" /><span>{{ tr('归档并停止自动填充') }}</span></label><p v-if="formError" class="form-error field-wide" role="alert">{{ formError }}</p></div><footer class="field-wide"><m3e-button variant="text" type="button" @click="editorOpen = false">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="submit">{{ tr('加密保存') }}</m3e-button></footer>
-    </form></section></div>
+
 
     <div v-if="bitwardenDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeBitwardenDialog"><section class="editor-dialog" role="dialog" aria-modal="true" aria-labelledby="bitwarden-dialog-title"><header><div><h2 id="bitwarden-dialog-title">{{ editingBitwardenId ? tr('重新登录 Bitwarden') : tr('连接 Bitwarden') }}</h2><p>{{ tr('主密码只用于本次登录和密钥派生，不会保存。') }}</p></div><m3e-icon-button :aria-label="tr('关闭')" @click="closeBitwardenDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="connectBitwarden">
-      <label class="field"><span>{{ tr('显示名称') }}</span><input v-model="bitwardenForm.name" autocomplete="off" /></label>
-      <label class="field"><span>{{ tr('服务器地址 *') }}</span><input v-model="bitwardenForm.vaultUrl" type="url" list="bitwarden-server-list" autocomplete="url" required /><datalist id="bitwarden-server-list"><option value="https://vault.bitwarden.com">Bitwarden US</option><option value="https://vault.bitwarden.eu">Bitwarden EU</option></datalist><small>{{ tr('自托管请填写 Vault 根地址，例如 https://vault.example.com。') }}</small></label>
-      <label class="field"><span>{{ tr('邮箱 *') }}</span><input v-model="bitwardenForm.email" type="email" autocomplete="username" required /></label>
-      <label class="field"><span>{{ tr('主密码 *') }}</span><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></label>
-      <label class="field"><span>{{ tr('组织 SSO 标识（可选）') }}</span><input v-model="bitwardenForm.ssoOrganizationIdentifier" autocomplete="off" :placeholder="tr('仅企业 SSO 账户填写')" /><small>{{ tr('填写后将通过 Bitwarden 官方 OAuth 窗口登录，回调只在后台校验。') }}</small></label>
-      <label v-if="bitwardenDeviceVerificationRequired" class="field"><span>{{ tr('新设备验证码 *') }}</span><input v-model="bitwardenForm.newDeviceOtp" inputmode="numeric" autocomplete="one-time-code" required autofocus /><small>{{ tr('Bitwarden 已向账号邮箱发送新设备验证码，验证后即可连接。') }}</small></label>
-      <template v-else-if="bitwardenTwoFactorProviders.length"><label class="field"><span>{{ tr('两步验证方式') }}</span><select v-model.number="bitwardenForm.twoFactorProvider"><option v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</option></select></label><label v-if="![2, 4, 5].includes(bitwardenForm.twoFactorProvider)" class="field"><span>{{ tr('验证码 *') }}</span><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></label><div v-else class="boundary-row"><m3e-icon name="key"></m3e-icon><span>{{ tr('点击连接后会打开 Bitwarden 安全验证页面，验证结果只在后台转交给登录接口。') }}</span></div><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">{{ tr('发送邮箱验证码') }}</m3e-button><label class="favorite-row"><input v-model="bitwardenForm.rememberTwoFactor" type="checkbox" /><span>{{ tr('让 Bitwarden 记住此设备') }}</span></label></template>
-       <label class="favorite-row"><input v-model="bitwardenForm.isDefaultSaveTarget" type="checkbox" /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('显示名称') }}</label><input v-model="bitwardenForm.name" autocomplete="off" /></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field"><label slot="label">{{ tr('服务器地址 *') }}</label><input v-model="bitwardenForm.vaultUrl" type="url" list="bitwarden-server-list" autocomplete="url" required /><datalist id="bitwarden-server-list"><option value="https://vault.bitwarden.com">Bitwarden US</option><option value="https://vault.bitwarden.eu">Bitwarden EU</option></datalist><small slot="hint">{{ tr('自托管请填写 Vault 根地址，例如 https://vault.example.com。') }}</small></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('邮箱 *') }}</label><input v-model="bitwardenForm.email" type="email" autocomplete="username" required /></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('主密码 *') }}</label><input v-model="bitwardenForm.masterPassword" type="password" autocomplete="current-password" required /></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field"><label slot="label">{{ tr('组织 SSO 标识（可选）') }}</label><input v-model="bitwardenForm.ssoOrganizationIdentifier" autocomplete="off" :placeholder="tr('仅企业 SSO 账户填写')" /><small slot="hint">{{ tr('填写后将通过 Bitwarden 官方 OAuth 窗口登录，回调只在后台校验。') }}</small></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" v-if="bitwardenDeviceVerificationRequired" class="field"><label slot="label">{{ tr('新设备验证码 *') }}</label><input v-model="bitwardenForm.newDeviceOtp" inputmode="numeric" autocomplete="one-time-code" required autofocus /><small slot="hint">{{ tr('Bitwarden 已向账号邮箱发送新设备验证码，验证后即可连接。') }}</small></m3e-form-field>
+      <template v-else-if="bitwardenTwoFactorProviders.length"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('两步验证方式') }}</label><component :is="materialSelectTag" @input="bitwardenForm.twoFactorProvider = Number(($event.target as HTMLElement &amp; { value: string }).value)" ><component :is="materialOptionTag" :selected.prop="String(bitwardenForm.twoFactorProvider ?? '') === String(provider)" v-for="provider in bitwardenTwoFactorProviders" :key="provider" :value="provider">{{ twoFactorName(provider) }}</component></component></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker v-if="![2, 4, 5].includes(bitwardenForm.twoFactorProvider)" class="field"><label slot="label">{{ tr('验证码 *') }}</label><input v-model="bitwardenForm.twoFactorCode" autocomplete="one-time-code" required autofocus /></m3e-form-field><div v-else class="boundary-row"><m3e-icon name="key"></m3e-icon><span>{{ tr('点击连接后会打开 Bitwarden 安全验证页面，验证结果只在后台转交给登录接口。') }}</span></div><m3e-button v-if="bitwardenForm.twoFactorProvider === 1" variant="tonal" type="button" :disabled="bitwardenBusy" @click="sendBitwardenEmailCode">{{ tr('发送邮箱验证码') }}</m3e-button><label v-choice-label class="favorite-row"><m3e-checkbox :checked.prop="bitwardenForm.rememberTwoFactor" @input="bitwardenForm.rememberTwoFactor = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('让 Bitwarden 记住此设备') }}</span></label></template>
+       <label v-choice-label class="favorite-row"><m3e-checkbox :checked.prop="bitwardenForm.isDefaultSaveTarget" @input="bitwardenForm.isDefaultSaveTarget = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
       <p v-if="bitwardenError" class="form-error" role="alert">{{ bitwardenError }}</p>
       <div class="boundary-row"><m3e-icon name="verified_user"></m3e-icon><span>{{ tr('支持个人与组织共享 Cipher；缺失组织密钥的项目会保留本地缓存并给出提示。') }}</span></div>
       <footer><m3e-button variant="text" type="button" @click="closeBitwardenDialog">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="bitwardenBusy">{{ bitwardenBusy ? tr('连接中…') : bitwardenDeviceVerificationRequired ? tr('验证新设备并连接') : bitwardenTwoFactorProviders.length ? tr('验证并连接') : bitwardenForm.ssoOrganizationIdentifier.trim() ? tr('打开 SSO 并连接') : tr('登录并连接') }}</m3e-button></footer>
@@ -2871,8 +2829,8 @@ function errorCode(error: unknown): string | undefined {
     />
 
     <div v-if="exportBackupDialogOpen" class="modal-backdrop" role="presentation" @mousedown.self="closeExportBackupDialog"><section class="editor-dialog backup-password-dialog" role="dialog" aria-modal="true" aria-labelledby="export-backup-title"><header><div><h2 id="export-backup-title">{{ tr('导出加密整库备份') }}</h2><p>{{ tr('设置独立备份密码；恢复时需要此密码，与当前主密码互不影响。') }}</p></div><m3e-icon-button :aria-label="tr('关闭')" @click="closeExportBackupDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header><form class="editor-form" @submit.prevent="submitExportBackup">
-      <label class="field"><span>{{ tr('备份密码 *') }}</span><input v-model="exportBackupForm.password" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" autofocus /></label>
-      <label class="field"><span>{{ tr('确认备份密码 *') }}</span><input v-model="exportBackupForm.confirmation" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" /></label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('备份密码 *') }}</label><input v-model="exportBackupForm.password" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" autofocus /></m3e-form-field>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('确认备份密码 *') }}</label><input v-model="exportBackupForm.confirmation" type="password" :minlength="MIN_BACKUP_PASSWORD_LENGTH" autocomplete="new-password" /></m3e-form-field>
       <p v-if="exportBackupError" class="form-error" role="alert">{{ exportBackupError }}</p>
       <footer><m3e-button variant="text" type="button" @click="closeExportBackupDialog">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="submit" :disabled="Boolean(securityBusy)">{{ securityBusy === 'export' ? tr('正在导出…') : tr('加密导出') }}</m3e-button></footer>
     </form></section></div>

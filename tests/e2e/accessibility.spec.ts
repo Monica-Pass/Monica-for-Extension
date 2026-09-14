@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -104,11 +105,11 @@ test("auth and unlocked manager have no serious axe violations", async ({}, test
     await launched.page.getByRole("button", { name: "密码源" }).click();
     await expectA11y(launched.page, "manager providers");
     await launched.page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    await expect(launched.page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toBeVisible();
+    await expect(dialogContent(launched.page, { name: "连接 Monica Android WebDAV" })).toBeVisible();
     await expectA11y(launched.page, "WebDAV dialog");
     await launched.page.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
     await launched.page.getByRole("button", { name: "连接 KeePass" }).click();
-    await expect(launched.page.getByRole("dialog", { name: "连接 KeePass" })).toBeVisible();
+    await expect(dialogContent(launched.page, { name: "连接 KeePass" })).toBeVisible();
     await expectA11y(launched.page, "KeePass dialog");
   } finally {
     await closeContext(context, profileDir);
@@ -139,7 +140,7 @@ test("manager navigation and dialogs expose a complete keyboard focus lifecycle"
     const trigger = launched.page.getByRole("button", { name: /连接 Monica Android WebDAV/ });
     await trigger.focus();
     await trigger.press("Enter");
-    const dialog = launched.page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    const dialog = dialogContent(launched.page, { name: "连接 Monica Android WebDAV" });
     await expect(dialog).toBeVisible();
     await expect.poll(() => launched.page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true);
 
@@ -153,7 +154,7 @@ test("manager navigation and dialogs expose a complete keyboard focus lifecycle"
 
     await launched.page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
-    await expect.poll(() => trigger.evaluate((element) => document.activeElement === element)).toBe(true);
+    await expect(trigger).toBeFocused();
   } finally {
     await closeContext(context, profileDir);
   }
@@ -213,7 +214,7 @@ test("manager remains operable with reduced motion, large text, and a narrow vie
     await ensureVault(launched.page, "responsive a11y password");
     await launched.page.reload();
     await launched.page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-    await expect(launched.page.getByRole("heading", { name: "密码库概览" })).toBeVisible();
+    await expect(launched.page.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
     const layout = await launched.page.evaluate(() => {
       const viewportWidth = document.documentElement.clientWidth;
       const overflowing = [...document.querySelectorAll<HTMLElement>("body *")]
@@ -226,7 +227,7 @@ test("manager remains operable with reduced motion, large text, and a narrow vie
       return { clientWidth: viewportWidth, scrollWidth: document.documentElement.scrollWidth, overflowing };
     });
     expect(layout.scrollWidth, `right overflow: ${layout.overflowing.join(", ")}`).toBeLessThanOrEqual(layout.clientWidth);
-    const motion = await launched.page.locator(".home-module").first().evaluate((element) => getComputedStyle(element).animationDuration);
+    const motion = await launched.page.locator(".page-view").evaluate((element) => getComputedStyle(element).animationDuration);
     expect(Number.parseFloat(motion) || 0).toBeLessThanOrEqual(0.001);
     await expectA11y(launched.page, "narrow 200 percent manager");
   } finally {
@@ -243,7 +244,11 @@ async function expectA11y(page: Page, label: string): Promise<void> {
 
 async function expectMinimumTargets(page: Page, label: string): Promise<void> {
   const tooSmall = await page.locator("button,m3e-button,m3e-icon-button,input,select").evaluateAll((elements) => elements.flatMap((element) => {
-    const rect = element.getBoundingClientRect();
+    // The filled field's whole container focuses its slotted input. Measure
+    // that hit area, not the inner text line's 24px height.
+    const target = element.closest("m3e-form-field")?.shadowRoot?.querySelector(".base")
+      ?? element.closest("m3e-search-bar") ?? element;
+    const rect = target.getBoundingClientRect();
     const style = getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return [];
     return rect.width + 0.5 < 44 || rect.height + 0.5 < 44

@@ -185,7 +185,7 @@ export interface KeePassDecodedEntry {
  * `analyzePasswordEntry` precedence, with the two other passes folded in at the points where Android's
  * own passes would have claimed the entry: `MonicaItemType` first, then a passkey carrying nothing else,
  * then a template, then a wholly empty entry. An entry that has passkey fields *and* a username or notes
- * still becomes a login on Android, so it does here too.
+ * may also be read by Android's independent passkey pass. Account labels alone must not hide its key.
  */
 export function decodeKeePassEntry(
   context: KeePassEntryContext,
@@ -209,11 +209,13 @@ export function decodeKeePassEntry(
         lastUsedAt: isoOf(context.entry.times.lastModTime),
         useCount: context.entry.times.usageCount
       });
-      return projection ? { item: keePassPasskeyToVaultItem(projection, base) } : { reason: "pure-passkey" };
+      if (projection) return { item: keePassPasskeyToVaultItem(projection, base) };
+      const login = readKeePassLoginFields(fields);
+      // Incomplete third-party fields must not hide an otherwise usable account label.
+      if (login.username || login.url || login.notes) return { item: buildLoginItem(fields, base) };
+      return { reason: "pure-passkey" };
     }
-    // Carries a username or notes as well, so Android's password pass claims it and the passkey half is
-    // preserved on the entry rather than modelled. Splitting it into two items would duplicate it on
-    // write-back, since both would then patch the same entry.
+    // A real password must remain available as a login; its passkey fields remain untouched on write.
     return { item: buildLoginItem(fields, base) };
   }
 
@@ -246,10 +248,10 @@ function keePassEntryTotpUri(fields: KeePassEntryFields): string | undefined {
   return keePassTotpFieldsFor(totp, totp.issuer || totp.accountName)[KEEPASS_TOTP_FIELDS.otp];
 }
 
-/** `analyzePasswordEntry`'s PURE_PASSKEY test: passkey fields present and all four others blank. */
+/** Android and Monica writers populate UserName, URL and Notes even for passwordless Passkeys. */
 function isPureKeePassPasskeyEntry(fields: KeePassEntryFields): boolean {
   const login = readKeePassLoginFields(fields);
-  return !login.username && !login.password && !login.url && !login.notes;
+  return !login.password;
 }
 
 function buildLoginItem(fields: KeePassEntryFields, base: MonicaItemBase): LoginItem {

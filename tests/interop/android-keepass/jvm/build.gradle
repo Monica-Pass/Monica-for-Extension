@@ -1,0 +1,29 @@
+// Compile copied Android core sources without building the Compose application.
+// Versions match the current Android project; no Android implementation is stubbed.
+buildscript {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+    dependencies {
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'
+        classpath 'org.jetbrains.kotlin:kotlin-serialization:2.0.21'
+    }
+}
+apply plugin: 'org.jetbrains.kotlin.jvm'
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
+
+repositories { google(); mavenCentral() }
+dependencies {
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.20'
+    implementation 'app.keemobile:kotpass:0.10.0'
+    implementation 'com.squareup.okio:okio-jvm:3.9.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0'
+    implementation 'androidx.room:room-common:2.6.1'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+    compileOnly files(System.getenv('MONICA_ANDROID_API_JAR'))
+    testImplementation 'junit:junit:4.13.2'
+}
+kotlin { jvmToolchain(17) }
+test {
+    useJUnit()
+    outputs.upToDateWhen { false }
+}

@@ -18,7 +18,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         manager: resolve(__dirname, "index.html"),
-        popup: resolve(__dirname, "popup.html")
+        popup: resolve(__dirname, "popup.html"),
+        passkeyVerify: resolve(__dirname, "passkey-verify.html")
       }
     }
   },

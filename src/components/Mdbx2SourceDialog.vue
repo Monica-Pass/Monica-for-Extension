@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr, locale } from '../i18n';
 
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
@@ -1566,12 +1567,12 @@ function conflictErrorMessage(cause: unknown): string {
           <fieldset class="mdbx2-mode-picker field-wide">
             <legend>{{ tr('加入方式') }}</legend>
             <div>
-              <button type="button" :aria-pressed="form.mode === 'local'" :class="{ active: form.mode === 'local' }" :disabled="Boolean(busy)" @click="setMode('local')"><m3e-icon name="folder_open" />{{ tr('本地 .mdbx 文件') }}</button>
-              <button type="button" :aria-pressed="form.mode === 'remote'" :class="{ active: form.mode === 'remote' }" :disabled="Boolean(busy)" @click="setMode('remote')"><m3e-icon name="cloud_download" />{{ tr('从 WebDAV 加入') }}</button>
+              <m3e-button variant="text" type="button" toggle :selected.prop="form.mode === 'local'" @beforeinput.prevent :class="{ active: form.mode === 'local' }" :disabled="Boolean(busy)" @click="setMode('local')"><m3e-icon slot="icon" name="folder_open" />{{ tr('本地 .mdbx 文件') }}</m3e-button>
+              <m3e-button variant="text" type="button" toggle :selected.prop="form.mode === 'remote'" @beforeinput.prevent :class="{ active: form.mode === 'remote' }" :disabled="Boolean(busy)" @click="setMode('remote')"><m3e-icon slot="icon" name="cloud_download" />{{ tr('从 WebDAV 加入') }}</m3e-button>
             </div>
           </fieldset>
-          <label class="field"><span>{{ tr('显示名称') }}</span><input v-model="form.name" autocomplete="off" autofocus placeholder="Monica MDBX2" /></label>
-          <label class="favorite-row"><input v-model="form.isDefaultSaveTarget" type="checkbox" /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('显示名称') }}</label><input v-model="form.name" autocomplete="off" autofocus placeholder="Monica MDBX2" /></m3e-form-field>
+          <label v-choice-label class="favorite-row"><m3e-checkbox :checked.prop="form.isDefaultSaveTarget" @input="form.isDefaultSaveTarget = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
         </template>
 
         <template v-if="!isExisting && form.mode === 'local'">
@@ -1579,17 +1580,17 @@ function conflictErrorMessage(cause: unknown): string {
         </template>
 
         <template v-if="form.mode === 'remote' || isExisting">
-          <label v-if="isExisting" class="field"><span>{{ tr('显示名称') }}</span><input v-model="form.name" autocomplete="off" /></label>
-          <label v-if="isExisting" class="favorite-row"><input v-model="form.isDefaultSaveTarget" type="checkbox" /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
-          <label class="field field-wide"><span>{{ tr('WebDAV 地址 *') }}</span><input v-model="form.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small>{{ tr('必须使用 HTTPS；开发环境仅允许回环 HTTP。地址中不能包含用户名、密码、查询参数或片段。') }}</small></label>
-          <label class="field"><span>{{ tr('用户名') }}</span><input v-model="form.username" autocomplete="username" /></label>
-          <label class="field"><span>{{ tr('WebDAV 密码') }}</span><input v-model="form.webDavPassword" type="password" autocomplete="current-password" :placeholder="form.webDavPasswordConfigured ? tr('已加密保存；留空保持不变') : ''" /></label>
-          <label class="field field-wide"><span>{{ tr('Android 兼容远端位置 *') }}</span><input v-model="form.remotePath" autocomplete="off" placeholder="Monica/MDBX2/main.mdbx" required /><small>{{ tr('此路径就是可移植 .mdbx 文件；日常同步对象自动写入同名') }}<code>.sync</code>{{ tr('目录。') }}</small></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="isExisting" class="field"><label slot="label">{{ tr('显示名称') }}</label><input v-model="form.name" autocomplete="off" /></m3e-form-field>
+          <label v-choice-label v-if="isExisting" class="favorite-row"><m3e-checkbox :checked.prop="form.isDefaultSaveTarget" @input="form.isDefaultSaveTarget = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('设为新项目的默认保存目标') }}</span></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"><label slot="label">{{ tr('WebDAV 地址 *') }}</label><input v-model="form.baseUrl" type="url" autocomplete="url" placeholder="https://cloud.example.com/remote.php/dav/files/user" required /><small slot="hint">{{ tr('必须使用 HTTPS；开发环境仅允许回环 HTTP。地址中不能包含用户名、密码、查询参数或片段。') }}</small></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('用户名') }}</label><input v-model="form.username" autocomplete="username" /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('WebDAV 密码') }}</label><input v-model="form.webDavPassword" type="password" autocomplete="current-password" :placeholder="form.webDavPasswordConfigured ? tr('已加密保存；留空保持不变') : ''" /></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"><label slot="label">{{ tr('Android 兼容远端位置 *') }}</label><input v-model="form.remotePath" autocomplete="off" placeholder="Monica/MDBX2/main.mdbx" required /><small slot="hint">{{ tr('此路径就是可移植 .mdbx 文件；日常同步对象自动写入同名') }}<code>.sync</code>{{ tr('目录。') }}</small></m3e-form-field>
         </template>
 
         <template v-if="!isExisting || !vaultOpen">
-          <label class="field"><span>{{ tr('解锁方式') }}</span><select v-model="form.unlockMethod"><option value="password">{{ tr('密码') }}</option><option value="security-key">{{ tr('安全密钥') }}</option><option value="password-security-key">{{ tr('密码 + 安全密钥') }}</option></select></label>
-          <label v-if="form.unlockMethod !== 'security-key'" class="field"><span>{{ tr('保险库密码（可留空）') }}</span><div class="password-field"><input v-model="form.vaultPassword" :type="revealVaultPassword ? 'text' : 'password'" autocomplete="current-password" /><button type="button" @click="revealVaultPassword = !revealVaultPassword">{{ revealVaultPassword ? tr('隐藏') : tr('显示') }}</button></div></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"><label slot="label">{{ tr('解锁方式') }}</label><component :is="materialSelectTag" @input="form.unlockMethod = ($event.target as HTMLElement &amp; { value: string }).value" ><component :is="materialOptionTag" :selected.prop="String(form.unlockMethod ?? '') === String('password')" value="password">{{ tr('密码') }}</component><component :is="materialOptionTag" :selected.prop="String(form.unlockMethod ?? '') === String('security-key')" value="security-key">{{ tr('安全密钥') }}</component><component :is="materialOptionTag" :selected.prop="String(form.unlockMethod ?? '') === String('password-security-key')" value="password-security-key">{{ tr('密码 + 安全密钥') }}</component></component></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="form.unlockMethod !== 'security-key'" class="field"><label slot="label">{{ tr('保险库密码（可留空）') }}</label><input v-model="form.vaultPassword" :type="revealVaultPassword ? 'text' : 'password'" autocomplete="current-password" /><m3e-button slot="suffix" variant="text" type="button" @click="revealVaultPassword = !revealVaultPassword">{{ revealVaultPassword ? tr('隐藏') : tr('显示') }}</m3e-button></m3e-form-field>
           <div v-if="needsSecurityKey" class="field field-wide"><span>{{ tr('安全密钥文件 *') }}</span><label class="file-action provider-file-action secondary"><m3e-icon name="key" /><span>{{ securityKeyFile?.name || tr('选择最大 64 KiB 的安全密钥文件') }}</span><input type="file" :aria-label="tr('MDBX2 安全密钥文件')" @change="selectSecurityKey" /></label><small>{{ tr('密码和安全密钥只进入 Native Host 的本次解锁调用，不会保存到插件密码库。') }}</small></div>
         </template>
 
@@ -1789,21 +1790,21 @@ function conflictErrorMessage(cause: unknown): string {
                 <strong id="mdbx2-health-guidance-title">{{ tr('建议处理') }}</strong>
                 <small>{{ tr('按影响优先显示恢复步骤；只使用 Native Host 返回的脱敏原因码，不显示底层描述或标识。') }}</small>
               </div>
-              <details
+              <m3e-expansion-panel
                 v-for="guidance in diagnosticGuidance"
                 :key="guidance.kind"
                 class="mdbx2-health-guidance-row"
                 :data-severity="guidance.severity"
               >
-                <summary>
+                <span slot="header">
                   <span class="mdbx2-health-guidance-icon"><m3e-icon :name="guidance.icon" /></span>
                   <span class="mdbx2-health-guidance-copy">
                     <strong>{{ guidance.title }}</strong>
                     <small>{{ guidance.summary }}</small>
                   </span>
                   <span class="mdbx2-health-guidance-severity">{{ tr('{0} · {1} 项', { 0: mdbx2HealthSeverityLabel(guidance.severity), 1: formatMdbx2DiagnosticCount(guidance.count) }) }}</span>
-                  <m3e-icon class="mdbx2-health-guidance-chevron" name="expand_more" />
-                </summary>
+
+                </span>
                 <div class="mdbx2-health-guidance-body">
                   <div>
                     <strong>{{ tr('可能影响') }}</strong>
@@ -1820,7 +1821,7 @@ function conflictErrorMessage(cause: unknown): string {
                     @click="activateHealthGuidance(guidance.action)"
                   ><m3e-icon slot="icon" :name="guidance.actionIcon"></m3e-icon>{{ guidance.actionLabel }}</m3e-button>
                 </div>
-              </details>
+              </m3e-expansion-panel>
             </div>
 
             <dl class="mdbx2-diagnostics-key-facts" :aria-label="tr('MDBX2 诊断概览')">
@@ -1847,12 +1848,12 @@ function conflictErrorMessage(cause: unknown): string {
               </div>
             </div>
 
-            <details ref="diagnosticsDetails" class="mdbx2-diagnostics-details">
-              <summary>
+            <m3e-expansion-panel ref="diagnosticsDetails" class="mdbx2-diagnostics-details">
+              <span slot="header">
                 <m3e-icon name="monitoring" />
                 <span><strong>{{ tr('查看聚合统计') }}</strong><small>{{ tr('展开数据库、同步历史与附件规模；不会读取条目标题或内容。') }}</small></span>
-                <m3e-icon class="mdbx2-diagnostics-details-chevron" name="expand_more" />
-              </summary>
+
+              </span>
               <div class="mdbx2-diagnostics-stat-groups">
                 <section aria-labelledby="mdbx2-diagnostics-data-title">
                   <h3 id="mdbx2-diagnostics-data-title">{{ tr('数据库规模') }}</h3>
@@ -1886,7 +1887,7 @@ function conflictErrorMessage(cause: unknown): string {
                   </dl>
                 </section>
               </div>
-            </details>
+            </m3e-expansion-panel>
           </template>
         </section>
 
@@ -1946,12 +1947,12 @@ function conflictErrorMessage(cause: unknown): string {
               </div>
             </div>
 
-            <details class="mdbx2-tiga-details">
-              <summary>
+            <m3e-expansion-panel class="mdbx2-tiga-details">
+              <span slot="header">
                 <m3e-icon name="policy" />
                 <span><strong>{{ tr('查看只读策略详情') }}</strong><small>{{ tr('展开解锁、会话、敏感操作、恢复和审计要求；不会显示原始警告或技术标识。') }}</small></span>
-                <m3e-icon class="mdbx2-tiga-details-chevron" name="expand_more" />
-              </summary>
+
+              </span>
               <div class="mdbx2-tiga-policy-groups">
                 <section aria-labelledby="mdbx2-tiga-unlock-title">
                   <h3 id="mdbx2-tiga-unlock-title">{{ tr('解锁与会话') }}</h3>
@@ -1996,7 +1997,7 @@ function conflictErrorMessage(cause: unknown): string {
                 </section>
                 <p class="mdbx2-tiga-readonly-note"><m3e-icon name="info" /><span>{{ tr('此页面只解释当前策略。修改模式、例外、恢复策略、密钥轮换或审计记录必须在支持这些管理能力的客户端完成。') }}</span></p>
               </div>
-            </details>
+            </m3e-expansion-panel>
           </template>
         </section>
 
@@ -2013,8 +2014,8 @@ function conflictErrorMessage(cause: unknown): string {
           </div>
 
           <div class="mdbx2-collection-tabs" role="group" :aria-label="tr('文件夹状态')">
-            <button type="button" :aria-pressed="collectionView === 'active'" :class="{ active: collectionView === 'active' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('active')"><m3e-icon name="folder" />{{ tr('当前文件夹') }}<span>{{ activeCollections.length }}</span></button>
-            <button type="button" :aria-pressed="collectionView === 'deleted'" :class="{ active: collectionView === 'deleted' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('deleted')"><m3e-icon name="delete" />{{ tr('回收站') }}<span>{{ deletedCollections.length }}</span></button>
+            <m3e-button variant="text" type="button" toggle :selected.prop="collectionView === 'active'" @beforeinput.prevent :class="{ active: collectionView === 'active' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('active')"><m3e-icon slot="icon" name="folder" />{{ tr('当前文件夹') }}<span>{{ activeCollections.length }}</span></m3e-button>
+            <m3e-button variant="text" type="button" toggle :selected.prop="collectionView === 'deleted'" @beforeinput.prevent :class="{ active: collectionView === 'deleted' }" :disabled="collectionBusy === 'mutate' || Boolean(pendingCollectionMutation)" @click="changeCollectionView('deleted')"><m3e-icon slot="icon" name="delete" />{{ tr('回收站') }}<span>{{ deletedCollections.length }}</span></m3e-button>
           </div>
 
           <div v-if="pendingCollectionMutation" class="mdbx2-collection-editor" :class="{ danger: pendingCollectionMutation.kind === 'delete' }" role="group" aria-labelledby="mdbx2-collection-editor-title" aria-live="polite">
@@ -2024,20 +2025,20 @@ function conflictErrorMessage(cause: unknown): string {
               <small>{{ collectionMutationDescription(pendingCollectionMutation) }}</small>
             </div>
 
-            <label v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'rename'" class="mdbx2-collection-editor-field" for="mdbx2-collection-title-input">
-              <span>{{ tr('文件夹名称') }}</span>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'rename'" class="mdbx2-collection-editor-field" for="mdbx2-collection-title-input">
+              <label slot="label">{{ tr('文件夹名称') }}</label>
               <input id="mdbx2-collection-title-input" v-model="pendingCollectionMutation.title" autocomplete="off" :aria-invalid="collectionTitleInvalid" aria-describedby="mdbx2-collection-title-help" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'" @keydown.enter.prevent="submitCollectionMutation" />
-              <small id="mdbx2-collection-title-help" :class="{ error: collectionTitleInvalid }">{{ tr('{0} / {1} UTF-8 字节', { 0: collectionTitleBytes, 1: MDBX2_MAX_COLLECTION_TITLE_BYTES }) }}</small>
-            </label>
+              <small slot="hint" id="mdbx2-collection-title-help" :class="{ error: collectionTitleInvalid }">{{ tr('{0} / {1} UTF-8 字节', { 0: collectionTitleBytes, 1: MDBX2_MAX_COLLECTION_TITLE_BYTES }) }}</small>
+            </m3e-form-field>
 
-            <label v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'move' || pendingCollectionMutation.kind === 'restore'" class="mdbx2-collection-editor-field" for="mdbx2-collection-parent">
-              <span>{{ tr('父级') }}</span>
-              <select id="mdbx2-collection-parent" v-model="pendingCollectionMutation.parentCollectionId" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'">
-                <option :value="undefined">{{ tr('顶层') }}</option>
-                <option v-for="row in collectionParentOptions" :key="row.item.collectionId" :value="row.item.collectionId">{{ row.path }}</option>
-              </select>
-              <small>{{ tr('顶层文件夹使用空父级，与 Android 的 MDBX2 目录规则一致。') }}</small>
-            </label>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" v-if="pendingCollectionMutation.kind === 'create' || pendingCollectionMutation.kind === 'move' || pendingCollectionMutation.kind === 'restore'" class="mdbx2-collection-editor-field" for="mdbx2-collection-parent">
+              <label slot="label">{{ tr('父级') }}</label>
+              <component :is="materialSelectTag" @input="pendingCollectionMutation.parentCollectionId = ($event.target as HTMLElement &amp; { value: string }).value || undefined" id="mdbx2-collection-parent" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'">
+                <component :is="materialOptionTag" :selected.prop="!pendingCollectionMutation.parentCollectionId" value="">{{ tr('顶层') }}</component>
+                <component :is="materialOptionTag" :selected.prop="String(pendingCollectionMutation.parentCollectionId ?? '') === String(row.item.collectionId)" v-for="row in collectionParentOptions" :key="row.item.collectionId" :value="row.item.collectionId">{{ row.path }}</component>
+              </component>
+              <small slot="hint">{{ tr('顶层文件夹使用空父级，与 Android 的 MDBX2 目录规则一致。') }}</small>
+            </m3e-form-field>
 
             <div class="mdbx2-collection-editor-actions">
               <m3e-button variant="text" type="button" :disabled="pendingCollectionMutation.uncertain || collectionBusy === 'mutate'" @click="cancelCollectionMutation">{{ tr('取消') }}</m3e-button>
@@ -2080,8 +2081,8 @@ function conflictErrorMessage(cause: unknown): string {
           </div>
 
           <div class="mdbx2-snapshot-create">
-            <label class="mdbx2-snapshot-name" for="mdbx2-snapshot-name">
-              <span>{{ tr('快照名称（可留空）') }}</span>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="mdbx2-snapshot-name" for="mdbx2-snapshot-name">
+              <label slot="label">{{ tr('快照名称（可留空）') }}</label>
               <input
                 id="mdbx2-snapshot-name"
                 v-model="snapshotName"
@@ -2092,7 +2093,7 @@ function conflictErrorMessage(cause: unknown): string {
                 :placeholder="tr('例如：升级前')"
                 @keydown.enter.prevent="createSnapshot"
               />
-            </label>
+            </m3e-form-field>
             <div id="mdbx2-snapshot-name-help" class="mdbx2-snapshot-create-copy">
               <small>{{ tr('MDBX2 手动快照始终保存完整且经过认证的保险库状态；留空时由 Core 生成名称。') }}</small>
               <small :class="{ error: snapshotNameTooLong }">{{ tr('{0} / {1} UTF-8 字节', { 0: snapshotNameBytes, 1: MDBX2_MAX_SNAPSHOT_NAME_BYTES }) }}</small>
@@ -2133,21 +2134,21 @@ function conflictErrorMessage(cause: unknown): string {
           <div v-else-if="snapshotLoaded && !snapshotItems.length" class="mdbx2-snapshot-empty"><m3e-icon name="backup_table" /><span>{{ tr('暂无数据库快照。') }}</span></div>
 
           <div v-if="snapshotItems.length" class="mdbx2-snapshot-list" :aria-label="tr('MDBX2 数据库快照列表')">
-            <button
+            <m3e-list-action role="presentation"
               v-for="item in snapshotItems"
               :key="item.snapshotId"
-              type="button"
+
               class="mdbx2-snapshot-row"
               :class="{ selected: selectedSnapshotId === item.snapshotId, 'integrity-failed': !item.integrityOk }"
-              :aria-expanded="selectedSnapshotId === item.snapshotId"
+              v-list-action="{ expanded: selectedSnapshotId === item.snapshotId }"
               :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || snapshotRequiresRefresh || conflictBusy === 'resolve'"
               @click="selectSnapshot(item)"
             >
-              <span class="mdbx2-snapshot-icon"><m3e-icon :name="presentMdbx2Snapshot(item).icon" /></span>
-              <span class="mdbx2-snapshot-copy"><strong>{{ presentMdbx2Snapshot(item).title }}</strong><small>{{ presentMdbx2Snapshot(item).supportingText }}</small></span>
-              <time :datetime="item.createdAt">{{ presentMdbx2Snapshot(item).timeLabel }}</time>
-              <m3e-icon :name="selectedSnapshotId === item.snapshotId ? 'expand_less' : 'chevron_right'" />
-            </button>
+              <span slot="leading" class="mdbx2-snapshot-icon" aria-hidden="true"><m3e-icon :name="presentMdbx2Snapshot(item).icon" /></span>
+              <strong>{{ presentMdbx2Snapshot(item).title }}</strong><span slot="supporting-text" class="mdbx2-snapshot-copy"><small>{{ presentMdbx2Snapshot(item).supportingText }}</small></span>
+              <time slot="supporting-text" :datetime="item.createdAt">{{ presentMdbx2Snapshot(item).timeLabel }}</time>
+              <m3e-icon slot="trailing" :name="selectedSnapshotId === item.snapshotId ? 'expand_less' : 'chevron_right'" />
+            </m3e-list-action>
           </div>
 
           <div v-if="selectedSnapshot" class="mdbx2-snapshot-detail" aria-live="polite">
@@ -2166,8 +2167,8 @@ function conflictErrorMessage(cause: unknown): string {
             <div v-if="selectedSnapshot.integrityOk" class="mdbx2-snapshot-structure">
               <div class="mdbx2-snapshot-structure-toolbar">
                 <div role="group" :aria-label="tr('快照结构查看方式')">
-                  <button type="button" :aria-pressed="snapshotStructureMode === 'snapshot'" :class="{ active: snapshotStructureMode === 'snapshot' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('snapshot')">{{ tr('仅快照') }}</button>
-                  <button type="button" :aria-pressed="snapshotStructureMode === 'compare'" :class="{ active: snapshotStructureMode === 'compare' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('compare')">{{ tr('与现版本比较') }}</button>
+                  <m3e-button variant="text" type="button" toggle :selected.prop="snapshotStructureMode === 'snapshot'" @beforeinput.prevent :class="{ active: snapshotStructureMode === 'snapshot' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('snapshot')">{{ tr('仅快照') }}</m3e-button>
+                  <m3e-button variant="text" type="button" toggle :selected.prop="snapshotStructureMode === 'compare'" @beforeinput.prevent :class="{ active: snapshotStructureMode === 'compare' }" :disabled="Boolean(snapshotBusy) || Boolean(pendingSnapshotPrune) || conflictBusy === 'resolve'" @click="changeSnapshotStructureMode('compare')">{{ tr('与现版本比较') }}</m3e-button>
                 </div>
                 <small>{{ tr('结构只包含可读名称、路径、类型和变化状态；附件内容与自定义 metadata 留在 Native Host。') }}</small>
               </div>
@@ -2249,21 +2250,21 @@ function conflictErrorMessage(cause: unknown): string {
           <div v-if="conflictBusy === 'list' && !conflictItems.length" class="mdbx2-conflict-empty" role="status"><m3e-icon name="progress_activity" /><span>{{ tr('正在读取冲突队列…') }}</span></div>
           <div v-else-if="conflictLoaded && !conflictItems.length" class="mdbx2-conflict-empty"><m3e-icon name="check_circle" /><span>{{ tr('没有待处理的同步冲突。') }}</span></div>
           <div v-if="conflictItems.length" class="mdbx2-conflict-list" :aria-label="tr('MDBX2 同步冲突列表')">
-            <button
+            <m3e-list-action role="presentation"
               v-for="item in conflictItems"
               :key="item.conflictId"
-              type="button"
+
               class="mdbx2-conflict-row"
               :class="{ selected: selectedConflictId === item.conflictId }"
-              :aria-expanded="selectedConflictId === item.conflictId"
+              v-list-action="{ expanded: selectedConflictId === item.conflictId }"
               :disabled="Boolean(conflictBusy) || snapshotMutating"
               @click="selectConflict(item)"
             >
-              <span class="mdbx2-conflict-icon"><m3e-icon :name="presentMdbx2Conflict(item).icon" /></span>
-              <span class="mdbx2-conflict-copy"><strong>{{ presentMdbx2Conflict(item).title }}</strong><small>{{ presentMdbx2Conflict(item).supportingText }}</small></span>
-              <time :datetime="item.createdAt">{{ presentMdbx2Conflict(item).timeLabel }}</time>
-              <m3e-icon :name="selectedConflictId === item.conflictId ? 'expand_less' : 'chevron_right'" />
-            </button>
+              <span slot="leading" class="mdbx2-conflict-icon" aria-hidden="true"><m3e-icon :name="presentMdbx2Conflict(item).icon" /></span>
+              <strong>{{ presentMdbx2Conflict(item).title }}</strong><span slot="supporting-text" class="mdbx2-conflict-copy"><small>{{ presentMdbx2Conflict(item).supportingText }}</small></span>
+              <time slot="supporting-text" :datetime="item.createdAt">{{ presentMdbx2Conflict(item).timeLabel }}</time>
+              <m3e-icon slot="trailing" :name="selectedConflictId === item.conflictId ? 'expand_less' : 'chevron_right'" />
+            </m3e-list-action>
           </div>
           <div v-if="selectedConflict" class="mdbx2-conflict-detail" aria-live="polite">
             <div class="mdbx2-conflict-detail-heading">
@@ -2308,21 +2309,21 @@ function conflictErrorMessage(cause: unknown): string {
           <div v-if="historyBusy === 'list' && !historyItems.length" class="mdbx2-history-empty" role="status"><m3e-icon name="progress_activity" /><span>{{ tr('正在读取提交历史…') }}</span></div>
           <div v-else-if="historyLoaded && !historyItems.length" class="mdbx2-history-empty"><m3e-icon name="history_toggle_off" /><span>{{ tr('暂无可显示的提交记录。') }}</span></div>
           <div v-if="historyItems.length" class="mdbx2-history-list" :aria-label="tr('MDBX2 提交历史')">
-            <button
+            <m3e-list-action role="presentation"
               v-for="item in historyItems"
               :key="item.commitId"
-              type="button"
+
               class="mdbx2-history-row"
               :class="{ selected: selectedCommitId === item.commitId }"
-              :aria-expanded="selectedCommitId === item.commitId"
+              v-list-action="{ expanded: selectedCommitId === item.commitId }"
               :disabled="Boolean(historyBusy) || managerMutationLocked || Boolean(pendingHistoryRevert)"
               @click="selectHistory(item)"
             >
-              <span class="mdbx2-history-icon"><m3e-icon :name="presentMdbx2History(item).icon" /></span>
-              <span class="mdbx2-history-copy"><strong>{{ presentMdbx2History(item).title }}</strong><small>{{ presentMdbx2History(item).supportingText }}</small></span>
-              <time :datetime="item.createdAt">{{ formatMdbx2HistoryTime(item.createdAt) }}</time>
-              <m3e-icon :name="selectedCommitId === item.commitId ? 'expand_less' : 'chevron_right'" />
-            </button>
+              <span slot="leading" class="mdbx2-history-icon" aria-hidden="true"><m3e-icon :name="presentMdbx2History(item).icon" /></span>
+              <strong>{{ presentMdbx2History(item).title }}</strong><span slot="supporting-text" class="mdbx2-history-copy"><small>{{ presentMdbx2History(item).supportingText }}</small></span>
+              <time slot="supporting-text" :datetime="item.createdAt">{{ formatMdbx2HistoryTime(item.createdAt) }}</time>
+              <m3e-icon slot="trailing" :name="selectedCommitId === item.commitId ? 'expand_less' : 'chevron_right'" />
+            </m3e-list-action>
           </div>
           <div v-if="selectedHistoryItem" class="mdbx2-history-detail" aria-live="polite">
             <div class="mdbx2-history-detail-heading"><strong>{{ presentMdbx2History(selectedHistoryItem).title }}</strong><small>{{ presentMdbx2History(selectedHistoryItem).supportingText }}</small></div>
@@ -2423,8 +2424,7 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-diagnostics-header > div,
 .mdbx2-diagnostics-health-copy,
-.mdbx2-diagnostics-category-copy,
-.mdbx2-diagnostics-details summary > span { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-diagnostics-category-copy { min-width: 0; display: grid; gap: 2px; }
 .mdbx2-diagnostics-header small,
 .mdbx2-diagnostics-health-copy small,
 .mdbx2-diagnostics-category-copy small,
@@ -2506,9 +2506,6 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-health-guidance-heading { min-height: 56px; display: grid; align-content: center; gap: 2px; padding: 10px 16px; }
 .mdbx2-health-guidance-heading small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-health-guidance-row { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-health-guidance-row summary { min-height: 72px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; list-style: none; }
-.mdbx2-health-guidance-row summary::-webkit-details-marker { display: none; }
-.mdbx2-health-guidance-row summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
 .mdbx2-health-guidance-icon { inline-size: 40px; block-size: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
 .mdbx2-health-guidance-icon m3e-icon,
 .mdbx2-health-guidance-chevron { --m3e-icon-size: 20px; }
@@ -2542,10 +2539,6 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-diagnostics-category-icon m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-diagnostics-category-count { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mdbx2-diagnostics-details { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-diagnostics-details summary { min-height: 56px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 8px 16px; cursor: pointer; list-style: none; }
-.mdbx2-diagnostics-details summary::-webkit-details-marker { display: none; }
-.mdbx2-diagnostics-details summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
-.mdbx2-diagnostics-details summary > m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-diagnostics-details[open] .mdbx2-diagnostics-details-chevron { transform: rotate(180deg); }
 .mdbx2-diagnostics-stat-groups { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .mdbx2-diagnostics-stat-groups > section { padding: 12px 16px; }
@@ -2559,8 +2552,7 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-tiga-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; }
 .mdbx2-tiga-header > div,
 .mdbx2-tiga-overview-copy,
-.mdbx2-tiga-limitation-copy,
-.mdbx2-tiga-details summary > span { min-width: 0; display: grid; gap: 2px; }
+.mdbx2-tiga-limitation-copy { min-width: 0; display: grid; gap: 2px; }
 .mdbx2-tiga-header small,
 .mdbx2-tiga-overview-copy small,
 .mdbx2-tiga-limitation-copy small,
@@ -2590,10 +2582,6 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-tiga-limitation-icon m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-tiga-limitation-copy small { color: inherit; opacity: .82; }
 .mdbx2-tiga-details { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-tiga-details summary { min-height: 56px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 8px 16px; cursor: pointer; list-style: none; }
-.mdbx2-tiga-details summary::-webkit-details-marker { display: none; }
-.mdbx2-tiga-details summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
-.mdbx2-tiga-details summary > m3e-icon { --m3e-icon-size: 20px; }
 .mdbx2-tiga-details[open] .mdbx2-tiga-details-chevron { transform: rotate(180deg); }
 .mdbx2-tiga-policy-groups { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .mdbx2-tiga-policy-groups > section { padding: 12px 16px; }
@@ -2631,7 +2619,7 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-collection-editor-icon { width: 32px; height: 32px; display: grid; place-items: center; color: var(--app-primary); }
 .mdbx2-collection-editor.danger .mdbx2-collection-editor-icon { color: inherit; }
 .mdbx2-collection-editor-icon m3e-icon { --m3e-icon-size: 20px; }
-.mdbx2-collection-editor-field { grid-column: 2 / -1; min-width: 0; display: grid; gap: 6px; font-weight: 600; }
+.mdbx2-collection-editor-field { grid-column: 2 / -1; min-width: 0; }
 .mdbx2-collection-editor-field input,
 .mdbx2-collection-editor-field select { box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; padding: 9px 12px; color: var(--app-text); background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); font: inherit; }
 .mdbx2-collection-editor-field input:focus-visible,
@@ -2670,7 +2658,7 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-snapshot-node small,
 .mdbx2-snapshot-integrity-warning small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-snapshot-create { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: minmax(180px, .8fr) minmax(220px, 1.2fr) auto; align-items: end; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
-.mdbx2-snapshot-name { min-width: 0; display: grid; gap: 6px; font-weight: 600; }
+.mdbx2-snapshot-name { min-width: 0; }
 .mdbx2-snapshot-name input { box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; padding: 9px 12px; color: var(--app-text); background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); font: inherit; }
 .mdbx2-snapshot-name input:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: 2px; }
 .mdbx2-snapshot-name input[aria-invalid="true"] { border-color: var(--md-sys-color-error, #ba1a1a); }
@@ -2698,11 +2686,10 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-snapshot-refresh-required { min-height: 56px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; gap: 8px; padding: 12px 16px; color: var(--md-sys-color-on-tertiary-container, var(--app-text)); background: var(--md-sys-color-tertiary-container, var(--app-surface-high)); }
 .mdbx2-snapshot-refresh-required m3e-icon { flex: 0 0 24px; --m3e-icon-size: 20px; }
 .mdbx2-snapshot-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-snapshot-row { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-text); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.mdbx2-snapshot-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.mdbx2-snapshot-row > strong { font-weight: 500; overflow-wrap: anywhere; }
 .mdbx2-snapshot-row:last-child { border-bottom: 0; }
-.mdbx2-snapshot-row:hover,
-.mdbx2-snapshot-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.mdbx2-snapshot-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-snapshot-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .mdbx2-snapshot-row:disabled { cursor: progress; opacity: .72; }
 .mdbx2-snapshot-row time { color: var(--app-muted); font-size: .78rem; white-space: nowrap; }
 .mdbx2-snapshot-icon,
@@ -2766,11 +2753,10 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-conflict-detail small,
 .mdbx2-conflict-confirmation small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-conflict-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-conflict-row { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-text); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.mdbx2-conflict-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.mdbx2-conflict-row > strong { font-weight: 500; overflow-wrap: anywhere; }
 .mdbx2-conflict-row:last-child { border-bottom: 0; }
-.mdbx2-conflict-row:hover,
-.mdbx2-conflict-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.mdbx2-conflict-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--md-sys-color-error, var(--app-primary)) 45%, transparent); outline-offset: -3px; }
+.mdbx2-conflict-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .mdbx2-conflict-row:disabled { cursor: progress; opacity: .72; }
 .mdbx2-conflict-row time { color: var(--app-muted); font-size: .78rem; white-space: nowrap; }
 .mdbx2-conflict-icon,
@@ -2801,11 +2787,10 @@ function conflictErrorMessage(cause: unknown): string {
 .mdbx2-history-detail small,
 .mdbx2-diff-row small { color: var(--app-muted); overflow-wrap: anywhere; }
 .mdbx2-history-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.mdbx2-history-row { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 32px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 16px; color: var(--app-text); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.mdbx2-history-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.mdbx2-history-row > strong { font-weight: 500; overflow-wrap: anywhere; }
 .mdbx2-history-row:last-child { border-bottom: 0; }
-.mdbx2-history-row:hover,
-.mdbx2-history-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.mdbx2-history-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.mdbx2-history-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .mdbx2-history-row:disabled { cursor: progress; opacity: .72; }
 .mdbx2-history-row time { color: var(--app-muted); font-size: .78rem; white-space: nowrap; }
 .mdbx2-history-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
@@ -2853,7 +2838,6 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
   .mdbx2-health-repair-actions > m3e-button { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
   .mdbx2-health-repair-review-counts { grid-template-columns: minmax(0, 1fr); }
   .mdbx2-health-repair-review-counts > div + div { border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-  .mdbx2-health-guidance-row summary { grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: start; }
   .mdbx2-health-guidance-icon { grid-row: 1 / 3; }
   .mdbx2-health-guidance-severity { grid-column: 2; justify-self: start; white-space: normal; }
   .mdbx2-health-guidance-chevron { grid-column: 3; grid-row: 1 / 3; align-self: center; }

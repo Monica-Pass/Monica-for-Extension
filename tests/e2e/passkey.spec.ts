@@ -62,7 +62,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
   const stretched = await stretchBitwardenMasterKey(await deriveBitwardenMasterKey(masterPassword, email, kdf));
   const protectedKey = await new BitwardenClient((() => Promise.reject(new Error("unused"))) as unknown as typeof fetch).protectVaultKey(vaultKey, stretched, Uint8Array.from({ length: 16 }, (_, index) => index + 1));
   const revision = "2026-08-31T12:00:00.000Z";
-  const remoteCipher = {
+  let remoteCipher: Record<string, unknown> = {
     Id: "imported-passkey-cipher", Type: 1, Name: await enc("Imported Passkey"), Notes: null, Favorite: false,
     RevisionDate: revision, CreationDate: revision,
     Login: { Username: await enc("joy@example.com"), Password: null, Uris: [], Fido2Credentials: [{
@@ -80,6 +80,12 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
       if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
       if (pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "import-access", refresh_token: "import-refresh", expires_in: 3600, Key: protectedKey });
       if (pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "import-user" }, Ciphers: [remoteCipher] });
+      if (pathname === "/api/ciphers/imported-passkey-cipher" && route.request().method() === "PUT") {
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        expect(body.lastKnownRevisionDate).toBe(revision);
+        remoteCipher = { ...body, Id: "imported-passkey-cipher", RevisionDate: "2026-08-31T12:01:00.000Z", CreationDate: revision };
+        return jsonRoute(route, remoteCipher);
+      }
       return route.abort("failed");
     });
     await context.route("https://imported-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="authenticate">Authenticate</button><output id="result"></output><script>
@@ -100,6 +106,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
     await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
     await expect(page.locator("#result")).toContainText(`authenticated:${IMPORTED_CREDENTIAL_ID}:`);
     await expect(page.locator("#result")).not.toContainText("error:");
+    expect((await decodeBitwardenCipher(remoteCipher, login.data.providerId, vaultKey)).items.find(item => item.kind === "passkey")).toMatchObject({ signCount: 5 });
   } finally { await context?.close(); }
 });
 
@@ -207,7 +214,7 @@ test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
   } finally { await context?.close(); }
 });
 
-test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 credential", async ({}, testInfo) => {
+test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes only the FIDO2 credential", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   const email = "joy@example.com"; const masterPassword = "bitwarden e2e master password";
   const kdf: BitwardenKdfConfig = { type: 0, iterations: 10_000 };
@@ -267,7 +274,7 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     await expect(page.locator("#result")).toContainText("authenticated:");
     expect((await listVaultItems(manager)).find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
-    expect(putCount).toBe(1);
+    expect(putCount).toBe(0);
     const remoteAfterSign = await decodeBitwardenCipher(remoteCipher!, providerId, vaultKey);
     expect(remoteAfterSign.items.find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0 });
 
@@ -275,7 +282,7 @@ test("Bitwarden Passkey creates syncs its counter and deletes only the FIDO2 cre
     const passkeyId = synced.find((item) => item.kind === "passkey")!.id;
     expect(await manager.evaluate(async (itemId) => chrome.runtime.sendMessage({ type: "VAULT_DELETE_ITEM", itemId }), passkeyId)).toMatchObject({ ok: true });
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
-    expect(putCount).toBe(2);
+    expect(putCount).toBe(1);
     expect(deleteCount).toBe(0);
     expect((await decodeBitwardenCipher(remoteCipher!, providerId, vaultKey)).items.map((item) => item.kind)).toEqual(["login"]);
     expect((await listVaultItems(manager)).map((item) => item.kind)).toEqual(["login"]);

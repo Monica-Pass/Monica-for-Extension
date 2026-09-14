@@ -77,6 +77,10 @@ let currentPasskeyRequestId: string | undefined;
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.origin !== location.origin || !event.data?.requestId) return;
   const requestId = String(event.data.requestId);
+  if (event.data.source === "monica-passkey-ready-check") {
+    window.postMessage({ source: "monica-passkey-extension", requestId, ready: true }, location.origin);
+    return;
+  }
   if (event.data.source === "monica-passkey-page-cancel") {
     const reason = cancellationReason(event.data);
     const active = activePasskeyRequests.get(requestId);
@@ -93,6 +97,7 @@ window.addEventListener("message", (event) => {
   window.postMessage({ source: "monica-passkey-extension", requestId, ack: true }, location.origin);
   void handlePasskeyRequest(requestId, event.data.request as PasskeyRequest);
 });
+window.postMessage({ source: "monica-passkey-extension", ready: true }, location.origin);
 
 async function handlePasskeyRequest(requestId: string, request: PasskeyRequest): Promise<void> {
   inlineAutofill.dismiss();

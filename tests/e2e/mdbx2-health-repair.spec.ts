@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
@@ -61,7 +62,7 @@ async function openMdbx2Manager(page: Page): Promise<Locator> {
   await page.getByRole("button", { name: "打开导航" }).click();
   await page.getByRole("button", { name: "密码源" }).click();
   await page.getByRole("button", { name: "管理 MDBX2" }).click();
-  const dialog = page.getByRole("dialog", { name: "管理 健康修复演示库" });
+  const dialog = dialogContent(page, { name: "管理 健康修复演示库" });
   await expect(dialog).toBeVisible();
   return dialog;
 }

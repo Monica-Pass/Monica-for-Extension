@@ -110,10 +110,22 @@ npm run build
 - [0.1.31：5 万条](../.artifacts/home-performance/before-0.1.31-50k.json)
 - [0.1.32：两种数据量](../.artifacts/home-performance/after-0.1.32.json)
 
-复测时请单独运行探针，避免同时构建或运行其他浏览器测试：
+以上为已移除概览页面的历史测量。0.1.37 起移除专用概览探针，使用列表性能探针：
 
 ```powershell
-node scripts/home-performance-probe.mjs --extension dist --output .artifacts/home-performance/current.json
+node scripts/performance-probe.mjs --items 2000 --output .artifacts/performance/current.json
 ```
 
-默认测量 10,000 和 50,000 条；可用 `--items 50000` 单独测量一种数据量。完整功能验证及交付见 [0.1.32 验证记录](VALIDATION-0.1.32.md)。
+旧探针默认测量 10,000 和 50,000 条；当时可用 `--items 50000` 单独测量一种数据量。完整功能验证及交付见 [0.1.32 验证记录](VALIDATION-0.1.32.md)。
+
+## 0.1.42 UI 资源调整（2026-09-15）
+
+M3 Expressive 界面改用系统字体，移除 Doto、Space Grotesk 和 Space Mono 四个字体文件及其不再使用的许可文件，不引入远程字体请求。Material Symbols 子集包含 225 个候选图标名称、23,948 字节；保留 FILL 轴，固定 `wght=400`、`GRAD=0`、`opsz=24`。图标维护命令和构建哈希校验沿用上文流程。
+
+拆分新建菜单复用现有 M3E Lit 组件，仅在打开时计算可用高度，并在窗口改变时调整；菜单和控件动效尊重减少动态效果。m3e-canvas 只用于设计 JSON，未加入 React / Next.js 或编辑器运行时。本轮没有重测大库启动、总内存或同步吞吐，不以资源变化推断这些指标。
+
+## 0.1.44 网站图标（2026-09-15）
+
+网站图标仅在条目进入视口附近时加载，继续使用现有列表分页；每个页面最多同时进行四个图标查询，同网站的并发请求合并。内存缓存最多 128 个来源，成功结果保留 30 分钟，失败结果保留两分钟，避免失败的网站在切换列表时反复请求。离开条目时取消无订阅者的请求，锁定密码库时清除页面图标缓存。
+
+浏览器缓存优先；直接获取仅访问公开 HTTPS 来源的固定 `/favicon.ico`，每次请求最多三秒，响应最多 256 KiB。图片使用固定 24 × 24 显示区域，不因加载成功或失败改变行高。网站图标不会写入密码库、备份或同步数据。本轮验证了缓存、取消、并发及 320–2560px 布局；没有重新测量大库启动、总内存或同步吞吐。

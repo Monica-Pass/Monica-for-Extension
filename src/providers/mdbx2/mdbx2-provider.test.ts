@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLoginItem, type ProviderAccount } from "../../core/model";
+import { createLoginItem, type ApiTokenItem, type PasskeyItem, type ProviderAccount } from "../../core/model";
 import { Mdbx2Provider, type Mdbx2CloudSynchronizer, type Mdbx2RuntimeClient } from "./mdbx2-provider";
 import type { Mdbx2ObjectMutationInput, Mdbx2ObjectOperationResolution, Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult } from "./native-contract";
 
@@ -71,6 +71,71 @@ class FakeRuntime implements Mdbx2RuntimeClient {
 const account: ProviderAccount = { id: "mdbx-provider", kind: "mdbx2", name: "MDBX2", enabled: true, isDefaultSaveTarget: false, config: { vaultHandle: HANDLE } };
 
 describe("MDBX2 provider", () => {
+  it("does not create MDBX2 commits for local Passkey usage or old usage-inclusive baselines", async () => {
+    class PasskeyRuntime extends FakeRuntime {
+      async listObjects() {
+        return { items: [{ objectId: LOGIN_OBJECT, collectionId: COLLECTION, objectTypeId: "passkey", title: "Example", payloadSchemaVersion: 1, headCommitId: this.head, deleted: false, updatedAt: "2026-08-02T00:00:00Z" }] };
+      }
+      async revealObject(): Promise<Mdbx2ObjectRecord> {
+        return { objectId: LOGIN_OBJECT, collectionId: COLLECTION, objectTypeId: "passkey", title: "Example", payloadSchemaVersion: 1, deleted: false,
+          payloadJson: JSON.stringify({ kind: "passkey", monica_entry_id: "passkey:usage", credential_id: "AQID", rp_id: "example.com", rp_name: "Example", user_id: "dXNlcg", public_key_algorithm: -7, private_key_alias: "device-reference-only", sign_count: 4, use_count: 2 }) };
+      }
+    }
+    const runtime = new PasskeyRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const initial = await provider.sync(account, { now: "2026-09-14T00:00:00Z", localItems: [] });
+    const item = initial.items[0] as PasskeyItem;
+    const reference = item.providerRefs[0];
+    const baseline = JSON.parse(reference.etag!);
+    baseline.useCount = 2;
+    const oldEtag = JSON.stringify(baseline, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) : value);
+    const used = { ...item, useCount: 3, lastUsedAt: "2026-09-14T01:00:00Z", providerRefs: [{ ...reference, etag: oldEtag }] };
+    const result = await provider.sync(account, { now: "2026-09-14T01:00:00Z", localItems: [used] });
+    expect(result.conflicts).toEqual([]);
+    expect(runtime.writes).toEqual([]);
+    expect(result.items[0]).toMatchObject({ signCount: 4, useCount: 3, lastUsedAt: used.lastUsedAt, replicaGroupId: "passkey:usage" });
+  });
+  it("reads Android label-only API edits and prevents concurrent local edits from overwriting them", async () => {
+    class ApiRuntime extends FakeRuntime {
+      favorite = false;
+      notes = "Original notes";
+      async listObjects(_handle: string, _collection: string, input: { deleted?: boolean } = {}) {
+        return { items: input.deleted ? [] : [{ objectId: LOGIN_OBJECT, collectionId: COLLECTION, objectTypeId: "api-token", title: "Workspace key", payloadSchemaVersion: 1, headCommitId: this.head, deleted: false, updatedAt: "2026-08-02T00:00:00Z" }] };
+      }
+      async revealObject(): Promise<Mdbx2ObjectRecord> {
+        return { objectId: LOGIN_OBJECT, collectionId: COLLECTION, objectTypeId: "api-token", title: "Workspace key", payloadSchemaVersion: 1, deleted: false,
+          payloadJson: JSON.stringify({ schema: "monica.api-token.v1", provider: "github", api_base: "", token: "synthetic-token" }),
+          apiTokenFavorite: this.favorite,
+          apiTokenMetadataJson: JSON.stringify({ schema: "monica.api-token.fields.v1", notes: this.notes, custom_fields: [] }) };
+      }
+    }
+    const runtime = new ApiRuntime();
+    const provider = new Mdbx2Provider(runtime);
+    const initial = await provider.sync(account, { now: "2026-08-02T00:01:00Z", localItems: [] });
+    const original = initial.items[0] as ApiTokenItem;
+    runtime.favorite = true;
+    runtime.notes = "Edited on Android";
+    const pulled = await provider.sync(account, { now: "2026-08-02T00:02:00Z", localItems: initial.items });
+    expect(pulled.items[0]).toMatchObject({ favorite: true, notes: "Edited on Android" });
+    expect(pulled.conflicts).toEqual([]);
+    const conflicting = await provider.sync(account, { now: "2026-08-02T00:03:00Z", localItems: [{ ...original, token: "edited-on-extension" }] });
+    expect(conflicting.conflicts).toHaveLength(1);
+    expect(conflicting.items[0]).toMatchObject({ token: "edited-on-extension", notes: "Original notes" });
+    expect(conflicting.conflicts[0].remote).toMatchObject({ favorite: true, notes: "Edited on Android" });
+    const deletion = await provider.sync(account, { now: "2026-08-02T00:04:00Z", localItems: [{ ...original, deletedAt: "2026-08-02T00:03:00Z" }] });
+    expect(deletion.conflicts).toHaveLength(1);
+    expect(runtime.writes).toEqual([]);
+    const cloudProvider = new Mdbx2Provider(runtime, { async synchronize() {
+      return { uploadedSegments: 0, downloadedSegments: 0, uploadedBlobs: 0, downloadedBlobs: 0, appliedCommits: 0, skippedCommits: 0, conflicts: 0, blockedStreams: 0 };
+    } });
+    const cloudAccount = { ...account, config: { ...account.config, webDavBaseUrl: "https://vault.test/dav", remotePath: "vaults/main.mdbx", syncStateHandle: "66666666-6666-4666-8666-666666666666" } };
+    const cloudConflict = await cloudProvider.sync(cloudAccount, { now: "2026-08-02T00:05:00Z", localItems: [{ ...original, token: "edited-on-extension" }] });
+    expect(cloudConflict.conflicts).toHaveLength(1);
+    expect(cloudConflict.items[0]).toMatchObject({ token: "edited-on-extension", notes: "Original notes" });
+    expect(runtime.writes).toEqual([]);
+  });
+
   it("imports Android objects and preserves unsupported future payloads", async () => {
     const runtime = new FakeRuntime();
     const provider = new Mdbx2Provider(runtime);

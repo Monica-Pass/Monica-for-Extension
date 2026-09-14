@@ -1,0 +1,42 @@
+/* A shared, quiet hierarchy for creating and editing every item type. */
+#root .structured-editor { grid-template-columns: minmax(0, 1fr); align-content: start; gap: 16px; padding: 20px 24px; }
+#root .editor-section { min-width: 0; display: grid; align-content: start; gap: 16px; padding: 20px; border-radius: 12px; background: var(--app-surface); }
+#root .editor-section h3 { font: 500 .875rem/1.5 var(--font-ui); color: var(--app-text); margin: 0; }
+#root .editor-section > h3 { padding-top: 4px; }
+#root :is(.editor-field-grid, .editor-meta-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+#root .editor-meta-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); }
+#root .editor-hint { font-size: .8125rem; line-height: 1.6; color: var(--app-muted); margin: 0; }
+#root .editor-field-label { color: var(--app-muted); font-size: .8125rem; }
+#root .editor-websites { display: grid; gap: 8px; }
+#root .editor-websites .uri-rule-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(8rem, .48fr) 44px; gap: 8px; align-items: center; }
+#root .editor-text-action { display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; border: 0; background: transparent; color: var(--app-text); font-size: .8125rem; min-height: 44px; width: fit-content; max-width: 100%; text-align: start; cursor: pointer; }
+#root .editor-text-action m3e-icon { --m3e-icon-size: 18px; flex-shrink: 0; }
+#root .editor-disclosure { min-width: 0; }
+#root .editor-disclosure-body { display: grid; gap: 12px; padding: 4px 0 20px; }
+#root .editor-extras { gap: 0; }
+#root .editor-extras > h3 { margin-bottom: 12px; }
+#root .editor-extras > .field { margin: 16px 0; }
+#root .editor-extras > .favorite-row { min-height: 44px; margin-bottom: 8px; }
+#root .structured-editor .custom-field-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto 44px; gap: 8px; }
+#root .structured-editor .custom-field-row > * { min-width: 0; }
+#root .editor-footer-status { flex: 1 0 100%; margin: 0 0 4px; }
+#root .concealed-secret { -webkit-text-security: disc; }
+#root .special-transfer img { max-width: 100%; justify-self: start; }
+#root .filter-kind-field { margin-bottom: 20px; }
+@container vault-editor (max-width: 36rem) {
+  #root :is(.editor-meta-grid, .editor-field-grid) { grid-template-columns: minmax(0, 1fr); }
+  #root .editor-websites .uri-rule-row { grid-template-columns: minmax(0, 1fr) 44px; }
+  #root .editor-websites .uri-rule-row > m3e-form-field:first-child { grid-column: 1 / -1; }
+  #root .structured-editor .custom-field-row { grid-template-columns: minmax(0, 1fr) 44px; }
+  #root .structured-editor .custom-field-row > m3e-form-field { grid-column: 1 / -1; }
+}
+@media (max-width: 580px) {
+  #root :is(.editor-meta-grid, .editor-field-grid) { grid-template-columns: minmax(0, 1fr); }
+  #root .editor-meta-grid { gap: 12px; }
+  #root .structured-editor { gap: 12px; padding: 12px; }
+  #root .editor-section { padding: 16px; }
+  #root .editor-websites .uri-rule-row { grid-template-columns: minmax(0, 1fr) 44px; }
+  #root .editor-websites .uri-rule-row > m3e-form-field:first-child { grid-column: 1 / -1; }
+  #root .structured-editor .custom-field-row { grid-template-columns: minmax(0, 1fr) 44px; padding-bottom: 12px; }
+  #root .structured-editor .custom-field-row > m3e-form-field { grid-column: 1 / -1; }
+}

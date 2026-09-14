@@ -2,7 +2,9 @@ import { sha256 } from "hash-wasm";
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
+import { passkeyContentFingerprint, preserveLocalPasskeyUsage } from "../../passkey/ownership-policy";
 import { decodeMdbx2Object, encodeMdbx2Object, mdbx2LogicalObjectId } from "./mdbx2-item-codec";
+import { serializeApiTokenMetadata, serializeApiTokenPayload } from "../../core/api-token";
 import type { Mdbx2CloudSyncInput, Mdbx2CloudSyncReport } from "./mdbx2-sync-coordinator";
 import type {
   Mdbx2ObjectBatchResult,
@@ -165,8 +167,12 @@ export class Mdbx2Provider implements ProviderAdapter {
       }
       const reference = referenceOf(local, account.id)!;
       const queuedCreation = !reference.remoteId;
-      const localChanged = queuedCreation || Boolean(reference.etag) && fingerprint(local) !== reference.etag;
-      const remoteChanged = queuedCreation || Boolean(reference.revision) && reference.revision !== remoteObject.summary.headCommitId;
+      const localChanged = queuedCreation || Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
+      // Android edits notes, custom fields and favorites in separate labels;
+      // these can change while the credential object's head stays the same.
+      const remoteChanged = queuedCreation
+        || Boolean(reference.revision) && reference.revision !== remoteObject.summary.headCommitId
+        || remoteObject.item.kind === "api-token" && Boolean(reference.etag) && fingerprint(remoteObject.item) !== reference.etag;
       if (local.deletedAt) {
         const pending: PendingDeleteMutation = {
           mutation: { kind: "delete", logicalObjectId: remoteObject.logicalObjectId },
@@ -221,7 +227,7 @@ export class Mdbx2Provider implements ProviderAdapter {
       if (!local) continue;
       matchedLocalIds.add(local.id);
       const reference = referenceOf(local, account.id)!;
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
+      const localChanged = Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
       if (local.deletedAt && reference.revision && reference.revision !== summary.headCommitId) {
         recoveryMutations.push({
           mutation: { kind: "delete", logicalObjectId: mdbx2LogicalObjectId(local) },
@@ -242,7 +248,7 @@ export class Mdbx2Provider implements ProviderAdapter {
       context.signal?.throwIfAborted();
       if (handled.has(remoteId)) continue;
       const reference = referenceOf(local, account.id)!;
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
+      const localChanged = Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
       if (localChanged && !local.deletedAt) {
         conflicts.push({ itemId: local.id, reason: "MDBX2 中已找不到该 Object，但浏览器仍有未同步修改。", local });
         items.push(local);
@@ -541,7 +547,7 @@ export class Mdbx2Provider implements ProviderAdapter {
             addWarning(`${summary.title || summary.objectId}: ${error instanceof Error ? error.message : "Tiga 披露失败"}`);
             continue;
           }
-          totalPayloadBytes += new TextEncoder().encode(record.payloadJson).byteLength;
+          totalPayloadBytes += new TextEncoder().encode(record.payloadJson).byteLength + new TextEncoder().encode(record.apiTokenMetadataJson || "").byteLength;
           if (totalPayloadBytes > MAX_SYNC_PAYLOAD_BYTES) throw new Error(`MDBX2 Object 载荷总量超过浏览器单次同步上限 ${MAX_SYNC_PAYLOAD_BYTES} 字节。`);
           const decoded = decodeMdbx2Object(record, { headCommitId: summary.headCommitId, updatedAt: summary.updatedAt }, account.id);
           payloads.set(summary.objectId, decoded.payload);
@@ -651,8 +657,9 @@ function referenceOf(item: VaultItem, providerId: string): ProviderReference | u
 }
 
 function finalizeRemote(remote: VaultItem, local: VaultItem | undefined, providerId: string, summary: Mdbx2ObjectSummary): VaultItem {
+  if (local?.kind === "passkey" && remote.kind === "passkey") remote = preserveLocalPasskeyUsage(local, remote);
   const merged = (local
-    ? { ...remote, id: local.id, favorite: local.favorite, createdAt: local.createdAt }
+    ? { ...remote, id: local.id, favorite: remote.kind === "api-token" ? remote.favorite : local.favorite, createdAt: local.createdAt }
     : remote) as VaultItem;
   const reference: ProviderReference = {
     providerId,
@@ -665,7 +672,7 @@ function finalizeRemote(remote: VaultItem, local: VaultItem | undefined, provide
 }
 
 function finalizeWritten(item: VaultItem, providerId: string, result: Mdbx2ObjectWriteResult): VaultItem {
-  const updated = { ...item, replicaGroupId: result.logicalObjectId, mdbxFolderId: result.collectionId } as VaultItem;
+  const updated = { ...item, ...(item.kind === "api-token" ? { apiTokenPayload: serializeApiTokenPayload(item), apiTokenMetadata: serializeApiTokenMetadata(item) } : {}), replicaGroupId: result.logicalObjectId, mdbxFolderId: result.collectionId } as VaultItem;
   const reference: ProviderReference = {
     providerId,
     remoteId: result.objectId,
@@ -678,7 +685,13 @@ function finalizeWritten(item: VaultItem, providerId: string, result: Mdbx2Objec
 
 function fingerprint(item: VaultItem): string {
   const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, ...content } = item;
-  return JSON.stringify(content, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+  if (content.kind === "passkey") { delete content.useCount; delete content.lastUsedAt; delete content.signCountHighWaterMark; }
+  const portable = item.kind === "api-token" ? {
+    kind: item.kind, title: item.title, favorite: item.favorite, mdbxFolderId: item.mdbxFolderId,
+    replicaGroupId: item.replicaGroupId,
+    payload: JSON.parse(serializeApiTokenPayload(item)), metadata: JSON.parse(serializeApiTokenMetadata(item))
+  } : content;
+  return JSON.stringify(portable, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))
     : value);
 }
@@ -725,7 +738,10 @@ function materializeCloudResult(
   const retained = new Set<string>();
   for (const [remoteId, object] of remote.active) {
     const local = localByRemote.get(remoteId);
-    if (object.item) {
+    if (local && conflictIds.has(local.id)) {
+      items.push(local);
+      retained.add(local.id);
+    } else if (object.item) {
       const item = finalizeRemote(object.item, local, account.id, object.summary);
       items.push(item);
       retained.add(item.id);

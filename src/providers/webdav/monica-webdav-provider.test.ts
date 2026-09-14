@@ -70,6 +70,53 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it("checks the latest filename and ETag without downloading an unchanged snapshot", async () => {
+    const mock = server(androidZip());
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const initial = await provider.sync(account(), { now: "2026-09-14T00:00:00Z", localItems: [] });
+    vi.mocked(mock.fetcher).mockClear();
+    const result = await provider.sync(account(initial.accountPatch?.config), { now: "2026-09-14T00:01:00Z", localItems: initial.items, syncHint: { type: "check-remote" } });
+    expect(result.unchanged).toBe(true);
+    expect(vi.mocked(mock.fetcher).mock.calls.map(call => call[1]?.method)).toEqual(["PROPFIND"]);
+    expect(mock.uploaded()).toBeUndefined();
+  });
+
+  it("downloads a changed snapshot and does not skip local edits even when the remote ETag is unchanged", async () => {
+    const initial = await new MonicaWebDavProvider(server(androidZip()).fetcher).sync(account(), { now: "2026-09-14T00:00:00Z", localItems: [] });
+    const changedServer = server(androidZip("phone update", 1_700_000_002_000), multiStatus(undefined, '"changed"'));
+    const changed = await new MonicaWebDavProvider(changedServer.fetcher).sync(account(initial.accountPatch?.config), { now: "2026-09-14T00:01:00Z", localItems: initial.items, syncHint: { type: "check-remote" } });
+    expect(changed.items[0]).toMatchObject({ password: "phone update" });
+    expect(vi.mocked(changedServer.fetcher).mock.calls.some(call => call[1]?.method === "GET")).toBe(true);
+    const localServer = server(androidZip());
+    await new MonicaWebDavProvider(localServer.fetcher).sync(account(initial.accountPatch?.config), { now: "2026-09-14T00:01:00Z", localItems: initial.items.map(item => ({ ...item, title: "browser edit", updatedAt: "2026-09-14T00:00:30Z" })), syncHint: { type: "check-remote" } });
+    expect(localServer.uploaded()).toBeDefined();
+  });
+
+  it("keeps an already synchronized trash item from forcing repeated snapshot downloads", async () => {
+    const files = unzipSync(androidZip());
+    const raw = JSON.parse(new TextDecoder().decode(files[PATH]));
+    files[PATH] = strToU8(JSON.stringify({ ...raw, isDeleted: true, deletedAt: raw.updatedAt }));
+    const mock = server(zipSync(files));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const initial = await provider.sync(account(), { now: "2026-09-14T00:00:00Z", localItems: [] });
+    expect(initial.items[0].deletedAt).toBeDefined();
+    vi.mocked(mock.fetcher).mockClear();
+    const result = await provider.sync(account(initial.accountPatch?.config), { now: "2026-09-14T00:01:00Z", localItems: initial.items, pendingMutations: [], syncHint: { type: "check-remote" } });
+    expect(result.unchanged).toBe(true);
+    expect(vi.mocked(mock.fetcher).mock.calls.map(call => call[1]?.method)).toEqual(["PROPFIND"]);
+  });
+
+  it("does not let an equal timestamp hide a queued deletion during the ETag check", async () => {
+    const mock = server(androidZip());
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const initial = await provider.sync(account(), { now: "2026-09-14T00:00:00Z", localItems: [] });
+    vi.mocked(mock.fetcher).mockClear();
+    const deleted = { ...initial.items[0], deletedAt: initial.items[0].updatedAt };
+    const result = await provider.sync(account(initial.accountPatch?.config), { now: "2026-09-14T00:01:00Z", localItems: [deleted], pendingMutations: [{ id: "queued-deletion", providerId: PROVIDER_ID, itemId: deleted.id, operation: "delete", createdAt: deleted.updatedAt, attempts: 0 }], syncHint: { type: "check-remote" } });
+    expect(result.unchanged).not.toBe(true);
+    expect(vi.mocked(mock.fetcher).mock.calls.some(call => call[1]?.method === "GET")).toBe(true);
+  });
+
   it.each(["bind", "replace", "unlink"] as const)("syncs an OTP binding edit (%s) through an encrypted Android snapshot without reverting or modifying the caller", async action => {
     const backupPassword = "synthetic-otp-binding-backup";
     const configPath = "monica_config/page_adjustment_settings.json";

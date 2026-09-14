@@ -14,11 +14,11 @@ export type ThemePalette = {
 
 export const palettes: ThemePalette[] = [
   palette("nothing", "#1a1a1a", "#ffffff", "#d71921", ["#f5f5f3", "#ffffff", "#eeeee9", "#e8e8e4"], ["#000000", "#111111", "#1a1a1a", "#252525"]),
-  palette("monica", "#0b6f69", "#8de8dc", "#f5c84c", ["#f4f8f6", "#e5efec", "#d7e4e1", "#bfded9"], ["#0f1514", "#17201f", "#1e2b29", "#24403c"]),
-  palette("ocean", "#1769aa", "#a9c7ff", "#24c6dc", ["#f4f7fb", "#e3edf5", "#d5e3ee", "#c6d9e8"], ["#0d141b", "#14202a", "#1b2d3b", "#213f55"]),
-  palette("forest", "#2f6b3f", "#b5d7b2", "#b6d86f", ["#f5f8f1", "#e6eee0", "#d8e3d0", "#c9dabc"], ["#10160f", "#182218", "#202e21", "#2c3d2c"]),
-  palette("sakura", "#9d405f", "#ffb1c8", "#f2b6c8", ["#faf5f6", "#f1e5e9", "#ead7df", "#e2c7d1"], ["#1a1014", "#291820", "#3a202b", "#542d3b"]),
-  palette("amber", "#7c5a00", "#ffdc7a", "#ffd35a", ["#f8f4e8", "#eee5cf", "#e4d7b9", "#d8c89f"], ["#171309", "#241d0e", "#362b12", "#4c3b16"])
+  palette("monica", "#0b6f69", "#8de8dc", "#f5c84c", ["#f2f7f4", "#ffffff", "#e4eeea", "#c4e8dd"], ["#0f1514", "#17201f", "#1e2b29", "#24403c"]),
+  palette("ocean", "#1769aa", "#a9c7ff", "#24c6dc", ["#f3f7fc", "#ffffff", "#e3edf5", "#cee2fa"], ["#0d141b", "#14202a", "#1b2d3b", "#213f55"]),
+  palette("forest", "#2f6b3f", "#b5d7b2", "#b6d86f", ["#f3f7ee", "#ffffff", "#e6eee0", "#d2e9c9"], ["#10160f", "#182218", "#202e21", "#2c3d2c"]),
+  palette("sakura", "#9d405f", "#ffb1c8", "#f2b6c8", ["#fcf5f7", "#fffbfc", "#f1e5e9", "#ffdae5"], ["#1a1014", "#291820", "#3a202b", "#542d3b"]),
+  palette("amber", "#7c5a00", "#ffdc7a", "#ffd35a", ["#fbf7ec", "#fffdfa", "#eee5cf", "#f3e1aa"], ["#171309", "#241d0e", "#362b12", "#4c3b16"])
 ];
 
 const schemeKey = "monica.scheme";
@@ -77,7 +77,7 @@ function readScheme(): SchemePreference {
 
 function readPalette(): ThemePaletteId {
   const value = localStorage.getItem(paletteKey);
-  return palettes.some((item) => item.id === value) ? (value as ThemePaletteId) : "nothing";
+  return palettes.some((item) => item.id === value) ? (value as ThemePaletteId) : "monica";
 }
 
 function palette(id: ThemePaletteId, color: string, darkColor: string, accent: string, light: string[], dark: string[]): ThemePalette {

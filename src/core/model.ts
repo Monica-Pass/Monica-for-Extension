@@ -8,6 +8,7 @@ export type VaultItemKind =
   | "identity"
   | "billing-address"
   | "payment-account"
+  | "api-token"
   | "passkey";
 
 export type ProviderKind = "local" | "monica-webdav" | "bitwarden" | "mdbx2" | "mdbx-legacy" | "keepass";
@@ -139,6 +140,17 @@ export interface SecureNoteItem extends VaultItemBase {
   tags?: string[];
   isMarkdown?: boolean;
   customFields?: SecureCustomField[];
+}
+
+/** Android native `api-token` objects. Payload and label extensions stay encrypted verbatim. */
+export interface ApiTokenItem extends VaultItemBase {
+  kind: "api-token";
+  provider: string;
+  apiBase: string;
+  token: string;
+  customFields: Array<SecureCustomField & { id?: number }>;
+  apiTokenPayload?: string;
+  apiTokenMetadata?: string;
 }
 
 export interface TotpItem extends VaultItemBase {
@@ -284,11 +296,18 @@ export interface PasskeyItem extends VaultItemBase {
   keyAlgorithm?: string;
   publicKey: string;
   privateKeyPkcs8?: string;
+  /** Persisted source counter. Independent/file-backed assertions use zero without rewriting it. */
   signCount: number;
+  /** Local history of observed counters; an unconfirmed local increment does not advance it. */
+  signCountHighWaterMark?: number;
+  /** Registration-time backup eligibility must stay stable when a key moves between clients. */
+  backupEligible?: boolean;
+  backupState?: boolean;
   discoverable: boolean;
   userVerificationRequired?: boolean;
   transports?: string[];
   aaguid?: string;
+  /** Installation-local statistics; these do not trigger provider writes. */
   lastUsedAt?: string;
   useCount?: number;
   iconUrl?: string;
@@ -297,7 +316,7 @@ export interface PasskeyItem extends VaultItemBase {
   sourceMode: "browser-local" | "bitwarden" | "android-metadata-only";
 }
 
-export type VaultItem = LoginItem | SecureNoteItem | TotpItem | CardItem | IdentityItem | BillingAddressItem | PaymentAccountItem | PasskeyItem;
+export type VaultItem = LoginItem | SecureNoteItem | TotpItem | CardItem | IdentityItem | BillingAddressItem | PaymentAccountItem | ApiTokenItem | PasskeyItem;
 
 export interface ProviderAccount {
   id: string;

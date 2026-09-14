@@ -3,6 +3,7 @@ import type { PasskeyItem, PendingMutation, ProviderAccount, ProviderReference, 
 import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
 import { normalizeCredentialId } from "../../passkey/source-policy";
+import { passkeyContentFingerprint, preserveLocalPasskeyUsage } from "../../passkey/ownership-policy";
 import {
   KEEPASS_ATTACHMENT_MAX_BYTES,
   PROVIDER_ATTACHMENT_CHUNK_BYTES,
@@ -490,7 +491,7 @@ export class KeePassProvider implements ProviderAdapter {
         continue;
       }
       /** No stored fingerprint means no baseline, so the safe move is always to take the file's copy. */
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== reference.etag;
+      const localChanged = Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
 
       if (pendingByItemId && !pendingByItemId.has(local.id) && (localChanged || local.deletedAt)) {
         keepLocal.set(entryUuid, local);
@@ -957,7 +958,8 @@ function remoteIdOf(item: VaultItem, providerId: string): string {
  * the user's local flag on every sync.
  */
 function finalize(remote: VaultItem, local: VaultItem | undefined, providerId: string): VaultItem {
-  const merged = (local ? { ...remote, id: local.id, favorite: local.favorite } : remote) as VaultItem;
+  const content = local?.kind === "passkey" && remote.kind === "passkey" ? preserveLocalPasskeyUsage(local, remote) : remote;
+  const merged = (local ? { ...content, id: local.id, favorite: local.favorite } : content) as VaultItem;
   const reference: ProviderReference = {
     providerId,
     remoteId: remoteIdOf(remote, providerId),
@@ -974,6 +976,7 @@ function finalize(remote: VaultItem, local: VaultItem | undefined, providerId: s
  */
 function fingerprint(item: VaultItem): string {
   const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, ...content } = item;
+  if (content.kind === "passkey") { delete content.useCount; delete content.lastUsedAt; delete content.signCountHighWaterMark; }
   return JSON.stringify(content, (_key, value) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))

@@ -1,3 +1,4 @@
+import { chooseOption } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
@@ -62,16 +63,16 @@ test("generator preferences persist across remounts and reloads", async ({}, tes
     await expect(page.locator(".generator-ssh-facts code")).toHaveText(/^SHA256:[A-Za-z0-9+/]{43}$/);
     await page.getByRole("button", { name: "显示私钥" }).click();
     await expect(page.getByLabel("私钥内容")).toHaveValue(/-----BEGIN OPENSSH PRIVATE KEY-----/);
-    await page.getByLabel("SSH 算法").selectOption("RSA");
-    await page.getByLabel("RSA 位数").selectOption("2048");
+    await chooseOption(page.getByLabel("SSH 算法"), "RSA");
+    await chooseOption(page.getByLabel("RSA 位数"), "2048");
     await page.getByRole("button", { name: "重新生成", exact: true }).last().click();
     await expect(page.getByLabel("公钥内容")).toHaveValue(/^ssh-rsa /);
 
     await page.reload();
     await page.getByRole("button", { name: "生成器" }).click();
     await expect(page.getByRole("tab", { name: "SSH 密钥" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByLabel("SSH 算法")).toHaveValue("RSA");
-    await expect(page.getByLabel("RSA 位数")).toHaveValue("2048");
+    await expect(page.getByLabel("SSH 算法")).toHaveJSProperty("value", "RSA");
+    await expect(page.getByLabel("RSA 位数")).toHaveJSProperty("value", "2048");
     await expect(page.getByLabel("公钥内容")).toHaveValue(/^ssh-rsa /);
 
     const accessibility = await new AxeBuilder({ page }).include(".generator-panel").analyze();

@@ -34,6 +34,10 @@ export interface ProviderSyncContext {
   markMutationsAttempted?: (mutationIds: string[]) => Promise<void>;
   /** Manager-authorized adoption of an authenticated empty remote projection. */
   allowEmptyRemote?: boolean;
+  /** Authentication refresh: download only, including deferral of compatibility migrations. */
+  readOnly?: boolean;
+  /** Internal automatic-sync hint; providers still obtain authoritative remote data. */
+  syncHint?: { type: "check-remote" | "full" } | { type: "ciphers"; ids: string[] };
 }
 
 export interface ProviderSyncResult {
@@ -46,6 +50,25 @@ export interface ProviderSyncResult {
   requestedMutations?: ProviderRequestedMutation[];
   /** An explicit manager decision authorizes removal of unchanged cached records absent remotely. */
   adoptRemoteRemovals?: boolean;
+  /** A lightweight remote check proved no change; preserve conflicts and queued writes. */
+  unchanged?: boolean;
+  /** Local IDs whose remote deletion was individually confirmed by an authenticated API. */
+  confirmedRemovedItemIds?: string[];
+}
+
+export interface ProviderSyncGuard {
+  expectedAccount?: ProviderAccount;
+  confirmedRemovedItemIds?: string[];
+}
+
+/** Ignore rotating tokens and sync metadata, but never merge results from a replaced source. */
+export function sameProviderBinding(left: ProviderAccount, right: ProviderAccount): boolean {
+  if (left.id !== right.id || left.kind !== right.kind) return false;
+  const keys = left.kind === "bitwarden" ? ["vaultUrl", "apiUrl", "identityUrl", "email", "deviceId", "vaultKeyEnc", "vaultKeyMac"]
+    : left.kind === "monica-webdav" ? ["baseUrl", "username", "password", "backupPassword"]
+    : left.kind === "keepass" ? ["sourceMode", "webDavBaseUrl", "webDavUsername", "webDavPassword", "remotePath", "databasePassword", "keyFile"]
+    : left.kind === "mdbx2" ? ["vaultHandle", "syncStateHandle", "webDavBaseUrl", "webDavUsername", "webDavPassword", "remotePath"] : [];
+  return keys.every(key => left.config[key] === right.config[key]);
 }
 
 export interface ProviderAdapter<TAccount extends ProviderAccount = ProviderAccount> {

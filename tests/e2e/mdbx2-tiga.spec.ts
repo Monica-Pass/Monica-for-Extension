@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 
@@ -183,7 +184,7 @@ test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 Tiga 安全演示库" });
+    const dialog = dialogContent(page, { name: "管理 Tiga 安全演示库" });
     const panel = dialog.locator(".mdbx2-tiga-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("border-radius", "8px");
@@ -206,7 +207,7 @@ test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text
     await expectCentered(panel.locator(".mdbx2-tiga-overview-icon"), panel.locator(".mdbx2-tiga-overview-icon m3e-icon"));
     await expectCentered(panel.locator(".mdbx2-tiga-limitation-icon").first(), panel.locator(".mdbx2-tiga-limitation-icon m3e-icon").first());
 
-    const details = panel.locator(".mdbx2-tiga-details");
+    const details = panel.locator(".mdbx2-tiga-m3e-expansion-panel");
     await expect(details).not.toHaveAttribute("open", "");
     await details.getByText("查看只读策略详情", { exact: true }).click();
     await expect(details).toHaveAttribute("open", "");

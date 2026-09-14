@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr, locale } from '../i18n';
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
@@ -555,12 +556,12 @@ function transferErrorMessage(cause: unknown): string {
       </header>
 
       <div class="attachment-toolbar">
-        <label v-if="providers.length > 1" class="attachment-provider-field">
-          <span>{{ tr('密码源') }}</span>
-          <select v-model="selectedProviderId" :disabled="interactionLocked">
-            <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
-          </select>
-        </label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="providers.length > 1" class="attachment-provider-field">
+          <label slot="label">{{ tr('密码源') }}</label>
+          <component :is="materialSelectTag" @input="selectedProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="interactionLocked">
+            <component :is="materialOptionTag" :selected.prop="String(selectedProviderId ?? '') === String(provider.id)" v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</component>
+          </component>
+        </m3e-form-field>
         <div v-else class="attachment-provider-summary">
           <m3e-icon :name="selectedProvider?.kind === 'mdbx2' ? 'database' : selectedProvider?.kind === 'bitwarden' ? 'shield_lock' : 'key'"></m3e-icon>
           <span><strong>{{ selectedProvider?.name }}</strong><small>{{ selectedProvider?.kind === 'mdbx2' ? 'MDBX2' : selectedProvider?.kind === 'bitwarden' ? 'Bitwarden' : selectedProvider?.kind === 'monica-webdav' ? 'Monica Android WebDAV' : 'KeePass' }}</small></span>
@@ -673,8 +674,8 @@ function transferErrorMessage(cause: unknown): string {
               <m3e-icon name="drive_file_move"></m3e-icon>
               <div class="attachment-transfer-content">
                 <div><strong>{{ tr('跨密码源传输') }}</strong><small>{{ tr('文件名和字节保持不变；同名目标不会被静默替换。') }}</small></div>
-                <label class="attachment-transfer-target"><span>{{ tr('目标密码源') }}</span><select v-model="pendingTransfer.targetProviderId" :aria-label="tr('目标密码源 · {0}', { 0: attachment.fileName })" :disabled="transferBusy || pendingTransfer.attempted"><option v-for="provider in transferTargets" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
-                <fieldset class="attachment-transfer-mode" :disabled="transferBusy || pendingTransfer.attempted"><legend>{{ tr('操作') }}</legend><label><input v-model="pendingTransfer.mode" type="radio" value="copy" /><span>{{ tr('复制') }}</span></label><label><input v-model="pendingTransfer.mode" type="radio" value="move" /><span>{{ tr('移动') }}</span></label></fieldset>
+                <m3e-form-field v-field-label variant="filled" hide-required-marker class="attachment-transfer-target"><label slot="label">{{ tr('目标密码源') }}</label><component :is="materialSelectTag" @input="pendingTransfer.targetProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :aria-label="tr('目标密码源 · {0}', { 0: attachment.fileName })" :disabled="transferBusy || pendingTransfer.attempted"><component :is="materialOptionTag" :selected.prop="String(pendingTransfer.targetProviderId ?? '') === String(provider.id)" v-for="provider in transferTargets" :key="provider.id" :value="provider.id">{{ provider.name }}</component></component></m3e-form-field>
+                <fieldset class="attachment-transfer-mode" :disabled="transferBusy || pendingTransfer.attempted"><legend>{{ tr('操作') }}</legend><m3e-radio-group :aria-label="tr('操作')" :disabled="transferBusy || pendingTransfer.attempted"><label v-choice-label><m3e-radio :checked.prop="pendingTransfer.mode === 'copy'" @input="pendingTransfer.mode = 'copy'"   value="copy" /><span>{{ tr('复制') }}</span></label><label v-choice-label><m3e-radio :checked.prop="pendingTransfer.mode === 'move'" @input="pendingTransfer.mode = 'move'"   value="move" /><span>{{ tr('移动') }}</span></label></m3e-radio-group></fieldset>
                 <p><m3e-icon :name="pendingTransfer.mode === 'move' ? 'verified_user' : 'content_copy'"></m3e-icon><span>{{ pendingTransfer.mode === 'move' ? tr('目标写入并重新读取校验成功后才删除来源；删除失败时保留两个副本。') : tr('来源保持不变；目标写入后会重新读取并逐字节校验。') }}</span></p>
                 <small v-if="pendingTransferTarget">{{ tr('目标上限 {0} · 原始字节仅在后台传输', { 0: formatBytes(attachmentLimit(pendingTransferTarget)) }) }}</small>
               </div>
@@ -1099,22 +1100,9 @@ function transferErrorMessage(cause: unknown): string {
 }
 
 .attachment-transfer-target {
-  display: grid;
-  gap: 6px;
+  min-width: 0;
 }
 
-.attachment-transfer-target select {
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
-  border-radius: 8px;
-  padding: 0 12px;
-  font: inherit;
-  color: var(--app-text);
-  background: var(--app-surface);
-}
-
-.attachment-transfer-target select:disabled,
 .attachment-transfer-mode:disabled {
   opacity: 0.72;
 }
@@ -1139,7 +1127,6 @@ function transferErrorMessage(cause: unknown): string {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
   border-radius: 8px;
   padding: 8px 12px;
   background: var(--app-surface);

@@ -43,7 +43,7 @@ async function toggle() {
   <section class="inline-autofill-setting" aria-labelledby="inline-autofill-label">
     <div class="inline-autofill-setting-row">
       <div><strong id="inline-autofill-label">{{ tr('表单旁自动填充') }}</strong><p id="inline-autofill-description">{{ tr('聚焦登录表单时，在输入框旁显示匹配的登录项。') }}</p></div>
-      <button type="button" class="inline-autofill-switch" role="switch" :aria-checked="enabled" aria-labelledby="inline-autofill-label" aria-describedby="inline-autofill-description" :disabled="!ready" :aria-disabled="saving" @click="toggle"><span aria-hidden="true"><i /></span></button>
+      <m3e-switch :checked.prop="enabled" @beforeinput.prevent="toggle" aria-labelledby="inline-autofill-label" aria-describedby="inline-autofill-description" :disabled="!ready || saving"></m3e-switch>
     </div>
     <small>{{ tr('关闭后仍可从工具栏插件填写。') }}</small>
     <p v-if="error" class="form-error" role="alert">{{ tr('未能保存自动填充设置，请重试。') }}</p>
@@ -53,17 +53,9 @@ async function toggle() {
 
 <style scoped>
 .inline-autofill-setting { padding: 16px; border-bottom: 1px solid var(--app-outline); }
-.inline-autofill-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 52px; gap: 16px; align-items: center; }
+.inline-autofill-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; }
 .inline-autofill-setting strong { font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
 .inline-autofill-setting p { margin: 6px 0; font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .inline-autofill-setting p:not(.form-error), .inline-autofill-setting small { color: var(--app-muted); }
 .inline-autofill-setting small { display: block; font-size: .75rem; line-height: 1.6; margin-top: 8px; overflow-wrap: anywhere; }
-.inline-autofill-switch { display: grid; place-items: center; width: 52px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
-.inline-autofill-switch > span { display: block; width: 44px; height: 26px; padding: 3px; border: 1px solid var(--app-outline); border-radius: 99px; background: var(--app-surface-high); }
-.inline-autofill-switch i { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--app-muted); transition: transform 120ms ease-out; }
-.inline-autofill-switch[aria-checked="true"] > span { background: var(--app-text); border-color: var(--app-text); }
-.inline-autofill-switch[aria-checked="true"] i { transform: translateX(18px); background: var(--app-bg); }
-.inline-autofill-switch:focus-visible { outline: 2px solid var(--app-text); outline-offset: 2px; }
-.inline-autofill-switch:disabled, .inline-autofill-switch[aria-disabled="true"] { opacity: .5; cursor: wait; }
-@media (prefers-reduced-motion: reduce) { .inline-autofill-switch i { transition: none; } }
 </style>

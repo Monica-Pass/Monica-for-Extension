@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import path from "node:path";
 
@@ -169,7 +170,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
     await expect(card.getByText("第四个账号", { exact: true })).toBeVisible();
 
     await card.getByRole("button", { name: "采用 Bitwarden 版本" }).first().click();
-    const conflictDialog = page.getByRole("dialog", { name: "采用 Bitwarden 版本？" });
+    const conflictDialog = dialogContent(page, { name: "采用 Bitwarden 版本？" });
     await expect(conflictDialog).toBeVisible();
     await expectFourRoundedCorners(conflictDialog, "16px");
     await expect(conflictDialog.getByRole("button", { name: "取消" })).toBeFocused();
@@ -182,7 +183,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
 
     const emptyButton = card.getByRole("button", { name: "查看并确认空库" });
     await emptyButton.click();
-    const emptyDialog = page.getByRole("dialog", { name: "采用服务器空密码库？" });
+    const emptyDialog = dialogContent(page, { name: "采用服务器空密码库？" });
     await expect(emptyDialog).toBeVisible();
     await expectFourRoundedCorners(emptyDialog, "16px");
     await expect(emptyDialog.getByRole("button", { name: "取消" })).toBeFocused();
@@ -191,7 +192,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
     await expect(emptyButton).toBeFocused();
 
     await emptyButton.click();
-    const retryDialog = page.getByRole("dialog", { name: "采用服务器空密码库？" });
+    const retryDialog = dialogContent(page, { name: "采用服务器空密码库？" });
     await retryDialog.getByRole("button", { name: "确认采用空库" }).click();
     await expect(retryDialog.getByRole("alert")).toContainText("网络暂时不可用，请重试空库确认。");
     await expect(retryDialog).toBeVisible();

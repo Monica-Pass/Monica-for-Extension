@@ -582,6 +582,7 @@ async function findLogicalObjectPaged(
     const page = await client.listObjects(vaultHandle, collectionId, { deleted: false, pageSize: 200, cursor });
     for (const summary of page.items) {
       const record = await client.revealObject(vaultHandle, summary.objectId);
+      if (record.objectTypeId === "api-token" && logicalId === `api-token:${record.objectId}`) return { objectId: summary.objectId, record };
       let payload: Record<string, unknown>;
       try { payload = JSON.parse(record.payloadJson) as Record<string, unknown>; } catch { continue; }
       if (payload.monica_entry_id === logicalId) return { objectId: summary.objectId, record };

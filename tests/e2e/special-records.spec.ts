@@ -1,8 +1,9 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
 
 async function openLoginEditor(manager: Page): Promise<void> {
-  await expect(manager.getByRole("dialog")).toHaveCount(0);
+  await expect(dialogContent(manager)).toHaveCount(0);
   await manager.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
   await manager.getByRole("button", { name: "新建", exact: true }).click();
 }
@@ -25,11 +26,13 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
 
     await openLoginEditor(manager);
     await manager.getByLabel("名称 *", { exact: true }).fill("Monica Lab Wi-Fi");
-    await manager.getByLabel("Wi-Fi", { exact: true }).check();
+    await chooseOption(manager.getByRole("combobox", { name: "项目类型", exact: true }), "WIFI");
     await manager.getByLabel("SSID", { exact: true }).fill("Monica;Lab");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "更多网络设置" }).click();
     await manager.getByLabel("BSSID", { exact: true }).fill("00:11:22:33:44:55");
     await manager.getByLabel("隐藏网络", { exact: true }).check();
     await manager.getByLabel("企业身份（Identity）", { exact: true }).fill("joy");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: /复制与条码|复制与二维码/ }).click();
     await manager.getByRole("button", { name: "生成二维码" }).click();
     await expect(manager.getByAltText("WIFI 二维码")).toHaveAttribute("src", /^data:image\/png;base64,/);
     await manager.getByRole("button", { name: "复制", exact: true }).click();
@@ -37,21 +40,24 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
 
     await openLoginEditor(manager);
     await manager.getByLabel("名称 *", { exact: true }).fill("Monica SSH");
-    await manager.getByLabel("SSH 密钥", { exact: true }).check();
+    await chooseOption(manager.getByRole("combobox", { name: "项目类型", exact: true }), "SSH_KEY");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await manager.getByLabel("算法", { exact: true }).fill("ED25519");
     await manager.getByLabel("密钥位数", { exact: true }).fill("256");
     await manager.getByLabel("OpenSSH 公钥", { exact: true }).fill("ssh-ed25519 AAAAC3Nza monica");
     await manager.getByLabel("OpenSSH 私钥", { exact: true }).fill("-----BEGIN OPENSSH PRIVATE KEY-----\nprivate\n-----END OPENSSH PRIVATE KEY-----");
     await manager.getByLabel("SHA-256 指纹", { exact: true }).fill("SHA256:monica");
     await manager.getByLabel("注释", { exact: true }).fill("joy@monica");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: /复制与条码|复制与二维码/ }).click();
     await manager.getByRole("button", { name: "生成二维码" }).click();
     await expect(manager.getByAltText("SSH_KEY 二维码")).toBeVisible();
     await manager.getByRole("button", { name: "加密保存" }).click();
 
     await openLoginEditor(manager);
     await manager.getByLabel("名称 *", { exact: true }).fill("Membership Barcode");
-    await manager.getByLabel("条码", { exact: true }).check();
+    await chooseOption(manager.getByRole("combobox", { name: "项目类型", exact: true }), "BARCODE");
     await manager.getByLabel("条码内容", { exact: true }).fill("MONICA-123456789");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: /复制与条码|复制与二维码/ }).click();
     await manager.getByRole("button", { name: "生成二维码" }).click();
     await expect(manager.getByAltText("BARCODE QR 二维码")).toBeVisible();
     await manager.getByRole("radio", { name: "Code 128" }).check();
@@ -75,6 +81,7 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
     await manager.reload();
     await manager.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await manager.getByRole("row").filter({ hasText: "Membership Barcode" }).getByRole("button", { name: "编辑登录项" }).click();
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "复制与条码" }).click();
     await manager.getByRole("radio", { name: "Code 128" }).check();
     await manager.getByRole("button", { name: "生成条码" }).click();
     await expect(manager.getByAltText("BARCODE Code 128 条码")).toBeVisible();

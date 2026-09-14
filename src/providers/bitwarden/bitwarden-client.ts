@@ -1,6 +1,6 @@
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 import { ProviderTransportError, providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
-import { readBoundedJsonObject } from "../bounded-body";
+import { readBoundedJsonObject, readBoundedResponseText } from "../bounded-body";
 import {
   decryptBitwardenSymmetricKey,
   deriveBitwardenMasterKey,
@@ -255,6 +255,32 @@ export class BitwardenClient {
 
   async sync(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
     return this.authorizedJson(session, "/sync?excludeDomains=true", { method: "GET", signal }, "同步 Bitwarden 密码库失败");
+  }
+
+  /** The official browser uses this small response to detect missed notifications. */
+  async accountRevision(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; revision: number }> {
+    const result = await this.authorizedRequest(session, "/accounts/revision-date", { method: "GET", signal }, "检查 Bitwarden 修订失败", async (response, requestSignal) => {
+      if (!response.ok) throw bitwardenHttpError("检查 Bitwarden 修订失败", response);
+      const text = await readBoundedResponseText(response, 1024, "Bitwarden 修订响应", requestSignal);
+      let revision: unknown;
+      try { revision = JSON.parse(text); } catch { /* Validate below without logging response data. */ }
+      if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < -1) throw new Error("Bitwarden 修订响应无效。");
+      if (revision < 0) throw new ProviderTransportError("authentication", "Bitwarden 账户已失效，请重新登录。", { status: 401, retryable: false, operation: "检查 Bitwarden 修订", attempts: 1 });
+      return revision;
+    });
+    return { session: result.session, revision: result.payload };
+  }
+
+  /** Fetch the authoritative Cipher; a notification is only a hint, never item data. */
+  getCipherDetails(session: BitwardenSessionConfig, cipherId: string, signal?: AbortSignal): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> | null }> {
+    assertPathId(cipherId, "Cipher");
+    return this.authorizedRequest(session, `/ciphers/${encodeURIComponent(cipherId)}/details`, { method: "GET", signal }, "读取 Bitwarden 项目失败", async (response, requestSignal) => {
+      if (response.status === 404) return null;
+      const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 项目响应", requestSignal);
+      if (!response.ok) throw bitwardenHttpError("读取 Bitwarden 项目失败", response, payload);
+      if (stringValue(payload, "Id", "id") !== cipherId || !stringValue(payload, "RevisionDate", "revisionDate")) throw new Error("Bitwarden 项目响应的标识或修订无效。");
+      return payload;
+    });
   }
 
   async revoke(session: BitwardenSessionConfig, signal?: AbortSignal): Promise<void> {
@@ -737,18 +763,28 @@ export class BitwardenClient {
     init: RequestInit,
     errorPrefix: string
   ): Promise<{ session: BitwardenSessionConfig; payload: Record<string, unknown> }> {
+    return this.authorizedRequest(session, path, init, errorPrefix, async (response, requestSignal) => {
+      const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 密码库响应", requestSignal);
+      if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
+      return payload;
+    });
+  }
+
+  private async authorizedRequest<T>(
+    session: BitwardenSessionConfig,
+    path: string,
+    init: RequestInit,
+    errorPrefix: string,
+    consume: ProviderResponseConsumer<T>
+  ): Promise<{ session: BitwardenSessionConfig; payload: T }> {
     let active = session.expiresAt <= Date.now() + 60_000 ? await this.refresh(session, init.signal || undefined) : session;
-    const execute = async (current: BitwardenSessionConfig): Promise<Record<string, unknown>> => {
+    const execute = async (current: BitwardenSessionConfig): Promise<T> => {
       const headers = new Headers(init.headers);
       for (const [name, value] of authorizedHeaders(current.accessToken)) headers.set(name, value);
       return this.request(`${current.apiUrl}${path}`, {
         ...init,
         headers
-      }, errorPrefix, undefined, async (response, requestSignal) => {
-        const payload = await this.responseJson(response, this.limits().maxVaultResponseBytes, "Bitwarden 密码库响应", requestSignal);
-        if (!response.ok) throw bitwardenHttpError(errorPrefix, response, payload);
-        return payload;
-      });
+      }, errorPrefix, undefined, consume);
     };
     try {
       return { session: active, payload: await execute(active) };

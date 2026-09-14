@@ -121,7 +121,7 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
   }
 });
 
-test("missing Monica Windows Hello Host falls back to the browser platform authenticator", async ({}, testInfo) => {
+test("device-key vault without Windows Hello falls back to the browser platform authenticator", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -129,7 +129,7 @@ test("missing Monica Windows Hello Host falls back to the browser platform authe
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
-    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "fallback password" }))).toMatchObject({ ok: true });
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "" }))).toMatchObject({ ok: true });
     const host = "native-fallback.example.test";
     await context.route(`https://${host}/**`, (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: relyingPartyHtml(host) }));
     const page = await context.newPage();

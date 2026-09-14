@@ -238,6 +238,7 @@ function transferPayloadPatch(
   boundLoginLogicalId: string | undefined,
   effectiveAction: Mdbx2BatchTransferAction
 ): Record<string, unknown> {
+  if (item.kind === "api-token") return {};
   const common: Record<string, unknown> = {
     bitwarden_mode: false,
     keepass_mode: false

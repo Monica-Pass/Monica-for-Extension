@@ -3,7 +3,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
-const pageNames = ["index.html", "popup.html"];
+const pageNames = ["index.html", "popup.html", "passkey-verify.html"];
 
 for (const pageName of pageNames) await verifyPage(pageName);
 console.log(`Verified ${pageNames.length} extension pages: no module preloads and every local asset reference exists.`);

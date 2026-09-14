@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Download, type Locator, type Page, type TestInfo } from "@playwright/test";
 import * as kdbxweb from "kdbxweb";
 import path from "node:path";
@@ -52,7 +53,7 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "连接 KeePass" }).click();
-    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    const sourceDialog = dialogContent(page, { name: "连接 KeePass" });
     await sourceDialog.getByLabel("显示名称").fill("KeePass Group Source");
     await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
       name: "group-fixture.kdbx",
@@ -68,7 +69,7 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await expectMinimumTarget(manageGroups);
     await manageGroups.click();
 
-    const dialog = page.getByRole("dialog", { name: "KeePass 分组 · KeePass Group Source" });
+    const dialog = dialogContent(page, { name: "KeePass 分组 · KeePass Group Source" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");
@@ -89,7 +90,7 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await dialog.getByRole("button", { name: "新建分组" }).click();
     const createForm = dialog.locator(".keepass-group-create");
     await createForm.getByLabel("分组名称").fill("Projects");
-    await createForm.getByLabel("父分组").selectOption({ label: "Accounts > Work" });
+    await chooseOption(createForm.getByLabel("父分组"), { label: "Accounts > Work" });
     await createForm.getByRole("button", { name: "创建", exact: true }).click();
     await expect(groupRow(dialog, "Projects")).toContainText("Accounts > Work > Projects");
 
@@ -100,10 +101,10 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await renameForm.getByRole("button", { name: "保存名称" }).click();
     await expect(groupRow(dialog, "Client Projects")).toContainText("Accounts > Work > Client Projects");
 
-    await expect(groupRow(dialog, "Client Projects")).toHaveAttribute("aria-expanded", "true");
+    await expect(groupRow(dialog, "Client Projects").getByRole("button")).toHaveAttribute("aria-expanded", "true");
     await dialog.getByRole("button", { name: "移动", exact: true }).click();
     const moveForm = dialog.locator('[data-group-mode="move"]');
-    await moveForm.getByLabel("目标父分组").selectOption({ label: "Archive" });
+    await chooseOption(moveForm.getByLabel("目标父分组"), { label: "Archive" });
     await moveForm.getByRole("button", { name: "确认移动" }).click();
     await expect(groupRow(dialog, "Client Projects")).toContainText("Archive > Client Projects");
 
@@ -113,14 +114,14 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await expect(confirmDelete).toBeFocused();
     await expectMinimumTarget(confirmDelete);
     await confirmDelete.click();
-    await expect(dialog.getByRole("tab", { name: /回收站/ })).toHaveAttribute("aria-selected", "true");
+    await expect(dialog.getByRole("tab", { name: /回收站/ })).toHaveJSProperty("selected", true);
     const recycledWork = groupRow(dialog, "Work");
     await expect(recycledWork).toContainText("可恢复");
-    await expect(recycledWork).toHaveAttribute("aria-expanded", "true");
+    await expect(recycledWork.getByRole("button")).toHaveAttribute("aria-expanded", "true");
     await dialog.getByRole("button", { name: "恢复完整分组树" }).click();
     const restoreForm = dialog.locator('[data-group-mode="restore"]');
     await restoreForm.getByRole("button", { name: "确认恢复" }).click();
-    await expect(dialog.getByRole("tab", { name: /分组/ })).toHaveAttribute("aria-selected", "true");
+    await expect(dialog.getByRole("tab", { name: /^分组/ })).toHaveJSProperty("selected", true);
     await expect(groupRow(dialog, "Work")).toContainText("Accounts > Work");
     await expectNoHorizontalOverflow(dialog);
     await page.screenshot({ path: testInfo.outputPath("keepass-groups-dark-375-large-text.png") });
@@ -134,7 +135,7 @@ test("KeePass groups preserve nested KDBX data through create rename move recycl
     await page.getByRole("button", { name: "密码源" }).click();
     const refreshedCard = page.locator("m3e-card.source-card").filter({ has: page.getByRole("heading", { name: "KeePass Group Source" }) });
     await refreshedCard.getByRole("button", { name: "管理分组" }).click();
-    const lightDialog = page.getByRole("dialog", { name: "KeePass 分组 · KeePass Group Source" });
+    const lightDialog = dialogContent(page, { name: "KeePass 分组 · KeePass Group Source" });
     await expect(lightDialog).toHaveCSS("background-image", "none");
     await expectNoGradients(lightDialog);
     await expectNoHorizontalOverflow(lightDialog);
@@ -239,8 +240,13 @@ async function expectIconsRemainFixedSize(locator: Locator): Promise<void> {
     const rect = icon.getBoundingClientRect();
     if (!rect.width || !rect.height) return [];
     const fontSize = parseFloat(getComputedStyle(icon).fontSize);
-    const cropped = icon.scrollWidth - icon.clientWidth > 1 || icon.scrollHeight - icon.clientHeight > 1;
-    return fontSize > 24.1 || cropped ? [{ fontSize, width: rect.width, height: rect.height, clientWidth: icon.clientWidth, scrollWidth: icon.scrollWidth }] : [];
+    const glyph = icon.shadowRoot?.querySelector<HTMLElement>(".icon");
+    const glyphRect = glyph?.getBoundingClientRect();
+    const glyphSize = glyph ? parseFloat(getComputedStyle(glyph).fontSize) : fontSize;
+    // Icon font descenders can contribute invisible scroll overflow. Check
+    // the actual glyph container and type size against the rendered slot.
+    const cropped = glyphRect && (glyphRect.left < rect.left - 1 || glyphRect.right > rect.right + 1 || glyphRect.top < rect.top - 1 || glyphRect.bottom > rect.bottom + 1);
+    return fontSize > 24.1 || glyphSize > Math.min(rect.width, rect.height) + 1 || cropped ? [{ glyph: glyph?.textContent, fontSize, glyphSize, width: rect.width, height: rect.height, glyphRect }] : [];
   }));
   expect(issues).toEqual([]);
 }

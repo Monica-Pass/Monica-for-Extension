@@ -1,3 +1,4 @@
+import { chooseOption } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
@@ -127,6 +128,7 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("到期月").fill("12");
     await manager.getByLabel("到期年").fill("2030");
     await manager.getByLabel("安全码").fill("123");
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "更多银行卡信息" }).click();
     await manager.getByLabel("银行", { exact: true }).fill("Monica Bank");
     await manager.getByLabel("昵称", { exact: true }).fill("Travel");
     await manager.getByLabel("PIN", { exact: true }).fill("7890");
@@ -140,10 +142,11 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("币种", { exact: true }).fill("eur");
     await manager.getByLabel("客服电话", { exact: true }).fill("+4912345");
     await manager.getByLabel("账单地址 JSON", { exact: true }).fill('{"city":"Berlin","future":true}');
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "自定义字段" }).click();
     await manager.getByRole("button", { name: "添加字段" }).click();
     await manager.getByLabel("自定义字段 1 名称").fill("virtual");
     await manager.getByLabel("自定义字段 1 值").fill("true");
-    await manager.getByLabel("自定义字段 1 类型").selectOption("BOOLEAN");
+    await chooseOption(manager.getByLabel("自定义字段 1 类型"), "BOOLEAN");
     await manager.getByRole("button", { name: "加密保存" }).click();
     await expect(manager.getByText("Android Complete Card", { exact: true })).toBeVisible();
 

@@ -8,21 +8,28 @@ import { generateOtpUri } from "../../core/totp";
 import { parametersFromItem } from "../../core/login-otp";
 import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
-import { bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
+import { bitwardenComparablePayload, bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
 import { BitwardenAttachmentDownloadService } from "./bitwarden-attachments";
 import { isSteamMaFileLogin, isSteamMaFileName, parseSteamMaFile, STEAM_MAFILE_MAX_BYTES } from "./bitwarden-steam-mafile";
 import { PROVIDER_ATTACHMENT_CHUNK_BYTES, type ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { normalizeCredentialId } from "../../passkey/source-policy";
+import { assertPasskeyCounterNotRegressed, preservePasskeyCounterHistory, samePasskeyCredential } from "../../passkey/ownership-policy";
+import { BitwardenSyncCache, ciphersOf } from "./bitwarden-sync-cache";
 
 export class BitwardenProvider implements ProviderAdapter {
   readonly kind = "bitwarden" as const;
   private readonly client: BitwardenClient;
   private readonly attachmentDownloads: BitwardenAttachmentDownloadService;
+  private readonly syncCache: BitwardenSyncCache;
 
   constructor(fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {
     this.client = new BitwardenClient(fetcher);
     this.attachmentDownloads = new BitwardenAttachmentDownloadService({ fetcher });
+    this.syncCache = new BitwardenSyncCache(this.client);
   }
+
+  lock(): void { this.syncCache.clear(); }
+  lockAccount(providerId: string): void { this.syncCache.clear(providerId); }
 
   async testConnection(account: ProviderAccount, signal?: AbortSignal): Promise<void> {
     const config = readSession(account);
@@ -31,10 +38,18 @@ export class BitwardenProvider implements ProviderAdapter {
 
   async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
     let session = readSession(account);
-    const synced = await this.client.sync(session, context.signal);
-    session = synced.session;
-    const rawCiphers = arrayValue(synced.payload, "Ciphers", "ciphers").map(record);
     const localScoped = context.localItems.filter((item) => hasProviderReference(item, account.id));
+    const mayReuse = context.pendingMutations !== undefined && !context.pendingMutations.length
+      && !context.mutationReceipts?.length && !context.acknowledgedMutations?.length
+      && !localScoped.some(item => item.updatedAt !== providerReference(item, account.id)?.revision);
+    const synced = await this.syncCache.read(account.id, session, context.syncHint, mayReuse, context.signal);
+    session = synced.session;
+    if (synced.unchanged) return { items: context.localItems, conflicts: [], warnings: [], unchanged: true };
+    const rawCiphers = ciphersOf(synced.payload);
+    const verifiedEmptyDelta = !rawCiphers.length && synced.deletedIds.size > 0 && localScoped.every(item => {
+      const remoteId = baseCipherId(providerReference(item, account.id)?.remoteId);
+      return !remoteId || synced.deletedIds.has(remoteId);
+    });
     const unrelated = context.localItems.filter((item) => !hasProviderReference(item, account.id));
     const pendingByItemId = context.pendingMutations === undefined
       ? undefined
@@ -48,7 +63,7 @@ export class BitwardenProvider implements ProviderAdapter {
           return !reference?.remoteId || item.updatedAt !== reference.revision;
         })
       : localScoped.filter((item) => pendingByItemId.has(item.id));
-    if (!rawCiphers.length && hasExistingBaseline && !context.allowEmptyRemote) {
+    if (!rawCiphers.length && hasExistingBaseline && !context.allowEmptyRemote && !verifiedEmptyDelta) {
       return {
         items: context.localItems,
         accountPatch: { lastError: "Bitwarden 返回空密码库，已启用防误删保护。", config: bitwardenAccountConfig(session, synced.payload), requiresEmptyRemoteConfirmation: true },
@@ -57,7 +72,7 @@ export class BitwardenProvider implements ProviderAdapter {
         sourceRecords: await bitwardenSourceRecords(rawCiphers, account.id)
       };
     }
-    if (!rawCiphers.length && hasExistingBaseline && context.allowEmptyRemote && unsynchronizedForEmptyRemote.length) {
+    if (!rawCiphers.length && hasExistingBaseline && context.allowEmptyRemote && !verifiedEmptyDelta && unsynchronizedForEmptyRemote.length) {
       return {
         items: context.localItems,
         accountPatch: {
@@ -85,6 +100,7 @@ export class BitwardenProvider implements ProviderAdapter {
     let preservedUnsupportedRecords = 0;
     let unreadableRecords = 0;
     for (const rawCipher of rawCiphers) {
+      context.signal?.throwIfAborted();
       const cipherId = stringValue(rawCipher, "Id", "id");
       if (cipherId) rawByCipherId.set(cipherId, rawCipher);
       try {
@@ -96,9 +112,15 @@ export class BitwardenProvider implements ProviderAdapter {
           continue;
         }
         const folderId = stringValue(rawCipher, "FolderId", "folderId");
-        const decoded = await decodeBitwardenCipher(rawCipher, account.id, ownerKey, resolvedFolderNames.get(folderId));
+        const fingerprint = JSON.stringify(rawCipher);
+        const cached = synced.decoded.get(cipherId);
+        const reused = cached?.fingerprint === fingerprint;
+        const decoded = reused
+          ? { items: structuredClone(cached.items), warning: undefined, unsupported: false }
+          : await decodeBitwardenCipher(rawCipher, account.id, ownerKey, resolvedFolderNames.get(folderId));
+        let hydrationFailed = false;
         const steamCarrier = decoded.items.find((item): item is LoginItem => item.kind === "login" && isSteamMaFileLogin(item));
-        if (steamCarrier) {
+        if (steamCarrier && !reused) {
           try {
             const hydrated = await hydrateBitwardenSteamMaFile(
               this.attachmentDownloads,
@@ -113,9 +135,11 @@ export class BitwardenProvider implements ProviderAdapter {
             const index = decoded.items.indexOf(steamCarrier);
             decoded.items[index] = { ...steamCarrier, ...hydrated.fields };
           } catch (error) {
+            hydrationFailed = true;
             warnings.push(`Bitwarden Steam 项目 ${steamCarrier.title} 的 maFile 附件读取失败：${errorMessage(error)}`);
           }
         }
+        if (!decoded.warning && !hydrationFailed) synced.decoded.set(cipherId, { fingerprint, items: structuredClone(decoded.items) });
         remoteItems.push(...decoded.items);
         if (decoded.warning) {
           warnings.push(decoded.warning);
@@ -246,17 +270,51 @@ export class BitwardenProvider implements ProviderAdapter {
     const conflicts: ProviderSyncResult["conflicts"] = [...recoveryConflicts];
 
     for (const cipherId of cipherIds) {
-      const locals = localByCipher.get(cipherId) || [];
+      const locals = [...(localByCipher.get(cipherId) || [])];
       const remotes = remoteByCipher.get(cipherId) || [];
       if (skippedCipherIds.has(cipherId)) {
         merged.push(...locals);
         continue;
       }
       if (!locals.length) {
-        merged.push(...remotes);
+        // Record the observed baseline before any local edit or pending increment.
+        merged.push(...remotes.map(remote => remote.kind === "passkey" && remote.signCount > 0
+          ? { ...remote, signCountHighWaterMark: remote.signCount } : remote));
         continue;
       }
-      const customFieldMigration = prepareBitwardenCustomFieldMigration(locals, remotes, account.id, context.now, pendingByItemId);
+      // Check before any Cipher write, including parent-login edits. A queued local
+      // increment has a separate observed floor, so its own pending +1 is permitted.
+      const deletingCipher = locals.some(local => local.kind === "login" && local.deletedAt
+        && (!pendingByItemId || pendingByItemId.has(local.id)));
+      const counterRegressions = locals.flatMap((local, index) => {
+        const remote = findEquivalent(local, remotes);
+        if (deletingCipher || local.deletedAt || local.kind !== "passkey" || remote?.kind !== "passkey" || !samePasskeyCredential(local, remote)) return [];
+        try {
+          assertPasskeyCounterNotRegressed(remote, local);
+          // Even a conflicting/deferred edit has now observed this remote value.
+          // Keeping its local content later must not write an older counter back.
+          const observed = preservePasskeyCounterHistory(remote, local);
+          locals[index] = observed;
+          if (itemChanged(local, account.id)) assertPasskeyCounterNotRegressed(observed);
+          return [];
+        } catch (error) {
+          return [{ itemId: local.id, reason: errorMessage(error), local: locals[index], remote: { ...remote, id: local.id } }];
+        }
+      });
+      if (counterRegressions.length) {
+        conflicts.push(...counterRegressions);
+        for (const local of locals) {
+          if (counterRegressions.some(conflict => conflict.itemId === local.id)) continue;
+          if (pendingByItemId ? !pendingByItemId.has(local.id) : !itemChanged(local, account.id)) continue;
+          const remote = findEquivalent(local, remotes);
+          conflicts.push({ itemId: local.id, reason: "此 Bitwarden 登录包含签名计数回退的 Passkey，已保留待同步修改并停止写入。", local, remote: remote ? { ...remote, id: local.id } : undefined });
+        }
+        merged.push(...locals, ...remotes.filter(remote => !locals.some(local => Boolean(findEquivalent(local, [remote])))));
+        continue;
+      }
+      const customFieldMigration = context.readOnly
+        ? { locals, forcedItemIds: new Set<string>(), requestedMutations: [] }
+        : prepareBitwardenCustomFieldMigration(locals, remotes, account.id, context.now, pendingByItemId);
       requestedMutations.push(...customFieldMigration.requestedMutations);
       const workingLocals = customFieldMigration.locals;
       const raw = rawByCipherId.get(cipherId);
@@ -347,6 +405,9 @@ export class BitwardenProvider implements ProviderAdapter {
         for (const passkey of changes.filter((item): item is Extract<VaultItem, { kind: "passkey" }> => item.kind === "passkey")) {
           payload = await encodeBitwardenPasskeyCipher(passkey, cipherKey, payload, passkey.deletedAt ? "delete" : "upsert");
         }
+        // Enforce the server's optimistic concurrency check, including the read/write race
+        // between two devices incrementing a historical nonzero FIDO2 counter.
+        payload.lastKnownRevisionDate = stringValue(current.raw, "RevisionDate", "revisionDate");
         await markMutationsAttempted(context, changes, pendingByItemId);
         const updated = await this.client.updateCipher(session, cipherId, payload, context.signal);
         session = updated.session;
@@ -398,6 +459,9 @@ export class BitwardenProvider implements ProviderAdapter {
       }
     }
 
+    const sourceRecords = await bitwardenSourceRecords([...rawByCipherId.values()], account.id, synced.records);
+    context.signal?.throwIfAborted();
+    synced.commit([...rawByCipherId.values()]);
     return {
       items: merged,
       accountPatch: {
@@ -409,10 +473,11 @@ export class BitwardenProvider implements ProviderAdapter {
       },
       conflicts,
       warnings,
-      sourceRecords: await bitwardenSourceRecords([...rawByCipherId.values()], account.id),
+      sourceRecords,
       acknowledgedMutations,
       requestedMutations: requestedMutations.length ? requestedMutations : undefined,
-      adoptRemoteRemovals: Boolean(context.allowEmptyRemote && !rawCiphers.length && hasExistingBaseline)
+      adoptRemoteRemovals: Boolean(context.allowEmptyRemote && !rawCiphers.length && hasExistingBaseline),
+      confirmedRemovedItemIds: localScoped.filter(item => synced.deletedIds.has(baseCipherId(providerReference(item, account.id)?.remoteId) || "")).map(item => item.id)
     };
   }
 
@@ -654,20 +719,19 @@ function providerReference(item: VaultItem, providerId: string): ProviderReferen
   return item.providerRefs.find((reference) => reference.providerId === providerId);
 }
 
-async function bitwardenSourceRecords(ciphers: Record<string, unknown>[], providerId: string): Promise<ProviderSourceRecord[]> {
+async function bitwardenSourceRecords(ciphers: Record<string, unknown>[], providerId: string, cache?: Map<string, ProviderSourceRecord>): Promise<ProviderSourceRecord[]> {
   const records = ciphers.flatMap((cipher) => {
     const remoteId = stringValue(cipher, "Id", "id");
     if (!remoteId) return [];
     return [{ cipher, remoteId, payload: JSON.stringify(cipher) }];
   });
-  return Promise.all(records.map(({ cipher, remoteId, payload }) => createSourceRecord({
-    providerId,
-    remoteId,
-    revision: stringValue(cipher, "RevisionDate", "revisionDate") || undefined,
-    format: "bitwarden-cipher",
-    encoding: "json",
-    payload
-  })));
+  return Promise.all(records.map(async ({ cipher, remoteId, payload }) => {
+    const existing = cache?.get(remoteId);
+    if (existing?.payload === payload) return { ...existing };
+    const result = await createSourceRecord({ providerId, remoteId, revision: stringValue(cipher, "RevisionDate", "revisionDate") || undefined, format: "bitwarden-cipher", encoding: "json", payload });
+    cache?.set(remoteId, result);
+    return { ...result };
+  }));
 }
 
 function hasProviderReference(item: VaultItem, providerId: string): boolean {
@@ -746,10 +810,12 @@ function rebaseRemoteItems(remotes: VaultItem[], locals: VaultItem[], providerId
     if (deferred.some((candidate) => candidate.id === local.id)) return withRecoveredReference(local, providerId, providerReference(remote, providerId)?.remoteId || "", remote);
     if (local.kind === "passkey" && remote.kind === "passkey") {
       return {
-        ...remote,
+        ...preservePasskeyCounterHistory(local, remote),
         id: local.id,
         publicKey: remote.publicKey || local.publicKey,
         userVerificationRequired: local.userVerificationRequired,
+        backupEligible: local.backupEligible,
+        backupState: local.backupState,
         transports: local.transports,
         aaguid: local.aaguid,
         lastUsedAt: local.lastUsedAt,
@@ -790,6 +856,9 @@ function withRecoveredReference(local: VaultItem, providerId: string, remoteId: 
 }
 
 function sameVaultPayload(left: VaultItem, right: VaultItem): boolean {
+  if (left.kind === "passkey" && right.kind === "passkey") {
+    return JSON.stringify(bitwardenComparablePayload(left)) === JSON.stringify(bitwardenComparablePayload(right));
+  }
   return JSON.stringify(comparableVaultPayload(left)) === JSON.stringify(comparableVaultPayload(right));
 }
 

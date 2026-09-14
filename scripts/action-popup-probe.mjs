@@ -42,6 +42,7 @@ try {
   }));
   const manager = await ownerContext.newPage();
   await manager.goto(`chrome-extension://${extensionId}/index.html`);
+  await manager.getByRole("heading", { name: "创建加密密码库", exact: true }).waitFor();
   const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "popup icon probe password" }));
   assert(setup?.ok, "Action Popup probe could not create its temporary vault.");
   const locked = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }));
@@ -71,12 +72,14 @@ try {
       scrollWidth: document.documentElement.scrollWidth,
       rootWidth: rootElement?.getBoundingClientRect().width || 0,
       shellWidth: shell?.getBoundingClientRect().width || 0,
+      shellHeight: shell?.getBoundingClientRect().height || 0,
       text: document.body.innerText
     };
   });
   assert(metrics.innerWidth >= 370 && metrics.innerWidth <= 410, `Action Popup width must stay near 390px; received ${metrics.innerWidth}px.`);
   assert(metrics.rootWidth >= 370 && metrics.shellWidth >= 370, `Action Popup content collapsed: root=${metrics.rootWidth}px shell=${metrics.shellWidth}px.`);
   assert(metrics.innerHeight >= 480 && metrics.innerHeight <= 600, `Action Popup height is outside the usable range: ${metrics.innerHeight}px.`);
+  assert(metrics.shellHeight === 600, `Action Popup must reserve its full list height on first paint; received ${metrics.shellHeight}px.`);
   assert(metrics.scrollWidth <= metrics.clientWidth + 1, `Action Popup has horizontal overflow: client=${metrics.clientWidth}px scroll=${metrics.scrollWidth}px.`);
   assert(metrics.text.includes("Monica") && metrics.text.includes("密码库已锁定") && metrics.text.includes("管理密码库"), "Action Popup did not render the expected locked Monica controls.");
   if (process.env.MONICA_POPUP_SCREENSHOT_NORMAL) {
@@ -180,6 +183,7 @@ try {
     return chrome.runtime.sendMessage({
       type: "VAULT_IMPORT_ITEMS",
       items: [
+        { id: "probe-match", kind: "login", title: "当前网站的工作账号", username: "work@example.test", password: "synthetic-work-secret", totpSecret: "JBSWY3DPEHPK3PXP", uris: ["https://popup-probe.example.test"], favorite: true, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
         { id: "probe-github", kind: "login", title: "GitHub 账号", username: "joy@github", password: "gh-secret", uris: ["https://github.com"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
         { id: "probe-forum", kind: "login", title: "论坛账号", username: "ling@forum", password: "forum-secret", uris: ["https://forum.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] },
         { id: "probe-long", kind: "login", title: "一个非常非常长的登录项标题用来验证列表不会把弹窗撑出横向滚动条", username: "extremely-long-username-for-overflow-regression@example-domain.test", password: "long-secret", uris: ["https://long.example"], favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: [], customFields: [] }
@@ -189,8 +193,47 @@ try {
   assert(seeded?.ok, `Action Popup search probe could not seed logins: ${seeded?.error || "unknown"}`);
   await popup.evaluate(() => window.__monicaPopupRefresh());
   await popup.getByText("全部登录项").waitFor({ timeout: 15000 });
+  await popup.locator("#popup-matches .popup-totp-icon").waitFor({ state: "visible" });
   const overflow = await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
   assert(overflow.scroll <= overflow.client + 1, `Action Popup global list causes horizontal overflow: client=${overflow.client} scroll=${overflow.scroll}`);
+  const rowIssues = await popup.locator(".login-row").evaluateAll((rows) => rows.flatMap((row) => {
+    const box = row.getBoundingClientRect();
+    const issues = [...row.querySelectorAll(".popup-item-title, .popup-item-subtitle, .row-actions")].flatMap((part) => {
+      const area = part.getBoundingClientRect();
+      return area.left >= box.left - 1 && area.right <= box.right + 1 && area.top >= box.top - 1 && area.bottom <= box.bottom + 1 ? [] : [part.className];
+    });
+    const icon = row.querySelector(".credential-icon").getBoundingClientRect();
+    const title = row.querySelector(".popup-item-title").getBoundingClientRect();
+    if (icon.left < box.left + 7 || title.left < icon.right + 7) issues.push("Squeezed website icon");
+    return issues;
+  }));
+  assert(!rowIssues.length, `Action Popup account text and actions overlap at 200% text: ${rowIssues.join(", ")}`);
+  await popup.emulateMedia({ colorScheme: "light" });
+  await popup.evaluate(() => {
+    document.documentElement.style.fontSize = "100%";
+    document.querySelector(".popup-shell").scrollTop = 0;
+  });
+  await saveListScreenshot(popup, "MONICA_POPUP_SCREENSHOT_LIST");
+  if (process.env.MONICA_POPUP_DIAGNOSTICS) console.log(JSON.stringify(await popup.locator(".login-row-main").evaluateAll((rows) => rows.map(row => {
+    const inner = row.shadowRoot.querySelector("m3e-list-item-button") || row;
+    const base = inner.shadowRoot.querySelector(".base");
+    const content = inner.shadowRoot.querySelector(".content");
+    const leading = inner.shadowRoot.querySelector('slot[name="leading"]');
+    const icon = row.querySelector(".credential-icon");
+    const title = row.querySelector(".popup-item-title");
+    return {
+      mainWidth: row.getBoundingClientRect().width,
+      padding: getComputedStyle(base).padding,
+      gap: getComputedStyle(base).columnGap,
+      contentWidth: content.getBoundingClientRect().width,
+      contentMinWidth: getComputedStyle(content).minWidth,
+      leadingWidth: leading.getBoundingClientRect().width,
+      iconWidth: icon.getBoundingClientRect().width,
+      iconLeft: icon.getBoundingClientRect().left,
+      titleLeft: title.getBoundingClientRect().left,
+      titleWidth: title.getBoundingClientRect().width
+    };
+  })), null, 2));
   await popup.getByLabel("搜索全部登录项").fill("github");
   await popup.waitForTimeout(300);
   const searchText = await popup.locator(".popup-shell").innerText();
@@ -198,6 +241,16 @@ try {
   assert(!searchText.includes("论坛账号"), "Action Popup search leaked a non-matching login.");
   await popup.getByRole("button", { name: "复制用户名" }).first().click();
   await popup.getByText("已复制用户名").waitFor({ timeout: 5000 });
+  assert(await site.locator('input[autocomplete="username"]').inputValue() === "" && await site.locator('input[type="password"]').inputValue() === "", "Copying an account must not also fill the webpage.");
+  const copyPassword = popup.getByRole("button", { name: "复制密码" }).first();
+  await copyPassword.focus();
+  await popup.keyboard.press("Enter");
+  await popup.getByText("已复制密码").waitFor({ timeout: 5000 });
+  assert(await site.locator('input[type="password"]').inputValue() === "", "Keyboard copying must not trigger the neighboring fill action.");
+  await popup.getByLabel("搜索全部登录项").fill("");
+  await popup.locator("#popup-matches").getByRole("button", { name: /当前网站的工作账号/ }).click();
+  await popup.getByText(/已填充 当前网站的工作账号/).waitFor({ timeout: 5000 });
+  assert(await site.locator('input[autocomplete="username"]').inputValue() === "work@example.test" && await site.locator('input[type="password"]').inputValue() === "synthetic-work-secret", "The M3E account row did not fill the selected login.");
 
   await site.goto("chrome://version/");
   await popup.evaluate(() => window.__monicaPopupRefresh());
@@ -206,6 +259,9 @@ try {
   await popup.waitForTimeout(300);
   const unsupportedText = await popup.locator(".popup-shell").innerText();
   assert(unsupportedText.includes("全部登录项"), "Action Popup hid the global login list on an unsupported page.");
+  assert(await popup.locator(".login-row-main").getByRole("button").count() === 0, "An unsupported page must expose account information without an active fill button.");
+  await popup.evaluate(() => { document.querySelector(".popup-shell").scrollTop = 0; });
+  await saveListScreenshot(popup, "MONICA_POPUP_SCREENSHOT_LIST_UNSUPPORTED");
   await popup.getByLabel("搜索全部登录项").fill("论坛");
   await popup.waitForTimeout(300);
   const unsupportedFiltered = await popup.locator(".popup-shell").innerText();
@@ -220,6 +276,16 @@ try {
   const profileTempRoot = await realpath(tmpdir());
   assert(dirname(resolvedProfile) === profileTempRoot && basename(resolvedProfile).startsWith("monica-action-popup-"), "Refusing to remove an unexpected Popup profile directory.");
   await rm(resolvedProfile, { recursive: true, force: true });
+}
+
+async function saveListScreenshot(popup, variable) {
+  if (!process.env[variable]) return;
+  const screenshotPath = resolve(root, process.env[variable]);
+  await mkdir(dirname(screenshotPath), { recursive: true });
+  await popup.evaluate(() => { document.scrollingElement.scrollTop = 0; document.querySelector(".popup-shell").scrollTop = 0; });
+  await popup.mouse.move(0, 0);
+  await popup.screenshot({ path: screenshotPath, animations: "disabled" });
+  console.log(`Saved account list screenshot to ${screenshotPath}.`);
 }
 
 async function reservePort() {

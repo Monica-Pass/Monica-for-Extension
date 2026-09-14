@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Download, type Page, type Route, type TestInfo } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
 import path from "node:path";
@@ -36,6 +37,9 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
   try {
     const launched = await launchExtension(testInfo);
     context = launched.context;
+    // This scenario drives each sync explicitly. Automatic sync has its own
+    // suite and must not replace the pending conflict during confirmation.
+    await launched.manager.evaluate(() => chrome.storage.local.set({ "monica.sync.preferences.v1": { enabled: false } }));
     await context.route("https://dav.example.test/**", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -92,7 +96,7 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
     await expect(launched.manager.getByText("1 个冲突", { exact: true })).toBeVisible();
     await expect(launched.manager.getByText("敏感字段不在此处显示", { exact: false })).toBeVisible();
     await launched.manager.getByRole("button", { name: "采用 Android 版本" }).click();
-    const confirmation = launched.manager.getByRole("dialog", { name: "采用 Android 版本？" });
+    const confirmation = dialogContent(launched.manager, { name: "采用 Android 版本？" });
     await expect(confirmation).toBeVisible();
     await expect(confirmation).not.toContainText("local-conflict-secret");
     await expect(confirmation).not.toContainText("remote-conflict-secret");
@@ -139,7 +143,7 @@ test("Android WebDAV backup encryption password is optional and has no minimum l
 
     await launched.manager.getByRole("button", { name: "密码源" }).click();
     await launched.manager.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    const dialog = launched.manager.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    const dialog = dialogContent(launched.manager, { name: "连接 Monica Android WebDAV" });
     await expect(dialog.getByLabel("Android 备份加密密码（可选）")).toHaveAttribute("placeholder", "留空使用普通 ZIP");
     await dialog.getByLabel("WebDAV 地址 *").fill("https://optional-dav.example.test/root");
     await dialog.getByRole("button", { name: "加密保存" }).click();
@@ -191,7 +195,7 @@ test("KeePass UI unlocks with an empty password and key file, exposes dirty stat
 
     await launched.manager.getByRole("button", { name: "密码源" }).click();
     await launched.manager.getByRole("button", { name: "连接 KeePass" }).click();
-    const dialog = launched.manager.getByRole("dialog", { name: "连接 KeePass" });
+    const dialog = dialogContent(launched.manager, { name: "连接 KeePass" });
     await dialog.getByLabel("KeePass 数据库文件").setInputFiles({ name: "key-file-fixture.kdbx", mimeType: "application/octet-stream", buffer: Buffer.from(database) });
     await dialog.getByLabel("密钥文件（可选）").setInputFiles({ name: "fixture.key", mimeType: "application/octet-stream", buffer: Buffer.from(keyFile) });
     await expect(dialog.getByText("仅密钥文件", { exact: true })).toBeVisible();

@@ -28,7 +28,7 @@ const sourceTreeClean = git("status", "--porcelain", "--untracked-files=no") ===
 if (!sourceTreeClean && !process.argv.includes("--allow-dirty")) throw new Error("Refusing to create a trusted release from a dirty tracked worktree.");
 
 const distEntries = await readDistEntries();
-for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html"]) {
+for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "passkey-verify.html"]) {
   if (!distEntries.has(required)) throw new Error(`Release is missing ${required}`);
 }
 const manifest = JSON.parse(new TextDecoder().decode(distEntries.get("manifest.json")));

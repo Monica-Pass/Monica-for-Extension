@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import * as kdbxweb from "kdbxweb";
@@ -25,7 +26,7 @@ interface RemoteState {
   putCount: number;
 }
 
-test("remote KeePass configures safely and presents restorable and pending states after worker restart", async ({}, testInfo) => {
+test("with automatic sync disabled, remote KeePass presents restorable and pending states after worker restart", async ({}, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {
@@ -43,10 +44,13 @@ test("remote KeePass configures safely and presents restorable and pending state
     const launched = await launchExtension(testInfo, remote);
     context = launched.context;
     const page = launched.manager;
+    // Manual mode must retain the explicit recovery and durable pending states.
+    // Automatic recovery is exercised in automatic-webdav-sync.spec.ts.
+    await page.evaluate(() => chrome.storage.local.set({ "monica.sync.preferences.v1": { enabled: false } }));
 
     await openProviders(page);
     await page.getByRole("button", { name: "连接 KeePass" }).click();
-    const dialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    const dialog = dialogContent(page, { name: "连接 KeePass" });
     await expect(dialog).toBeVisible();
     await dialog.getByLabel("WebDAV 文件").check();
     await dialog.getByLabel("显示名称").fill("Remote KeePass UI");
@@ -81,7 +85,7 @@ test("remote KeePass configures safely and presents restorable and pending state
     expect(JSON.stringify(providers)).not.toMatch(new RegExp(`${escapeRegExp(DATABASE_PASSWORD)}|${escapeRegExp(WEBDAV_PASSWORD)}|ui-etag-1|remote-ui-private-secret`));
 
     await card.getByRole("button", { name: "管理 KeePass" }).click();
-    const editDialog = page.getByRole("dialog", { name: "管理 KeePass" });
+    const editDialog = dialogContent(page, { name: "管理 KeePass" });
     await expect(editDialog.getByLabel("WebDAV 地址")).toHaveValue(`${REMOTE_ORIGIN}/dav`);
     await expect(editDialog.getByLabel("用户名")).toHaveValue("remote-ui-user");
     await expect(editDialog.getByLabel("远端 .kdbx 位置")).toHaveValue("vaults/main.kdbx");
@@ -227,6 +231,7 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     const stored = await fixturePasskeyEntry(remote.bytes, rpId);
     expect(stored.credentialId).toBe(created[0].credentialId);
     expect(stored.privateKeyPem).toContain("BEGIN PRIVATE KEY");
+    const savedBeforeAuthentication = Buffer.from(remote.bytes);
 
     await page.locator("#authenticate").click();
     const prompt = page.locator("#monica-passkey-prompt-host");
@@ -241,14 +246,15 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     expect(signed[0]).toMatchObject({ useCount: 1, lastUsedAt: expect.any(String) });
 
     expect(await send(launched.manager, { type: "PROVIDER_SYNC", providerId })).toMatchObject({ ok: true, data: { conflicts: 0 } });
-    expect(remote.putCount).toBe(2);
+    expect(remote.putCount).toBe(1);
+    expect(Buffer.from(remote.bytes)).toEqual(savedBeforeAuthentication);
     const storedAfterSign = await fixturePasskeyEntry(remote.bytes, rpId);
     expect(storedAfterSign.credentialId).toBe(created[0].credentialId);
-    expect(storedAfterSign.useCount).toBe(1);
+    expect(storedAfterSign.useCount).toBe(0);
 
     expect(await send(launched.manager, { type: "VAULT_DELETE_ITEM", itemId: created[0].id })).toMatchObject({ ok: true });
     expect(await send(launched.manager, { type: "PROVIDER_SYNC", providerId })).toMatchObject({ ok: true, data: { conflicts: 0 } });
-    expect(remote.putCount).toBe(3);
+    expect(remote.putCount).toBe(2);
     expect(await vaultPasskeys(launched.manager)).toHaveLength(0);
     await expect(fixturePasskeyEntry(remote.bytes, rpId)).rejects.toThrow("Passkey 条目");
     await expectSecretsAbsent(launched.manager);
@@ -369,7 +375,7 @@ async function installRemoteRoute(context: BrowserContext, remote: RemoteState):
 async function connectRemoteKeePass(page: Page, name: string): Promise<string> {
   await openProviders(page);
   await page.getByRole("button", { name: "连接 KeePass" }).click();
-  const dialog = page.getByRole("dialog", { name: "连接 KeePass" });
+  const dialog = dialogContent(page, { name: "连接 KeePass" });
   await dialog.getByLabel("WebDAV 文件").check();
   await dialog.getByLabel("显示名称").fill(name);
   await dialog.getByLabel("WebDAV 地址").fill(`${REMOTE_ORIGIN}/dav`);

@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
@@ -55,7 +56,8 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.reload();
     await openLoginSection(manager);
     await manager.getByRole("row").filter({ hasText: "Native SSH" }).getByRole("button", { name: "编辑登录项" }).click();
-    const nativeDialog = manager.getByRole("dialog", { name: "编辑登录项" });
+    const nativeDialog = dialogContent(manager, { name: "编辑登录项" });
+    await nativeDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(nativeDialog.getByText("Bitwarden 原生 SSH Cipher（Type 5）", { exact: false })).toBeVisible();
     await expect(nativeDialog.getByLabel("算法", { exact: true })).toHaveAttribute("readonly", "");
     await nativeDialog.getByLabel("OpenSSH 公钥", { exact: true }).fill("ssh-ed25519 AAAAC3Nza updated@example");
@@ -74,14 +76,16 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.reload();
     await openLoginSection(manager);
     await manager.getByRole("row").filter({ hasText: "Native SSH" }).getByRole("button", { name: "编辑登录项" }).click();
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(manager.getByLabel("密钥位数", { exact: true })).toHaveValue("256");
     await expect(manager.getByLabel("注释", { exact: true })).toHaveValue("local encrypted metadata");
     await manager.getByRole("button", { name: "关闭" }).click();
 
     await manager.getByRole("button", { name: "新建", exact: true }).click();
-    const createDialog = manager.getByRole("dialog", { name: "添加登录项" });
+    const createDialog = dialogContent(manager, { name: "添加登录项" });
     await createDialog.getByLabel("名称 *", { exact: true }).fill("Fallback SSH");
-    await createDialog.getByLabel("SSH 密钥", { exact: true }).check();
+    await chooseOption(createDialog.getByRole("combobox", { name: "项目类型", exact: true }), "SSH_KEY");
+    await createDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(createDialog.getByText("保存到 Bitwarden 时将使用 Monica Android 兼容格式", { exact: false })).toBeVisible();
     await createDialog.getByLabel("算法", { exact: true }).fill("RSA");
     await createDialog.getByLabel("密钥位数", { exact: true }).fill("4096");
@@ -106,7 +110,8 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.reload();
     await openLoginSection(manager);
     await manager.getByRole("row").filter({ hasText: "Fallback SSH" }).getByRole("button", { name: "编辑登录项" }).click();
-    const fallbackDialog = manager.getByRole("dialog", { name: "编辑登录项" });
+    const fallbackDialog = dialogContent(manager, { name: "编辑登录项" });
+    await fallbackDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(fallbackDialog.getByText("Monica Android 兼容格式（Type 1 + 加密字段）", { exact: false })).toBeVisible();
     await expectNoGradients(fallbackDialog);
     expect(await manager.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

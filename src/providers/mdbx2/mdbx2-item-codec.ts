@@ -3,6 +3,7 @@ import { exportSteamMaFile, parseSteamMaFile } from "../../core/steam-mafile";
 import { androidRecordToItem, vaultItemToAndroidRecord } from "../webdav/android-backup-codec";
 import type { Mdbx2ObjectRecord, Mdbx2ObjectUpsertInput } from "./native-contract";
 import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
+import { apiTokenFromPayload, apiTokenValidationError, serializeApiTokenPayload, serializeApiTokenMetadata } from "../../core/api-token";
 
 export interface Mdbx2ObjectMetadata {
   headCommitId: string;
@@ -34,6 +35,20 @@ export function decodeMdbx2Object(
 ): Mdbx2DecodedObject {
   const payload = parsePayload(record.payloadJson);
   const logicalObjectId = stringValue(payload.monica_entry_id) || record.objectId;
+  if (record.objectTypeId === "api-token") {
+    const logicalId = `api-token:${record.objectId}`;
+    // An old Host cannot disclose the Android label metadata. Do not expose an
+    // editable partial record that would overwrite notes, fields or favorites.
+    const decoded = record.apiTokenFavorite === undefined ? undefined : apiTokenFromPayload(record.payloadJson, record.apiTokenMetadataJson);
+    if (!decoded) return { logicalObjectId: logicalId, payload, unsupportedReason: "API 密钥需要新版本机助手及有效的 Android 数据结构；原始记录已保留。" };
+    const updatedAt = normalizedDate(metadata.updatedAt);
+    return { logicalObjectId: logicalId, payload, item: {
+      id: `mdbx2:${providerId}:${logicalId}`, kind: "api-token", title: record.title,
+      ...decoded, favorite: record.apiTokenFavorite === true, createdAt: updatedAt, updatedAt,
+      deletedAt: record.deleted ? updatedAt : undefined, replicaGroupId: logicalId, mdbxFolderId: record.collectionId,
+      providerRefs: [{ providerId, remoteId: record.objectId, remoteFolderId: record.collectionId, revision: metadata.headCommitId }]
+    } };
+  }
   if (isSteamMaFileType(record.objectTypeId)) {
     return decodeSteamMaFileObject(record, metadata, providerId, logicalObjectId, payload);
   }
@@ -86,6 +101,15 @@ export function encodeMdbx2Object(
   const logicalObjectId = logicalIdFor(item);
   const objectTypeId = objectTypeFor(item);
   if (!objectTypeId) return undefined;
+  if (item.kind === "api-token") {
+    const error = apiTokenValidationError(item);
+    if (error) throw new Error(error);
+    return {
+      logicalObjectId, collectionId: item.mdbxFolderId, objectTypeId, title: item.title,
+      payloadJson: serializeApiTokenPayload(item),
+      apiTokenMetadataJson: serializeApiTokenMetadata(item), apiTokenFavorite: item.favorite
+    };
+  }
   if (isSteamMaFileItem(item)) {
     const steamItem = item as TotpItem;
     const sharedSecret = steamItem.steamSharedSecretBase64 || steamItem.secret;
@@ -161,6 +185,8 @@ export function encodeMdbx2Object(
     payload.transports = (item.transports || []).join(",");
     payload.aaguid = item.aaguid || "";
     payload.sign_count = item.signCount;
+    if (typeof item.backupEligible === "boolean") payload.backup_eligible = item.backupEligible;
+    if (typeof item.backupState === "boolean") payload.backup_state = item.backupState;
     payload.passkey_mode = item.passkeyMode || "LEGACY";
     payload.bitwarden_compatible = item.sourceMode === "bitwarden" || Boolean(item.keyAlgorithm);
     payload.keepass_compatible = item.passkeyMode === "KEEPASS_COMPAT";
@@ -241,6 +267,8 @@ function androidRawRecord(
       transports: payload.transports ?? "internal",
       aaguid: payload.aaguid ?? "",
       signCount: payload.sign_count ?? 0,
+      backupEligible: payload.backup_eligible,
+      backupState: payload.backup_state,
       notes: payload.notes ?? "",
       passkeyMode: payload.passkey_mode ?? "LEGACY"
     };
@@ -253,6 +281,10 @@ function androidRawRecord(
 }
 
 function logicalIdFor(item: VaultItem): string {
+  if (item.kind === "api-token") {
+    if (item.replicaGroupId?.startsWith("api-token:")) return item.replicaGroupId;
+    return `api-token:${item.id}`;
+  }
   const prefix = isSteamMaFileItem(item) ? "steam-mafile"
     : item.kind === "login" ? "password"
     : item.kind === "secure-note" ? "note"
@@ -277,7 +309,8 @@ function objectTypeFor(item: VaultItem): string | undefined {
     identity: "document-ref",
     "billing-address": "billing-address",
     "payment-account": "payment-account",
-    passkey: "passkey"
+    passkey: "passkey",
+    "api-token": "api-token"
   } as const)[item.kind];
 }
 

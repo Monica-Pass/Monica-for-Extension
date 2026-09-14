@@ -1,3 +1,4 @@
+import { chooseOption } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
@@ -15,14 +16,14 @@ test("browser language initializes the UI, system appearance follows changes, an
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(manager.getByRole("heading", { name: "Create encrypted vault" })).toBeVisible();
     await expect(manager.locator("html")).toHaveAttribute("lang", "en");
-    await expect(manager.locator("html")).toHaveAttribute("data-palette", "nothing");
+    await expect(manager.locator("html")).toHaveAttribute("data-palette", "monica");
     await expect(manager.locator("html")).toHaveAttribute("data-theme", "light");
     await manager.emulateMedia({ colorScheme: "dark" });
     await expect(manager.locator("html")).toHaveAttribute("data-theme", "dark");
     await manager.getByLabel("Master password", { exact: true }).fill("localized vault master password");
     await manager.getByLabel("Confirm master password", { exact: true }).fill("localized vault master password");
     await manager.getByRole("button", { name: "Create and unlock", exact: true }).click();
-    await expect(manager.getByRole("heading", { name: "Vault overview" })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "All items", exact: true })).toBeVisible();
     const now = new Date().toISOString();
     expect(await manager.evaluate((item) => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), {
       id: "localized-note", kind: "secure-note", title: "我的中文笔记", content: "不要翻译我的数据 <>&", notes: "原始备注",
@@ -35,16 +36,21 @@ test("browser language initializes the UI, system appearance follows changes, an
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
     await expect(popup.locator("html")).toHaveAttribute("lang", "en");
-    await manager.getByLabel("Interface language", { exact: true }).selectOption("zh-CN");
+    await manager.getByRole("navigation").getByRole("button", { name: "Settings and backups", exact: true }).click();
+    await expect(manager.locator(".sidebar").getByRole("combobox")).toHaveCount(0);
+    await chooseOption(manager.locator(".settings-page").getByLabel("Interface language", { exact: true }), "zh-CN");
     await expect(popup.locator("html")).toHaveAttribute("lang", "zh-CN");
-    await expect(popup.getByLabel("界面语言", { exact: true })).toHaveValue("zh-CN");
-    await popup.getByLabel("界面语言", { exact: true }).selectOption("en");
+    await expect(popup.getByLabel("界面语言", { exact: true })).toHaveJSProperty("value", "zh-CN");
+    await chooseOption(popup.getByLabel("界面语言", { exact: true }), "en");
     await expect(manager.locator("html")).toHaveAttribute("lang", "en");
+    await expect(manager.locator(".settings-page").getByLabel("Interface language", { exact: true })).toHaveJSProperty("value", "en");
+    await manager.getByRole("navigation").getByRole("button", { name: /^Secure Note/ }).click();
     await expect(manager.getByText("我的中文笔记", { exact: true })).toBeVisible();
     const vault = await manager.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" }));
     expect(vault).toMatchObject({ ok: true, data: [expect.objectContaining({ title: "我的中文笔记", content: "不要翻译我的数据 <>&", notes: "原始备注" })] });
     await manager.reload();
-    await expect(manager.getByLabel("Interface language", { exact: true })).toHaveValue("en");
+    await manager.getByRole("navigation").getByRole("button", { name: "Settings and backups", exact: true }).click();
+    await expect(manager.locator(".settings-page").getByLabel("Interface language", { exact: true })).toHaveJSProperty("value", "en");
   } finally { await context.close(); }
 });
 
@@ -64,7 +70,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "English layout master password" }))).toMatchObject({ ok: true });
       await manager.reload();
       await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-      const sections = ["Overview", "Login", "Wallet and identity", "Secure Note", "Verification codes", "Steam", "Passkey", "Secure Send", "Archive", "Recycle Bin", "Sources", "Settings and backups", "Generator"];
+      const sections = ["All items", "API key", "Login", "Wallet and identity", "Secure Note", "Verification codes", "Steam", "Passkey", "Secure Send", "Archive", "Recycle Bin", "Sources", "Settings and backups", "Generator"];
       const issues: Array<{ section: string; label: string }> = [];
       for (const section of sections) {
         await manager.getByRole("button", { name: "Open navigation", exact: true }).click();

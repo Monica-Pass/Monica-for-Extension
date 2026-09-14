@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Download, type Locator, type Page, type TestInfo } from "@playwright/test";
 import * as kdbxweb from "kdbxweb";
 import path from "node:path";
@@ -57,7 +58,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "连接 KeePass" }).click();
-    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    const sourceDialog = dialogContent(page, { name: "连接 KeePass" });
     await sourceDialog.getByLabel("显示名称").fill("KeePass Attachment Source");
     await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
       name: "attachment-fixture.kdbx",
@@ -84,7 +85,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await expectMinimumTarget(manageButton);
     await manageButton.click();
 
-    const dialog = page.getByRole("dialog", { name: "附件 · KeePass attachment account" });
+    const dialog = dialogContent(page, { name: "附件 · KeePass attachment account" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");
@@ -186,7 +187,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "管理 KeePass attachment account 的附件" }).click();
-    const lightDialog = page.getByRole("dialog", { name: "附件 · KeePass attachment account" });
+    const lightDialog = dialogContent(page, { name: "附件 · KeePass attachment account" });
     await expect(lightDialog).toHaveCSS("background-image", "none");
     await expectNoGradients(lightDialog);
     await expectNoHorizontalOverflow(lightDialog);
@@ -249,7 +250,7 @@ test("KeePass Android-managed bank-card photos have front/back controls and pres
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "连接 KeePass" }).click();
-    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    const sourceDialog = dialogContent(page, { name: "连接 KeePass" });
     await sourceDialog.getByLabel("显示名称").fill("KeePass Managed Photo Source");
     await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
       name: "managed-photo-fixture.kdbx",
@@ -269,7 +270,7 @@ test("KeePass Android-managed bank-card photos have front/back controls and pres
     await expect(cardRow).toBeVisible();
     await cardRow.getByRole("button", { name: "管理 Android Bank Card 的附件" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "附件 · Android Bank Card" });
+    const dialog = dialogContent(page, { name: "附件 · Android Bank Card" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("银行卡照片", { exact: true })).toBeVisible();
     await expect(dialog.getByText("使用 Monica Android 保留的 KDBX 文件名", { exact: false })).toBeVisible();

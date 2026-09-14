@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { computed, reactive, ref, watch } from "vue";
@@ -29,6 +30,7 @@ const props = defineProps<{
   item?: VaultItem;
   initialKind: EditableVaultKind;
   providers: ProviderAccount[];
+  saveItem: (item: VaultItem) => Promise<void>;
 }>();
 const emit = defineEmits<{ cancel: []; save: [item: VaultItem] }>();
 
@@ -38,6 +40,7 @@ const kind = ref<EditableVaultKind>(
     : props.initialKind,
 );
 const error = ref("");
+const saving = ref(false);
 const otpTransferInput = ref("");
 const otpQrDataUrl = ref("");
 const otpTransferStatus = ref("");
@@ -208,7 +211,8 @@ function initialize() {
   }
 }
 
-function submit() {
+async function submit() {
+  if (saving.value) return;
   error.value = "";
   const title = fields.title.trim();
   if (!title) return void (error.value = tr('请输入名称。'));
@@ -229,7 +233,10 @@ function submit() {
     return void (error.value = tr('请输入笔记内容。'));
   if (kind.value === "totp" && !fields.secret.trim())
     return void (error.value = tr('请输入验证码密钥。'));
-  emit("save", buildItem(title));
+  saving.value = true;
+  try { await props.saveItem(buildItem(title)); }
+  catch (failure) { error.value = failure instanceof Error ? tr(failure.message) : tr('保存失败，请重试。'); }
+  finally { saving.value = false; }
 }
 
 function buildItem(title: string): VaultItem {
@@ -749,403 +756,347 @@ function exportMaFile() {
 </script>
 
 <template>
-  <div
-    class="modal-backdrop"
-    role="presentation"
-    @mousedown.self="emit('cancel')"
-  >
-    <section
-      class="editor-dialog vault-item-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="vault-item-editor-title"
-    >
-      <header>
-        <div>
-          <h2 id="vault-item-editor-title">
+  <m3e-dialog v-material-dialog open class="material-dialog material-editor-dialog" :disableClose.prop="saving" :dismissible="!saving" :close-label="tr('关闭')" @closed.self="emit('cancel')">
+<h2 slot="header" id="vault-item-editor-title">
             {{
               item ? tr('编辑{0}', { 0: itemKindLabel(kind) }) : tr('添加{0}', { 0: itemKindLabel(kind) })
             }}
           </h2>
-        </div>
-        <m3e-icon-button :aria-label="tr('关闭')" @click="emit('cancel')"
-          ><m3e-icon name="close"></m3e-icon
-        ></m3e-icon-button>
-      </header>
-      <form class="editor-form editor-with-actions" @submit.prevent="submit">
-        <div class="editor-fields vault-item-form">
-        <p class="editor-intro field-wide">{{ tr('保存时整个密码库会重新加密；敏感字段不会写入浏览器普通存储。') }}</p>
-        <label v-if="!item" class="field field-wide"
-          ><span>{{ tr('项目类型') }}</span
-          ><select v-model="kind">
-            <option value="card">{{ tr('银行卡') }}</option>
-            <option value="identity">{{ tr('证件') }}</option>
-            <option value="billing-address">{{ tr('账单地址') }}</option>
-            <option value="payment-account">{{ tr('支付账号') }}</option>
-            <option value="secure-note">{{ tr('安全笔记') }}</option>
-            <option value="totp">{{ tr('动态验证码') }}</option>
-          </select></label
-        >
-        <label class="field field-wide"
-          ><span>{{ tr('名称 *') }}</span
-          ><input v-model="fields.title" autofocus autocomplete="off"
-        /></label>
-
-        <template v-if="kind === 'card'"
-          ><label class="field"
-            ><span>{{ tr('持卡人') }}</span
-            ><input
+<form id="vault-item-form" class="material-editor-form editor-form editor-with-actions" @submit.prevent="submit">
+        <div class="editor-fields vault-item-form structured-editor"><section class="editor-section editor-basics" :aria-label="tr('基本信息')"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field editor-title-field"><label slot="label">{{ tr('名称 *') }}</label><input v-model="fields.title" autofocus autocomplete="off" /></m3e-form-field><div class="editor-meta-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker v-if="!item" class="field"
+          ><label slot="label">{{ tr('项目类型') }}</label><component :is="materialSelectTag" @input="kind = ($event.target as HTMLElement &amp; { value: string }).value" >
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('card')" value="card">{{ tr('银行卡') }}</component>
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('identity')" value="identity">{{ tr('证件') }}</component>
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('billing-address')" value="billing-address">{{ tr('账单地址') }}</component>
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('payment-account')" value="payment-account">{{ tr('支付账号') }}</component>
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('secure-note')" value="secure-note">{{ tr('安全笔记') }}</component>
+            <component :is="materialOptionTag" :selected.prop="String(kind ?? '') === String('totp')" value="totp">{{ tr('动态验证码') }}</component>
+          </component></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field"
+          ><label slot="label">{{ tr('保存到') }}</label><component :is="materialSelectTag" @input="fields.providerId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="Boolean(item)">
+            <component :is="materialOptionTag" :selected.prop="String(fields.providerId ?? '') === String(provider.id)"
+              v-for="provider in eligibleProviders"
+              :key="provider.id"
+              :value="provider.id"
+            >
+              {{ provider.kind === 'local' ? tr('Monica 本地库') : provider.name }}
+            </component></component><small slot="hint"
+            v-if="
+              kind === 'billing-address' ||
+              kind === 'payment-account' ||
+              kind === 'totp'
+            "
+            >{{ tr('Bitwarden 不支持该独立记录类型，因此不会显示为目标。') }}</small
+          ></m3e-form-field></div></section><section v-if="kind === 'card'" class="editor-section"><h3>{{ tr('银行卡信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('持卡人') }}</label><input
               v-model="fields.cardholderName"
-              autocomplete="cc-name" /></label
-          ><label class="field"
-            ><span>{{ tr('卡组织') }}</span
-            ><input v-model="fields.brand" autocomplete="cc-type" /></label
-          ><label class="field field-wide"
-            ><span>{{ tr('银行卡号 *') }}</span
-            ><input
+              autocomplete="cc-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('卡组织') }}</label><input v-model="fields.brand" autocomplete="cc-type" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('银行卡号 *') }}</label><input
               v-model="fields.number"
               inputmode="numeric"
-              autocomplete="cc-number" /></label
-          ><label class="field"
-            ><span>{{ tr('到期月') }}</span
-            ><input
+              autocomplete="cc-number" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('到期月') }}</label><input
               v-model="fields.expiryMonth"
               inputmode="numeric"
-              autocomplete="cc-exp-month" /></label
-          ><label class="field"
-            ><span>{{ tr('到期年') }}</span
-            ><input
+              autocomplete="cc-exp-month" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('到期年') }}</label><input
               v-model="fields.expiryYear"
               inputmode="numeric"
-              autocomplete="cc-exp-year" /></label
-          ><label class="field"
-            ><span>{{ tr('安全码') }}</span
-            ><input
+              autocomplete="cc-exp-year" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('安全码') }}</label><input
               v-model="fields.securityCode"
               type="password"
               inputmode="numeric"
-              autocomplete="cc-csc" /></label
-        ></template>
-        <template v-if="kind === 'card'"
-          ><label class="field"
-            ><span>{{ tr('银行') }}</span><input v-model="fields.bankName" /></label
-          ><label class="field"
-            ><span>{{ tr('卡类型') }}</span
-            ><select v-model="fields.cardType">
-              <option value="CREDIT">{{ tr('信用卡') }}</option>
-              <option value="DEBIT">{{ tr('借记卡') }}</option>
-              <option value="PREPAID">{{ tr('预付卡') }}</option>
-            </select></label
-          ><label class="field"
-            ><span>{{ tr('昵称') }}</span><input v-model="fields.nickname" /></label
-          ><label class="field"
-            ><span>PIN</span
-            ><input
+              autocomplete="cc-csc" /></m3e-form-field></div><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('更多银行卡信息') }}</span></span><div class="editor-disclosure-body editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('银行') }}</label><input v-model="fields.bankName" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('卡类型') }}</label><component :is="materialSelectTag" @input="fields.cardType = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(fields.cardType ?? '') === String('CREDIT')" value="CREDIT">{{ tr('信用卡') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.cardType ?? '') === String('DEBIT')" value="DEBIT">{{ tr('借记卡') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.cardType ?? '') === String('PREPAID')" value="PREPAID">{{ tr('预付卡') }}</component>
+            </component></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('昵称') }}</label><input v-model="fields.nickname" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">PIN</label><input
               v-model="fields.cardPin"
               type="password"
-              inputmode="numeric" /></label
-          ><label class="field"
-            ><span>{{ tr('生效月') }}</span
-            ><input
+              inputmode="numeric" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('生效月') }}</label><input
               v-model="fields.validFromMonth"
-              inputmode="numeric" /></label
-          ><label class="field"
-            ><span>{{ tr('生效年') }}</span
-            ><input v-model="fields.validFromYear" inputmode="numeric" /></label
-          ><label class="field"
-            ><span>IBAN</span><input v-model="fields.iban" /></label
-          ><label class="field"
-            ><span>SWIFT/BIC</span><input v-model="fields.swiftBic" /></label
-          ><label class="field"
-            ><span>{{ tr('路由号码') }}</span
-            ><input v-model="fields.routingNumber" /></label
-          ><label class="field"
-            ><span>{{ tr('账户号码') }}</span
-            ><input v-model="fields.cardAccountNumber" /></label
-          ><label class="field"
-            ><span>{{ tr('分行代码') }}</span><input v-model="fields.branchCode" /></label
-          ><label class="field"
-            ><span>{{ tr('币种') }}</span
-            ><input v-model="fields.currency" maxlength="3" /></label
-          ><label class="field"
-            ><span>{{ tr('客服电话') }}</span
-            ><input v-model="fields.customerServicePhone" type="tel" /></label
-          ><label class="field field-wide"
-            ><span>{{ tr('账单地址 JSON') }}</span
-            ><textarea
+              inputmode="numeric" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('生效年') }}</label><input v-model="fields.validFromYear" inputmode="numeric" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">IBAN</label><input v-model="fields.iban" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">SWIFT/BIC</label><input v-model="fields.swiftBic" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('路由号码') }}</label><input v-model="fields.routingNumber" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('账户号码') }}</label><input v-model="fields.cardAccountNumber" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('分行代码') }}</label><input v-model="fields.branchCode" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('币种') }}</label><input v-model="fields.currency" maxlength="3" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('客服电话') }}</label><input v-model="fields.customerServicePhone" type="tel" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('账单地址 JSON') }}</label><textarea
               v-model="fields.billingAddress"
               rows="3"
-            ></textarea></label
-        ></template>
-
-        <template v-if="kind === 'identity'"
-          ><label class="field"
-            ><span>{{ tr('证件类型') }}</span
-            ><select v-model="fields.documentType">
-              <option value="ID_CARD">{{ tr('身份证') }}</option>
-              <option value="PASSPORT">{{ tr('护照') }}</option>
-              <option value="DRIVER_LICENSE">{{ tr('驾驶证') }}</option>
-              <option value="SOCIAL_SECURITY">{{ tr('社会保障号') }}</option>
-              <option value="OTHER">{{ tr('其他证件') }}</option>
-            </select></label
-          ><label class="field"
-            ><span>{{ tr('证件号码 *') }}</span
-            ><input v-model="fields.documentNumber" autocomplete="off" /></label
-          ><label class="field"
-            ><span>{{ tr('名') }}</span
-            ><input
+            ></textarea></m3e-form-field></div></m3e-expansion-panel></section>
+<section v-if="kind === 'identity'" class="editor-section"><h3>{{ tr('身份信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('证件类型') }}</label><component :is="materialSelectTag" @input="fields.documentType = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('ID_CARD')" value="ID_CARD">{{ tr('身份证') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('PASSPORT')" value="PASSPORT">{{ tr('护照') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('DRIVER_LICENSE')" value="DRIVER_LICENSE">{{ tr('驾驶证') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('SOCIAL_SECURITY')" value="SOCIAL_SECURITY">{{ tr('社会保障号') }}</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('OTHER')" value="OTHER">{{ tr('其他证件') }}</component>
+            </component></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('证件号码 *') }}</label><input v-model="fields.documentNumber" autocomplete="off" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('完整姓名') }}</label><input v-model="fields.fullName" autocomplete="name" /></m3e-form-field></div><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('更多身份信息') }}</span></span><div class="editor-disclosure-body editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('名') }}</label><input
               v-model="fields.firstName"
-              autocomplete="given-name" /></label
-          ><label class="field"
-            ><span>{{ tr('中间名') }}</span
-            ><input
+              autocomplete="given-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('中间名') }}</label><input
               v-model="fields.middleName"
-              autocomplete="additional-name" /></label
-          ><label class="field"
-            ><span>{{ tr('姓') }}</span
-            ><input
+              autocomplete="additional-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('姓') }}</label><input
               v-model="fields.lastName"
-              autocomplete="family-name" /></label
-          ><label class="field"
-            ><span>{{ tr('完整姓名') }}</span
-            ><input v-model="fields.fullName" autocomplete="name" /></label
-          ><label class="field"
-            ><span>{{ tr('出生日期') }}</span
-            ><input
+              autocomplete="family-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('出生日期') }}</label><input
               v-model="fields.birthDate"
               type="date"
-              autocomplete="bday" /></label
-          ><label class="field"
-            ><span>{{ tr('国籍') }}</span
-            ><input
+              autocomplete="bday" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('国籍') }}</label><input
               v-model="fields.nationality"
-              autocomplete="country-name" /></label
-          ><label class="field"
-            ><span>{{ tr('签发日期') }}</span
-            ><input v-model="fields.issuedDate" type="date" /></label
-          ><label class="field"
-            ><span>{{ tr('到期日期') }}</span
-            ><input v-model="fields.expiryDate" type="date" /></label
-          ><label class="field"
-            ><span>{{ tr('签发机关') }}</span><input v-model="fields.issuedBy" /></label
-          ><label class="field"
-            ><span>{{ tr('邮箱') }}</span
-            ><input
+              autocomplete="country-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('签发日期') }}</label><input v-model="fields.issuedDate" type="date" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('到期日期') }}</label><input v-model="fields.expiryDate" type="date" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('签发机关') }}</label><input v-model="fields.issuedBy" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('邮箱') }}</label><input
               v-model="fields.email"
               type="email"
-              autocomplete="email" /></label
-          ><label class="field"
-            ><span>{{ tr('电话') }}</span
-            ><input
+              autocomplete="email" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('电话') }}</label><input
               v-model="fields.phone"
               type="tel"
-              autocomplete="tel" /></label
-          ><label class="field field-wide"
-            ><span>{{ tr('街道地址') }}</span
-            ><input
+              autocomplete="tel" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('街道地址') }}</label><input
               v-model="fields.streetAddress"
-              autocomplete="street-address" /></label
-          ><label class="field"
-            ><span>{{ tr('城市') }}</span
-            ><input
+              autocomplete="street-address" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('城市') }}</label><input
               v-model="fields.city"
-              autocomplete="address-level2" /></label
-          ><label class="field"
-            ><span>{{ tr('省/州') }}</span
-            ><input
+              autocomplete="address-level2" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('省/州') }}</label><input
               v-model="fields.stateProvince"
-              autocomplete="address-level1" /></label
-          ><label class="field"
-            ><span>{{ tr('邮编') }}</span
-            ><input
+              autocomplete="address-level1" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('邮编') }}</label><input
               v-model="fields.postalCode"
-              autocomplete="postal-code" /></label
-          ><label class="field"
-            ><span>{{ tr('国家') }}</span
-            ><input
+              autocomplete="postal-code" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('国家') }}</label><input
               v-model="fields.country"
-              autocomplete="country-name" /></label
-        ></template>
-        <template v-if="kind === 'identity'"
-          ><label class="field"
-            ><span>{{ tr('公司') }}</span><input v-model="fields.company" /></label
-          ><label class="field"
-            ><span>{{ tr('用户名') }}</span><input v-model="fields.username" /></label
-          ><label class="field"
-            ><span>{{ tr('社会保障号') }}</span><input v-model="fields.ssn" /></label
-          ><label class="field"
-            ><span>{{ tr('护照号码') }}</span
-            ><input v-model="fields.passportNumber" /></label
-          ><label class="field"
-            ><span>{{ tr('驾驶证号码') }}</span
-            ><input v-model="fields.licenseNumber" /></label
-          ><label class="field"
-            ><span>{{ tr('地址第三行') }}</span><input v-model="fields.address3" /></label
-          ><label class="field field-wide"
-            ><span>{{ tr('其他信息') }}</span
-            ><textarea
+              autocomplete="country-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('公司') }}</label><input v-model="fields.company" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('用户名') }}</label><input v-model="fields.username" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('社会保障号') }}</label><input v-model="fields.ssn" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('护照号码') }}</label><input v-model="fields.passportNumber" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('驾驶证号码') }}</label><input v-model="fields.licenseNumber" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('地址第三行') }}</label><input v-model="fields.address3" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('其他信息') }}</label><textarea
               v-model="fields.additionalInfo"
               rows="3"
-            ></textarea></label
-        ></template>
-
-        <template v-if="kind === 'billing-address'"
-          ><label class="field"
-            ><span>{{ tr('收件人') }}</span
-            ><input v-model="fields.fullName" autocomplete="name" /></label
-          ><label class="field"
-            ><span>{{ tr('公司') }}</span
-            ><input
+            ></textarea></m3e-form-field></div></m3e-expansion-panel></section>
+<section v-if="kind === 'billing-address'" class="editor-section"><h3>{{ tr('地址信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('收件人') }}</label><input v-model="fields.fullName" autocomplete="name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('公司') }}</label><input
               v-model="fields.company"
-              autocomplete="organization" /></label
-          ><label class="field field-wide"
-            ><span>{{ tr('街道地址 *') }}</span
-            ><input
+              autocomplete="organization" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('街道地址 *') }}</label><input
               v-model="fields.streetAddress"
-              autocomplete="street-address" /></label
-          ><label class="field"
-            ><span>{{ tr('公寓/房间') }}</span
-            ><input
+              autocomplete="street-address" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('公寓/房间') }}</label><input
               v-model="fields.apartment"
-              autocomplete="address-line2" /></label
-          ><label class="field"
-            ><span>{{ tr('城市') }}</span
-            ><input
+              autocomplete="address-line2" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('城市') }}</label><input
               v-model="fields.city"
-              autocomplete="address-level2" /></label
-          ><label class="field"
-            ><span>{{ tr('省/州') }}</span
-            ><input
+              autocomplete="address-level2" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('省/州') }}</label><input
               v-model="fields.stateProvince"
-              autocomplete="address-level1" /></label
-          ><label class="field"
-            ><span>{{ tr('邮编') }}</span
-            ><input
+              autocomplete="address-level1" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('邮编') }}</label><input
               v-model="fields.postalCode"
-              autocomplete="postal-code" /></label
-          ><label class="field"
-            ><span>{{ tr('国家') }}</span
-            ><input
+              autocomplete="postal-code" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('国家') }}</label><input
               v-model="fields.country"
-              autocomplete="country-name" /></label
-          ><label class="field"
-            ><span>{{ tr('电话') }}</span
-            ><input
+              autocomplete="country-name" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('电话') }}</label><input
               v-model="fields.phone"
               type="tel"
-              autocomplete="tel" /></label
-          ><label class="field"
-            ><span>{{ tr('邮箱') }}</span
-            ><input
+              autocomplete="tel" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('邮箱') }}</label><input
               v-model="fields.email"
               type="email"
-              autocomplete="email" /></label
-        ></template>
-        <label v-if="kind === 'billing-address'" class="favorite-row field-wide"
-          ><input v-model="fields.isDefault" type="checkbox" /><span
-            >{{ tr('设为默认账单地址') }}</span
-          ></label
-        >
-
-        <template v-if="kind === 'payment-account'"
-          ><label class="field"
-            ><span>{{ tr('支付类型') }}</span
-            ><input
+              autocomplete="email" /></m3e-form-field></div></section>
+<section v-if="kind === 'payment-account'" class="editor-section"><h3>{{ tr('支付信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('支付类型') }}</label><input
               v-model="fields.paymentType"
-              placeholder="BANK / PAYPAL / ALIPAY" /></label
-          ><label class="field"
-            ><span>{{ tr('服务商') }}</span
-            ><input v-model="fields.paymentProvider" /></label
-          ><label class="field"
-            ><span>{{ tr('账号名称') }}</span><input v-model="fields.accountName" /></label
-          ><label class="field"
-            ><span>{{ tr('账户持有人') }}</span
-            ><input v-model="fields.accountHolderName" /></label
-          ><label class="field"
-            ><span>{{ tr('账号 ID') }}</span><input v-model="fields.accountId" /></label
-          ><label class="field"
-            ><span>{{ tr('显示账号') }}</span
-            ><input
+              placeholder="BANK / PAYPAL / ALIPAY" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('服务商') }}</label><input v-model="fields.paymentProvider" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('账号名称') }}</label><input v-model="fields.accountName" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('账户持有人') }}</label><input v-model="fields.accountHolderName" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('账号 ID') }}</label><input v-model="fields.accountId" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('显示账号') }}</label><input
               v-model="fields.maskedAccountNumber"
-              placeholder="**** 7890" /></label
-          ><label class="field"
-            ><span>{{ tr('路由号码') }}</span
-            ><input v-model="fields.routingNumber" inputmode="numeric" /></label
-          ><label class="field"
-            ><span>IBAN</span><input v-model="fields.iban" /></label
-          ><label class="field"
-            ><span>SWIFT/BIC</span><input v-model="fields.swiftBic" /></label
-          ><label class="field"
-            ><span>{{ tr('币种') }}</span
-            ><input v-model="fields.currency" maxlength="3" /></label
-          ><label class="field"
-            ><span>{{ tr('用户名') }}</span
-            ><input v-model="fields.username" autocomplete="username" /></label
-          ><label class="field"
-            ><span>{{ tr('邮箱') }}</span
-            ><input
+              placeholder="**** 7890" /></m3e-form-field></div><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('更多支付信息') }}</span></span><div class="editor-disclosure-body editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('路由号码') }}</label><input v-model="fields.routingNumber" inputmode="numeric" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">IBAN</label><input v-model="fields.iban" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">SWIFT/BIC</label><input v-model="fields.swiftBic" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('币种') }}</label><input v-model="fields.currency" maxlength="3" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('用户名') }}</label><input v-model="fields.username" autocomplete="username" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('邮箱') }}</label><input
               v-model="fields.email"
               type="email"
-              autocomplete="email" /></label
-          ><label class="field"
-            ><span>{{ tr('电话') }}</span
-            ><input
+              autocomplete="email" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('电话') }}</label><input
               v-model="fields.phone"
               type="tel"
-              autocomplete="tel" /></label
-          ><label class="field"
-            ><span>{{ tr('网站') }}</span
-            ><input
+              autocomplete="tel" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('网站') }}</label><input
               v-model="fields.website"
               type="url"
-              autocomplete="url" /></label
-        ></template>
-        <template v-if="kind === 'payment-account'"
-          ><label class="field"
-            ><span>{{ tr('关联卡尾号') }}</span
-            ><input
+              autocomplete="url" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('关联卡尾号') }}</label><input
               v-model="fields.linkedCardLast4"
               maxlength="4"
-              inputmode="numeric" /></label
-          ><label class="favorite-row"
-            ><input v-model="fields.isDefault" type="checkbox" /><span
+              inputmode="numeric" /></m3e-form-field>
+<label v-choice-label class="favorite-row"
+            ><m3e-checkbox :checked.prop="fields.isDefault" @input="fields.isDefault = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span
               >{{ tr('设为默认支付账户') }}</span
             ></label
-          ><label class="field field-wide"
-            ><span>{{ tr('账单地址 JSON') }}</span
-            ><textarea
+          >
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('账单地址 JSON') }}</label><textarea
               v-model="fields.billingAddress"
               rows="3"
-            ></textarea></label
-          ><label class="field field-wide"
-            ><span>{{ tr('支付账户备注') }}</span
-            ><textarea v-model="fields.paymentNotes" rows="3"></textarea></label
-        ></template>
-
-        <template v-if="kind === 'secure-note'"
-          ><label class="field field-wide"
-            ><span>{{ tr('标签') }}</span
-            ><input v-model="fields.tags" :placeholder="tr('工作, 项目')" /></label
-          ><label class="favorite-row field-wide"
-            ><input v-model="fields.isMarkdown" type="checkbox" /><span
+            ></textarea></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('支付账户备注') }}</label><textarea v-model="fields.paymentNotes" rows="3"></textarea></m3e-form-field></div></m3e-expansion-panel></section>
+<section v-if="kind === 'secure-note'" class="editor-section"><h3>{{ tr('笔记内容') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('笔记内容 *') }}</label><textarea v-model="fields.content" rows="12"></textarea></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+            ><label slot="label">{{ tr('标签') }}</label><input v-model="fields.tags" :placeholder="tr('工作, 项目')" /></m3e-form-field>
+<label v-choice-label class="favorite-row field-wide"
+            ><m3e-checkbox :checked.prop="fields.isMarkdown" @input="fields.isMarkdown = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span
               >{{ tr('使用 Markdown') }}</span
             ></label
-          ><label class="field field-wide"
-            ><span>{{ tr('笔记内容 *') }}</span
-            ><textarea v-model="fields.content" rows="12"></textarea></label
-        ></template>
-
-        <template v-if="kind === 'totp'">
-          <fieldset class="editor-fieldset field-wide otp-transfer">
+          ></div></section>
+<section v-if="kind === 'totp'" class="editor-section"><h3>{{ tr('验证器信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('验证码类型') }}</label><component :is="materialSelectTag" @input="fields.otpType = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('TOTP')" value="TOTP">TOTP</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('HOTP')" value="HOTP">HOTP</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('STEAM')" value="STEAM">Steam Guard</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('YANDEX')" value="YANDEX">Yandex</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('MOTP')" value="MOTP">mOTP</component>
+            </component></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker v-if="fields.otpType === 'STEAM'" class="field"
+            ><label slot="label">{{ tr('Steam 密钥编码') }}</label><component :is="materialSelectTag" @input="fields.steamSecretEncoding = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(fields.steamSecretEncoding ?? '') === String('base64')" value="base64">Base64（maFile / Android）</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.steamSecretEncoding ?? '') === String('base32')" value="base32">Base32（OTP URI）</component>
+            </component></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"
+            ><label slot="label"
+              >{{
+                fields.otpType === "STEAM"
+                  ? "Steam Shared Secret"
+                  : fields.otpType === "MOTP"
+                    ? tr('mOTP 原始密钥')
+                    : tr('Base32 密钥')
+              }}
+              *</label><input
+              v-model="fields.secret"
+              type="password"
+              autocomplete="off"
+            /><small slot="hint">{{ tr('密钥只保存在加密密码库中；二维码在本机生成。') }}</small></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('签发方') }}</label><input v-model="fields.issuer" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+            ><label slot="label">{{ tr('账户') }}</label><input v-model="fields.accountName"
+          /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker v-if="fields.otpType === 'HOTP'" class="field"
+            ><label slot="label">{{ tr('计数器') }}</label><input v-model="fields.counter" type="number" min="0" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker
+            v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'"
+            class="field"
+            ><label slot="label">PIN {{ fields.otpType === "YANDEX" ? tr('（4-16 位数字）') : "" }}</label><input
+              v-model="fields.pin"
+              type="password"
+              inputmode="numeric"
+              autocomplete="off"
+          /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker v-if="fields.otpType === 'YANDEX'" class="field"
+            ><label slot="label">{{ tr('PIN 长度') }}</label><input v-model="fields.pinLength" type="number" min="4" max="16" inputmode="numeric"
+          /></m3e-form-field></div><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('导入与导出验证器') }}</span></span><div class="editor-disclosure-body editor-field-grid"><fieldset class="editor-fieldset field-wide otp-transfer">
             <legend>{{ tr('二维码与 URI') }}</legend>
-            <label class="field"
-              ><span>OTP URI</span
-              ><textarea
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">OTP URI</label><textarea
                 v-model="otpTransferInput"
                 rows="3"
                 :placeholder="tr('otpauth://、motp:// 或 migration URI')"
               ></textarea>
-            </label>
+            </m3e-form-field>
             <div class="otp-transfer-actions">
               <m3e-button
                 variant="tonal"
@@ -1175,87 +1126,28 @@ function exportMaFile() {
             <p v-if="otpTransferStatus" class="supporting" aria-live="polite">
               {{ otpTransferStatus }}
             </p>
-          </fieldset>
-          <label class="field"
-            ><span>{{ tr('验证码类型') }}</span
-            ><select v-model="fields.otpType">
-              <option value="TOTP">TOTP</option>
-              <option value="HOTP">HOTP</option>
-              <option value="STEAM">Steam Guard</option>
-              <option value="YANDEX">Yandex</option>
-              <option value="MOTP">mOTP</option>
-            </select></label
-          >
-          <label v-if="fields.otpType === 'STEAM'" class="field"
-            ><span>{{ tr('Steam 密钥编码') }}</span
-            ><select v-model="fields.steamSecretEncoding">
-              <option value="base64">Base64（maFile / Android）</option>
-              <option value="base32">Base32（OTP URI）</option>
-            </select></label
-          >
-          <label class="field field-wide"
-            ><span
-              >{{
-                fields.otpType === "STEAM"
-                  ? "Steam Shared Secret"
-                  : fields.otpType === "MOTP"
-                    ? tr('mOTP 原始密钥')
-                    : tr('Base32 密钥')
-              }}
-              *</span
-            ><input
-              v-model="fields.secret"
-              type="password"
-              autocomplete="off"
-            /><small>{{ tr('密钥只保存在加密密码库中；二维码在本机生成。') }}</small></label
-          >
-          <label class="field"
-            ><span>{{ tr('签发方') }}</span><input v-model="fields.issuer" /></label
-          ><label class="field"
-            ><span>{{ tr('账户') }}</span><input v-model="fields.accountName"
-          /></label>
-          <label v-if="fields.otpType === 'HOTP'" class="field"
-            ><span>{{ tr('计数器') }}</span
-            ><input v-model="fields.counter" type="number" min="0" /></label
-          ><label
-            v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'"
-            class="field"
-            ><span>PIN {{ fields.otpType === "YANDEX" ? tr('（4-16 位数字）') : "" }}</span
-            ><input
-              v-model="fields.pin"
-              type="password"
-              inputmode="numeric"
-              autocomplete="off"
-          /></label>
-          <label v-if="fields.otpType === 'YANDEX'" class="field"
-            ><span>{{ tr('PIN 长度') }}</span
-            ><input v-model="fields.pinLength" type="number" min="4" max="16" inputmode="numeric"
-          /></label>
-          <label
+          </fieldset></div></m3e-expansion-panel><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('验证器高级设置') }}</span></span><div class="editor-disclosure-body editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"
             class="field"
-            ><span>{{ tr('算法') }}</span
-            ><select v-model="fields.algorithm">
-              <option>SHA1</option>
-              <option>SHA256</option>
-              <option>SHA512</option>
-            </select></label
-          ><label
+            ><label slot="label">{{ tr('算法') }}</label><component :is="materialSelectTag" @input="fields.algorithm = ($event.target as HTMLElement &amp; { value: string }).value" >
+              <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA1')">SHA1</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA256')">SHA256</component>
+              <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA512')">SHA512</component>
+            </component></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"
             class="field"
-            ><span>{{ tr('位数') }}</span
-            ><input
+            ><label slot="label">{{ tr('位数') }}</label><input
               v-model="fields.digits"
               type="number"
               min="1"
-              max="10" /></label
-          ><label
+              max="10" /></m3e-form-field>
+<m3e-form-field v-field-label variant="filled" hide-required-marker
             v-if="fields.otpType === 'TOTP' || fields.otpType === 'YANDEX'"
             class="field"
-            ><span>{{ tr('周期（秒）') }}</span
-            ><input v-model="fields.period" type="number" min="5" max="300"
-          /></label>
-          <template v-if="fields.otpType === 'STEAM'"
+            ><label slot="label">{{ tr('周期（秒）') }}</label><input v-model="fields.period" type="number" min="5" max="300"
+          /></m3e-form-field>
+<template v-if="fields.otpType === 'STEAM'"
             ><div class="steam-file-actions field-wide">
               <label class="file-action"
                 ><m3e-icon name="upload_file"></m3e-icon><span>{{ tr('导入 maFile') }}</span
@@ -1268,60 +1160,36 @@ function exportMaFile() {
                 ><m3e-icon slot="icon" name="download"></m3e-icon>{{ tr('导出 maFile') }}</m3e-button
               >
             </div>
-            <label class="field"
-              ><span>SteamID64</span
-              ><input v-model="fields.steamId" inputmode="numeric" /></label
-            ><label class="field"
-              ><span>{{ tr('Steam 设备 ID') }}</span
-              ><input v-model="fields.steamDeviceId" /></label
-            ><label class="field"
-              ><span>{{ tr('Steam 指纹') }}</span
-              ><input v-model="fields.steamFingerprint" /></label
-            ><label class="field"
-              ><span>{{ tr('Steam 序列号') }}</span
-              ><input v-model="fields.steamSerialNumber" /></label
-            ><label class="field"
-              ><span>{{ tr('撤销代码') }}</span
-              ><input v-model="fields.steamRevocationCode" /></label
-            ><label class="field"
-              ><span>Identity Secret</span
-              ><input
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">SteamID64</label><input v-model="fields.steamId" inputmode="numeric" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">{{ tr('Steam 设备 ID') }}</label><input v-model="fields.steamDeviceId" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">{{ tr('Steam 指纹') }}</label><input v-model="fields.steamFingerprint" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">{{ tr('Steam 序列号') }}</label><input v-model="fields.steamSerialNumber" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">{{ tr('撤销代码') }}</label><input v-model="fields.steamRevocationCode" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">Identity Secret</label><input
                 v-model="fields.steamIdentitySecret"
-                type="password" /></label
-            ><label class="field"
-              ><span>Token GID</span
-              ><input v-model="fields.steamTokenGid" /></label
-            ><label class="field field-wide"
-              ><span>Access Token</span
-              ><textarea
+                type="password" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
+              ><label slot="label">Token GID</label><input v-model="fields.steamTokenGid" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+              ><label slot="label">Access Token</label><textarea
                 v-model="fields.steamAccessToken"
                 rows="2"
                 autocomplete="off"
-              ></textarea></label
-            ><label class="field field-wide"
-              ><span>Refresh Token</span
-              ><textarea
+              ></textarea></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+              ><label slot="label">Refresh Token</label><textarea
                 v-model="fields.steamRefreshToken"
                 rows="2"
                 autocomplete="off"
-              ></textarea></label
-            ><label class="field field-wide"
-              ><span>Steam Login Secure</span
-              ><input
+              ></textarea></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+              ><label slot="label">Steam Login Secure</label><input
                 v-model="fields.steamLoginSecure"
                 type="password"
-                autocomplete="off" /></label
-            ><label class="field field-wide"
-              ><span>{{ tr('原始 Steam JSON') }}</span
-              ><textarea v-model="fields.steamRawJson" rows="4"></textarea
-              ><small
+                autocomplete="off" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never" class="field field-wide"
+              ><label slot="label">{{ tr('原始 Steam JSON') }}</label><textarea v-model="fields.steamRawJson" rows="4"></textarea
+              ><small slot="hint"
                 >{{ tr('未知字段保持原样，用于 Monica Android 与 maFile 写回。') }}</small
-              ></label
-            ></template
-          >
-        </template>
-
-        <fieldset
+              ></m3e-form-field></template
+          ></div></m3e-expansion-panel></section>
+<section class="editor-section editor-extras" :aria-label="tr('补充信息')"><h3>{{ tr('补充信息') }}</h3><m3e-expansion-panel
           v-if="
             kind === 'card' ||
             kind === 'identity' ||
@@ -1329,32 +1197,31 @@ function exportMaFile() {
             kind === 'payment-account' ||
             kind === 'secure-note'
           "
-          class="editor-fieldset field-wide"
+          class="editor-disclosure" :open="fields.customFields.length > 0"
         >
-          <legend>{{ tr('自定义字段') }}</legend>
+          <span slot="header"><span>{{ tr('自定义字段') }}<small>{{ fields.customFields.length || tr('可选') }}</small></span></span><div class="editor-disclosure-body">
           <div class="custom-field-list">
             <div
               v-for="(custom, index) in fields.customFields"
               :key="index"
               class="custom-field-row"
             >
-              <input
+              <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 名称', { 0: index + 1 }) }}</label><input
                 v-model="custom.name"
                 :aria-label="tr('自定义字段 {0} 名称', { 0: index + 1 })"
                 :placeholder="tr('字段名称')"
-              /><input
+              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 值', { 0: index + 1 }) }}</label><input
                 v-model="custom.value"
                 :type="custom.fieldType === 'HIDDEN' ? 'password' : 'text'"
                 :aria-label="tr('自定义字段 {0} 值', { 0: index + 1 })"
                 :placeholder="tr('字段值')"
-              /><select
-                v-model="custom.fieldType"
+              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 类型', { 0: index + 1 }) }}</label><component :is="materialSelectTag" @input="custom.fieldType = ($event.target as HTMLElement &amp; { value: string }).value"
+
                 :aria-label="tr('自定义字段 {0} 类型', { 0: index + 1 })"
               >
-                <option value="TEXT">{{ tr('文本') }}</option>
-                <option value="HIDDEN">{{ tr('隐藏') }}</option>
-                <option value="BOOLEAN">{{ tr('布尔') }}</option></select
-              ><m3e-icon-button
+                <component :is="materialOptionTag" :selected.prop="String(custom.fieldType ?? '') === String('TEXT')" value="TEXT">{{ tr('文本') }}</component>
+                <component :is="materialOptionTag" :selected.prop="String(custom.fieldType ?? '') === String('HIDDEN')" value="HIDDEN">{{ tr('隐藏') }}</component>
+                <component :is="materialOptionTag" :selected.prop="String(custom.fieldType ?? '') === String('BOOLEAN')" value="BOOLEAN">{{ tr('布尔') }}</component></component></m3e-form-field><m3e-icon-button
                 type="button"
                 :aria-label="tr('删除自定义字段 {0}', { 0: index + 1 })"
                 @click="removeCustomField(index)"
@@ -1365,52 +1232,24 @@ function exportMaFile() {
           <m3e-button variant="text" type="button" @click="addCustomField"
             ><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加字段') }}</m3e-button
           >
-        </fieldset>
-        <div v-if="item?.imagePaths?.length" class="boundary-row field-wide">
+        </div></m3e-expansion-panel><div v-if="item?.imagePaths?.length" class="boundary-row field-wide">
           <m3e-icon name="image"></m3e-icon
           ><span
             >{{ tr('{0} 个 Android 图片引用已保留；图片字节继续保存在同步信封中。', { 0: item.imagePaths.length }) }}</span
           >
-        </div>
-
-        <label class="field field-wide"
-          ><span>{{ tr('备注') }}</span
-          ><textarea v-model="fields.notes" rows="3"></textarea>
-        </label>
-        <label class="field field-wide"
-          ><span>{{ tr('保存到') }}</span
-          ><select v-model="fields.providerId" :disabled="Boolean(item)">
-            <option
-              v-for="provider in eligibleProviders"
-              :key="provider.id"
-              :value="provider.id"
-            >
-              {{ provider.kind === 'local' ? tr('Monica 本地库') : provider.name }}
-            </option></select
-          ><small
-            v-if="
-              kind === 'billing-address' ||
-              kind === 'payment-account' ||
-              kind === 'totp'
-            "
-            >{{ tr('Bitwarden 不支持该独立记录类型，因此不会显示为目标。') }}</small
-          ></label
-        >
-        <label class="favorite-row field-wide"
-          ><input v-model="fields.favorite" type="checkbox" /><span
+        </div><m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
+          ><label slot="label">{{ tr('备注') }}</label><textarea v-model="fields.notes" rows="3"></textarea>
+        </m3e-form-field><label v-choice-label class="favorite-row field-wide"
+          ><m3e-checkbox :checked.prop="fields.favorite" @input="fields.favorite = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span
             >{{ tr('收藏并优先显示') }}</span
           ></label
-        >
-        <p v-if="error" class="form-error field-wide" role="alert">
-          {{ error }}
-        </p>
-        </div>
-        <footer class="field-wide">
-          <m3e-button variant="text" type="button" @click="emit('cancel')"
-            >{{ tr('取消') }}</m3e-button
-          ><m3e-button variant="filled" type="submit">{{ tr('加密保存') }}</m3e-button>
-        </footer>
+        ></section></div>
+
       </form>
-    </section>
-  </div>
+<footer slot="actions" end class="field-wide"><p v-if="error" class="form-error editor-footer-status" role="alert">{{ error }}</p>
+          <m3e-button variant="text" type="button" :disabled="saving" @click="emit('cancel')"
+            >{{ tr('取消') }}</m3e-button
+          ><m3e-button form="vault-item-form" variant="filled" type="submit" :disabled="saving">{{ saving ? tr('正在保存…') : tr('加密保存') }}</m3e-button>
+        </footer>
+</m3e-dialog>
 </template>

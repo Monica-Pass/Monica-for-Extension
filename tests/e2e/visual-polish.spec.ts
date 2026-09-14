@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
@@ -40,41 +41,42 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await expect(page.locator("m3e-card m3e-card")).toHaveCount(0);
     const connectionShape = await page.locator(".connect-source-card").first().evaluate((host) => ({
       host: getComputedStyle(host).borderRadius,
-      button: getComputedStyle(host.querySelector(".connect-source")!).borderRadius
+      button: getComputedStyle(host.querySelector(".connect-source")!.shadowRoot!.querySelector("m3e-list-item-button")!.shadowRoot!.querySelector(".base")!).borderRadius
     }));
     expect(connectionShape.button).toBe(connectionShape.host);
 
     await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
-    const mdbx2Dialog = page.getByRole("dialog", { name: "打开 MDBX2 保险库" });
+    const mdbx2Dialog = dialogContent(page, { name: "打开 MDBX2 保险库" });
     await expect(mdbx2Dialog).toBeVisible();
-    await expect(mdbx2Dialog).toHaveCSS("border-radius", "16px");
+    await expect(mdbx2Dialog).toHaveCSS("border-radius", "28px");
     await expect(mdbx2Dialog.getByLabel("MDBX2 可移植备份")).toBeVisible();
     await mdbx2Dialog.getByRole("button", { name: "从 WebDAV 加入" }).click();
-    const remoteMdbx2Dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    const remoteMdbx2Dialog = dialogContent(page, { name: "从 WebDAV 加入 MDBX2" });
     await expect(remoteMdbx2Dialog).toBeVisible();
     await expect(remoteMdbx2Dialog.getByLabel("Android 兼容远端位置 *")).toBeVisible();
     await expect(remoteMdbx2Dialog.getByText("日常同步对象自动写入同名", { exact: false })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("mdbx2-dialog.png"), fullPage: true });
     await remoteMdbx2Dialog.getByRole("button", { name: "关闭 MDBX2 设置" }).click();
-    await expect(page.getByRole("dialog", { name: /MDBX2/ })).toHaveCount(0);
+    await expect(dialogContent(page, { name: /MDBX2/ })).toHaveCount(0);
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).hover();
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    const dialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    const dialog = dialogContent(page, { name: "连接 Monica Android WebDAV" });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toHaveCSS("border-radius", "16px");
+    await expect(dialog).toHaveCSS("border-radius", "28px");
     await expect(page.getByLabel("WebDAV 地址 *")).toBeVisible();
     await page.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
-    await expect(page.getByRole("dialog", { name: "连接 Monica Android WebDAV" })).toHaveCount(0);
+    await expect(dialogContent(page, { name: "连接 Monica Android WebDAV" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "概览" }).click();
-    await page.getByRole("button", { name: "自定义首页", exact: true }).click();
-    await expectCentered(page.locator(".home-reorder-actions .home-icon-button").first(), page.locator(".home-reorder-actions m3e-icon").first());
-    await page.locator("#home-customization").press("Escape");
-    await expect(page.locator(".home-module")).toHaveCount(6);
-    await expect(page.locator(".home-type-grid")).toHaveCSS("border-radius", "12px");
-    await expect(page.locator(".home-type-grid")).toHaveCSS("overflow", "hidden");
+    await page.getByRole("button", { name: /^全部项目/ }).click();
+    await page.getByRole("button", { name: "新建", exact: true }).click();
+    const picker = dialogContent(page, { name: "新建项目" });
+    await expect(picker.getByRole("button", { name: "关闭", exact: true })).toBeVisible();
+    await expect(picker.locator("m3e-list-action")).toHaveCount(11);
+    for (const option of await picker.locator("m3e-list-action").all()) await expect(option).toBeInViewport({ ratio: 1 });
+    await picker.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(picker).toHaveCount(0);
     await page.getByRole("button", { name: "设置与备份" }).click();
     await expectAllRoundedAndClipped(page.locator("main m3e-card"));
     await page.getByRole("button", { name: "密码源" }).click();
@@ -139,7 +141,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     }, createdAt);
     expect(setup, JSON.stringify(setup)).toMatchObject({ ok: true });
     await page.reload();
-    await page.getByRole("button", { name: "概览" }).waitFor();
+    await page.getByRole("button", { name: /^全部项目/ }).waitFor();
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
     const drawerWidth = (await page.locator(".sidebar").boundingBox())?.width || 0;
@@ -149,11 +151,10 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     const walletLabelWidth = await walletNavLabel.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(walletLabelWidth.scroll, JSON.stringify(walletLabelWidth)).toBeLessThanOrEqual(walletLabelWidth.client + 1);
 
-    await expect(page.locator(".home-module")).toHaveCount(6);
-    await expect(page.locator(".home-type-button")).toHaveCount(8);
-    await expectNoHorizontalOverflow(page.locator(".vault-home"));
+    await expect(page.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page.locator(".page-view"));
 
-    const sections = ["概览", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
+    const sections = ["全部项目", "API 密钥", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
     for (const section of sections) {
       await page.getByRole("button", { name: new RegExp(`^${section}`) }).first().click();
       await expectNoHorizontalOverflow(page.locator("html"));
@@ -197,13 +198,13 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-providers.png"), animations: "disabled" });
 
     await page.getByRole("button", { name: "设置与备份" }).click();
-    const appearance = page.locator(".appearance-disclosure");
-    await expect(appearance.locator(".appearance-dialog")).toHaveCount(0);
-    await expect(appearance.locator(".appearance-summary-copy small")).toContainText("Nothing");
+    const appearance = page.locator(".appearance-card");
+    await expect(dialogContent(page, { name: "外观", exact: true })).toHaveCount(0);
+    await expect(appearance.locator('span[slot="supporting-text"]')).toContainText("Monica");
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-appearance-collapsed.png"), animations: "disabled" });
     await appearance.locator(".appearance-trigger").click();
-    await expect(page.locator(".appearance-dialog")).toBeVisible();
-    const selectedPalette = page.locator(".palette-button.selected");
+    await expect(dialogContent(page, { name: "外观", exact: true })).toBeVisible();
+    const selectedPalette = page.locator(".palette-option.selected");
     const paletteWidth = await selectedPalette.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
     expect(paletteWidth.scroll, JSON.stringify(paletteWidth)).toBeLessThanOrEqual(paletteWidth.client + 1);
     const swatchColors = await selectedPalette.locator(".swatch").evaluate((element) => [...element.children].map((child) => getComputedStyle(child).backgroundColor));
@@ -300,7 +301,7 @@ test("mobile manager actions remain complete with 200% text", async ({}, testInf
     await page.reload();
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
 
-    const sections = ["概览", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
+    const sections = ["全部项目", "API 密钥", "登录项", "钱包与身份", "安全笔记", "动态验证码", "Steam", "Passkey", "安全发送", "归档", "回收站", "密码源", "设置与备份", "生成器"];
     const clipped: Array<{ section: string; text: string; clientWidth: number; scrollWidth: number }> = [];
     const overflow: Array<{ section: string; selector: string; text: string; left: number; right: number; width: number; scrollWidth: number }> = [];
     const scrollOffsets: Array<{ section: string; scrollX: number; scrollY: number }> = [];
@@ -317,6 +318,14 @@ test("mobile manager actions remain complete with 200% text", async ({}, testInf
       }
     }
     expect({ clipped, overflow, scrollOffsets }, JSON.stringify({ clipped, overflow, scrollOffsets })).toEqual({ clipped: [], overflow: [], scrollOffsets: [] });
+    // The library paginates wide tab strips. Keyboard navigation must bring
+    // an initially offscreen generator tab into its visible scroll area.
+    const tabs = page.locator(".generator-tabs");
+    await tabs.getByRole("tab", { name: "密码", exact: true }).focus();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Space");
+    await expect(tabs.getByRole("tab", { name: "SSH 密钥", exact: true, selected: true })).toBeVisible();
+    expect(await visibleHorizontalOverflowIssues(page.locator("#root"))).toEqual([]);
   } finally { await context?.close(); }
 });
 
@@ -353,38 +362,38 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
 
     await openSection("密码源");
     await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
-    let dialog = page.getByRole("dialog", { name: "打开 MDBX2 保险库" });
+    let dialog = dialogContent(page, { name: "打开 MDBX2 保险库" });
     await audit("MDBX2 本机", dialog);
     await dialog.getByRole("button", { name: "从 WebDAV 加入" }).click();
-    dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    dialog = dialogContent(page, { name: "从 WebDAV 加入 MDBX2" });
     await audit("MDBX2 WebDAV", dialog);
     await dialog.getByRole("button", { name: "关闭 MDBX2 设置" }).click();
 
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    dialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    dialog = dialogContent(page, { name: "连接 Monica Android WebDAV" });
     await audit("Android WebDAV", dialog);
     await dialog.getByRole("button", { name: "关闭 WebDAV 设置" }).click();
 
     await page.getByRole("button", { name: /连接 KeePass/ }).click();
-    dialog = page.getByRole("dialog", { name: /KeePass/ });
+    dialog = dialogContent(page, { name: /KeePass/ });
     await audit("KeePass", dialog);
     await dialog.getByRole("button", { name: "关闭 KeePass 设置" }).click();
 
     await page.getByRole("button", { name: /连接 Bitwarden/ }).click();
-    dialog = page.getByRole("dialog", { name: "连接 Bitwarden" });
+    dialog = dialogContent(page, { name: "连接 Bitwarden" });
     await audit("Bitwarden", dialog);
     await dialog.getByRole("button", { name: "关闭" }).click();
 
     await openSection("登录项");
     await page.getByRole("button", { name: "新建", exact: true }).click();
-    dialog = page.getByRole("dialog", { name: "添加登录项" });
+    dialog = dialogContent(page, { name: "添加登录项" });
     await audit("登录项", dialog);
     await dialog.getByRole("button", { name: "关闭" }).click();
 
     for (const [section, action, dialogName, surface] of [["钱包与身份", "添加钱包项目", "添加银行卡", "钱包"], ["安全笔记", "添加安全笔记", "添加安全笔记", "笔记"], ["动态验证码", "添加验证码", "添加动态验证码", "验证码"]] as const) {
       await openSection(section);
       await page.getByRole("button", { name: action }).first().click();
-      dialog = page.getByRole("dialog", { name: dialogName });
+      dialog = dialogContent(page, { name: dialogName });
       await audit(surface, dialog);
       await dialog.getByRole("button", { name: "关闭" }).click();
     }
@@ -392,7 +401,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
     await openSection("设置与备份");
     await page.getByText("加密整库备份", { exact: true }).click();
     await page.getByRole("button", { name: "导出加密整库备份" }).click();
-    dialog = page.getByRole("dialog", { name: "导出加密整库备份" });
+    dialog = dialogContent(page, { name: "导出加密整库备份" });
     await audit("备份", dialog);
 
     expect({ clipped, overflow }, JSON.stringify({ clipped, overflow })).toEqual({ clipped: [], overflow: [] });
@@ -420,7 +429,7 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: /连接 Monica Android WebDAV/ }).click();
-    const webDavDialog = page.getByRole("dialog", { name: "连接 Monica Android WebDAV" });
+    const webDavDialog = dialogContent(page, { name: "连接 Monica Android WebDAV" });
     await expect(webDavDialog).toBeVisible();
     await expectDirectChildrenSeparated(webDavDialog.locator(".provider-form"));
     const displayName = await webDavDialog.getByLabel("显示名称").boundingBox();
@@ -432,13 +441,12 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "添加登录项" }).first().click();
-    const editor = page.getByRole("dialog", { name: "添加登录项" });
+    const editor = dialogContent(page, { name: "添加登录项" });
     await expect(editor).toBeVisible();
     await expectDirectChildrenSeparated(editor.locator(".login-item-form"));
-    const loginTypes = editor.locator(".login-type-segments label");
-    const firstType = await loginTypes.nth(0).boundingBox();
-    const fourthType = await loginTypes.nth(3).boundingBox();
-    expect(fourthType!.y).toBeGreaterThan(firstType!.y + firstType!.height);
+    const type = await editor.getByRole("combobox", { name: "项目类型", exact: true }).boundingBox();
+    const destination = await editor.getByRole("combobox", { name: "保存到", exact: true }).boundingBox();
+    expect(destination!.y).toBeGreaterThan(type!.y + type!.height);
     await expectVisibleIconsFit(editor);
     await expectNoHorizontalOverflow(editor);
     await page.screenshot({ path: testInfo.outputPath("manager-large-text-editor.png"), animations: "disabled" });
@@ -464,14 +472,15 @@ test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", as
     await page.reload();
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     const navigationButton = page.getByRole("button", { name: "打开导航" });
-    if (await navigationButton.isVisible()) await navigationButton.click();
+    await expect(navigationButton).toBeVisible();
+    await navigationButton.click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: /连接 MDBX2 保险库/ }).click();
-    await page.getByRole("dialog", { name: "打开 MDBX2 保险库" }).getByRole("button", { name: "从 WebDAV 加入" }).evaluate((button) => (button as HTMLButtonElement).click());
+    await dialogContent(page, { name: "打开 MDBX2 保险库" }).getByRole("button", { name: "从 WebDAV 加入" }).evaluate((button) => (button as HTMLButtonElement).click());
 
-    const dialog = page.getByRole("dialog", { name: "从 WebDAV 加入 MDBX2" });
+    const dialog = dialogContent(page, { name: "从 WebDAV 加入 MDBX2" });
     await expect(dialog).toBeVisible();
-    const modeButtons = dialog.locator(".mdbx2-mode-picker button");
+    const modeButtons = dialog.locator(".mdbx2-mode-picker").getByRole("button");
     const firstMode = await modeButtons.nth(0).boundingBox();
     const secondMode = await modeButtons.nth(1).boundingBox();
     expect(firstMode).not.toBeNull();
@@ -530,7 +539,7 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 冲突演示库" });
+    const dialog = dialogContent(page, { name: "管理 冲突演示库" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("button", { name: /工作账号/ })).toBeVisible();
     await expect(dialog).not.toContainText("22222222-2222-4222-8222-222222222222");
@@ -640,7 +649,7 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 快照演示库" });
+    const dialog = dialogContent(page, { name: "管理 快照演示库" });
     const panel = dialog.locator(".mdbx2-snapshot-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("border-radius", "8px");
@@ -796,6 +805,8 @@ async function expectDirectChildrenSeparated(root: Locator): Promise<void> {
     const items = children.map((child, index) => {
       const rect = child.getBoundingClientRect();
       const visibleDescendants = [child, ...child.querySelectorAll("*")].filter((node) => {
+        const closed = node.closest("details:not([open])");
+        if (closed && node !== closed && !closed.querySelector(":scope > summary")?.contains(node)) return false;
         const style = getComputedStyle(node);
         const box = node.getBoundingClientRect();
         return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0;
@@ -878,8 +889,20 @@ async function visibleHorizontalOverflowIssues(root: Locator): Promise<Array<{ s
       const style = getComputedStyle(candidate);
       const rect = candidate.getBoundingClientRect();
       if (style.display === "none" || style.visibility === "hidden" || rect.width <= 0 || rect.height <= 0) return [];
-      const intersectsViewport = rect.right > 1 && rect.left < viewportWidth - 1;
-      const outside = intersectsViewport && (rect.left < -1 || rect.right > viewportWidth + 1);
+      let left = rect.left;
+      let right = rect.right;
+      // Follow slots through shadow roots: M3E tab pagination owns a real
+      // horizontal scroller. Measure visible content, not offscreen tabs.
+      const composedParent = (node: Element): Element | undefined => node.assignedSlot || node.parentElement || (node.getRootNode() as ShadowRoot).host;
+      for (let parent = composedParent(candidate); parent; parent = composedParent(parent)) {
+        if (/^(auto|scroll)$/.test(getComputedStyle(parent).overflowX) && parent.scrollWidth > parent.clientWidth + 1) {
+          const viewport = parent.getBoundingClientRect();
+          left = Math.max(left, viewport.left);
+          right = Math.min(right, viewport.right);
+        }
+      }
+      const intersectsViewport = right > left && right > 1 && left < viewportWidth - 1;
+      const outside = intersectsViewport && (left < -1 || right > viewportWidth + 1);
       const ownOverflow = candidate === document.documentElement && candidate.scrollWidth > candidate.clientWidth + 1;
       if (!outside && !ownOverflow) return [];
       const name = candidate.id ? `#${candidate.id}` : `${candidate.tagName.toLowerCase()}.${String(candidate.className || "").trim().replace(/\s+/g, ".")}`;

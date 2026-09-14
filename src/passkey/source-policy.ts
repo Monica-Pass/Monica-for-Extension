@@ -18,7 +18,6 @@ export function passkeyAvailability(item: PasskeyItem, rpId?: string): PasskeyAv
   if (item.sourceMode === "android-metadata-only") return "android-metadata-only";
   if (item.algorithm !== -7) return "unsupported-algorithm";
   if (!item.privateKeyPkcs8) return "missing-private-key";
-  if (item.algorithm !== -7) return "unsupported-algorithm";
   if (rpId && !passkeyRpIdsEqual(item.rpId, rpId)) return "rp-mismatch";
   return "ready";
 }
@@ -93,7 +92,7 @@ export function passkeyMatchesPageHost(item: PasskeyItem, pageHost: string): boo
 
 export function selectPasskeyCandidates(items: PasskeyItem[], rpId: string, allowedCredentialIds: string[]): PasskeyItem[] {
   const allowed = new Set(allowedCredentialIds.map(normalizeCredentialId));
-  return items.filter((item) => passkeyAvailability(item, rpId) === "ready"
+  return items.filter((item) => !item.deletedAt && !item.archivedAt && passkeyAvailability(item, rpId) === "ready"
     && (allowed.size ? allowed.has(normalizeCredentialId(item.credentialId)) : item.discoverable));
 }
 

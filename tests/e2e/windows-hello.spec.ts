@@ -18,12 +18,12 @@ test("Windows Hello remains manager-only and exposes a truthful device-key recov
     const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "" }));
     expect(setup).toMatchObject({ ok: true });
     await manager.reload();
-    await expect(manager.getByRole("heading", { name: "密码库概览" })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
 
     await manager.getByRole("button", { name: "设置与备份" }).click();
-    const helloDisclosure = manager.locator("details.hello-disclosure");
-    await expect(helloDisclosure.locator("summary")).toContainText("设备不可用 · 设备密钥");
-    await helloDisclosure.locator("summary").click();
+    const helloDisclosure = manager.locator("m3e-expansion-panel.hello-disclosure");
+    await expect(helloDisclosure.locator("[slot=\"header\"]")).toContainText("设备不可用 · 设备密钥");
+    await helloDisclosure.locator("[slot=\"header\"]").click();
     await expect(helloDisclosure.getByText("使用 Windows Hello 保护设备密钥；私钥不离开本机。")).toBeVisible();
 
     const popup = await context.newPage();

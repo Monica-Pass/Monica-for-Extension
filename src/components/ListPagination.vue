@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { computed, nextTick } from "vue";
 import { tr } from "../i18n";
 
@@ -19,11 +20,11 @@ async function change(page: number) {
   <nav v-if="pages > 1" class="list-pagination" :aria-label="tr('分页')">
     <span class="pagination-range" role="status">{{ tr('显示 {0}–{1} / {2}', { 0: (page - 1) * pageSize + 1, 1: Math.min(page * pageSize, total), 2: total }) }}</span>
     <div class="pagination-controls">
-      <button type="button" :disabled="page <= 1" @click="change(page - 1)">{{ tr('上一页') }}</button>
-      <select :value="page" :aria-label="tr('页码')" @change="change(Number(($event.target as HTMLSelectElement).value))">
-        <option v-for="number in pages" :key="number" :value="number">{{ number }} / {{ pages }}</option>
-      </select>
-      <button type="button" :disabled="page >= pages" @click="change(page + 1)">{{ tr('下一页') }}</button>
+      <m3e-button variant="text" type="button" :disabled="page <= 1" @click="change(page - 1)">{{ tr('上一页') }}</m3e-button>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('页码') }}</label><component :is="materialSelectTag"  :aria-label="tr('页码')" @change="change(Number(($event.target as HTMLSelectElement).value))">
+        <component :is="materialOptionTag" :selected.prop="String(page ?? '') === String(number)" v-for="number in pages" :key="number" :value="String(number)">{{ number }} / {{ pages }}</component>
+      </component></m3e-form-field>
+      <m3e-button variant="text" type="button" :disabled="page >= pages" @click="change(page + 1)">{{ tr('下一页') }}</m3e-button>
     </div>
   </nav>
 </template>

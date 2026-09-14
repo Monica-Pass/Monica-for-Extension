@@ -67,8 +67,11 @@ export class WebDavClient {
     if (file.size !== undefined && (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > limits.maxDownloadBytes)) {
       throw new Error("WebDAV 备份下载超过安全上限。");
     }
-    return this.request(file.url, { method: "GET", signal }, "WebDAV 下载备份", async (response, requestSignal) => {
+    const headers: Record<string, string> = file.etag && !file.etag.startsWith("W/") ? { "If-Match": file.etag } : {};
+    return this.request(file.url, { method: "GET", headers, signal }, "WebDAV 下载备份", async (response, requestSignal) => {
       if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
+      const receivedEtag = response.headers.get("etag");
+      if (file.etag && receivedEtag && file.etag !== receivedEtag) throw new Error("WebDAV 备份在下载期间发生变化，请重新同步。");
       return readBoundedResponseBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载", requestSignal);
     });
   }

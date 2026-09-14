@@ -1,7 +1,7 @@
 {
   "name": "monica-browser-extension",
   "private": true,
-  "version": "0.1.36",
+  "version": "0.1.37",
   "packageManager": "npm@10.9.2",
   "engines": {
     "node": ">=22.14.0 <25.0.0",
@@ -52,7 +52,9 @@
     "performance:probe": "node scripts/performance-probe.mjs"
   },
   "dependencies": {
-    "@m3e/web": "^2.5.8",
+    "@m3e/web": "2.6.1",
+    "@microsoft/signalr": "10.0.0",
+    "@microsoft/signalr-protocol-msgpack": "10.0.0",
     "bwip-js": "4.11.4",
     "fflate": "^0.8.3",
     "hash-wasm": "^4.12.0",

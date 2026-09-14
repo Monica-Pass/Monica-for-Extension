@@ -1,0 +1,143 @@
+/* Material 3 Expressive is the shared design system. Palettes only supply color. */
+:root {
+  --font-ui: Roboto, 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif;
+  --font-data: 'Cascadia Code', Consolas, 'Microsoft YaHei UI', ui-monospace, monospace;
+  --font-display: var(--font-ui);
+  --app-text: #19211e;
+  --app-muted: #4c5b55;
+  --app-outline: #c1cec7;
+  --app-outline-strong: #728078;
+  --app-on-primary: #fff;
+  --app-shape-card: 20px;
+  --app-shape-field: 12px;
+  --app-shape-dialog: 28px;
+  --app-content-max: 1440px;
+  --app-elevation-menu: 0 4px 16px rgb(20 35 28 / 16%), 0 1px 3px rgb(20 35 28 / 12%);
+  --app-elevation-dialog: 0 12px 40px rgb(15 30 24 / 20%), 0 2px 6px rgb(15 30 24 / 10%);
+  font-family: var(--font-ui);
+}
+:root[data-theme='dark'] {
+  --app-text: #e0e9e3;
+  --app-muted: #b8c8bf;
+  --app-outline: #3e4c45;
+  --app-outline-strong: #899b90;
+  --app-on-primary: #09201a;
+  --app-elevation-menu: 0 4px 16px rgb(0 0 0 / 32%), 0 1px 3px rgb(0 0 0 / 24%);
+  --app-elevation-dialog: 0 12px 40px rgb(0 0 0 / 40%);
+}
+html, body, .sidebar nav { scrollbar-width: thin; scrollbar-color: var(--app-outline) transparent; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, .sidebar nav::-webkit-scrollbar { display: block; width: 6px; height: 6px; }
+html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb, .sidebar nav::-webkit-scrollbar-thumb { background: var(--app-outline); border-radius: 8px; }
+button, input, select, textarea { font-family: var(--font-ui); }
+code, pre, .mono, .url-list, .otp-code, .totp-code, .generated-value { font-family: var(--font-data); }
+
+m3e-theme {
+  --md-ref-typeface-brand: var(--font-ui);
+  --md-ref-typeface-plain: var(--font-ui);
+  --md-sys-color-primary: var(--app-primary);
+  --md-sys-color-on-primary: var(--app-on-primary);
+  --md-sys-color-primary-container: var(--app-selected);
+  --md-sys-color-on-primary-container: var(--app-text);
+  --md-sys-color-secondary-container: var(--app-selected);
+  --md-sys-color-on-secondary-container: var(--app-text);
+  --md-sys-color-surface: var(--app-bg);
+  --md-sys-color-on-surface: var(--app-text);
+  --md-sys-color-on-surface-variant: var(--app-muted);
+  --md-sys-color-surface-container-lowest: var(--app-surface);
+  --md-sys-color-surface-container-low: var(--app-surface);
+  --md-sys-color-surface-container: var(--app-surface);
+  --md-sys-color-surface-container-high: color-mix(in srgb, var(--app-surface-high) 60%, var(--app-surface));
+  --md-sys-color-surface-container-highest: var(--app-surface-high);
+  --md-sys-color-outline: var(--app-outline-strong);
+  --md-sys-color-outline-variant: var(--app-outline);
+}
+m3e-card { --m3e-card-container-shape: 20px; --m3e-filled-card-container-color: var(--app-surface); --m3e-outlined-card-outline-color: var(--app-outline); }
+m3e-button {
+  max-inline-size: 100%;
+  min-height: 44px;
+  --m3e-button-label-text-font-weight: 500;
+  --m3e-button-label-text-tracking: .005em;
+  --m3e-button-label-text-line-height: 1.5;
+  --m3e-button-container-height: max(44px, 2.75rem);
+}
+m3e-icon { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+m3e-tab { --m3e-tab-icon-size: 24px; }
+:where(button, a, input, select, textarea):focus-visible { outline: 3px solid var(--app-primary); outline-offset: 3px; }
+input[type='checkbox'], input[type='radio'] { accent-color: var(--app-primary); }
+
+/* Action menus and form choices use the component library's own surfaces. */
+m3e-menu {
+  --m3e-menu-container-shape: 16px;
+  --m3e-menu-active-container-shape: 20px;
+  --m3e-menu-container-elevation: var(--app-elevation-menu);
+  --m3e-menu-container-color: var(--app-surface-high);
+  --m3e-menu-container-padding-block: 8px;
+  --m3e-menu-container-padding-inline: 8px;
+  --m3e-menu-item-container-height: max(44px, 2.75rem);
+  --m3e-menu-item-label-text-line-height: 1.5;
+  --m3e-menu-container-max-height: min(36rem, calc(100dvh - 24px));
+  --m3e-menu-container-max-width: min(20rem, calc(100vw - 24px));
+}
+.create-type-menu { width: 272px; max-width: calc(100vw - 24px); }
+.create-type-menu m3e-menu-item-group { display: grid; gap: 2px; }
+.m3-menu-group-label { padding: 10px 12px 6px; color: var(--app-muted); font-size: .75rem; font-weight: 500; line-height: 1.5; }
+.create-type-menu m3e-menu-item[aria-current='true'] { --m3e-menu-item-color: var(--app-primary); }
+#root .appbar-actions .create-split {
+  flex: 0 1 auto;
+  max-width: 100%;
+  /* @m3e/web 2.5.8 spells this public split-button token "spit".
+     Keep both glyphs inside their 24px slots when only text is enlarged. */
+  --m3e-spit-button-small-trailing-button-icon-size: 20px;
+}
+#root .appbar-actions .create-split .appbar-create { min-width: 88px; --m3e-button-leading-space: 18px; --m3e-button-trailing-space: 16px; }
+#root .create-menu-trigger { flex: none; min-width: 48px; min-height: 44px; }
+.create-menu-trigger m3e-icon { transition: transform 180ms var(--motion-ease); }
+.create-menu-trigger[aria-expanded='true'] m3e-icon { transform: rotate(180deg); }
+.create-type-label { margin-inline-start: .3em; }
+
+/* Compact extension popup shares the same typography, color and shapes. */
+.popup-shell { font-family: var(--font-ui); --popup-action-color: var(--app-primary); }
+.popup-brand { gap: 10px; }
+.popup-brand > div > strong { font: 600 1.5rem/1.2 var(--font-ui); }
+.popup-brand .brand-logo { flex-basis: 36px; width: 36px; height: 36px; }
+.popup-brand small { font: 400 .6875rem/1.5 var(--font-ui); color: var(--app-muted); }
+.popup-header { padding-block: 0; }
+.site-summary { padding: 12px; gap: 12px; flex-wrap: wrap; border-radius: 16px; background: var(--app-surface-high); box-shadow: none; }
+.site-summary > div { flex: 1 1 180px; min-width: 0; }
+.site-icon, .credential-icon, .unlock-icon { background: var(--app-selected); color: var(--app-primary); border-radius: 14px; }
+.ready-badge { padding: 5px 8px; background: var(--app-selected); color: var(--app-text); font-size: .6875rem; white-space: normal; }
+.popup-shell h2 { font: 500 .875rem/1.5 var(--font-ui); letter-spacing: normal; text-transform: none; }
+.popup-unlock { padding: 20px 16px; border-radius: 20px; background: var(--app-surface); }
+.popup-unlock small { white-space: normal; line-height: 1.6; }
+.popup-unlock m3e-button { width: 100%; min-width: 0; }
+.locked-autofill-section { display: grid; gap: 10px; }
+.popup-status { font-size: .75rem; text-align: left; overflow-wrap: anywhere; }
+.popup-status:not(:empty) { padding: 10px 12px; background: var(--app-surface-high); border-radius: 12px; }
+.popup-footer { flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 12px; }
+.popup-footer > span { white-space: normal; font-size: .6875rem; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after, *::picker(select) { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+@media (forced-colors: active) { #root .nav-item.selected, select option:checked { outline: 2px solid Highlight; } }
+
+/* M3E components own control chrome. These resets only remove the legacy
+   stylesheet rules that would otherwise override their slotted native inputs. */
+m3e-form-field { width: 100%; min-width: 0; max-width: 100%; }
+m3e-form-field.field { display: inline-flex; gap: 0; }
+#root m3e-form-field :is(input, textarea, select),
+#popup-root m3e-form-field :is(input, textarea, select) {
+  min-width: 0; min-height: 0; max-width: 100%; width: 100%;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent;
+  box-shadow: none; outline: 0; color: inherit; font: inherit; letter-spacing: inherit;
+}
+#root m3e-form-field textarea, #popup-root m3e-form-field textarea { resize: vertical; }
+#root m3e-form-field [slot='label'], #popup-root m3e-form-field [slot='label'] { font: inherit; color: inherit; }
+m3e-form-field [slot='suffix'] { margin-inline-end: 4px; }
+m3e-form-field m3e-select { min-width: 0; max-width: 100%; }
+m3e-option-panel { --m3e-option-panel-max-height: min(28rem, 60dvh); }
+#root m3e-expansion-panel { min-width: 0; border: 0; padding: 0; }
+#root m3e-expansion-panel [slot='header'] { min-width: 0; }
+#root m3e-expansion-panel [slot='header'] small { margin-inline-start: 8px; color: var(--app-muted); }
+#root m3e-expansion-panel .editor-disclosure-body { padding: 0; }
+m3e-checkbox, m3e-radio { flex: 0 0 auto; }
+m3e-search-bar { width: 100%; min-width: 0; }
+m3e-search-bar > input { border: 0; outline: 0; background: transparent; min-width: 0; }

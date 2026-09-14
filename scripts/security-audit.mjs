@@ -9,7 +9,9 @@ const missing = scripts.filter((name) => !manifest.content_scripts?.some((entry)
 if (missing.length || manifest.background?.service_worker !== "background.js") throw new Error(`Missing trusted extension scripts: ${missing.join(", ")}`);
 if (!manifest.content_scripts.some((entry) => entry.world === "MAIN" && entry.js?.includes("main-world.js") && entry.run_at === "document_start")) throw new Error("MAIN-world Passkey bridge is not document_start.");
 if (manifest.externally_connectable || manifest.optional_permissions || manifest.optional_host_permissions) throw new Error("Release manifest exposes an unexpected external or optional privilege surface.");
-if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "cookies", "identity", "nativeMessaging", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
+// favicon reads the browser's local icon cache in extension pages only; the
+// _favicon endpoint remains absent from web-accessible resources below.
+if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
 if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(["http://*/*", "https://*/*"])) throw new Error("Release manifest host access changed without a security review.");
 const csp = manifest.content_security_policy?.extension_pages || "";
 for (const directive of ["script-src 'self' 'wasm-unsafe-eval'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) {
@@ -39,8 +41,12 @@ for (const name of scripts) {
   for (const token of forbidden) if (source.includes(token)) throw new Error(`${name} contains forbidden token: ${token}`);
   // The release CSP is `script-src 'self' 'wasm-unsafe-eval'`, so any code-generation form a bundled
   // dependency drags in would fail at load rather than at review time.
+  // SignalR's platform detector checks whether the worker has this property.
+  // Exempt only that exact read-only probe, retaining the ban on all imports,
+  // property accesses/aliases and dynamically loaded worker code.
+  const executableSource = source.replaceAll('"importScripts"in self', 'false');
   for (const form of ["new Function", "eval(", "importScripts"]) {
-    if (source.includes(form)) throw new Error(`${name} contains a CSP-forbidden code-generation form: ${form}`);
+    if (executableSource.includes(form)) throw new Error(`${name} contains a CSP-forbidden code-generation form: ${form}`);
   }
 }
 const background = await readFile(resolve(root, "dist/background.js"), "utf8");
@@ -53,6 +59,10 @@ const pageTypes = ["CREDENTIAL_CAPTURE", "CREDENTIAL_PENDING", "CREDENTIAL_ACCEP
 const allowlistBlock = backgroundSource.match(/const WEB_PAGE_REQUEST_TYPES[\s\S]*?\]\);/)?.[0] || "";
 for (const type of pageTypes) if (!allowlistBlock.includes(`"${type}"`)) throw new Error(`Page request allowlist is missing ${type}.`);
 const messageSource = await readFile(resolve(root, "src/runtime/messages.ts"), "utf8");
+for (const type of ["PASSKEY_VERIFICATION_CONTEXT", "PASSKEY_VERIFY_PASSWORD", "PASSKEY_CANCEL_VERIFICATION"]) {
+  if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Passkey identity verification request ${type} is exposed to web pages.`);
+  if (!backgroundSource.includes(`case "${type}"`)) throw new Error(`Passkey identity verification handler ${type} is missing.`);
+}
 const steamTypes = [...messageSource.matchAll(/type:\s*"(STEAM_[A-Z0-9_]+)"/g)].map((match) => match[1]);
 for (const type of steamTypes) if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Privileged Steam request ${type} is exposed to web pages.`);
 const mdbx2Types = [...messageSource.matchAll(/type:\s*"(MDBX2_[A-Z0-9_]+)"/g)].map((match) => match[1]);

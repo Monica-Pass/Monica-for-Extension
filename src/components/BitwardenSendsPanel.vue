@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr, locale } from '../i18n';
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
@@ -143,6 +144,12 @@ async function selectSend(summary: BitwardenSendSummary) {
   } finally {
     detailLoading.value = false;
   }
+}
+
+function selectSendFromList(event: Event) {
+  const id = (event.currentTarget as HTMLElement & { value: string }).value;
+  const summary = filteredSends.value.find(send => send.sendId === id);
+  if (summary) void selectSend(summary);
 }
 
 function openCreateText() {
@@ -461,12 +468,12 @@ function messageOf(cause: unknown): string {
 <template>
   <section class="send-panel" aria-labelledby="bitwarden-send-heading">
     <div class="send-toolbar">
-      <label class="provider-select">
-        <span>{{ tr('Bitwarden 密码源') }}</span>
-        <select v-model="selectedProviderId" :disabled="!bitwardenProviders.length || loading || mutationBusy">
-          <option v-for="provider in bitwardenProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
-        </select>
-      </label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker class="provider-select">
+        <label slot="label">{{ tr('Bitwarden 密码源') }}</label>
+        <component :is="materialSelectTag" @input="selectedProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="!bitwardenProviders.length || loading || mutationBusy">
+          <component :is="materialOptionTag" :selected.prop="String(selectedProviderId ?? '') === String(provider.id)" v-for="provider in bitwardenProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</component>
+        </component>
+      </m3e-form-field>
       <div class="toolbar-actions">
         <m3e-button variant="text" :disabled="!selectedProviderId || loading" @click="loadSends(true)"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ loading ? tr('刷新中…') : tr('刷新') }}</m3e-button>
         <m3e-button variant="tonal" :disabled="!selectedProviderId" @click="openCreateFile"><m3e-icon slot="icon" name="upload_file"></m3e-icon>{{ tr('发送文件') }}</m3e-button>
@@ -475,7 +482,7 @@ function messageOf(cause: unknown): string {
     </div>
 
     <p class="send-live-status" aria-live="polite">{{ notice }}</p>
-    <div v-if="error" class="send-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span><button type="button" @click="loadSends(true)">{{ tr('重试') }}</button></div>
+    <div v-if="error" class="send-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span><m3e-button variant="text" type="button" @click="loadSends(true)">{{ tr('重试') }}</m3e-button></div>
 
     <div v-if="!bitwardenProviders.length" class="send-empty standalone">
       <m3e-icon name="send"></m3e-icon>
@@ -490,24 +497,23 @@ function messageOf(cause: unknown): string {
           <span v-if="selectedProvider" class="provider-origin">{{ selectedProvider.name }}</span>
         </header>
         <div v-if="loading && !sends.length" class="send-list-loading" role="status">{{ tr('正在读取并解密 Send 摘要…') }}</div>
-        <div v-else-if="filteredSends.length" class="send-list" role="listbox" :aria-label="tr('选择安全发送')">
-          <button
+        <template v-else-if="filteredSends.length">
+        <m3e-selection-list class="send-list" hide-selection-indicator :aria-label="tr('选择安全发送')" @change="selectSendFromList">
+          <m3e-list-option
             v-for="send in filteredSends"
             :key="send.sendId"
             class="send-list-item"
-            :class="{ selected: send.sendId === selectedSendId }"
-            type="button"
-            role="option"
-            :aria-selected="send.sendId === selectedSendId"
-            @click="selectSend(send)"
+            :value="send.sendId"
+            :selected.prop="send.sendId === selectedSendId"
           >
-            <span class="send-type-icon"><m3e-icon :name="send.type === 'file' ? 'draft' : send.type === 'text' ? 'text_snippet' : 'help'"></m3e-icon></span>
-            <span class="send-list-copy"><strong>{{ send.name }}</strong><small>{{ send.fileName || typeLabel(send.type) }} · {{ authLabel(send) }}</small></span>
-            <span v-if="send.disabled" class="send-state-chip">{{ tr('已停用') }}</span>
-            <m3e-icon class="send-row-arrow" name="chevron_right"></m3e-icon>
-          </button>
+            <span slot="leading" class="send-type-icon"><m3e-icon :name="send.type === 'file' ? 'draft' : send.type === 'text' ? 'text_snippet' : 'help'"></m3e-icon></span>
+            <strong>{{ send.name }}</strong><small slot="supporting-text">{{ send.fileName || typeLabel(send.type) }} · {{ authLabel(send) }}</small>
+            <span v-if="send.disabled" slot="supporting-text" class="send-state-chip">{{ tr('已停用') }}</span>
+            <m3e-icon slot="trailing" class="send-row-arrow" name="chevron_right"></m3e-icon>
+          </m3e-list-option>
+        </m3e-selection-list>
           <m3e-button v-if="nextCursor" class="load-more" variant="text" :disabled="loadingMore" @click="loadSends(false)">{{ loadingMore ? tr('加载中…') : tr('加载更多') }}</m3e-button>
-        </div>
+        </template>
         <div v-else class="send-empty compact">
           <m3e-icon name="outbox"></m3e-icon>
           <h3>{{ props.query ? tr('没有匹配的安全发送') : tr('还没有安全发送') }}</h3>
@@ -528,7 +534,7 @@ function messageOf(cause: unknown): string {
 
         <section class="detail-section" aria-labelledby="send-share-title">
           <div class="section-heading"><div><h3 id="send-share-title">{{ tr('分享链接') }}</h3><p>{{ tr('链接包含访问此 Send 所需的 URL 密钥，请只发给可信收件人。') }}</p></div></div>
-          <div class="share-row"><input :value="selectedSend.shareUrl" readonly :aria-label="tr('Send 分享链接')" @focus="($event.target as HTMLInputElement).select()" /><m3e-button variant="tonal" :disabled="!selectedSend.shareUrl" @click="copyShareUrl"><m3e-icon slot="icon" name="content_copy"></m3e-icon>{{ tr('复制链接') }}</m3e-button></div>
+          <div class="share-row"><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('Send 分享链接') }}</label><input :value="selectedSend.shareUrl" readonly :aria-label="tr('Send 分享链接')" @focus="($event.target as HTMLInputElement).select()" /></m3e-form-field><m3e-button variant="tonal" :disabled="!selectedSend.shareUrl" @click="copyShareUrl"><m3e-icon slot="icon" name="content_copy"></m3e-icon>{{ tr('复制链接') }}</m3e-button></div>
         </section>
 
         <section v-if="selectedSend.type === 'text'" class="detail-section" aria-labelledby="send-content-title">
@@ -564,24 +570,24 @@ function messageOf(cause: unknown): string {
       <section ref="editorDialog" class="send-editor" role="dialog" aria-modal="true" aria-labelledby="send-editor-title">
         <header><div><h2 id="send-editor-title">{{ editorTitle }}</h2><p>{{ editorDescription }}</p></div><m3e-icon-button data-dialog-close :aria-label="tr('关闭安全发送编辑器')" :disabled="mutationBusy" @click="closeEditor"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
         <form novalidate @submit.prevent="submitEditor">
-          <label class="send-field"><span>{{ tr('标题 *') }}</span><input v-model="form.name" autofocus autocomplete="off" /></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field"><label slot="label">{{ tr('标题 *') }}</label><input v-model="form.name" autofocus autocomplete="off" /></m3e-form-field>
 
           <label v-if="editorMode === 'create-file'" class="send-field field-wide"><span>{{ tr('文件 *') }}</span><span class="send-file-picker"><m3e-icon name="upload_file"></m3e-icon><span>{{ selectedFile ? `${selectedFile.name} · ${formatBytes(selectedFile.size)}` : tr('选择不超过 100 MiB 的文件') }}</span><input type="file" :aria-label="tr('选择安全发送文件')" @change="selectFile" /></span></label>
-          <label v-else-if="editorMode === 'create-text' || editingExisting?.type === 'text'" class="send-field field-wide"><span>{{ tr('文本内容 *') }}</span><textarea v-model="form.text" rows="7"></textarea></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker v-else-if="editorMode === 'create-text' || editingExisting?.type === 'text'" class="send-field field-wide"><label slot="label">{{ tr('文本内容 *') }}</label><textarea v-model="form.text" rows="7"></textarea></m3e-form-field>
 
-          <label class="send-field field-wide"><span>{{ tr('备注') }}</span><textarea v-model="form.notes" rows="3"></textarea></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field field-wide"><label slot="label">{{ tr('备注') }}</label><textarea v-model="form.notes" rows="3"></textarea></m3e-form-field>
 
           <fieldset class="send-fieldset field-wide"><legend>{{ tr('访问策略') }}</legend>
-            <label class="send-field"><span>{{ tr('自动删除 *') }}</span><input v-model="form.deletionDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="maximumDeletionDate" /></label>
-            <label class="send-field"><span>{{ tr('提前到期') }}</span><input v-model="form.expirationDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="form.deletionDate || maximumDeletionDate" /></label>
-            <label class="send-field"><span>{{ tr('访问次数上限') }}</span><input v-model="form.maxAccessCount" type="number" min="1" step="1" inputmode="numeric" :placeholder="tr('不限制')" /></label>
-            <label class="send-field"><span>{{ editingExisting?.hasPassword ? tr('访问密码') : tr('访问密码（可选）') }}</span><span class="password-input"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" :disabled="Boolean(editingExisting?.hasPassword)" :placeholder="editingExisting?.hasPassword ? tr('已设置；请先在详情页移除') : ''" /><button type="button" :disabled="Boolean(editingExisting?.hasPassword)" @click="revealPassword = !revealPassword">{{ revealPassword ? tr('隐藏') : tr('显示') }}</button></span></label>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field"><label slot="label">{{ tr('自动删除 *') }}</label><input v-model="form.deletionDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="maximumDeletionDate" /></m3e-form-field>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field"><label slot="label">{{ tr('提前到期') }}</label><input v-model="form.expirationDate" type="datetime-local" :min="editorMode === 'edit' ? undefined : minimumDate" :max="form.deletionDate || maximumDeletionDate" /></m3e-form-field>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field"><label slot="label">{{ tr('访问次数上限') }}</label><input v-model="form.maxAccessCount" type="number" min="1" step="1" inputmode="numeric" :placeholder="tr('不限制')" /></m3e-form-field>
+            <m3e-form-field v-field-label variant="filled" hide-required-marker class="send-field"><label slot="label">{{ editingExisting?.hasPassword ? tr('访问密码') : tr('访问密码（可选）') }}</label><span class="password-input"><input v-model="form.password" :type="revealPassword ? 'text' : 'password'" autocomplete="new-password" :disabled="Boolean(editingExisting?.hasPassword)" :placeholder="editingExisting?.hasPassword ? tr('已设置；请先在详情页移除') : ''" /><m3e-button variant="text" type="button" :disabled="Boolean(editingExisting?.hasPassword)" @click="revealPassword = !revealPassword">{{ revealPassword ? tr('隐藏') : tr('显示') }}</m3e-button></span></m3e-form-field>
           </fieldset>
 
           <fieldset class="send-options field-wide"><legend>{{ tr('显示与可用性') }}</legend>
-            <label><input v-model="form.hideEmail" type="checkbox" /><span>{{ tr('向访问者隐藏所有者邮箱') }}</span></label>
-            <label v-if="editorMode !== 'create-file' && editingExisting?.type !== 'file'"><input v-model="form.hiddenText" type="checkbox" /><span>{{ tr('访问页面默认隐藏文本') }}</span></label>
-            <label><input v-model="form.disabled" type="checkbox" /><span>{{ tr('暂时停用分享链接') }}</span></label>
+            <label v-choice-label><m3e-checkbox :checked.prop="form.hideEmail" @input="form.hideEmail = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('向访问者隐藏所有者邮箱') }}</span></label>
+            <label v-choice-label v-if="editorMode !== 'create-file' && editingExisting?.type !== 'file'"><m3e-checkbox :checked.prop="form.hiddenText" @input="form.hiddenText = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('访问页面默认隐藏文本') }}</span></label>
+            <label v-choice-label><m3e-checkbox :checked.prop="form.disabled" @input="form.disabled = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span>{{ tr('暂时停用分享链接') }}</span></label>
           </fieldset>
 
           <div v-if="activeTransferId" class="upload-status field-wide" role="status" aria-live="polite"><div><strong>{{ tr('正在加密上传文件') }}</strong><span>{{ uploadPercent }}%</span></div><progress :value="uploadProgress" :max="selectedFile?.size || 1"></progress><m3e-button variant="text" type="button" @click="cancelUpload">{{ tr('取消上传') }}</m3e-button></div>
@@ -628,10 +634,13 @@ function messageOf(cause: unknown): string {
 .provider-select,
 .send-field {
   min-width: 0;
+}
+
+label.send-field {
   display: grid;
   gap: 6px;
   color: var(--md-sys-color-on-surface, var(--app-text));
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .provider-select {
@@ -796,29 +805,10 @@ button:focus-visible,
 .send-list-item {
   min-width: 0;
   min-height: 72px;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto 20px;
-  align-items: center;
-  gap: 10px;
-  border: 0;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
-  padding: 10px 12px;
-  color: var(--md-sys-color-on-surface, var(--app-text));
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  transition: background-color 160ms ease;
 }
 
-.send-list-item:hover {
-  background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--app-text)) 6%, transparent);
-}
-
-.send-list-item.selected {
-  color: var(--md-sys-color-on-secondary-container, var(--app-text));
-  background: var(--md-sys-color-secondary-container, var(--app-selected));
-}
+.send-list-item > strong { font-weight: 500; overflow-wrap: anywhere; }
+.send-list-item > small { overflow-wrap: anywhere; }
 
 .send-type-icon,
 .file-icon {

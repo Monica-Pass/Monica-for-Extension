@@ -94,6 +94,27 @@ async function reopen(provider: KeePassProvider, target: ProviderAccount): Promi
 }
 
 describe("KeePassProvider", () => {
+  it("keeps usage local without rewriting the KDBX or adding entry history, including old baselines", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, []);
+    const created = await provider.create(target, newPasskey({ signCount: 4, useCount: 2 })) as PasskeyItem;
+    await provider.exportFile(target.id);
+    const reference = created.providerRefs[0];
+    const baseline = JSON.parse(reference.etag!);
+    baseline.useCount = 2;
+    const oldEtag = JSON.stringify(baseline, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) : value);
+    const used = { ...created, useCount: 3, lastUsedAt: "2026-09-14T03:00:00.000Z", providerRefs: [{ ...reference, etag: oldEtag }] };
+    const result = await sync(provider, target, [used]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.items[0]).toMatchObject({ signCount: 4, useCount: 3, lastUsedAt: used.lastUsedAt });
+    expect(provider.summarize(target.id).dirty).toBe(false);
+    const database = await reopen(provider, target);
+    const entry = database.getDefaultGroup().entries[0];
+    expect(entry.history).toHaveLength(0);
+    const payload = JSON.parse(keePassFieldText(entry.fields.get("MonicaPasskeyData")));
+    expect(payload).toMatchObject({ signCount: 4, useCount: 2 });
+  });
   it("summarizes the file without handing the UI the database or its entries", async () => {
     const provider = new KeePassProvider();
     const { summary } = await unlock(provider);

@@ -1,0 +1,132 @@
+/* Manager overrides stay in its entry chunk, after the shared popup CSS. */
+#root { --app-drawer-width: clamp(240px, 17rem, 320px); }
+#root .sidebar { padding: 16px 12px 20px; border-right: 0; background: var(--app-surface); }
+#root .sidebar-brand { min-height: 92px; padding: 8px 12px 24px; gap: 12px; grid-template-columns: 44px minmax(0, 1fr); border: 0; }
+.sidebar-brand > span:last-child, .login-brand-copy { font: 600 1.625rem/1.2 var(--font-ui); letter-spacing: -.02em; }
+.sidebar-brand small, .login-brand-copy small { font: 400 .6875rem/1.5 var(--font-ui); letter-spacing: .045em; margin-top: 5px; }
+img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; object-fit: contain; border: 0; border-radius: 0; filter: none; }
+#root .sidebar .nav-title { padding: 14px 16px 8px; font: 500 .75rem/1.5 var(--font-ui); letter-spacing: .01em; text-transform: none; color: var(--app-muted); }
+#root .nav-item { min-height: 48px; padding: 10px 16px; border-radius: 28px; font: 500 .875rem/1.5 var(--font-ui); }
+#root .nav-item > span:not(.nav-count) { white-space: normal; overflow-wrap: anywhere; }
+#root .nav-item.selected { background: var(--app-selected); color: var(--app-text); }
+#root .nav-item.selected > m3e-icon { color: var(--app-primary); font-variation-settings: 'FILL' 1, 'wght' 500; }
+#root .nav-count { background: transparent; color: var(--app-muted); font: 500 .75rem/1.5 var(--font-ui); }
+#root .sidebar-footer { border-top: 1px solid var(--app-outline); padding: 16px 8px 0; gap: 12px; }
+.local-badge { background: transparent; font-size: .75rem; }
+.local-badge m3e-icon { color: var(--app-primary); }
+#root .page-heading h1 { font: 500 clamp(1.75rem, 3vw, 2.125rem)/1.25 var(--font-ui); letter-spacing: -.025em; overflow-wrap: anywhere; }
+#root .page-heading p { margin-top: 10px; line-height: 1.6; font-size: .875rem; color: var(--app-muted); }
+#root .appbar-actions > m3e-button { flex: 0 0 auto; width: max-content; }
+.search input { min-width: 0; font-size: .9375rem; }
+.section-heading, .table-header { gap: 16px; flex-wrap: wrap; }
+.metrics { gap: 16px; }
+.metric > strong:not(.metric-word) { font: 500 clamp(2.25rem, 5vw, 3.5rem)/1.15 var(--font-ui); letter-spacing: -.03em; }
+.metric p, thead th { font: 500 .8125rem/1.5 var(--font-ui); letter-spacing: normal; text-transform: none; }
+.row-icon { color: var(--app-primary); border: 0; border-radius: 16px; background: var(--app-selected); }
+#root .vault-result-count { font: 400 .8125rem/1.5 var(--font-ui); }
+#root .vault-list-card :is(.item-card, .credential-table tbody tr) { border-radius: 4px; }
+#root .vault-list-card :is(.item-card, .credential-table tbody tr):first-child { border-start-start-radius: 24px; border-start-end-radius: 24px; }
+#root .vault-list-card :is(.item-card, .credential-table tbody tr):last-child { border-end-start-radius: 24px; border-end-end-radius: 24px; }
+#root .vault-list-card .row-icon { border-radius: 14px; background: var(--app-selected); }
+#root .vault-list-card .item-card-meta time { font-family: var(--font-ui); }
+#root .vault-list-card .empty-state { border: 0; border-radius: 24px; background: var(--app-surface); }
+
+/* One surface hierarchy for every editor, source dialog and settings panel. */
+:where([role='dialog'], .editor-dialog, .provider-dialog, .appearance-dialog) { max-inline-size: calc(100vw - 32px); max-block-size: calc(100dvh - 32px); min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+#root :is([role='dialog'], .editor-dialog, .provider-dialog), body .appearance-modal .appearance-dialog { border-radius: 28px; border: 0; box-shadow: var(--app-elevation-dialog); }
+:where([role='dialog']) :where(form, fieldset, label, header, footer, section, div, p) { min-width: 0; }
+:where([role='dialog']) :where(p, small, strong, label, legend, h2, h3) { overflow-wrap: anywhere; }
+:where([role='dialog']) :where(input:not([type='checkbox']):not([type='radio']), textarea, select) { max-width: 100%; }
+:where([role='dialog']) :where(footer, .actions, .provider-actions, .dialog-actions) { flex-wrap: wrap; }
+:where(.modal-backdrop, .appearance-modal, .detail-backdrop) { background: rgb(8 20 15 / 40%); backdrop-filter: none; }
+.field > span, .provider-form label > span, .filter-caption { font: 500 .8125rem/1.5 var(--font-ui); letter-spacing: normal; color: var(--app-muted); }
+#root .editor-section { padding: 20px; border-radius: 20px; background: var(--app-surface); gap: 16px; }
+#root .editor-basics { background: transparent; padding-block: 4px 8px; }
+#root .editor-meta-grid:has(> :only-child) { grid-template-columns: minmax(0, 1fr); }
+#root .editor-meta-grid > .field:only-child { grid-template-columns: minmax(0, 1fr); }
+#root .editor-meta-grid > .field:only-child > small { grid-column: 1 / -1; }
+#root .editor-section h3 { font: 500 .9375rem/1.5 var(--font-ui); }
+#root .editor-extras { gap: 0; padding-block: 16px; }
+#root .editor-text-action { color: var(--app-primary); border-radius: 12px; padding-inline: 8px; }
+#root .editor-label-action .editor-text-action { min-height: 44px; }
+
+/* Expansion panels provide their own state layer, indicator and keyboard support. */
+#root .editor-disclosure { margin-top: 8px; border: 0; background: var(--app-bg); }
+#root .settings-disclosure-content { grid-template-columns: minmax(0, 1fr); }
+#root .settings-disclosure-content > *, .source-actions { min-width: 0; max-width: 100%; }
+#root :is(.settings-list-card, .bitwarden-provider-card, .source-card) { border-radius: 24px; --m3e-card-shape: 24px; }
+.boundary-row, .security-note { background: var(--app-surface-high); border: 0; border-radius: 16px; color: var(--app-muted); }
+.sr-status:not(:empty) { position: static; width: auto; height: auto; clip: auto; clip-path: none; margin: 0 0 16px; padding: 12px 16px; background: var(--app-selected); border-radius: 16px; font-size: .875rem; white-space: normal; }
+.login-card { border-radius: 28px; }
+.login-brand { gap: 14px; align-items: center; }
+.login-heading h1 { font-weight: 500; letter-spacing: -.025em; }
+.login-stack { gap: 24px; }
+.locked-autofill-option { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 0; border-radius: 16px; background: var(--app-surface-high); }
+.locked-autofill-option > span { display: grid; gap: 8px; min-width: 0; }
+.locked-autofill-option strong { font-size: .875rem; font-weight: 500; }
+.locked-autofill-option small { font-size: .75rem; line-height: 1.6; color: var(--app-muted); }
+.locked-autofill-badge { display: inline-flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; padding: 4px 8px; background: var(--app-surface-high); border-radius: 8px; font-size: .6875rem; line-height: 1.5; white-space: normal; }
+#root .locked-autofill-badge m3e-icon { --m3e-icon-size: 16px; --app-icon-medium: 16px; }
+.language-picker { min-width: 0; }
+.auth-preferences { display: flex; justify-content: flex-end; padding: 16px; }
+
+@container manager-content (max-width: 48rem) { .create-type-label { display: none; } }
+@container manager-content (max-width: 24rem) {
+  #root .appbar-actions .create-split { flex: 1 1 auto; }
+  #root .appbar-actions .create-split .appbar-create { min-width: 72px; }
+}
+@media (max-width: 580px) {
+  #root :is([role='dialog'], .editor-dialog, .provider-dialog), body .appearance-modal .appearance-dialog { border-radius: 24px; }
+  #root .editor-section { padding: 16px; }
+  #root .editor-basics { padding: 4px 4px 8px; }
+  .getting-started-actions { flex-wrap: wrap; }
+  .source-actions > m3e-button { width: 100%; }
+  :where([role='dialog']) { max-inline-size: calc(100vw - 16px); max-block-size: calc(100dvh - 16px); }
+}
+
+/* Component hosts only receive layout; M3E owns their surfaces and state layers. */
+#root .material-dialog { --m3e-dialog-min-width: min(480px, calc(100vw - 32px)); --m3e-dialog-max-width: min(560px, calc(100vw - 32px)); }
+#root .material-editor-dialog { --m3e-dialog-min-width: min(760px, calc(100vw - 32px)); --m3e-dialog-max-width: min(760px, calc(100vw - 32px)); }
+#root .material-dialog > [slot='header'] { min-width: 0; overflow-wrap: anywhere; font-size: 1.25rem; font-weight: 500; line-height: 1.3; }
+#root .material-editor-form { container: vault-editor / inline-size; display: block; overflow: visible; min-height: 0; }
+#root .material-editor-form .structured-editor { padding: 4px 0 16px; gap: 24px; overflow: visible; }
+#root .material-editor-form .editor-section { padding: 0; background: transparent; gap: 16px; }
+#root .material-editor-form .editor-basics { padding: 0; }
+#root .material-editor-form .editor-extras { gap: 8px; }
+#root .material-dialog > footer[slot='actions'] { margin: 0; padding: 0; border: 0; background: transparent; flex-wrap: wrap; gap: 8px; }
+#root .material-dialog > footer[slot='actions'] > m3e-button { flex: 0 1 auto; min-width: 88px; }
+#root .material-dialog .editor-disclosure { margin: 0; background: transparent; }
+#root .material-dialog .editor-extras > h3 { margin: 0 0 4px; }
+#root .material-dialog .editor-extras > .field { margin: 8px 0; }
+#root .create-type-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 20px; }
+#root .create-type-groups > section { min-width: 0; }
+#root .create-type-groups h3 { margin: 0 0 12px; font-size: .875rem; font-weight: 500; }
+#root .create-type-groups m3e-list-action { --m3e-list-item-three-line-height: 88px; }
+#root .settings-actions { width: 100%; }
+#root .settings-actions strong { font-weight: 500; }
+#root .settings-actions [slot='supporting-text'] { font-size: .82rem; }
+#root .settings-disclosure > [slot='header'] { width: 100%; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 12px; }
+#root .settings-disclosure > [slot='header'] > span:first-child { grid-column: 2; grid-row: 1; min-width: 0; }
+#root .settings-disclosure > [slot='header'] > .settings-entry-icon { grid-column: 1; grid-row: 1; }
+#root .settings-disclosure > [slot='header'] strong { font-size: 1rem; font-weight: 500; }
+#root .settings-disclosure > [slot='header'] small { display: block; margin: 4px 0 0; font-size: .82rem; line-height: 1.5; }
+#root .settings-disclosure-content { padding: 12px 0 4px; border: 0; }
+#root .generator-tabs, #root .steam-tabs-m3, #root .keepass-tabs { min-width: 0; width: 100%; margin-bottom: 16px; }
+#root .generator-options { border: 0; border-radius: 20px; padding: 16px; background: var(--app-surface); }
+#root .generator-options legend { font-size: .875rem; font-weight: 500; }
+#root .generator-radio-options { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; }
+#root .generator-slider-field { padding-inline: 8px; }
+#root .generator-slider-field > * { min-width: 0; }
+#root .generator-slider-field m3e-slider { width: 100%; --m3e-slider-min-width: 0px; }
+#root .generator-history > [slot='header'] { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; }
+#root .generator-history > [slot='header'] strong { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+#root m3e-radio-group.login-type-segments { display: flex; flex-wrap: wrap; gap: 16px; border: 0; }
+#root m3e-radio-group.login-type-segments > label, #root .barcode-render-modes > label { display: flex; align-items: center; gap: 8px; }
+#root .batch-action-segments label { display: flex; align-items: center; gap: 4px; }
+#root .batch-action-segments span { min-height: 56px; padding: 4px; border: 0; }
+#root .attachment-transfer-mode m3e-radio-group { display: flex; flex-wrap: wrap; gap: 12px; }
+#root .attachment-transfer-mode label { border: 0; padding: 0; }
+@media (max-width: 620px) {
+  #root .create-type-groups { grid-template-columns: minmax(0, 1fr); }
+  #root .material-dialog { --m3e-dialog-min-width: calc(100vw - 24px); --m3e-dialog-max-width: calc(100vw - 24px); }
+}

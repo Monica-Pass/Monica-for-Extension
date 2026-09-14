@@ -1,5 +1,5 @@
 import { createEmptyVaultState, type PasskeyItem, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderMutationReceipt, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState, type WindowsHelloBinding } from "../core/model";
-import type { ProviderAcknowledgedMutation, ProviderRequestedMutation } from "../core/provider";
+import { sameProviderBinding, type ProviderAcknowledgedMutation, type ProviderRequestedMutation, type ProviderSyncGuard } from "../core/provider";
 import { providerSourceRecordsFor, replaceProviderSourceRecords, validProviderMutationReceipt } from "../core/migrations";
 import { sourceRecordsBudgetError } from "../core/source-records";
 import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
@@ -13,6 +13,8 @@ import { LockedAutofillCache, supportsLockedAutofill } from "./locked-autofill";
 import { normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
 import { addBlockedFieldSignature, normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import { normalizeHomePreferences, type HomePreferences } from "../core/home-preferences";
+import { apiTokenValidationError } from "../core/api-token";
+import { assertPasskeyCounterNotRegressed, nextBitwardenPasskeyCounter, passkeyCounterHighWaterMark, preserveLocalPasskeyUsage, preservePasskeyCounterHistory, resolvePasskeyOwnership, samePasskeySigningIdentity } from "../passkey/ownership-policy";
 
 export type VaultLifecycleStatus = "uninitialized" | "locked" | "unlocked";
 
@@ -259,6 +261,21 @@ export class SecureVaultService {
     });
   }
 
+  /** Fresh verification for one WebAuthn ceremony; it must not unlock or extend a session. */
+  async verifyMasterPasswordForPasskey(masterPassword: string): Promise<void> {
+    return this.runExclusive(async () => {
+      const { envelope } = await this.unlockedContext();
+      if (envelope.kdf.name === "DEVICE-KEY") throw new Error("此密码库未设置主密码，请使用 Windows Hello 验证身份。");
+      if (typeof masterPassword !== "string" || !masterPassword || masterPassword.length > 4096) throw new VaultUnlockError();
+      try {
+        const { key } = await deriveVaultKey(masterPassword, envelope.kdf);
+        await decryptVaultState(envelope, key);
+      } catch {
+        throw new VaultUnlockError();
+      }
+    });
+  }
+
   async enrollWindowsHello(
     enroll: (bindingId: string) => Promise<WindowsHelloNativeEnrollment>,
     revoke?: (bindingId: string) => Promise<void>
@@ -429,12 +446,23 @@ export class SecureVaultService {
     });
   }
 
-  async readState(): Promise<VaultState> {
+  async readState(activity = false): Promise<VaultState> {
     return this.runExclusive(async () => {
     const { envelope, key } = await this.unlockedContext();
     const state = await decryptVaultState(envelope, key);
-    await this.touchSession(state.settings.autoLockMinutes);
+    if (activity) await this.touchSession(state.settings.autoLockMinutes);
     return state;
+    });
+  }
+
+  /** Only explicit user interaction renews inactivity expiry; background reads do not. */
+  async recordUserActivity(): Promise<void> {
+    return this.runExclusive(async () => {
+      const session = await this.sessions.read();
+      if (!session || session.expiresAt <= this.now()) return;
+      const lifetime = session.expiresAt - session.lastActivityAt;
+      const now = this.now();
+      await this.sessions.write({ ...session, lastActivityAt: now, expiresAt: now + lifetime });
     });
   }
 
@@ -530,7 +558,7 @@ export class SecureVaultService {
       if (byKey.size > MAX_PROVIDER_MUTATION_RECEIPTS) throw new Error("密码源持久同步回执数量超过安全上限。");
       state.providerMutationReceipts = [...byKey.values()];
       state.updatedAt = new Date(this.now()).toISOString();
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -556,7 +584,7 @@ export class SecureVaultService {
       });
       if (found.size !== ids.size) throw new Error("准备中的密码源持久同步回执不存在。");
       state.updatedAt = now;
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -592,7 +620,7 @@ export class SecureVaultService {
       });
       if (found.size !== byId.size) throw new Error("密码源持久同步确认缺少准备回执。");
       state.updatedAt = now;
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -605,7 +633,7 @@ export class SecureVaultService {
       state.providerMutationReceipts = state.providerMutationReceipts.filter((receipt) => receipt.providerId !== providerId || !ids.has(receipt.mutationId));
       if (state.providerMutationReceipts.length === before) return;
       state.updatedAt = new Date(this.now()).toISOString();
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -633,7 +661,6 @@ export class SecureVaultService {
       const session = await this.sessions.read();
       if (session && session.expiresAt > this.now()) {
         const state = await decryptVaultState(envelope, await importVaultKey(session.rawKey));
-        await this.touchSession(state.settings.autoLockMinutes);
         return {
           locked: false, envelopeVersion, items: state.items.filter((item) => !item.deletedAt && !item.archivedAt),
           allowedIds: state.settings.lockedAutofillItemIds || [], blockedHosts: state.settings.autofillBlockedHosts,
@@ -681,9 +708,12 @@ export class SecureVaultService {
     return provider ? safeProviderAccount(provider) : undefined;
   }
 
-  async upsertProvider(provider: ProviderAccount): Promise<ProviderAccount> {
+  async upsertProvider(provider: ProviderAccount, activity = true, expectedProvider?: ProviderAccount): Promise<ProviderAccount> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
+    const currentProvider = state.providers.find(candidate => candidate.id === provider.id);
+    if (expectedProvider && (!currentProvider || !sameProviderBinding(expectedProvider, currentProvider))) throw new Error("同步期间密码源配置已变化，请重新同步。");
+    if (!activity && currentProvider) provider = { ...provider, name: currentProvider.name, enabled: currentProvider.enabled, isDefaultSaveTarget: currentProvider.isDefaultSaveTarget };
     const exists = state.providers.some((candidate) => candidate.id === provider.id);
     state.providers = exists ? state.providers.map((candidate) => (candidate.id === provider.id ? provider : candidate)) : [...state.providers, provider];
     if (provider.isDefaultSaveTarget) {
@@ -696,7 +726,7 @@ export class SecureVaultService {
       state.settings.defaultProviderId = local.id;
     }
     state.updatedAt = new Date(this.now()).toISOString();
-    await this.persist(state, key, envelope.kdf);
+    await this.persist(state, key, envelope.kdf, false, activity);
     return publicProviderAccount(provider);
     });
   }
@@ -736,12 +766,15 @@ export class SecureVaultService {
     syncSnapshot?: VaultItem[],
     acknowledgedMutations: ProviderAcknowledgedMutation[] = [],
     requestedMutations: ProviderRequestedMutation[] = [],
-    adoptRemoteRemovals = false
+    adoptRemoteRemovals = false,
+    deferredMutationIds: string[] = [],
+    guard: ProviderSyncGuard = {}
   ): Promise<{ conflicts: number }> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
+    if (guard.expectedAccount && !sameProviderBinding(guard.expectedAccount, provider)) throw new Error("同步期间密码源配置已变化，请重新同步。");
     const detectedAt = new Date(this.now()).toISOString();
     const acknowledgementsById = new Map<string, ProviderAcknowledgedMutation>();
     for (const acknowledgement of acknowledgedMutations) {
@@ -763,7 +796,7 @@ export class SecureVaultService {
     const acknowledgementsByItemId = new Map([...acknowledgementsById.values()].map((acknowledgement) => [acknowledgement.itemId, acknowledgement]));
     if (acknowledgementsByItemId.size !== acknowledgementsById.size) throw new Error("密码源同步确认包含重复项目。");
     const merge = syncSnapshot
-      ? mergeProviderSyncItems(providerId, syncSnapshot, state.items, items, acknowledgementsByItemId, adoptRemoteRemovals)
+      ? mergeProviderSyncItems(providerId, syncSnapshot, state.items, items, acknowledgementsByItemId, adoptRemoteRemovals, new Set(guard.confirmedRemovedItemIds || []))
       : { items, conflicts: [] as ProviderConflictInput[], locallyChangedIds: new Set<string>(), confirmedMutationIds: new Set<string>() };
     const persistedConflicts: ProviderConflict[] = [...conflicts, ...merge.conflicts].slice(0, 500).map((conflict) => ({
       ...structuredClone(conflict),
@@ -772,7 +805,18 @@ export class SecureVaultService {
       detectedAt
     }));
     const globalConflict = persistedConflicts.find((conflict) => conflict.itemId === providerId || !conflict.local && !conflict.remote);
-    state.items = merge.items;
+    const previousById = new Map(state.items.map(item => [item.id, item]));
+    const incomingById = new Map(items.map(item => [item.id, item]));
+    state.items = merge.items.map(item => {
+      if (item.kind !== "passkey") return item;
+      const previous = previousById.get(item.id);
+      const incoming = incomingById.get(item.id);
+      const preserved = previous?.kind === "passkey" ? preservePasskeyCounterHistory(previous, item) : item;
+      // History-only observations intentionally do not count as content edits,
+      // but must survive even when the content merge keeps the local version.
+      return incoming?.kind === "passkey" ? preservePasskeyCounterHistory(incoming, preserved) : preserved;
+    });
+    const deferredMutations = new Set(deferredMutationIds);
     const consumedAcknowledgements = new Set<string>();
     state.mutationQueue = state.mutationQueue.flatMap((mutation): PendingMutation[] => {
       if (mutation.providerId !== providerId) return [mutation];
@@ -780,6 +824,7 @@ export class SecureVaultService {
       // A mutation made after the adapter took its snapshot was not acknowledged
       // by this sync, even if the remote response otherwise looks successful.
       if (conflict) return [{ ...mutation, lastError: conflict.reason }];
+      if (deferredMutations.has(mutation.id)) return [mutation];
       const acknowledgement = acknowledgementsById.get(mutation.id);
       if (acknowledgement) {
         if (acknowledgement.itemId !== mutation.itemId || acknowledgement.operation !== mutation.operation) {
@@ -855,7 +900,7 @@ export class SecureVaultService {
       if (budgetError) throw new Error(budgetError);
     }
     state.updatedAt = new Date(this.now()).toISOString();
-    await this.persist(state, key, envelope.kdf);
+    await this.persist(state, key, envelope.kdf, false, false);
     return { conflicts: persistedConflicts.length };
     });
   }
@@ -878,7 +923,7 @@ export class SecureVaultService {
       const safe = redactProviderDiagnostic(structuredClone(diagnostic));
       state.providerDiagnostics = [...state.providerDiagnostics, safe].slice(-100);
       state.updatedAt = new Date(this.now()).toISOString();
-      await this.persist(state, key, envelope.kdf);
+      await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -936,10 +981,15 @@ export class SecureVaultService {
           ? { ...mutation, attempts: 0, lastError: undefined }
           : mutation);
       } else if (resolution === "use-remote") {
-        state.items = conflict.remote
+        const current = state.items.find(item => item.id === conflict.itemId) || conflict.local;
+        let remote = conflict.remote ? structuredClone(conflict.remote) : undefined;
+        if (current?.kind === "passkey" && remote?.kind === "passkey") {
+          remote = preservePasskeyCounterHistory(current, { ...remote, id: current.id });
+        }
+        state.items = remote
           ? state.items.some((item) => item.id === conflict.itemId)
-            ? state.items.map((item) => item.id === conflict.itemId ? structuredClone(conflict.remote!) : item)
-            : [structuredClone(conflict.remote), ...state.items]
+            ? state.items.map((item) => item.id === conflict.itemId ? remote! : item)
+            : [remote, ...state.items]
           : state.items.filter((item) => item.id !== conflict.itemId);
         state.mutationQueue = state.mutationQueue.filter((mutation) => mutation.providerId !== conflict.providerId || mutation.itemId !== conflict.itemId);
       } else {
@@ -963,17 +1013,22 @@ export class SecureVaultService {
     });
   }
 
-  async upsertItem(item: VaultItem, allowLockedAutofill?: boolean): Promise<VaultItem> {
+  async upsertItem(item: VaultItem, allowLockedAutofill?: boolean, expectedUpdatedAt?: string): Promise<VaultItem> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
-    const now = new Date(this.now()).toISOString();
+    assertApiTokenDestination(item, state.providers);
     const existing = state.items.find((candidate) => candidate.id === item.id);
-    const normalized: VaultItem = {
+    const now = new Date(Math.max(this.now(), (Date.parse(existing?.updatedAt || "") || 0) + 1)).toISOString();
+    if (expectedUpdatedAt !== undefined && (typeof expectedUpdatedAt !== "string" || !existing || existing.updatedAt !== expectedUpdatedAt)) {
+      throw new Error("此项目已被其他设备或窗口修改。你的草稿仍然保留，请重新打开最新项目后再保存。");
+    }
+    let normalized: VaultItem = {
       ...item,
       createdAt: existing?.createdAt || item.createdAt || now,
       updatedAt: now,
       providerRefs: item.providerRefs || []
     } as VaultItem;
+    if (existing?.kind === "passkey" && normalized.kind === "passkey") normalized = preservePasskeyCounterHistory(existing, normalized);
     state.items = existing ? state.items.map((candidate) => (candidate.id === item.id ? normalized : candidate)) : [normalized, ...state.items];
     if (allowLockedAutofill !== undefined) this.updateLockedAutofillGrant(state, normalized.id, allowLockedAutofill);
     queueProviderMutations(state, normalized, existing ? "update" : "create", now);
@@ -983,15 +1038,49 @@ export class SecureVaultService {
     });
   }
 
-  async recordPasskeyUse(itemId: string, signCount: number, usedAt: string): Promise<PasskeyItem> {
+  async recordPasskeyUse(itemId: string, usedAt: string, expected?: PasskeyItem): Promise<PasskeyItem> {
     return this.runExclusive(async () => {
       const { state, envelope, key } = await this.mutableContext();
       const item = state.items.find((candidate): candidate is PasskeyItem => candidate.id === itemId && candidate.kind === "passkey" && !candidate.deletedAt);
-      if (!item) throw new Error("Passkey 不存在或已被删除。");
-      const updated: PasskeyItem = { ...item, signCount, lastUsedAt: usedAt, useCount: (item.useCount || 0) + 1, updatedAt: usedAt };
+      if (!item || item.archivedAt) throw new Error("Passkey 不存在或已被删除。");
+      if (expected && (!samePasskeySigningIdentity(expected, item) || expected.signCount !== item.signCount)) {
+        throw new Error("登录期间 Passkey 已变化，请重新发起登录。");
+      }
+      if (expected && resolvePasskeyOwnership(item, state.providers).kind === "bitwarden") {
+        assertPasskeyCounterNotRegressed(item);
+        assertPasskeyCounterNotRegressed(item, expected);
+      }
+      // Keep imported counters intact. Signing policy chooses zero for independent/file copies;
+      // Bitwarden positive counters are committed separately before producing a signature.
+      // Changing updatedAt here would make every login look like a remote database edit.
+      const updated: PasskeyItem = { ...item, lastUsedAt: usedAt, useCount: (item.useCount || 0) + 1 };
       state.items = state.items.map((candidate) => candidate.id === itemId ? updated : candidate);
-      queueProviderMutations(state, updated, "update", usedAt);
       state.updatedAt = usedAt;
+      await this.persist(state, key, envelope.kdf);
+      return updated;
+    });
+  }
+
+  /** Internal compare-and-set; never exposed as a runtime command. */
+  async advanceBitwardenPasskeyCounter(expected: PasskeyItem): Promise<PasskeyItem> {
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const item = state.items.find((candidate): candidate is PasskeyItem => candidate.id === expected.id && candidate.kind === "passkey");
+      if (!item || item.deletedAt || item.archivedAt || !samePasskeySigningIdentity(expected, item) || expected.signCount !== item.signCount || expected.updatedAt !== item.updatedAt) {
+        throw new Error("登录期间 Passkey 已变化，请重新发起登录。");
+      }
+      const ownership = resolvePasskeyOwnership(item, state.providers);
+      if (ownership.kind !== "bitwarden" || !ownership.account.enabled || !ownership.reference.remoteId || !ownership.reference.revision) {
+        throw new Error("Bitwarden Passkey 尚未完成同步。");
+      }
+      assertPasskeyCounterNotRegressed(item);
+      const signCount = nextBitwardenPasskeyCounter(item.signCount);
+      if (!signCount) return item;
+      const now = new Date(Math.max(this.now(), (Date.parse(item.updatedAt) || 0) + 1)).toISOString();
+      const updated = { ...item, signCountHighWaterMark: Math.max(passkeyCounterHighWaterMark(item), item.signCount), signCount, updatedAt: now };
+      state.items = state.items.map(candidate => candidate.id === item.id ? updated : candidate);
+      queueProviderMutation(state, updated, ownership.account.id, "update", now);
+      state.updatedAt = now;
       await this.persist(state, key, envelope.kdf);
       return updated;
     });
@@ -1002,6 +1091,7 @@ export class SecureVaultService {
       const imported = validateImportedItems(items);
       const { state, envelope, key } = await this.mutableContext();
       const providerIds = new Set(state.providers.map((provider) => provider.id));
+      for (const item of imported) assertApiTokenDestination(item, state.providers);
       if (imported.some((item) => item.providerRefs.some((reference) => !providerIds.has(reference.providerId)))) {
         throw new Error("导入项目引用了当前密码库中不存在的密码源。");
       }
@@ -1014,12 +1104,13 @@ export class SecureVaultService {
       const queuedByProviderItem = new Map(state.mutationQueue.map((mutation) => [`${mutation.providerId}\u0000${mutation.itemId}`, mutation]));
       for (const item of imported) {
         const existing = existingById.get(item.id);
-        const normalized = {
+        let normalized = {
           ...item,
           createdAt: existing?.createdAt || item.createdAt || now,
           updatedAt: now,
           providerRefs: item.providerRefs || []
         } as VaultItem;
+        if (existing?.kind === "passkey" && normalized.kind === "passkey") normalized = preservePasskeyCounterHistory(existing, normalized);
         if (existing) replacements.set(item.id, normalized);
         else additions.push(normalized);
         queueImportedProviderMutations(normalized, providersById, queuedByProviderItem, now);
@@ -1180,7 +1271,7 @@ export class SecureVaultService {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
     state.mutationQueue = state.mutationQueue.map((mutation) => mutation.providerId === providerId ? { ...mutation, attempts: Math.min(5, mutation.attempts + 1), lastError: message } : mutation);
-    await this.persist(state, key, envelope.kdf);
+    await this.persist(state, key, envelope.kdf, false, false);
     });
   }
 
@@ -1213,14 +1304,14 @@ export class SecureVaultService {
     }
   }
 
-  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters, requireLockedAutofill = false): Promise<void> {
+  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters, requireLockedAutofill = false, activity = true): Promise<void> {
     const eligible = new Set(state.items.filter(supportsLockedAutofill).map((item) => item.id));
     state.settings.lockedAutofillItemIds = (state.settings.lockedAutofillItemIds || []).filter((id) => eligible.has(id));
     const envelope = await encryptVaultState(state, key, kdf);
     await this.refreshLockedAutofill(state, envelope, requireLockedAutofill);
     await this.storage.write(envelope);
     try {
-      await this.touchSession(state.settings.autoLockMinutes);
+      if (activity) await this.touchSession(state.settings.autoLockMinutes);
     } catch {
       // The encrypted IndexedDB write is already durable. Failing the caller here
       // would make a committed mutation look rolled back and invite duplicate writes.
@@ -1261,7 +1352,7 @@ export class SecureVaultService {
 
   private async touchSession(autoLockMinutes: number): Promise<void> {
     const session = await this.sessions.read();
-    if (!session) throw new VaultLockedError();
+    if (!session || session.expiresAt <= this.now()) throw new VaultLockedError();
     const now = this.now();
     await this.sessions.write({ ...session, lastActivityAt: now, expiresAt: now + autoLockMinutes * 60_000 });
   }
@@ -1504,7 +1595,8 @@ function mergeProviderSyncItems(
   current: VaultItem[],
   remote: VaultItem[],
   acknowledgementsByItemId: Map<string, ProviderAcknowledgedMutation> = new Map(),
-  adoptRemoteRemovals = false
+  adoptRemoteRemovals = false,
+  confirmedRemovedItemIds = new Set<string>()
 ): { items: VaultItem[]; conflicts: ProviderConflictInput[]; locallyChangedIds: Set<string>; confirmedMutationIds: Set<string> } {
   const snapshotById = new Map(snapshot.map((item) => [item.id, item]));
   const currentById = new Map(current.map((item) => [item.id, item]));
@@ -1565,7 +1657,7 @@ function mergeProviderSyncItems(
       continue;
     }
     if (local && !local.deletedAt && !incoming) {
-      if (adoptRemoteRemovals && !localChanged) {
+      if ((adoptRemoteRemovals || confirmedRemovedItemIds.has(id) && local.providerRefs.some(reference => reference.providerId === providerId)) && !localChanged) {
         replacementById.set(id, undefined);
         continue;
       }
@@ -1584,7 +1676,7 @@ function mergeProviderSyncItems(
   const merged = current.flatMap((item): VaultItem[] => {
     if (!replacementById.has(item.id)) return [item];
     const replacement = replacementById.get(item.id);
-    return replacement ? [replacement] : [];
+    return replacement ? [item.kind === "passkey" && replacement.kind === "passkey" ? preserveLocalPasskeyUsage(item, replacement) : replacement] : [];
   });
   for (const item of remote) if (!currentById.has(item.id) && replacementById.get(item.id) === item) merged.push(item);
   return { items: merged, conflicts, locallyChangedIds, confirmedMutationIds };
@@ -1624,6 +1716,11 @@ function withAcknowledgedProviderReference(local: VaultItem, incoming: VaultItem
 }
 
 function sameVaultItem(left: VaultItem | undefined, right: VaultItem | undefined): boolean {
+  if (left?.kind === "passkey" && right?.kind === "passkey") {
+    const { useCount: _leftUses, lastUsedAt: _leftUsedAt, signCountHighWaterMark: _leftCounterHistory, ...leftPayload } = left;
+    const { useCount: _rightUses, lastUsedAt: _rightUsedAt, signCountHighWaterMark: _rightCounterHistory, ...rightPayload } = right;
+    return JSON.stringify(leftPayload) === JSON.stringify(rightPayload);
+  }
   return left === right || Boolean(left && right) && JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -1642,7 +1739,7 @@ function validateEncryptedBackup(input: unknown): EncryptedVaultBackup {
 
 function validateImportedItems(input: unknown): VaultItem[] {
   if (!Array.isArray(input) || !input.length || input.length > 10_000) throw new Error("导入项目列表为空或过大。");
-  const kinds = new Set(["login", "secure-note", "totp", "card", "identity", "billing-address", "payment-account", "passkey"]);
+  const kinds = new Set(["login", "secure-note", "totp", "card", "identity", "billing-address", "payment-account", "api-token", "passkey"]);
   const ids = new Set<string>();
   const items = input.map((candidate) => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("导入项目格式无效。");
@@ -1655,4 +1752,13 @@ function validateImportedItems(input: unknown): VaultItem[] {
     return structuredClone(candidate as VaultItem);
   });
   return items;
+}
+
+function assertApiTokenDestination(item: VaultItem, providers: ProviderAccount[]): void {
+  if (item.kind !== "api-token") return;
+  const error = apiTokenValidationError(item);
+  if (error) throw new Error(error);
+  if (item.providerRefs.some(ref => !["local", "mdbx2"].includes(providers.find(provider => provider.id === ref.providerId)?.kind || ""))) {
+    throw new Error("API 密钥支持 Monica 本地库与 MDBX2；与 Android 同步请选择 MDBX2 密码源。");
+  }
 }

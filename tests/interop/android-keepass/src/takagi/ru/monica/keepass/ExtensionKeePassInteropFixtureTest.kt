@@ -25,7 +25,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import takagi.ru.monica.data.ItemType
+import takagi.ru.monica.passkey.PasskeyPrivateKeySupport
 import takagi.ru.monica.utils.KeePassCodecSupport
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -33,6 +39,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
 import java.util.UUID
 
 class ExtensionKeePassInteropFixtureTest {
@@ -65,6 +76,63 @@ class ExtensionKeePassInteropFixtureTest {
             "Extension Card Holder",
             "Extension Document Holder"
         )
+        verifyPasskeyPortability(output, "aes")
+        verifyPasskeyPortability(output, "chacha20")
+    }
+
+    private fun verifyPasskeyPortability(output: Path, variant: String) {
+        val database = decode(Files.readAllBytes(output.resolve("extension-passkey-$variant.kdbx")), credentials())
+        val entry = requireNotNull(findEntry(database.content.group, PASSKEY_ENTRY_UUID))
+        val raw = entry.fields.getValue("MonicaPasskeyData")
+        assertTrue(raw is EntryValue.Encrypted)
+        val updated = requireNotNull(KeePassPasskeySyncCodec.decode(raw.content, 1L, "Android Interop", INTEROP_GROUP_UUID.toString()))
+        val original = requireNotNull(KeePassPasskeySyncCodec.decode(PASSKEY_PAYLOAD, 1L, "Android Interop", INTEROP_GROUP_UUID.toString()))
+        assertEquals(original.credentialId, updated.credentialId)
+        assertEquals(original.privateKeyAlias, updated.privateKeyAlias)
+        assertEquals(original.userId, updated.userId)
+        assertEquals(0L, updated.signCount)
+        assertEquals(4, updated.useCount)
+        assertEquals("true", entry.fields.getValue("KPEX_PASSKEY_FLAG_BE").content)
+        assertEquals("true", entry.fields.getValue("KPEX_PASSKEY_FLAG_BS").content)
+        assertEquals("passkey plugin must stay", entry.fields.getValue("External Passkey Plugin Field").content)
+
+        val request = Json.parseToJsonElement(Files.readString(output.resolve("extension-passkey-$variant.json"))).jsonObject
+        val decoder = Base64.getUrlDecoder()
+        val authData = decoder.decode(request.getValue("authenticatorData").jsonPrimitive.content)
+        val clientData = decoder.decode(request.getValue("clientDataJSON").jsonPrimitive.content)
+        val clientJson = Json.parseToJsonElement(String(clientData, Charsets.UTF_8)).jsonObject
+        assertEquals("webauthn.get", clientJson.getValue("type").jsonPrimitive.content)
+        assertEquals("https://github.com", clientJson.getValue("origin").jsonPrimitive.content)
+        assertEquals(request.getValue("challenge").jsonPrimitive.content, clientJson.getValue("challenge").jsonPrimitive.content)
+        assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(updated.rpId.toByteArray()), authData.copyOfRange(0, 32))
+        assertEquals(0x1d, authData[32].toInt())
+        assertArrayEquals(ByteArray(4), authData.copyOfRange(33, 37))
+        val signedData = authData + MessageDigest.getInstance("SHA-256").digest(clientData)
+        val publicKey = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(request.getValue("publicKeySpki").jsonPrimitive.content)))
+        val verifier = Signature.getInstance("SHA256withECDSA")
+        verifier.initVerify(publicKey)
+        verifier.update(signedData)
+        assertTrue(verifier.verify(decoder.decode(request.getValue("signature").jsonPrimitive.content)))
+
+        // These are the actual Android private-key decoder and signer used by PasskeyAuthActivity.
+        val signatures = listOf(original, updated).map { passkey ->
+            val key = requireNotNull(PasskeyPrivateKeySupport.decodeFlexiblePrivateKey(passkey.privateKeyAlias))
+            val signer = PasskeyPrivateKeySupport.createSignature(key.privateKey, passkey.publicKeyAlgorithm)
+            signer.update(signedData)
+            JsonPrimitive(Base64.getUrlEncoder().withoutPadding().encodeToString(signer.sign()))
+        }
+        Files.writeString(output.resolve("android-passkey-$variant.json"), JsonArray(signatures).toString())
+
+        val payload = KeePassPasskeySyncCodec.encode(updated.copy(signCount = 0L, useCount = 5))
+        val updatedEntry = entry.copy(fields = EntryFields.of(*entry.fields.map { (name, value) ->
+            name to if (name == "MonicaPasskeyData") EntryValue.Encrypted(EncryptedValue.fromString(payload)) else value
+        }.toTypedArray()))
+        val returned = database.modifyParentGroup {
+            copy(groups = groups.map { group ->
+                if (group.uuid == INTEROP_GROUP_UUID) group.copy(entries = group.entries.map { if (it.uuid == PASSKEY_ENTRY_UUID) updatedEntry else it }) else group
+            })
+        }
+        Files.write(output.resolve("android-passkey-$variant.kdbx"), encode(returned))
     }
 
     private fun writeFixture(target: Path, cipherId: UUID) {

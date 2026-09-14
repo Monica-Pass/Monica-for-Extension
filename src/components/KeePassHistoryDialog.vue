@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr, locale } from '../i18n';
 
 import { computed, nextTick, onMounted, ref } from "vue";
@@ -230,7 +231,7 @@ function errorMessage(cause: unknown): string {
 
       <div class="keepass-history-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('仅 Monica 管理页能够读取历史。Popup 和网页内容脚本无法访问历史字段、附件信息或恢复操作。') }}</span></div>
 
-      <label v-if="providers.length > 1" class="keepass-history-provider"><span>{{ tr('历史来源') }}</span><select v-model="selectedProviderId" :disabled="Boolean(busy)" @change="changeProvider"><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
+      <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="providers.length > 1" class="keepass-history-provider"><label slot="label">{{ tr('历史来源') }}</label><component :is="materialSelectTag" @input="selectedProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="Boolean(busy)" @change="changeProvider"><component :is="materialOptionTag" :selected.prop="String(selectedProviderId ?? '') === String(provider.id)" v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</component></component></m3e-form-field>
 
       <div v-if="error" class="keepass-history-error" role="alert"><m3e-icon name="error"></m3e-icon><span>{{ error }}</span></div>
       <p class="keepass-history-status" aria-live="polite">{{ status }}</p>
@@ -245,11 +246,11 @@ function errorMessage(cause: unknown): string {
           <div v-else-if="loaded && !history.length" class="keepass-history-empty"><m3e-icon name="history_toggle_off"></m3e-icon><span>{{ tr('此 KeePass 条目还没有历史版本。') }}</span></div>
           <ol v-else class="keepass-history-list">
             <li v-for="(historyItem, index) in history" :key="historyItem.historyId">
-              <button type="button" class="keepass-history-row" :class="{ selected: selectedHistoryId === historyItem.historyId }" :aria-expanded="selectedHistoryId === historyItem.historyId" :disabled="restoreBusy" @click="selectHistory(historyItem)">
-                <span class="keepass-history-icon"><m3e-icon name="history"></m3e-icon></span>
-                <span class="keepass-history-copy"><strong>{{ formatDate(historyItem.modifiedAt) }}</strong><small>{{ index === 0 ? tr('最近的历史版本') : tr('更早版本 {0}', { 0: index + 1 }) }}</small><small>{{ summaryText(historyItem) }}</small></span>
-                <m3e-icon name="chevron_right"></m3e-icon>
-              </button>
+              <m3e-list-action role="presentation" class="keepass-history-row" :class="{ selected: selectedHistoryId === historyItem.historyId }" v-list-action="{ expanded: selectedHistoryId === historyItem.historyId }" :disabled="restoreBusy" @click="selectHistory(historyItem)">
+                <span slot="leading" class="keepass-history-icon" aria-hidden="true"><m3e-icon name="history"></m3e-icon></span>
+                <strong>{{ formatDate(historyItem.modifiedAt) }}</strong><span slot="supporting-text" class="keepass-history-copy"><small>{{ index === 0 ? tr('最近的历史版本') : tr('更早版本 {0}', { 0: index + 1 }) }}</small><small>{{ summaryText(historyItem) }}</small></span>
+                <m3e-icon slot="trailing" name="chevron_right"></m3e-icon>
+              </m3e-list-action>
             </li>
           </ol>
           <div v-if="nextCursor" class="keepass-history-more"><m3e-button variant="text" type="button" :disabled="Boolean(busy)" @click="loadHistory(false)">{{ tr('加载更多历史') }}</m3e-button></div>
@@ -319,10 +320,10 @@ function errorMessage(cause: unknown): string {
 .keepass-history-section-heading small, .keepass-history-copy small, .keepass-history-field-head small, .keepass-history-attachments small, .keepass-history-restore-confirmation small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); overflow-wrap: anywhere; }
 .keepass-history-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .keepass-history-list > li + li { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.keepass-history-row { width: 100%; min-height: 76px; border: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; color: var(--app-text); background: transparent; text-align: left; font: inherit; cursor: pointer; }
-.keepass-history-row:hover, .keepass-history-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.keepass-history-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.keepass-history-row > strong { font-weight: 500; overflow-wrap: anywhere; }
+.keepass-history-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .keepass-history-row:disabled { cursor: default; opacity: .6; }
-.keepass-history-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
 .keepass-history-icon { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
 .keepass-history-copy { min-width: 0; display: grid; gap: 2px; }
 .keepass-history-copy strong { overflow-wrap: anywhere; }

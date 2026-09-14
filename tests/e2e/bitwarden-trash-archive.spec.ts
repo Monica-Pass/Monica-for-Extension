@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
@@ -120,7 +121,7 @@ test("manager requires explicit confirmation before adopting an authenticated em
     await expectNoGradients(manager.locator(".provider-page"));
     await expectNoHorizontalOverflow(manager);
     await openConfirmation.click();
-    const confirmation = manager.getByRole("dialog", { name: "采用服务器空密码库？" });
+    const confirmation = dialogContent(manager, { name: "采用服务器空密码库？" });
     await expect(confirmation).toBeVisible();
     await expect(confirmation).toHaveCSS("border-radius", "16px");
     await confirmation.getByRole("button", { name: "确认采用空库" }).click();

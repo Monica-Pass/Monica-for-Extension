@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as kdbxweb from "kdbxweb";
 import {
   createLoginItem,
@@ -29,6 +29,51 @@ const PASSWORD = "durable sync fixture password";
 const NOW = "2026-08-07T07:00:00.000Z";
 
 describe("KeePass durable item synchronization", () => {
+  it("checks an unchanged ETag without downloading, reprojecting or rewriting the encrypted vault", async () => {
+    const environment = await openRemoteFixture([{ title: "Phone login", fields: { UserName: "before" } }]);
+    const vault = new TestDurableVault({ items: [], mutationQueue: [] });
+    const coordinator = new KeePassDurableSyncCoordinator(environment.provider, environment.sessions, vault, accountWriter(environment));
+    const stat = vi.spyOn(environment.client, "stat");
+    const read = vi.spyOn(environment.client, "read");
+    const project = vi.spyOn(environment.provider, "sync");
+    const persist = vi.spyOn(vault, "applyProviderSync");
+    await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    stat.mockClear(); read.mockClear(); project.mockClear(); persist.mockClear();
+    const result = await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    expect(result.unchanged).toBe(true);
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    expect(project).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+
+    coordinator.clearProjectionCache();
+    await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    expect(project).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes changed remote KDBX bytes before projecting entries and then resumes cheap checks", async () => {
+    const environment = await openRemoteFixture([{ title: "Phone login", fields: { UserName: "before" } }]);
+    const vault = new TestDurableVault({ items: [], mutationQueue: [] });
+    const coordinator = new KeePassDurableSyncCoordinator(environment.provider, environment.sessions, vault, accountWriter(environment));
+    await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    const database = await kdbxweb.Kdbx.load(environment.remoteBytes.slice().buffer, keePassCredentials(PASSWORD));
+    const entry = database.getDefaultGroup().entries[0];
+    entry.fields.set("UserName", "edited-on-phone");
+    entry.times.update();
+    const bytes = new Uint8Array(await database.save());
+    const previousStat = await environment.client.stat();
+    vi.spyOn(environment.client, "stat").mockResolvedValue({ ...previousStat!, etag: '"phone-etag"', sizeBytes: bytes.length });
+    const read = vi.spyOn(environment.client, "read").mockImplementation(async () => ({ ...previousStat!, etag: '"phone-etag"', sizeBytes: bytes.length, bytes: bytes.slice(), sha256: "b".repeat(64) }));
+    const result = await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    expect(result.items.find(item => item.title === "Phone login")).toMatchObject({ username: "edited-on-phone" });
+    expect(read).toHaveBeenCalledTimes(1);
+    const unchanged = await coordinator.synchronize(environment.account, undefined, { checkOnly: true });
+    expect(unchanged.unchanged).toBe(true);
+    expect(read).toHaveBeenCalledTimes(1);
+    bytes.fill(0);
+  });
+
   it.each(["create", "update", "delete"] as const)(
     "recovers one committed %s after the vault state write fails and the background restarts",
     async (operation) => {
@@ -156,6 +201,7 @@ interface RemoteFixtureEnvironment {
   storage: MemoryKeePassWorkingCopyStorage;
   account: ProviderAccount;
   remoteBytes: Uint8Array;
+  client: KeePassRemoteFileClient;
 }
 
 async function openRemoteFixture(entries: KeePassFixtureEntry[]): Promise<RemoteFixtureEnvironment> {
@@ -164,7 +210,8 @@ async function openRemoteFixture(entries: KeePassFixtureEntry[]): Promise<Remote
   const receipts = new Map<string, KeePassEncryptedMutationReceipt>();
   const storage = new MemoryKeePassWorkingCopyStorage(records, receipts);
   const provider = new KeePassProvider();
-  const sessions = new KeePassRemoteSessionService(provider, storage, () => remoteClient(bytes));
+  const client = remoteClient(bytes);
+  const sessions = new KeePassRemoteSessionService(provider, storage, () => client);
   const base = remoteAccount();
   const opened = await sessions.open(base, {
     baseUrl: "http://127.0.0.1:8787/dav/durable-sync",
@@ -173,7 +220,7 @@ async function openRemoteFixture(entries: KeePassFixtureEntry[]): Promise<Remote
     remotePath: "vaults/durable-sync.kdbx",
     databasePassword: PASSWORD
   });
-  return { provider, sessions, storage, account: { ...base, config: opened.accountConfig }, remoteBytes: bytes };
+  return { provider, sessions, storage, account: { ...base, config: opened.accountConfig }, remoteBytes: bytes, client };
 }
 
 function accountWriter(environment: RemoteFixtureEnvironment) {

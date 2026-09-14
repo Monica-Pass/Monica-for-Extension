@@ -1,0 +1,114 @@
+/* Connected lists and a visible database scope, adapted from the M3E Canvas
+   layout patterns. All palettes share the Material 3 Expressive hierarchy. */
+#root .page-view:has(> .vault-browse-bar) > .page-heading { padding-block: 20px; }
+#root .page-view:has(> .vault-browse-bar) > .page-heading h1 { font-size: clamp(1.75rem, 3vw, 2.25rem); }
+#root .vault-browse-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+  margin: 0 0 16px;
+}
+#root .vault-source-select {
+  flex: 0 1 18rem;
+  min-width: 0;
+  max-width: 100%;
+}
+#root .vault-source-select > m3e-icon { flex: none; --m3e-icon-size: 20px; color: var(--app-muted); }
+#root :is(.vault-quick-filter, .vault-filter-summary, .vault-clear-filters) {
+  max-width: 100%;
+}
+#root :is(.vault-quick-filter, .vault-filter-summary) > m3e-icon { flex: none; --m3e-icon-size: 20px; }
+#root .vault-filter-summary > span { overflow-wrap: anywhere; }
+#root .vault-result-count { flex: 1 0 auto; margin: 0; text-align: end; color: var(--app-muted); font: 400 .75rem/1.5 var(--font-data); }
+
+#root .vault-list-card {
+  --m3e-card-padding: 0;
+  --m3e-card-container-color: transparent;
+  --m3e-filled-card-container-color: transparent;
+  background: transparent;
+  border: 0;
+}
+#root .vault-list-card .item-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; padding: 0; }
+#root .vault-list-card .item-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, .85fr) minmax(7rem, .6fr) 88px;
+  align-items: center;
+  gap: 16px;
+  min-height: 80px;
+  padding: 16px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+#root .vault-list-card .item-card:first-child { border-start-start-radius: 12px; border-start-end-radius: 12px; }
+#root .vault-list-card .item-card:last-child { border-end-start-radius: 12px; border-end-end-radius: 12px; }
+#root .vault-list-card .item-card:is(:hover, :focus-within) { background: var(--app-surface-high); transform: none; }
+#root .vault-list-card :is(.item-card-main, .row-title) {
+  min-width: 0;
+  width: 100%;
+  --m3e-list-item-leading-space: 0;
+  --m3e-list-item-trailing-space: 0;
+  --m3e-list-item-between-space: 12px;
+  --m3e-list-item-one-line-height: 48px;
+  --m3e-list-item-two-line-height: 48px;
+  --m3e-list-item-three-line-height: 48px;
+}
+#root .vault-list-card :is(.item-card-main, .row-title) > strong { font-size: 1rem; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+#root .vault-list-card :is(.item-card-main, .row-title) > small { font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+#root .vault-list-card .row-icon { flex: 0 0 40px; width: 40px; height: 40px; border: 0; border-radius: 12px; background: var(--app-bg); }
+#root .vault-list-card .item-card-summary { min-width: 0; min-height: 0; overflow: visible; }
+#root .vault-list-card .item-summary-text { font-size: .8125rem; font-weight: 400; line-height: 1.6; color: var(--app-muted); }
+#root .vault-list-card .item-card-meta { min-width: 0; display: grid; justify-content: start; gap: 6px; font-size: .75rem; line-height: 1.4; }
+#root .vault-list-card .item-card-meta time { font: 400 .6875rem/1.5 var(--font-data); }
+#root .vault-list-card .item-card-actions { min-width: 0; flex-wrap: wrap; align-items: center; gap: 0; border: 0; padding: 0; margin: 0; }
+#root .vault-list-card .empty-state { min-height: 240px; margin: 0; padding: 32px 24px; border: 1px solid var(--app-outline); border-radius: 12px; }
+
+/* Login rows keep their existing table and keyboard actions. */
+#root .vault-list-card .credential-table tbody { gap: 3px; }
+#root .vault-list-card .credential-table tbody tr { border: 0; border-radius: 4px; background: var(--app-surface); min-height: 80px; }
+#root .vault-list-card .credential-table tbody tr:first-child { border-start-start-radius: 12px; border-start-end-radius: 12px; }
+#root .vault-list-card .credential-table tbody tr:last-child { border-end-start-radius: 12px; border-end-end-radius: 12px; }
+#root .vault-list-card .credential-table tbody tr:is(:hover, :focus-within) { background: var(--app-surface-high); }
+#root .vault-list-card .credential-table .item-cell { padding: 10px 16px; }
+#root .vault-list-card .credential-table .action-cell { padding-inline-end: 16px; }
+#root .vault-list-card .credential-table .row-title {
+  --m3e-list-item-one-line-top-space: 0px;
+  --m3e-list-item-one-line-bottom-space: 0px;
+  --m3e-list-item-two-line-top-space: 0px;
+  --m3e-list-item-two-line-bottom-space: 0px;
+  --m3e-list-item-three-line-top-space: 0px;
+  --m3e-list-item-three-line-bottom-space: 0px;
+}
+/* Full values remain in the detail view and accessible name. Keep list rows
+   scannable even when users enlarge text, without shrinking the type. */
+#root .vault-list-card .credential-table .row-title > :is(strong, small) {
+  min-width: 0; max-width: 100%; white-space: normal; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+}
+#root .vault-list-card .credential-table .row-title > strong { font-size: .875rem; line-height: 1.4; }
+#root .vault-list-card .credential-table .row-title > small { font-size: .75rem; line-height: 1.4; }
+
+@container manager-content (max-width: 58rem) {
+  #root .vault-list-card .item-card { grid-template-columns: minmax(0, 1fr) minmax(7rem, .45fr) 88px; grid-template-areas: 'main meta actions' 'summary meta actions'; gap: 4px 16px; }
+  #root .vault-list-card .item-card-main { grid-area: main; }
+  #root .vault-list-card .item-card-summary { grid-area: summary; padding-inline-start: 52px; }
+  #root .vault-list-card .item-card-meta { grid-area: meta; }
+  #root .vault-list-card .item-card-actions { grid-area: actions; }
+}
+@container manager-content (max-width: 38rem) {
+  #root .vault-list-card .item-card { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'main main' 'summary summary' 'meta actions'; gap: 8px 12px; }
+  #root .vault-list-card .item-card-summary { padding-inline-start: 0; }
+  #root .vault-list-card .item-card-meta { gap: 4px; }
+  #root .vault-list-card .item-card-actions { max-width: 176px; }
+  #root .vault-source-select { flex: 1 1 12rem; }
+  #root .vault-result-count { flex: 1 0 auto; }
+}
+@container manager-content (max-width: 24rem) {
+  #root .vault-list-card .item-card { padding: 12px; }
+  #root .vault-list-card .item-card-actions { max-width: 88px; }
+  #root .vault-list-card .credential-table .item-cell { padding: 8px 12px 4px; }
+  #root .vault-list-card .credential-table .action-cell { padding: 0 12px 8px; }
+}

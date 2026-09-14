@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test as base, type Page } from "@playwright/test";
 import { createHmac } from "node:crypto";
@@ -55,7 +56,7 @@ async function openLogin(page: Page, items: VaultItem[]) {
   await page.clock.install({ time });
   await page.clock.pauseAt(time);
   await page.getByRole("button", { name: "查看Login with OTP详情", exact: true }).click();
-  return page.getByRole("dialog", { name: /Login with OTP/ });
+  return dialogContent(page, { name: /Login with OTP/ });
 }
 
 for (const input of [
@@ -108,16 +109,20 @@ test("editing an Android legacy binding preserves its selection and an explicit 
   await manager.clock.resume();
   await expect(detail.locator(".totp-code-cell")).toBeVisible();
   await detail.getByRole("button", { name: "编辑", exact: true }).click();
-  const editor = manager.getByRole("dialog", { name: "编辑登录项", exact: true });
-  await expect(editor.getByRole("combobox", { name: "绑定独立验证器", exact: true })).toHaveValue(authenticator.id);
-  await editor.getByRole("combobox", { name: "绑定独立验证器", exact: true }).selectOption("");
+  const editor = dialogContent(manager, { name: "编辑登录项", exact: true });
+  await expect(editor.getByRole("combobox", { name: "绑定独立验证器", exact: true })).toHaveJSProperty("value", authenticator.id);
+  await chooseOption(editor.getByRole("combobox", { name: "绑定独立验证器", exact: true }), "");
+  await expect(editor.getByLabel("内嵌验证码密钥", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: /^两步验证/ }).click();
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel("名称 *", { exact: true })).toHaveValue(login.title);
   await editor.getByRole("button", { name: "加密保存", exact: true }).click();
   await expect(editor).toHaveCount(0);
   expect((await manager.evaluate(itemId => chrome.runtime.sendMessage({ type: "VAULT_GET_ITEM", itemId }), login.id)).data).toMatchObject({ boundTotpItemId: "", password: login.password });
   await manager.reload();
   await manager.locator("button.nav-item").filter({ hasText: "登录项" }).click();
   await manager.getByRole("button", { name: "查看Login with OTP详情", exact: true }).click();
-  await expect(manager.getByRole("dialog").locator(".totp-code-cell")).toHaveCount(0);
+  await expect(dialogContent(manager).locator(".totp-code-cell")).toHaveCount(0);
 });
 
 test("a linked authenticator takes priority and fits narrow translated details", async ({ manager }, testInfo) => {
@@ -126,7 +131,7 @@ test("a linked authenticator takes priority and fits narrow translated details",
     { ...authenticator, algorithm: "SHA256", digits: 8, period: 45, archivedAt: time.toISOString() }
   ]);
   const current = expectedCode(Math.floor(time.getTime() / 1000 / 45), "sha256", 8);
-  const code = detail.locator(".totp-code-cell button");
+  const code = detail.locator(".totp-code-cell").getByRole("button");
   await expect(code.locator("strong")).toHaveText(current);
   await code.click();
   expect(await manager.evaluate(() => navigator.clipboard.readText())).toBe(current);
@@ -184,21 +189,21 @@ for (const linked of [false, true]) {
     await manager.reload();
     await manager.locator("button.nav-item").filter({ hasText: "登录项" }).click();
     await manager.getByRole("button", { name: "查看Login with OTP详情", exact: true }).click();
-    await expect(manager.getByRole("dialog").getByRole("button", { name: "复制验证码并将计数器加一" }).locator("strong")).toHaveText("359152");
+    await expect(dialogContent(manager).getByRole("button", { name: "复制验证码并将计数器加一" }).locator("strong")).toHaveText("359152");
   });
 }
 
 test("invalid secrets and missing bindings show unavailable, never a copyable placeholder", async ({ manager }) => {
   const detail = await openLogin(manager, [{ ...login, totpSecret: "not a valid OTP secret!" }]);
   await expect(detail.getByText("不可用", { exact: true })).toBeVisible();
-  await expect(detail.locator(".totp-code-cell button:enabled")).toHaveCount(0);
+  await expect(detail.locator(".totp-code-cell").getByRole("button", { disabled: false })).toHaveCount(0);
   await detail.getByRole("button", { name: "关闭", exact: true }).click();
   expect(await manager.evaluate(item => chrome.runtime.sendMessage({ type: "VAULT_UPSERT_ITEM", item }), { ...login, boundTotpItemId: "missing-authenticator" })).toMatchObject({ ok: true });
   await manager.reload();
   await manager.locator("button.nav-item").filter({ hasText: "登录项" }).click();
   await manager.getByRole("button", { name: "查看Login with OTP详情", exact: true }).click();
   await expect(detail.getByText("不可用", { exact: true })).toBeVisible();
-  await expect(detail.locator(".totp-code-cell button:enabled")).toHaveCount(0);
+  await expect(detail.locator(".totp-code-cell").getByRole("button", { disabled: false })).toHaveCount(0);
 });
 
 test("a failed clipboard write leaves the HOTP counter unchanged", async ({ manager }) => {

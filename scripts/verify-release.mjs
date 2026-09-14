@@ -48,7 +48,7 @@ async function verifyArtifacts(directory) {
 
   const entries = unzipSync(archiveBytes);
   for (const path of Object.keys(entries)) assert(!path.includes("\\") && !path.startsWith("/") && !path.split("/").includes(".."), `Unsafe ZIP path: ${path}`);
-  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json", "SECURITY-EVIDENCE.json"]) {
+  for (const required of ["manifest.json", "background.js", "content.js", "main-world.js", "index.html", "popup.html", "passkey-verify.html", "LICENSE", "RELEASE-METADATA.json", "SBOM.cdx.json", "THIRD-PARTY-LICENSES.json", "SECURITY-EVIDENCE.json"]) {
     assert(entries[required], `ZIP is missing ${required}.`);
   }
   verifyExtensionPages(entries);
@@ -117,7 +117,7 @@ async function compareArtifactSets(leftDirectory, rightDirectory) {
 }
 
 function verifyExtensionPages(entries) {
-  for (const pageName of ["index.html", "popup.html"]) {
+  for (const pageName of ["index.html", "popup.html", "passkey-verify.html"]) {
     const html = new TextDecoder().decode(entries[pageName]);
     const linkTags = html.match(/<link\b[^>]*>/gi) || [];
     assert(!linkTags.some((tag) => /\brel\s*=\s*["']modulepreload["']/i.test(tag)), `${pageName} contains a modulepreload link.`);

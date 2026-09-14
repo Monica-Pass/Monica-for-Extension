@@ -15,9 +15,8 @@ export interface PasskeyGetInterceptionInput {
 }
 
 /**
- * UV-required requests enter Monica so the background can verify an enrolled
- * Windows Hello binding. Without one the background reports NotSupported and
- * the main-world bridge falls back to the browser authenticator.
+ * UV-required requests enter Monica for fresh master-password or Windows Hello
+ * verification. Without either, the bridge keeps the browser authenticator available.
  */
 export function shouldInterceptPasskeyCreate(input: PasskeyCreateInterceptionInput): boolean {
   return input.topLevel

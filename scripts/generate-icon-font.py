@@ -1,4 +1,4 @@
-"""Generate the committed Nothing icon subset; Python is not needed at runtime or build time."""
+"""Generate the bundled Material Symbols subset; Python is not needed at runtime or build time."""
 import argparse
 import hashlib
 import json
@@ -46,7 +46,7 @@ options.recalc_timestamp = False
 subsetter = subset.Subsetter(options=options)
 subsetter.populate(glyphs=[symbols[name] for name in selected], unicodes=range(32, 127))
 subsetter.subset(font)
-axes = {"FILL": 0, "wght": 300, "GRAD": 0, "opsz": 24}
+axes = {"FILL": (0, 0, 1), "wght": 400, "GRAD": 0, "opsz": 24}
 instantiateVariableFont(font, axes, inplace=True)
 font.flavor = "woff2"
 target = root / "public/fonts/monica-symbols.woff2"

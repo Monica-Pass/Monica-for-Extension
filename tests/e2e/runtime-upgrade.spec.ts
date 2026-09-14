@@ -101,7 +101,7 @@ for (const surface of ["index.html", "popup.html"]) {
       expect(await reopened.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_STATUS" }))).toMatchObject({ ok: true, data: "locked" });
       await reopened.getByLabel("主密码", { exact: true }).fill(password);
       await reopened.getByLabel("主密码", { exact: true }).press("Enter");
-      await expect(reopened.getByRole("heading", { name: "密码库概览", exact: true })).toBeVisible();
+      await expect(reopened.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
       const saved = await reopened.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" }));
       expect(saved).toMatchObject({ ok: true, data: [expect.objectContaining({ id: "before-upgrade", username: "synthetic-user", password: "synthetic-account-secret" })] });
     } finally {

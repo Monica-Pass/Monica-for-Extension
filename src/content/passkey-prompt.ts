@@ -132,7 +132,7 @@ export function renderPasskeyPrompt(
       choice.tabIndex = index === 0 ? 0 : -1;
       choice.innerHTML = `<span class="choice-copy"><strong></strong><span class="supporting"></span></span><span class="source"></span>`;
       (choice.querySelector("strong") as HTMLElement).textContent = credential.title;
-      i18n.text((choice.querySelector(".supporting") as HTMLElement), () => [credential.userDisplayName || credential.userName || tr('无用户名'), credential.useCount ? tr('已使用 {0} 次', { 0: credential.useCount }) : tr('未使用'), credential.userVerificationRequired ? "Windows Hello" : "", credential.credentialConflict ? tr('凭据 ID 重复，请确认密码源') : ""].filter(Boolean).join(" · "));
+      i18n.text((choice.querySelector(".supporting") as HTMLElement), () => [credential.userDisplayName || credential.userName || tr('无用户名'), credential.useCount ? tr('已使用 {0} 次', { 0: credential.useCount }) : tr('未使用'), credential.userVerificationRequired ? tr('需要验证身份') : "", credential.credentialConflict ? tr('凭据 ID 重复，请确认密码源') : ""].filter(Boolean).join(" · "));
       const source = choice.querySelector(".source") as HTMLElement;
       i18n.text(source, () => credential.isLocalSource ? tr('Monica 本地库') : credential.providerName);
       i18n.attribute(source, "title", () => credential.isLocalSource ? tr('Monica 本地库') : credential.providerName);
@@ -173,7 +173,9 @@ export function renderPasskeyPrompt(
   i18n.text((notice.querySelector("span") as HTMLElement), () => requiresExplicitSelection
     ? tr('凭据 ID 重复，请确认密码源。只有明确选择后才会使用对应私钥。')
     : context.userVerificationRequired
-    ? tr('确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。')
+    ? context.userVerificationMethod === "master-password"
+      ? tr('确认后将在 Monica 安全窗口中验证主密码，再完成本次 Passkey 操作。')
+      : tr('确认后将通过 Windows Hello 验证身份，再完成本次 Passkey 操作。')
     : context.operation === "create"
       ? tr('私钥会加密保存；Monica 不会把私钥发送给当前网站。')
       : tr('只有确认后才会使用所选私钥完成本次签名。'));
@@ -224,7 +226,7 @@ export function renderPasskeyPrompt(
     if (targetSelect) targetSelect.disabled = true;
     status.className = "status";
     status.removeAttribute("role");
-    i18n.text(status, () => context.userVerificationRequired ? tr('正在等待 Windows Hello…') : context.operation === "create" ? tr('正在创建并加密保存…') : tr('正在完成安全签名…'));
+    i18n.text(status, () => context.userVerificationRequired ? context.userVerificationMethod === "master-password" ? tr('请在 Monica 安全窗口中确认…') : tr('正在等待 Windows Hello…') : context.operation === "create" ? tr('正在创建并加密保存…') : tr('正在完成安全签名…'));
     void accept(selected, selectedProviderId).then(cleanup).catch((error) => {
       busy = false;
       card.removeAttribute("aria-busy");

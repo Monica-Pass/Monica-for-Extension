@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
@@ -55,7 +56,7 @@ test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route C
     const manage = manager.getByRole("button", { name: "管理文件夹" });
     await expect(manage).toBeVisible();
     await manage.click();
-    const dialog = manager.getByRole("dialog", { name: /Bitwarden 文件夹/ });
+    const dialog = dialogContent(manager, { name: /Bitwarden 文件夹/ });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog.locator(".bitwarden-folders-list-shell")).toHaveCSS("border-radius", "8px");
@@ -74,8 +75,8 @@ test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route C
     await dialog.getByRole("button", { name: "保存名称" }).click();
     await expect(dialog.getByRole("button", { name: "Work renamed 1 个项目" })).toBeVisible();
 
-    await dialog.locator("[data-move-item]").selectOption({ label: "Folder account" });
-    await dialog.locator("[data-move-target]").selectOption({ label: "Personal" });
+    await chooseOption(dialog.locator("[data-move-item]"), { label: "Folder account" });
+    await chooseOption(dialog.locator("[data-move-target]"), { label: "Personal" });
     await dialog.getByRole("button", { name: "移动项目" }).click();
     await expect(dialog.getByText("Folder account 已移动到 Personal。", { exact: true })).toBeVisible();
     expect(String(server.cipher.folderId)).toBe("folder-personal");

@@ -1,6 +1,7 @@
 import type { IdentityItem, LoginItem, LoginUriMatchType, PasskeyItem, SecureCustomField, TotpItem, VaultItem, VaultItemKind } from "../core/model";
+import { apiTokenFromPayload, serializeApiTokenMetadata, serializeApiTokenPayload } from "../core/api-token";
 
-const KINDS = new Set<VaultItemKind>(["login", "secure-note", "totp", "card", "identity", "billing-address", "payment-account", "passkey"]);
+const KINDS = new Set<VaultItemKind>(["login", "secure-note", "totp", "card", "identity", "billing-address", "payment-account", "api-token", "passkey"]);
 
 export function normalizeImportedVaultItem(input: unknown, now = new Date().toISOString()): VaultItem | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
@@ -17,6 +18,18 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
     }) : []
   };
   switch (kind) {
+    case "api-token": {
+      try {
+        const payload = serializeApiTokenPayload({ title: base.title, provider: string(raw.provider), apiBase: string(raw.apiBase), token: string(raw.token), apiTokenPayload: optional(raw.apiTokenPayload) });
+        const fields = Array.isArray(raw.customFields) ? raw.customFields.map((value, index) => {
+          const field = value && typeof value === "object" ? value as Record<string, unknown> : {};
+          return { ...secureCustomFields([field])[0], id: Number.isSafeInteger(field.id) ? field.id as number : -(index + 1) };
+        }) : [];
+        const metadata = serializeApiTokenMetadata({ notes: base.notes, customFields: fields, apiTokenMetadata: optional(raw.apiTokenMetadata) });
+        const decoded = apiTokenFromPayload(payload, metadata);
+        return decoded ? { ...base, kind, ...decoded } : null;
+      } catch { return null; }
+    }
     case "login": {
       const uris = strings(raw.uris ?? raw.urls);
       return {
@@ -92,8 +105,24 @@ export function normalizeImportedVaultItem(input: unknown, now = new Date().toIS
     }
     case "billing-address": return { ...base, kind, fullName: string(raw.fullName), company: string(raw.company), streetAddress: string(raw.streetAddress), apartment: string(raw.apartment), city: string(raw.city), stateProvince: string(raw.stateProvince), postalCode: string(raw.postalCode), country: string(raw.country), phone: string(raw.phone), email: string(raw.email), isDefault: Boolean(raw.isDefault), customFields: secureCustomFields(raw.customFields) };
     case "payment-account": return { ...base, kind, paymentType: string(raw.paymentType), provider: string(raw.provider), accountName: string(raw.accountName), accountHolderName: string(raw.accountHolderName), email: string(raw.email), phone: string(raw.phone), username: string(raw.username), accountId: string(raw.accountId), maskedAccountNumber: string(raw.maskedAccountNumber), linkedCardLast4: optional(raw.linkedCardLast4), routingNumber: string(raw.routingNumber), iban: string(raw.iban), swiftBic: string(raw.swiftBic), website: string(raw.website), currency: string(raw.currency), billingAddress: optional(raw.billingAddress), paymentNotes: optional(raw.paymentNotes), isDefault: Boolean(raw.isDefault), customFields: secureCustomFields(raw.customFields) };
-    case "passkey": return { ...base, kind, credentialId: string(raw.credentialId), rpId: string(raw.rpId), rpName: string(raw.rpName), userHandle: string(raw.userHandle), userName: string(raw.userName), userDisplayName: string(raw.userDisplayName), algorithm: passkeyAlgorithm(raw.algorithm), keyAlgorithm: optional(raw.keyAlgorithm), publicKey: string(raw.publicKey), privateKeyPkcs8: optional(raw.privateKeyPkcs8), signCount: number(raw.signCount, 0), discoverable: raw.discoverable !== false, userVerificationRequired: raw.userVerificationRequired === undefined ? undefined : Boolean(raw.userVerificationRequired), transports: strings(raw.transports), aaguid: optional(raw.aaguid), lastUsedAt: optionalDate(raw.lastUsedAt), useCount: optionalNumber(raw.useCount), iconUrl: optional(raw.iconUrl), boundPasswordId: optionalNumber(raw.boundPasswordId), passkeyMode: passkeyMode(raw.passkeyMode), sourceMode: sourceMode(raw.sourceMode) };
+    case "passkey": return { ...base, kind, credentialId: string(raw.credentialId), rpId: string(raw.rpId), rpName: string(raw.rpName), userHandle: string(raw.userHandle), userName: string(raw.userName), userDisplayName: string(raw.userDisplayName), algorithm: passkeyAlgorithm(raw.algorithm), keyAlgorithm: optional(raw.keyAlgorithm), publicKey: string(raw.publicKey), privateKeyPkcs8: optional(raw.privateKeyPkcs8), signCount: number(raw.signCount, 0), backupEligible: typeof raw.backupEligible === "boolean" ? raw.backupEligible : undefined, backupState: typeof raw.backupState === "boolean" ? raw.backupState : undefined, discoverable: raw.discoverable !== false, userVerificationRequired: raw.userVerificationRequired === undefined ? undefined : Boolean(raw.userVerificationRequired), transports: strings(raw.transports), aaguid: optional(raw.aaguid), lastUsedAt: optionalDate(raw.lastUsedAt), useCount: optionalNumber(raw.useCount), iconUrl: optional(raw.iconUrl), boundPasswordId: optionalNumber(raw.boundPasswordId), passkeyMode: passkeyMode(raw.passkeyMode), sourceMode: sourceMode(raw.sourceMode) };
   }
+}
+
+/** A manual snapshot import cannot inherit another installation's live provider bindings. */
+export function independentImportedPasskey(item: VaultItem): VaultItem {
+  if (item.kind !== "passkey") return item;
+  const {
+    keepassDatabaseId: _database, keepassGroupPath: _group, keepassEntryUuid: _entry,
+    keepassGroupUuid: _groupUuid, mdbxDatabaseId: _mdbx, mdbxFolderId: _folder,
+    replicaGroupId: _replica, boundPasswordId: _password, boundNoteId: _note, ...portable
+  } = item;
+  return {
+    ...portable,
+    id: crypto.randomUUID(),
+    providerRefs: [],
+    sourceMode: item.privateKeyPkcs8 ? "browser-local" : "android-metadata-only"
+  };
 }
 
 function string(value: unknown): string { return typeof value === "string" ? value : value == null ? "" : String(value); }

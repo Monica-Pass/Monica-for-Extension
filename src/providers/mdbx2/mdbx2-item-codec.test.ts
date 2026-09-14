@@ -193,11 +193,16 @@ describe("MDBX2 Android item codec", () => {
         public_key_algorithm: -7,
         public_key: "public",
         private_key_alias: P256_PKCS8,
-        sign_count: 2
+        sign_count: 2,
+        backup_eligible: false,
+        backup_state: false
       })
     };
     const item = decodeMdbx2Object(record, META, "mdbx-provider").item as PasskeyItem;
     expect(item).toMatchObject({ sourceMode: "browser-local", privateKeyPkcs8: P256_PKCS8, signCount: 2 });
+    expect(item).toMatchObject({ backupEligible: false, backupState: false });
+    const written = encodeMdbx2Object({ ...item, signCount: 0 })!;
+    expect(JSON.parse(written.payloadJson)).toMatchObject({ sign_count: 0, backup_eligible: false, backup_state: false, private_key_alias: P256_PKCS8 });
 
     const metadataOnly = decodeMdbx2Object({ ...record, payloadJson: record.payloadJson.replace(P256_PKCS8, "monica-passkey-key-ref-v1:device-only") }, META, "mdbx-provider").item as PasskeyItem;
     expect(metadataOnly).toMatchObject({ sourceMode: "android-metadata-only", privateKeyPkcs8: undefined });

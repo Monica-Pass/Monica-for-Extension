@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { computed, nextTick, onMounted, ref } from "vue";
@@ -271,20 +272,20 @@ function errorMessage(cause: unknown): string {
 
       <div class="keepass-groups-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('分组接口仅允许管理页调用；Popup 与网页内容脚本无法读取 KDBX 分组名称或结构。') }}</span></div>
 
-      <div class="keepass-groups-tabs" role="tablist" :aria-label="tr('KeePass 分组范围')">
-        <button type="button" role="tab" :aria-selected="tab === 'active'" :class="{ active: tab === 'active' }" @click="tab = 'active'; clearSelection()"><m3e-icon name="folder"></m3e-icon><span>{{ tr('分组') }}</span><small>{{ activeGroups.length }}</small></button>
-        <button type="button" role="tab" :aria-selected="tab === 'recycle'" :class="{ active: tab === 'recycle' }" @click="tab = 'recycle'; clearSelection()"><m3e-icon name="delete"></m3e-icon><span>{{ tr('回收站') }}</span><small>{{ recycledGroups.filter((group) => !group.isRecycleBin).length }}</small></button>
-      </div>
+      <m3e-tabs variant="primary" stretch class="keepass-tabs" :aria-label="tr('KeePass 分组范围')">
+        <m3e-tab :selected.prop="tab === 'active'" @input="tab = 'active'; clearSelection()"><m3e-icon slot="icon" name="folder"></m3e-icon><span>{{ tr('分组') }}</span><small>{{ activeGroups.length }}</small></m3e-tab>
+        <m3e-tab :selected.prop="tab === 'recycle'" @input="tab = 'recycle'; clearSelection()"><m3e-icon slot="icon" name="delete"></m3e-icon><span>{{ tr('回收站') }}</span><small>{{ recycledGroups.filter((group) => !group.isRecycleBin).length }}</small></m3e-tab>
+      </m3e-tabs>
 
       <div class="keepass-groups-toolbar">
-        <label><span class="sr-only">{{ tr('搜索 KeePass 分组') }}</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索分组路径')" /></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('搜索 KeePass 分组') }}</label><m3e-icon slot="prefix" name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索分组路径')" /></m3e-form-field>
         <m3e-button v-if="tab === 'active'" variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>{{ tr('新建分组') }}</m3e-button>
       </div>
 
       <form v-if="createOpen" class="keepass-group-create" @submit.prevent="createGroup">
         <span class="keepass-group-form-icon"><m3e-icon name="create_new_folder"></m3e-icon></span>
-        <label><span>{{ tr('分组名称') }}</span><input ref="createNameInput" v-model="createName" autocomplete="off" :disabled="interactionLocked" /></label>
-        <label><span>{{ tr('父分组') }}</span><select v-model="createParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('{0} 根目录', { 0: rootName }) }}</option><option v-for="group in activeGroups" :key="group.groupId" :value="group.groupId">{{ group.displayPath }}</option></select></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('分组名称') }}</label><input ref="createNameInput" v-model="createName" autocomplete="off" :disabled="interactionLocked" /></m3e-form-field>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('父分组') }}</label><component :is="materialSelectTag" @input="createParentGroupId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="interactionLocked"><component :is="materialOptionTag" :selected.prop="String(createParentGroupId ?? '') === String('')" value="">{{ tr('{0} 根目录', { 0: rootName }) }}</component><component :is="materialOptionTag" :selected.prop="String(createParentGroupId ?? '') === String(group.groupId)" v-for="group in activeGroups" :key="group.groupId" :value="group.groupId">{{ group.displayPath }}</component></component></m3e-form-field>
         <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false; retryOperation = undefined">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? tr('创建中…') : tr('创建') }}</m3e-button></div>
       </form>
 
@@ -298,26 +299,26 @@ function errorMessage(cause: unknown): string {
         <div v-else-if="loaded && !displayedGroups.length" class="keepass-groups-empty"><m3e-icon :name="tab === 'active' ? 'folder_off' : 'delete_sweep'"></m3e-icon><span>{{ search ? tr('没有匹配的分组。') : tab === 'active' ? tr('数据库根目录下还没有分组。') : tr('KeePass 回收站中没有可恢复的分组。') }}</span></div>
         <ul v-else class="keepass-groups-list">
           <li v-for="group in displayedGroups" :key="group.groupId">
-            <button class="keepass-group-row" type="button" :class="{ selected: selectedGroupId === group.groupId }" :aria-expanded="selectedGroupId === group.groupId" @click="selectGroup(group)">
-              <span class="keepass-group-icon" :class="{ recycle: group.inRecycleBin }"><m3e-icon :name="group.isRecycleBin ? 'delete' : group.inRecycleBin ? 'folder_delete' : 'folder'"></m3e-icon></span>
-              <span class="keepass-group-copy"><strong>{{ group.name }}</strong><small>{{ group.displayPath }}</small><small>{{ tr('{0} 个直接条目 · {1} 个子分组', { 0: group.entryCount, 1: group.childGroupCount }) }}<template v-if="group.nameTruncated || group.displayPathTruncated">{{ tr('· 名称过长，仅显示摘要') }}</template></small></span>
-              <span v-if="group.isRecycleBin" class="keepass-group-state">{{ tr('系统回收站') }}</span><span v-else-if="group.canRestore" class="keepass-group-state">{{ tr('可恢复') }}</span>
-              <m3e-icon name="expand_more"></m3e-icon>
-            </button>
+            <m3e-list-action role="presentation" class="keepass-group-row" :class="{ selected: selectedGroupId === group.groupId }" v-list-action="{ expanded: selectedGroupId === group.groupId }" @click="selectGroup(group)">
+              <span slot="leading" class="keepass-group-icon" aria-hidden="true" :class="{ recycle: group.inRecycleBin }"><m3e-icon :name="group.isRecycleBin ? 'delete' : group.inRecycleBin ? 'folder_delete' : 'folder'"></m3e-icon></span>
+              <strong>{{ group.name }}</strong><span slot="supporting-text" class="keepass-group-copy"><small>{{ group.displayPath }}</small><small>{{ tr('{0} 个直接条目 · {1} 个子分组', { 0: group.entryCount, 1: group.childGroupCount }) }}<template v-if="group.nameTruncated || group.displayPathTruncated">{{ tr('· 名称过长，仅显示摘要') }}</template></small></span>
+              <span slot="supporting-text" v-if="group.isRecycleBin" class="keepass-group-state">{{ tr('系统回收站') }}</span><span slot="supporting-text" v-else-if="group.canRestore" class="keepass-group-state">{{ tr('可恢复') }}</span>
+              <m3e-icon slot="trailing" name="expand_more"></m3e-icon>
+            </m3e-list-action>
 
             <div v-if="selectedGroupId === group.groupId" class="keepass-group-detail">
               <template v-if="group.isRecycleBin"><p>{{ tr('此分组由 KDBX 元数据指定为回收站。分组树会原样显示，系统回收站自身不能重命名、移动或删除。') }}</p></template>
               <template v-else-if="group.canRestore">
                 <div v-if="mode !== 'restore'" class="keepass-group-actions"><m3e-button variant="tonal" type="button" :disabled="interactionLocked" @click="showMode('restore')"><m3e-icon slot="icon" name="restore_from_trash"></m3e-icon>{{ tr('恢复完整分组树') }}</m3e-button></div>
                 <form v-else data-group-mode="restore" class="keepass-group-action-form" @submit.prevent="restoreGroup">
-                  <label><span>{{ tr('恢复位置') }}</span><select v-model="restoreParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('原父分组；不存在时使用根目录') }}</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>{{ tr('条目、历史、附件、UUID 与子分组一起恢复。') }}</small></label>
+                  <m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never"><label slot="label">{{ tr('恢复位置') }}</label><component :is="materialSelectTag" @input="restoreParentGroupId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="interactionLocked"><component :is="materialOptionTag" :selected.prop="String(restoreParentGroupId ?? '') === String('')" value="">{{ tr('原父分组；不存在时使用根目录') }}</component><component :is="materialOptionTag" :selected.prop="String(restoreParentGroupId ?? '') === String(target.groupId)" v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</component></component><small slot="hint">{{ tr('条目、历史、附件、UUID 与子分组一起恢复。') }}</small></m3e-form-field>
                   <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'restore' ? tr('恢复中…') : tr('确认恢复') }}</m3e-button></div>
                 </form>
               </template>
               <template v-else-if="!group.inRecycleBin">
                 <div v-if="!mode" class="keepass-group-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>{{ tr('重命名') }}</m3e-button><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="showMode('move')"><m3e-icon slot="icon" name="drive_file_move"></m3e-icon>{{ tr('移动') }}</m3e-button><m3e-button class="keepass-group-delete-action" variant="text" type="button" :disabled="interactionLocked || !recycleBinEnabled" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ tr('移入回收站') }}</m3e-button></div>
-                <form v-else-if="mode === 'rename'" data-group-mode="rename" class="keepass-group-action-form" @submit.prevent="renameGroup"><label><span>{{ tr('新名称') }}</span><input v-model="renameName" autocomplete="off" :disabled="interactionLocked" /><small>{{ tr('同级名称按 Monica Android 规则进行不区分大小写的冲突检查。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
-                <form v-else-if="mode === 'move'" data-group-mode="move" class="keepass-group-action-form" @submit.prevent="moveGroup"><label><span>{{ tr('目标父分组') }}</span><select v-model="moveParentGroupId" :disabled="interactionLocked"><option value="">{{ tr('{0} 根目录', { 0: rootName }) }}</option><option v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</option></select><small>{{ tr('自身和已加载的子孙分组从列表中排除；后台仍会再次校验完整树。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'move' ? tr('移动中…') : tr('确认移动') }}</m3e-button></div></form>
+                <form v-else-if="mode === 'rename'" data-group-mode="rename" class="keepass-group-action-form" @submit.prevent="renameGroup"><m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never"><label slot="label">{{ tr('新名称') }}</label><input v-model="renameName" autocomplete="off" :disabled="interactionLocked" /><small slot="hint">{{ tr('同级名称按 Monica Android 规则进行不区分大小写的冲突检查。') }}</small></m3e-form-field><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
+                <form v-else-if="mode === 'move'" data-group-mode="move" class="keepass-group-action-form" @submit.prevent="moveGroup"><m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never"><label slot="label">{{ tr('目标父分组') }}</label><component :is="materialSelectTag" @input="moveParentGroupId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="interactionLocked"><component :is="materialOptionTag" :selected.prop="String(moveParentGroupId ?? '') === String('')" value="">{{ tr('{0} 根目录', { 0: rootName }) }}</component><component :is="materialOptionTag" :selected.prop="String(moveParentGroupId ?? '') === String(target.groupId)" v-for="target in targetGroups" :key="target.groupId" :value="target.groupId">{{ target.displayPath }}</component></component><small slot="hint">{{ tr('自身和已加载的子孙分组从列表中排除；后台仍会再次校验完整树。') }}</small></m3e-form-field><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'move' ? tr('移动中…') : tr('确认移动') }}</m3e-button></div></form>
                 <div v-else-if="mode === 'delete'" class="keepass-group-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>{{ tr('将“{0}”移入 KeePass 回收站？', { 0: group.name }) }}</strong><small>{{ tr('整个子树会一起移动，条目、历史、附件和未知字段保持原样。导出 KDBX 后修改才会永久保存。') }}</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-group-delete class="keepass-group-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteGroup">{{ busy === 'delete' ? tr('处理中…') : tr('确认移入回收站') }}</m3e-button></div></div>
               </template>
               <p v-else>{{ tr('此分组属于回收站内的子树。恢复最外层分组后，完整层级会一起返回。') }}</p>
@@ -342,12 +343,6 @@ function errorMessage(cause: unknown): string {
 .keepass-groups-boundary { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
 .keepass-groups-warning, .keepass-groups-error { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); }
 .keepass-groups-error { border: 1px solid var(--md-sys-color-error, var(--app-primary)); }
-.keepass-groups-tabs { border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; margin-bottom: 12px; }
-.keepass-groups-tabs button { min-width: 0; min-height: 48px; border: 0; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 14px; color: var(--app-text); background: transparent; font: inherit; cursor: pointer; }
-.keepass-groups-tabs button + button { border-left: 1px solid var(--md-sys-color-outline, var(--app-outline)); }
-.keepass-groups-tabs button.active { color: var(--md-sys-color-on-secondary-container, var(--app-text)); background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.keepass-groups-tabs button:focus-visible, .keepass-group-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
-.keepass-groups-tabs small { font-variant-numeric: tabular-nums; }
 .keepass-groups-toolbar { min-width: 0; display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .keepass-groups-toolbar label { min-width: 0; min-height: 44px; flex: 1 1 auto; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 8px; padding: 0 12px; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .keepass-groups-toolbar input { min-width: 0; min-height: 42px; border: 0; outline: 0; color: var(--app-text); background: transparent; font: inherit; }
@@ -364,8 +359,9 @@ function errorMessage(cause: unknown): string {
 .keepass-groups-list-heading small, .keepass-group-copy small, .keepass-group-detail p, .keepass-group-action-form small, .keepass-group-delete-confirmation small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); overflow-wrap: anywhere; }
 .keepass-groups-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .keepass-groups-list > li + li { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.keepass-group-row { width: 100%; min-height: 72px; border: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 24px; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; color: var(--app-text); background: transparent; text-align: left; font: inherit; cursor: pointer; }
-.keepass-group-row:hover, .keepass-group-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
+.keepass-group-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.keepass-group-row > strong { font-weight: 500; overflow-wrap: anywhere; }
+.keepass-group-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .keepass-group-copy strong { overflow-wrap: anywhere; }
 .keepass-group-state { max-width: 120px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); text-align: right; overflow-wrap: anywhere; }
 .keepass-group-detail { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
@@ -385,19 +381,17 @@ function errorMessage(cause: unknown): string {
   .keepass-groups-toolbar { align-items: stretch; flex-direction: column; }
   .keepass-groups-toolbar > m3e-button { width: 100%; }
   .keepass-group-create { grid-template-columns: 40px minmax(0, 1fr); align-items: stretch; }
-  .keepass-group-create label, .keepass-group-create > div { grid-column: 1 / -1; }
+  .keepass-group-create > m3e-form-field, .keepass-group-create > div { grid-column: 1 / -1; }
   .keepass-group-row { grid-template-columns: 40px minmax(0, 1fr) 24px; }
   .keepass-group-state { grid-column: 2; max-width: none; text-align: left; }
   .keepass-group-action-form, .keepass-group-delete-confirmation { grid-template-columns: 32px minmax(0, 1fr); align-items: stretch; }
-  .keepass-group-action-form label, .keepass-group-action-form > div { grid-column: 1 / -1; }
+  .keepass-group-action-form > m3e-form-field, .keepass-group-action-form > div { grid-column: 1 / -1; }
   .keepass-group-delete-confirmation > div { grid-column: 1 / -1; align-items: stretch; flex-direction: column; }
   .keepass-group-actions { align-items: stretch; flex-direction: column; }
   .keepass-groups-dialog > footer { align-items: stretch; flex-direction: column; }
 }
 @media (max-width: 420px) {
   .keepass-groups-dialog { padding: 12px; }
-  .keepass-groups-tabs { grid-template-columns: minmax(0, 1fr); }
-  .keepass-groups-tabs button + button { border-left: 0; border-top: 1px solid var(--md-sys-color-outline, var(--app-outline)); }
   .keepass-group-row, .keepass-groups-list-heading, .keepass-group-detail { padding-inline: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {

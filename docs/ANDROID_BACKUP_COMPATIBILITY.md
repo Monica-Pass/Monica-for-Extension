@@ -13,6 +13,8 @@ This document defines the browser extension's compatibility contract with the cu
 
 The extension treats data it does not edit as opaque Android-owned data. Compatibility does not depend on the provider-neutral extension model knowing every Android field.
 
+API keys added in extension 0.1.37 use the separate native MDBX2 `api-token` format, not Room password rows or the legacy WebDAV JSON backup. The implementation follows Android's `ApiTokenPayload.kt`, `ApiTokenMetadata.kt`, `NativeApiTokenExtrasStore.kt` and `NativeApiTokenFavorites.kt`. Native helper 0.1.1 preserves object UUIDs, payload schemas, unknown fields, field IDs, notes and favorites. Local/remote edits are compared against both object and label content; conflicts retain the unsynchronized local record. Legacy JSON, Bitwarden and KeePass destinations are excluded for this type. Extension archive state is additive metadata retained by Android, not an Android archive feature.
+
 ## Feature Parity Matrix
 
 The status vocabulary is intentionally strict:
@@ -160,7 +162,15 @@ Current `itemData` fields are `content`, `tags`, and `isMarkdown`. Only `content
 
 Android currently writes `credentialId`, `rpId`, `rpName`, `userId`, `userName`, `userDisplayName`, `publicKeyAlgorithm`, `publicKey`, `privateKeyAlias`, `createdAt`, `lastUsedAt`, `useCount`, `iconUrl`, `isDiscoverable`, `isUserVerificationRequired`, `transports`, `aaguid`, `signCount`, `notes`, `boundPasswordId`, `passkeyMode`, and `categoryName`.
 
-`privateKeyAlias` is an Android key reference, not PKCS#8 key material. The extension must preserve it but cannot use it for browser WebAuthn signing.
+`privateKeyAlias` may contain either an Android device-bound reference or portable PKCS#8 private-key material. Device-bound references remain metadata and are preserved on edits. The extension validates portable keys and uses only ES256/P-256 for browser signing. Portable keys are imported/written through encrypted Android backups; a plain ZIP does not enable portable-key signing or export.
+
+Release 0.1.37 recognizes a passwordless KeePass entry as a Passkey even when Android has populated its ordinary username, URL and notes (first implemented in local development build 0.1.38). Entries with a real password remain logins and retain embedded Passkey fields. Malformed or unsupported private keys are not presented as usable ES256 credentials.
+
+Release 0.1.37 includes the counter policy from local development build 0.1.39 and its subsequent review fixes: actual provider bindings choose the policy. Independent/restored copies and file databases sign with 0, retaining imported counter metadata without advancing it. Live Bitwarden credentials keep 0 or refresh, increment and commit historical positive counters before signing, matching the official client. `useCount` and `lastUsedAt` are local statistics and do not trigger Cipher/file writes. Neither zeroing nor freezing a previously positive counter is guaranteed to pass a site's clone detection; older independent copies may require re-registration.
+
+The inspected Android `PasskeyAuthActivity.kt` still unconditionally signs and stores 0. Its encrypted full-backup restore drops live provider bindings and restores usable keys as local (`NONE`) or missing keys as references (`REFERENCE`). This is distinct from the extension's own full-vault backup, which intentionally includes provider settings. The Android historical-positive Bitwarden branch is not yet aligned with the official client; this extension update does not change Android production code. See [source policies and evidence](PASSKEY_COMPATIBILITY.md).
+
+Optional `backupEligible` and `backupState` metadata round-trips through the extension's KeePass, MDBX2 and encrypted Android codecs. Explicit imported values are retained. Older native Monica payloads default to BE/BS true, matching Monica's registration/authentication flags; KPEX-only imports use their recorded flags. Android's current `KeePassPasskeySyncCodec` ignores these additive JSON fields and continues to read the credential and key. See [0.1.38 verification](VALIDATION-0.1.38.md) for the JVM and browser test boundaries.
 
 ### Generator history
 

@@ -104,7 +104,7 @@ onBeforeUnmount(() => {
 
 <template>
   <span class="totp-code-cell">
-    <button v-if="allowUse" type="button" :disabled="!available || copying || (parameters?.otpType === 'HOTP' && !consumeCode)" :aria-label="parameters?.otpType === 'HOTP' ? tr('复制验证码并将计数器加一') : tr('复制验证码')" @click="useCode"><strong>{{ displayCode }}</strong><m3e-icon v-if="showCopyIcon" name="content_copy" aria-hidden="true"></m3e-icon></button>
+    <m3e-button variant="text" v-if="allowUse" type="button" :disabled="!available || copying || (parameters?.otpType === 'HOTP' && !consumeCode)" :aria-label="parameters?.otpType === 'HOTP' ? tr('复制验证码并将计数器加一') : tr('复制验证码')" @click="useCode"><strong>{{ displayCode }}</strong><m3e-icon slot="icon" v-if="showCopyIcon" name="content_copy" aria-hidden="true"></m3e-icon></m3e-button>
     <strong v-else>{{ displayCode }}</strong>
     <small v-if="remaining">{{ tr('{0} 秒', { 0: remaining }) }}</small>
     <small v-else-if="parameters?.otpType === 'HOTP'">{{ tr('计数 {0}', { 0: parameters.counter || 0 }) }}</small>

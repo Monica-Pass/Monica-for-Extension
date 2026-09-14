@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
@@ -16,7 +17,7 @@ async function launch(testInfo: TestInfo): Promise<{ context: BrowserContext; pa
   await page.getByLabel("主密码", { exact: true }).fill("site policy e2e password");
   await page.getByLabel("确认主密码", { exact: true }).fill("site policy e2e password");
   await page.getByRole("button", { name: "创建并解锁" }).click();
-  await expect(page.getByRole("heading", { name: "密码库概览" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
   return { context, page };
 }
 
@@ -30,14 +31,14 @@ test("settings manages encrypted autofill site exclusions in a compact dialog", 
     expect(result).toMatchObject({ ok: true, data: { blockedHosts: ["blocked.example.com"], saveBlockedHosts: ["save.example.com"] } });
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "设置与备份" }).click();
-    await expect(page.getByRole("button", { name: /自动填充排除项/ })).toContainText("自动填充 1 个 · 保存提示 1 个");
+    await expect(page.getByRole("button", { name: /自动填充排除项/ })).toHaveAccessibleName("自动填充排除项 自动填充 1 个 · 保存提示 1 个");
     await page.getByRole("button", { name: /自动填充排除项/ }).click();
-    const dialog = page.getByRole("dialog", { name: "自动填充排除项" });
+    const dialog = dialogContent(page, { name: "自动填充排除项" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("blocked.example.com", { exact: true })).toBeVisible();
     await expect(dialog.getByText("save.example.com", { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await dialog.getByLabel("排除类型").selectOption("blockedHosts");
+    await chooseOption(dialog.getByLabel("排除类型"), "blockedHosts");
     await dialog.getByPlaceholder("example.com").fill("new.example.org");
     await dialog.getByRole("button", { name: "添加" }).click();
     await dialog.getByRole("button", { name: "保存" }).click();

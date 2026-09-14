@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
@@ -48,14 +49,14 @@ async function expectUsableControls(root: Locator) {
   const problems = await root.evaluate((root) => {
     const problems: string[] = [];
     const viewport = document.documentElement.clientWidth;
-    for (const element of root.querySelectorAll<HTMLElement>("button, m3e-button, m3e-icon-button, input, select, textarea, summary")) {
+    for (const element of root.querySelectorAll<HTMLElement>("button, m3e-button, m3e-icon-button, m3e-list-action, m3e-list-option, input, select, m3e-select, textarea, summary")) {
       if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true }) || element.closest("[inert]")) continue;
       const box = element.getBoundingClientRect();
       if (box.width < 2 || box.height < 2) continue; // Deliberately hidden file/radio inputs.
       const name = element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 65) || element.tagName;
       if (box.left < -1 || box.right > viewport + 1) problems.push(`Outside window: ${name}`);
-      if (element.matches("button, m3e-button, m3e-icon-button") && (box.width < 43.5 || box.height < 43.5)) problems.push(`Small target: ${name}`);
-      const label = element.shadowRoot?.querySelector<HTMLElement>(".label");
+      if (element.matches("button, m3e-button, m3e-icon-button, m3e-list-action, m3e-list-option") && (box.width < 43.5 || box.height < 43.5)) problems.push(`Small target: ${name}`);
+      const label = element.shadowRoot?.querySelector<HTMLElement>(".label, .content") ?? element.shadowRoot?.querySelector("m3e-list-item-button")?.shadowRoot?.querySelector<HTMLElement>(".content");
       if (label && (label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1)) problems.push(`Clipped label: ${name}`);
       const target = element.shadowRoot?.querySelector(".touch")?.getBoundingClientRect();
       if (target && (target.left < box.left - 1 || target.right > box.right + 1 || target.top < box.top - 1 || target.bottom > box.bottom + 1)) problems.push(`Overlapping hit area: ${name}`);
@@ -69,16 +70,15 @@ for (const [width, height, scale] of sizes) {
   test(`populated pages and actions fit ${width}x${height} at ${scale}% text`, async ({}, testInfo) => {
     const { context, page } = await launch(testInfo, width, height, scale);
     try {
-      await expect(page.locator(".home-module")).toHaveCount(6);
-      await expect(page.locator(".home-featured-card")).toHaveCount(1);
-      await expect(page.locator(".home-type-button")).toHaveCount(8);
-      for (const section of ["Overview", "Login", "Wallet and identity", "Secure Note", "Verification codes", "Steam", "Passkey", "Secure Send", "Archive", "Recycle Bin", "Timeline", "Sources", "Settings and backups", "Generator"]) {
+      await expect(page.getByRole("heading", { name: "All items", exact: true })).toBeVisible();
+      await expect(page.locator(".item-card")).toHaveCount(5);
+      for (const section of ["All items", "API key", "Login", "Wallet and identity", "Secure Note", "Verification codes", "Steam", "Passkey", "Secure Send", "Archive", "Recycle Bin", "Timeline", "Sources", "Settings and backups", "Generator"]) {
         await navigate(page, section);
         if (section === "Settings and backups") await page.locator(".settings-disclosure").evaluateAll((items) => items.forEach((item) => { (item as HTMLDetailsElement).open = true; }));
         await expectUsableControls(page.locator("#main-content"));
         if (["Login", "Wallet and identity", "Secure Note", "Verification codes", "Passkey"].includes(section)) {
           await page.getByRole("button", { name: /^View details for / }).first().click();
-          const detail = page.getByRole("dialog");
+          const detail = dialogContent(page);
           await expect(detail).toBeVisible();
           await expectUsableControls(detail);
           await detail.getByRole("button", { name: "Close", exact: true }).click();
@@ -145,11 +145,12 @@ for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 60
     try {
       await navigate(page, "登录项", "打开导航");
       await page.getByRole("button", { name: "新建", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "添加登录项", exact: true });
+      const dialog = dialogContent(page, { name: "添加登录项", exact: true });
       const save = dialog.getByRole("button", { name: "加密保存", exact: true });
       await expect(save).toBeInViewport({ ratio: 1 });
       const initial = await save.boundingBox();
       await dialog.getByLabel("名称 *", { exact: true }).fill("跨尺寸保存的项目");
+      await dialog.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "自定义字段" }).click();
       await dialog.getByRole("button", { name: "添加字段", exact: true }).click();
       await dialog.getByLabel("自定义字段 1 名称").fill("自定义字段");
       await dialog.getByLabel("自定义字段 1 值").fill("synthetic value");
@@ -164,7 +165,7 @@ for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 60
       await expect(page.getByText("跨尺寸保存的项目", { exact: true })).toBeVisible();
       await navigate(page, "安全笔记", "打开导航");
       await page.getByRole("button", { name: "添加安全笔记", exact: true }).click();
-      const note = page.getByRole("dialog", { name: "添加安全笔记", exact: true });
+      const note = dialogContent(page, { name: "添加安全笔记", exact: true });
       await note.getByLabel("名称 *").fill("跨尺寸安全笔记");
       await note.getByLabel("笔记内容 *").fill("A complete editable note.");
       await expect(note.getByRole("button", { name: "加密保存" })).toBeInViewport({ ratio: 1 });
@@ -192,7 +193,7 @@ test("short popup keeps marked autofill and the unlock form operable", async ({}
       await popup.evaluate((value) => { document.documentElement.style.fontSize = `${value}%`; }, scale);
       await popup.evaluate(() => document.fonts.ready);
       const copy = await popup.locator(".popup-unlock > div").boundingBox();
-      const field = await popup.getByLabel("主密码", { exact: true }).boundingBox();
+      const field = await popup.locator(".popup-unlock m3e-form-field").boundingBox();
       // Explanatory text must use the available form width, not a leftover icon column.
       expect(copy!.width, `Unlock copy at ${width}x${height}/${scale}%`).toBeGreaterThanOrEqual(field!.width - 1);
       expect(Math.abs(copy!.x - field!.x)).toBeLessThanOrEqual(1);

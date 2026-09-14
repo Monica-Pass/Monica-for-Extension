@@ -1,5 +1,5 @@
 import type { PendingMutation, ProviderAccount, ProviderConflictInput, ProviderSourceRecord, VaultItem, VaultState } from "../../core/model";
-import type { ProviderSyncResult } from "../../core/provider";
+import type { ProviderAcknowledgedMutation, ProviderRequestedMutation, ProviderSyncGuard, ProviderSyncResult } from "../../core/provider";
 import { KeePassProvider } from "./keepass-provider";
 import { keePassMutationIntentSha256, KeePassRemoteSessionError, KeePassRemoteSessionService } from "./keepass-remote-session";
 import type { KeePassDurableMutationReceipt } from "./keepass-working-copy-store";
@@ -8,20 +8,27 @@ export const KEEPASS_ITEM_SYNC_RECEIPT_ID = "item-sync-pending";
 export const KEEPASS_ITEM_SYNC_BATCH_LIMIT = 100;
 
 export interface KeePassDurableSyncVault {
-  readState(): Promise<Pick<VaultState, "items" | "mutationQueue">>;
+  readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue">>;
   applyProviderSync(
     providerId: string,
     items: VaultItem[],
     accountPatch?: Partial<ProviderAccount>,
     conflicts?: ProviderConflictInput[],
     sourceRecords?: ProviderSourceRecord[],
-    syncSnapshot?: VaultItem[]
+    syncSnapshot?: VaultItem[],
+    acknowledgedMutations?: ProviderAcknowledgedMutation[],
+    requestedMutations?: ProviderRequestedMutation[],
+    adoptRemoteRemovals?: boolean,
+    deferredMutationIds?: string[],
+    guard?: ProviderSyncGuard
   ): Promise<unknown>;
 }
 
 export type KeePassAccountConfigWriter = (account: ProviderAccount, config: Record<string, unknown>) => Promise<ProviderAccount>;
 
 export class KeePassDurableSyncCoordinator {
+  private readonly projectedWorkingCopies = new Map<string, string>();
+  clearProjectionCache(): void { this.projectedWorkingCopies.clear(); }
   constructor(
     private readonly provider: KeePassProvider,
     private readonly remoteSessions: KeePassRemoteSessionService,
@@ -29,19 +36,29 @@ export class KeePassDurableSyncCoordinator {
     private readonly writeAccountConfig: KeePassAccountConfigWriter
   ) {}
 
-  async synchronize(account: ProviderAccount, signal?: AbortSignal): Promise<ProviderSyncResult> {
+  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { checkOnly?: boolean } = {}): Promise<ProviderSyncResult> {
     if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") {
       throw new KeePassRemoteSessionError("remote-provider-invalid", "所选密码源不是远端 KeePass 数据库。");
     }
     await this.recoverPending(account, signal);
     signal?.throwIfAborted();
-    const state = await this.vault.readState();
+    const state = await this.vault.readState(false);
     const snapshot = state.items;
     const allPending = state.mutationQueue
       .filter((mutation) => mutation.providerId === account.id)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     const pending = allPending.slice(0, KEEPASS_ITEM_SYNC_BATCH_LIMIT);
     const now = new Date().toISOString();
+    // With no queued edits, compare the remote validator before projecting all
+    // entries again. A cold worker still refreshes the local projection once.
+    const checked = options.checkOnly && !allPending.length ? await this.remoteSessions.publishWorkingCopy(account, signal) : undefined;
+    signal?.throwIfAborted();
+    if (checked) {
+      await this.writeAccountConfig(account, checked.accountConfig);
+      if (checked.status === "unchanged" && this.projectedWorkingCopies.get(account.id) === checked.workingSha256) {
+        return { items: snapshot, conflicts: [], warnings: [], unchanged: true };
+      }
+    }
     let result = await this.provider.sync(account, {
       signal,
       now,
@@ -54,14 +71,16 @@ export class KeePassDurableSyncCoordinator {
       const persisted = await this.remoteSessions.persistWorkingCopy(account, journal);
       if (persisted) await this.writeAccountConfig(account, persisted.accountConfig);
     }
-    const published = await this.remoteSessions.publishWorkingCopy(account, signal);
+    const published = checked || await this.remoteSessions.publishWorkingCopy(account, signal);
     if (published) {
       await this.writeAccountConfig(account, published.accountConfig);
-      if (published.status === "rebased" || published.status === "remote-refreshed") {
+      if (!checked && (published.status === "rebased" || published.status === "remote-refreshed")) {
         result = await this.provider.refreshFromSession(account, result.items, now);
       }
     }
-    await this.vault.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot);
+    signal?.throwIfAborted();
+    await this.vault.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot, [], [], false, [], { expectedAccount: account });
+    if (published && !result.conflicts.length) this.projectedWorkingCopies.set(account.id, published.workingSha256);
     if (journal) await this.remoteSessions.deleteDurableReceipt(account, KEEPASS_ITEM_SYNC_RECEIPT_ID);
     if (allPending.length > KEEPASS_ITEM_SYNC_BATCH_LIMIT) {
       result.warnings = [...result.warnings, `本轮按 Monica Android 上限处理了 ${KEEPASS_ITEM_SYNC_BATCH_LIMIT} 条 KeePass 修改，其余修改将在下次同步继续。`];
@@ -76,13 +95,14 @@ export class KeePassDurableSyncCoordinator {
       throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 项目同步回执类型无效。");
     }
     signal?.throwIfAborted();
-    const state = await this.vault.readState();
+    const state = await this.vault.readState(false);
     const published = await this.remoteSessions.publishWorkingCopy(account, signal);
     if (!published) throw new KeePassRemoteSessionError("remote-working-copy-missing", "KeePass 远端工作副本无法发布。");
     await this.writeAccountConfig(account, published.accountConfig);
     const identities = acknowledgedIdentityItems(receipt.result.snapshotItems, receipt.result.mutations, account.id);
     const refreshed = await this.provider.refreshFromSession(account, identities, receipt.result.syncedAt);
-    await this.vault.applyProviderSync(account.id, refreshed.items, refreshed.accountPatch, receipt.result.conflicts, refreshed.sourceRecords, state.items);
+    signal?.throwIfAborted();
+    await this.vault.applyProviderSync(account.id, refreshed.items, refreshed.accountPatch, receipt.result.conflicts, refreshed.sourceRecords, state.items, [], [], false, [], { expectedAccount: account });
     await this.remoteSessions.deleteDurableReceipt(account, KEEPASS_ITEM_SYNC_RECEIPT_ID);
   }
 }

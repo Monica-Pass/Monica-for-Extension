@@ -30,7 +30,7 @@ try {
   const manager = await context.newPage();
   await manager.goto(`chrome-extension://${extensionId}/index.html`);
   await manager.locator(".login-brand .brand-logo").waitFor();
-  await inspectPageLogo(manager, ".login-brand .brand-logo", 48, "setup");
+  await inspectPageLogo(manager, ".login-brand .brand-logo", 44, "setup");
   await manager.evaluate(() => localStorage.setItem("monica.scheme", "light"));
   const setup = await manager.evaluate(async (items) => {
     const created = await chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "store asset fixture password" });
@@ -43,10 +43,10 @@ try {
   }, fixtures());
   if (!setup.ok) throw new Error(setup.error || "Unable to seed store assets.");
   await manager.reload();
-  await manager.locator(".vault-home").waitFor();
+  await manager.getByRole("heading", { name: "全部项目", exact: true }).waitFor();
   await settle(manager);
-  await inspectPageLogo(manager, ".sidebar-brand .brand-logo", 40, "overview");
-  await manager.screenshot({ path: resolve(output, "01-vault-overview.png"), animations: "disabled" });
+  await inspectPageLogo(manager, ".sidebar-brand .brand-logo", 40, "vault-items");
+  await manager.screenshot({ path: resolve(output, "01-vault-items.png"), animations: "disabled" });
 
   await manager.getByRole("navigation").getByRole("button", { name: /^登录项/ }).click();
   await manager.getByText("示例工作账号", { exact: true }).waitFor();

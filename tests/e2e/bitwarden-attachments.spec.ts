@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Download, type Page, type Route, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
@@ -94,7 +95,7 @@ test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover 
     const manage = manager.getByRole("button", { name: "管理 Bitwarden attachment account 的附件" });
     await expect(manage).toBeVisible();
     await manage.click();
-    const dialog = manager.getByRole("dialog", { name: "附件 · Bitwarden attachment account" });
+    const dialog = dialogContent(manager, { name: "附件 · Bitwarden attachment account" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog.locator(".attachment-list-shell")).toHaveCSS("border-radius", "8px");

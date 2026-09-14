@@ -1,3 +1,4 @@
+import { chooseOption } from "./fixtures/material";
 import { expect, test, chromium, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
@@ -85,7 +86,8 @@ test("manager saves a metadata-only SSO login with empty username, password, and
     await manager.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     await manager.getByRole("button", { name: "新建", exact: true }).click();
     await manager.getByLabel("名称 *").fill("Company SSO");
-    await manager.getByRole("radio", { name: "SSO", exact: true }).check();
+    await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "登录方式" }).click();
+    await chooseOption(manager.getByRole("combobox", { name: "登录方式", exact: true }), "SSO");
     await manager.getByLabel("SSO 提供商").fill("GOOGLE");
     await manager.screenshot({ path: testInfo.outputPath("metadata-login-editor.png"), fullPage: true });
     await manager.getByRole("button", { name: "加密保存" }).click();
@@ -130,13 +132,12 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
     expect(await popup.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))).toMatchObject({ client: 390, scroll: 390 });
     await popup.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     const scaledCard = await popup.locator(".passkey-card").last().evaluate((card) => {
-      const copy = card.querySelector<HTMLElement>(".credential-copy")!;
+      const copy = card.querySelector<HTMLElement>(".popup-passkey-support > span:first-child")!;
       const state = card.querySelector<HTMLElement>(".passkey-state")!;
       const cardRect = card.getBoundingClientRect();
       const copyRect = copy.getBoundingClientRect();
       const stateRect = state.getBoundingClientRect();
       return {
-        display: getComputedStyle(card).display,
         cardWidth: cardRect.width,
         stateWidth: stateRect.width,
         stateTop: stateRect.top,
@@ -148,7 +149,6 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
         documentScrollWidth: document.documentElement.scrollWidth
       };
     });
-    expect(scaledCard.display).toBe("grid");
     expect(scaledCard.stateWidth).toBeGreaterThan(scaledCard.cardWidth * 0.55);
     expect(scaledCard.stateTop).toBeGreaterThanOrEqual(scaledCard.copyBottom - 1);
     expect(scaledCard.alignedLeft).toBeLessThanOrEqual(1);

@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
@@ -128,7 +129,7 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 目录演示库" });
+    const dialog = dialogContent(page, { name: "管理 目录演示库" });
     const panel = dialog.locator(".mdbx2-collection-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("border-radius", "8px");
@@ -141,7 +142,7 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
     await expect(titleInput).toBeFocused();
     expect((await titleInput.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await titleInput.fill("工作");
-    await dialog.locator("#mdbx2-collection-parent").selectOption({ label: "个人 / 账号" });
+    await chooseOption(dialog.locator("#mdbx2-collection-parent"), { label: "个人 / 账号" });
     await dialog.getByRole("button", { name: "创建", exact: true }).click();
     await expect(dialog.getByText("个人 / 账号 / 工作", { exact: true })).toBeVisible();
 
@@ -151,9 +152,9 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
     await expect(dialog.getByText("个人 / 账号 / 工作账号", { exact: true })).toBeVisible();
 
     await dialog.getByRole("button", { name: "移动 工作账号" }).click();
-    await dialog.locator("#mdbx2-collection-parent").selectOption({ label: "顶层" });
+    await chooseOption(dialog.locator("#mdbx2-collection-parent"), { label: "顶层" });
     const moveConfirm = dialog.getByRole("button", { name: "确认移动" });
-    await expect(moveConfirm).toBeFocused();
+    await expect(dialog.locator("#mdbx2-collection-parent")).toBeFocused();
     await moveConfirm.click();
     await expect(dialog.getByRole("alert")).toContainText("原操作标识已保留");
     const safeRetry = dialog.getByRole("button", { name: "安全重试" });
@@ -176,7 +177,7 @@ test("MDBX2 folders preserve Android hierarchy and retry one uncertain move inte
     await expect(dialog.getByText("工作账号", { exact: true })).toBeVisible();
 
     await dialog.getByRole("button", { name: "恢复", exact: true }).click();
-    await dialog.locator("#mdbx2-collection-parent").selectOption({ label: "个人" });
+    await chooseOption(dialog.locator("#mdbx2-collection-parent"), { label: "个人" });
     await dialog.getByRole("button", { name: "确认恢复" }).click();
     await dialog.getByRole("button", { name: /当前文件夹/ }).click();
     await expect(dialog.getByText("个人 / 工作账号", { exact: true })).toBeVisible();

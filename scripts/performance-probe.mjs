@@ -74,12 +74,12 @@ try {
   if (!imported.ok) throw new Error(imported.error);
   await manager.reload();
   await expect(manager.locator('.page-heading h1')).toBeVisible();
-  await sample(manager, 'managerOverview');
+  await sample(manager, 'managerVault');
   await manager.locator('.sidebar .nav-item').nth(1).click();
   await expect(manager.locator('.credential-table tbody tr').first()).toBeVisible();
   await sample(manager, 'managerLogins');
   result.renderedLoginRows = await manager.locator('.credential-table tbody tr').count();
-  await manager.locator('.sidebar .nav-item').nth(4).click();
+  await manager.getByRole('navigation').getByRole('button', { name: /^Bestätigungscodes/ }).click();
   await expect(manager.locator('.totp-code-cell').first()).toBeVisible();
   await manager.waitForTimeout(1100);
   const clock = await manager.evaluate(() => { const fixed = Math.floor(Date.now() / 30000) * 30000 + 15000; Date.now = () => fixed; return window.__monicaPerformance(); });

@@ -56,7 +56,7 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     await manager.getByLabel("主密码", { exact: true }).fill("steam e2e master password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("steam e2e master password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();
-    await expect(manager.getByRole("heading", { name: "密码库概览" })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "全部项目", exact: true })).toBeVisible();
     const now = new Date().toISOString();
     const accessToken = jwt(4_102_444_800);
     const upsert = await manager.evaluate(async ({ now, token }) => chrome.runtime.sendMessage({

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import * as kdbxweb from "kdbxweb";
 import {
   KEEPASS_PASSKEY_FIELDS,
@@ -23,8 +24,7 @@ import type { MonicaItemBase } from "../monica-item-data";
 /** A real P-256 PKCS#8 key, so the OID sniffing is exercised against genuine DER rather than a stub. */
 const P256_PKCS8 =
   "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
-/** Only the `PrivateKeyInfo` prefix is needed: the algorithm OID is all `coseAlgorithmOfPkcs8` reads. */
-const RSA_PKCS8_HEADER = "MBICAQAwDQYJKoZIhvcNAQEBBQA=";
+const RSA_PKCS8 = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
 const ED25519_PKCS8 = "MC4CAQAwBQYDK2VwBCIEIJnQd7TZ/Nw+CYe+uaJUoXpe4i7M98vZBzfdPUtkHyij";
 
 function fields(entries: Record<string, string | kdbxweb.ProtectedValue>): Map<string, KeePassEntryFieldValue> {
@@ -274,6 +274,10 @@ describe("readKeePassPasskeyFields", () => {
     expect(readKeePassPasskeyFields(keePassDxEntry({ [KEEPASSDX_PASSKEY_FIELDS.privateKey]: secret("!!!") }))).toBeUndefined();
   });
 
+  it.each(["MBICAQAwDQYJKoZIhvcNAQEBBQA=", "bm90IGEgcHJpdmF0ZSBrZXk=", "monica-passkey-key-ref-v1:device-only"])("does not offer non-signing key material %s", key => {
+    expect(readKeePassPasskeyFields(keePassDxEntry({ [KEEPASSDX_PASSKEY_FIELDS.privateKey]: secret(key) }))).toBeUndefined();
+  });
+
   it("strips the [Passkey] title suffix to recover the relying party name", () => {
     expect(readKeePassPasskeyFields(keePassDxEntry({ Title: "My Bank [Passkey]" }))!.rpName).toBe("My Bank");
     expect(readKeePassPasskeyFields(keePassDxEntry({ Title: "" }))!.rpName).toBe("github.com");
@@ -288,7 +292,7 @@ describe("readKeePassPasskeyFields", () => {
       readKeePassPasskeyFields(keePassDxEntry({ [KEEPASSDX_PASSKEY_FIELDS.privateKey]: secret(pem(pkcs8)) }))!.algorithm;
 
     expect(algorithmOf(P256_PKCS8)).toBe(-7);
-    expect(algorithmOf(RSA_PKCS8_HEADER)).toBe(-257);
+    expect(algorithmOf(RSA_PKCS8)).toBe(-257);
     expect(algorithmOf(ED25519_PKCS8)).toBe(-8);
   });
 
@@ -406,6 +410,8 @@ describe("buildKeePassPasskeyFields", () => {
       transports: "internal,hybrid",
       aaguid: "aa-guid",
       signCount: 3,
+      backupEligible: true,
+      backupState: true,
       notes: "",
       passkeyMode: "KEEPASS_COMPAT"
     });
@@ -443,11 +449,21 @@ describe("buildKeePassPasskeyFields", () => {
     expect(written.get(KEEPASSDX_PASSKEY_FIELDS.flagBs)).toBe("true");
   });
 
-  it("defaults the backup flags to false on a fresh entry", () => {
+  it("writes the portable registration backup flags on a fresh entry", () => {
     const written = buildKeePassPasskeyFields({ item: passkey() });
 
-    expect(written.get(KEEPASSDX_PASSKEY_FIELDS.flagBe)).toBe("false");
-    expect(written.get(KEEPASSDX_PASSKEY_FIELDS.flagBs)).toBe("false");
+    expect(written.get(KEEPASSDX_PASSKEY_FIELDS.flagBe)).toBe("true");
+    expect(written.get(KEEPASSDX_PASSKEY_FIELDS.flagBs)).toBe("true");
+  });
+
+  it("preserves device key references and unknown payload fields when editing metadata", () => {
+    const existingFields = buildKeePassPasskeyFields({ item: passkey() });
+    const payload = JSON.parse(keePassFieldText(existingFields.get(KEEPASS_PASSKEY_FIELDS.data)));
+    payload.privateKeyAlias = "monica-passkey-key-ref-v1:device-only";
+    payload.futureMetadata = { retained: true };
+    existingFields.set(KEEPASS_PASSKEY_FIELDS.data, secret(JSON.stringify(payload)));
+    const written = buildKeePassPasskeyFields({ item: passkey({ privateKeyPkcs8: undefined, sourceMode: "android-metadata-only", notes: "edited" }), existingFields });
+    expect(JSON.parse(keePassFieldText(written.get(KEEPASS_PASSKEY_FIELDS.data)))).toMatchObject({ privateKeyAlias: payload.privateKeyAlias, futureMetadata: { retained: true }, notes: "edited" });
   });
 
   it("falls back to the display name when the credential has no user name", () => {

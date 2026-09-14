@@ -2,6 +2,10 @@
 
 This process is the trusted MDBX2 runtime for Monica Extension. It uses the exact Monica MDBX2 core instead of reproducing format, cryptography, Commit2 or synchronization rules in TypeScript.
 
+Version 0.1.1 adds the `supportsApiTokenMetadata` capability for native Android API keys. API objects retain their native UUID and `monica.api-token.v1` / `monica.gateway.credential.v1` payload. Notes, stable custom-field IDs and favorites use Android's collection-scoped `monica:api-token:fields:v1` and `monica:api-token:favorite:v1` labels. Object and label changes share one idempotent transaction; ambiguous field labels fail closed. Existing vaults require no format migration.
+
+Install the updated helper before editing API keys through MDBX2. Extension 0.1.37 blocks API writes through older helpers so partial metadata cannot overwrite Android records. Extension-only archive state uses the additive `monica:extension:archived_at` field in the fields label; Android preserves it but does not currently display this archive state.
+
 ## Core pin
 
 `mdbx-ffi` is fetched from `https://github.com/Monica-Pass/Mdbx.git` at revision:

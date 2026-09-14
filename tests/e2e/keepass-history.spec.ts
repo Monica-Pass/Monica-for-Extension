@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Download, type Locator, type Page, type TestInfo } from "@playwright/test";
 import * as kdbxweb from "kdbxweb";
 import path from "node:path";
@@ -46,7 +47,7 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "连接 KeePass" }).click();
-    const sourceDialog = page.getByRole("dialog", { name: "连接 KeePass" });
+    const sourceDialog = dialogContent(page, { name: "连接 KeePass" });
     await sourceDialog.getByLabel("显示名称").fill("KeePass History Source");
     await sourceDialog.getByLabel("KeePass 数据库文件").setInputFiles({
       name: "history-fixture.kdbx",
@@ -70,7 +71,7 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await expectMinimumTarget(historyButton);
     await historyButton.click();
 
-    const dialog = page.getByRole("dialog", { name: "KeePass 历史 · KeePass history account" });
+    const dialog = dialogContent(page, { name: "KeePass 历史 · KeePass history account" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");
@@ -132,7 +133,7 @@ test("KeePass history reveals one field at a time and restores a complete KDBX4.
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: /^登录项/ }).click();
     await page.getByRole("button", { name: "查看 KeePass history account 的 KeePass 历史" }).click();
-    const lightDialog = page.getByRole("dialog", { name: "KeePass 历史 · KeePass history account" });
+    const lightDialog = dialogContent(page, { name: "KeePass 历史 · KeePass history account" });
     await expect(lightDialog).toHaveCSS("background-image", "none");
     await expectNoGradients(lightDialog);
     await expectNoHorizontalOverflow(lightDialog);

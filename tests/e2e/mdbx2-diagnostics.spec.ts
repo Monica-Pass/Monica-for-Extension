@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
@@ -151,7 +152,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 健康检查演示库" });
+    const dialog = dialogContent(page, { name: "管理 健康检查演示库" });
     const panel = dialog.locator(".mdbx2-diagnostics-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("border-radius", "8px");
@@ -172,7 +173,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     await expectCentered(panel.locator(".mdbx2-diagnostics-health-icon"), panel.locator(".mdbx2-diagnostics-health-icon m3e-icon"));
     const inactiveGuidance = panel.locator(".mdbx2-health-guidance-row", { hasText: "存在长期未活动设备" });
-    await inactiveGuidance.locator("summary").click();
+    await inactiveGuidance.locator("[slot=\"header\"]").click();
     await expect(inactiveGuidance).toHaveAttribute("open", "");
     await expect(inactiveGuidance.getByText("这通常只是状态提示，不代表数据库内容损坏。", { exact: true })).toBeVisible();
     const historyAction = inactiveGuidance.getByRole("button", { name: "查看提交历史" });
@@ -200,7 +201,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await panel.locator(".mdbx2-health-guidance-row").first().scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("mdbx2-health-guidance-dark-375-200.png") });
 
-    const details = panel.locator(".mdbx2-diagnostics-details");
+    const details = panel.locator(".mdbx2-diagnostics-m3e-expansion-panel");
     await expect(details).not.toHaveAttribute("open", "");
     await details.getByText("查看聚合统计", { exact: true }).click();
     await expect(details).toHaveAttribute("open", "");
@@ -210,7 +211,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await expectCentered(panel.locator(".mdbx2-health-guidance-icon").first(), panel.locator(".mdbx2-health-guidance-icon m3e-icon").first());
 
     const attachmentGuidance = panel.locator(".mdbx2-health-guidance-row", { hasText: "附件分片不完整" });
-    await attachmentGuidance.locator("summary").click();
+    await attachmentGuidance.locator("[slot=\"header\"]").click();
     await attachmentGuidance.getByRole("button", { name: "查看附件统计" }).click();
     await expect(panel.locator("#mdbx2-diagnostics-attachment-title").locator("..")).toBeFocused();
 

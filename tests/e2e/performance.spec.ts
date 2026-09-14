@@ -1,3 +1,4 @@
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -26,22 +27,22 @@ test("large lists remain searchable, pageable and usable for filling", async ({}
     await manager.reload();
     await manager.locator(".sidebar .nav-item").nth(1).click();
     await expect(manager.locator(".credential-table tbody tr")).toHaveCount(50);
-    await manager.getByLabel("Page", { exact: true }).selectOption("3");
+    await chooseOption(manager.getByLabel("Page", { exact: true }), "3");
     await expect(manager.locator(".credential-table tbody tr")).toHaveCount(23);
     await expect(manager.locator("#main-content")).toBeFocused();
-    const search = manager.getByRole("textbox", { name: "Search vault", exact: true });
+    const search = manager.getByRole("searchbox", { name: "Search vault", exact: true });
     await search.fill("Account 077");
     await expect(manager.locator(".credential-table tbody tr")).toHaveCount(1);
     await expect(manager.getByText("Account 077", { exact: true })).toBeVisible();
     await search.fill("");
-    await expect(manager.getByLabel("Page", { exact: true })).toHaveValue("1");
-    await manager.getByLabel("Page", { exact: true }).selectOption("3");
+    await expect(manager.getByLabel("Page", { exact: true })).toHaveJSProperty("value", "1");
+    await chooseOption(manager.getByLabel("Page", { exact: true }), "3");
     manager.on("dialog", dialog => void dialog.accept());
     for (let index = 0; index < 23; index++) {
       await manager.getByRole("button", { name: "Delete login", exact: true }).first().click();
       await expect(manager.locator(".credential-table tbody tr")).toHaveCount(index === 22 ? 50 : 22 - index);
     }
-    await expect(manager.getByLabel("Page", { exact: true })).toHaveValue("2");
+    await expect(manager.getByLabel("Page", { exact: true })).toHaveJSProperty("value", "2");
     await manager.setViewportSize({ width: 320, height: 480 });
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     for (const locale of ["zh-CN", "en", "ja", "ko", "de", "es", "ru", "vi"]) {
@@ -49,7 +50,7 @@ test("large lists remain searchable, pageable and usable for filling", async ({}
       await expect(manager.locator("html")).toHaveAttribute("lang", locale);
       const issues = await manager.locator(".list-pagination").evaluate(root => {
         const problems: string[] = [];
-        for (const control of root.querySelectorAll("button, select")) {
+        for (const control of root.querySelectorAll("m3e-button, m3e-form-field")) {
           const bounds = control.getBoundingClientRect();
           if (bounds.width < 44 || bounds.height < 44 || bounds.left < 0 || bounds.right > document.documentElement.clientWidth) problems.push(control.textContent || control.tagName);
         }
@@ -69,12 +70,12 @@ test("large lists remain searchable, pageable and usable for filling", async ({}
     await site.bringToFront();
     await popup.goto(`chrome-extension://${id}/popup.html`);
     await expect(popup.locator("#popup-matches .credential-card")).toHaveCount(20);
-    await popup.locator("#popup-matches").getByLabel("Page", { exact: true }).selectOption("4");
+    await chooseOption(popup.locator("#popup-matches").getByLabel("Page", { exact: true }), "4");
     await expect(popup.locator("#popup-matches .credential-card")).toHaveCount(20);
-    const title = await popup.locator("#popup-matches .credential-card strong").first().textContent();
+    const title = await popup.locator("#popup-matches .popup-item-title").first().textContent();
     await popup.getByRole("searchbox").fill(title!);
     await expect(popup.locator("#popup-matches .credential-card")).toHaveCount(1);
-    await popup.locator("#popup-matches .credential-card").click();
+    await popup.locator("#popup-matches .credential-card").getByRole("button").click();
     await expect(site.locator('input[type="password"]')).toHaveValue(/^synthetic-secret-\d+$/);
     expect(await popup.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
@@ -84,15 +85,15 @@ test("large lists remain searchable, pageable and usable for filling", async ({}
     await site.bringToFront();
     await popup.reload();
     await expect(popup.locator("#popup-login-results .login-row")).toHaveCount(20);
-    await popup.locator("#popup-login-results").getByLabel("Page", { exact: true }).selectOption("5");
-    const copyTitle = await popup.locator("#popup-login-results .login-row strong").first().textContent();
+    await chooseOption(popup.locator("#popup-login-results").getByLabel("Page", { exact: true }), "5");
+    const copyTitle = await popup.locator("#popup-login-results .popup-item-title").first().textContent();
     await popup.getByRole("searchbox").fill(copyTitle!);
     await expect(popup.locator("#popup-login-results .login-row")).toHaveCount(1);
     await manager.getByRole("button", { name: "Edit login", exact: true }).first().click();
-    await expect(manager.getByRole("dialog")).toBeVisible();
+    await expect(dialogContent(manager)).toBeVisible();
     await popup.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }));
     await expect(manager.getByRole("heading", { name: "Unlock Monica", exact: true })).toBeVisible();
-    await expect(manager.getByRole("dialog")).toHaveCount(0);
+    await expect(dialogContent(manager)).toHaveCount(0);
     await expect(manager.locator(".credential-table")).toHaveCount(0);
   } finally { await context.close(); }
 });

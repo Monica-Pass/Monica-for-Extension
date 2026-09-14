@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { createAssertion, createPasskey, fromBase64Url, validateRpId } from "./webauthn-core";
 
 const challenge = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
@@ -35,5 +36,38 @@ describe("WebAuthn passkey core", () => {
   it("rejects unsupported algorithms and short challenges", async () => {
     await expect(createPasskey({ origin: "https://example.com", challenge, rpName: "Example", userId: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithms: [-257], excludeCredentialIds: [] })).rejects.toThrow("ES256");
     await expect(createPasskey({ origin: "https://example.com", challenge: "AQ", rpName: "Example", userId: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithms: [-7], excludeCredentialIds: [] })).rejects.toThrow("challenge");
+  });
+
+  it("retains an imported credential's backup eligibility rather than changing its registration identity", async () => {
+    const created = await createPasskey({ origin: "https://example.com", challenge, rpName: "Example", userId: "dXNlcg", userName: "synthetic", userDisplayName: "Synthetic", algorithms: [-7], excludeCredentialIds: [] });
+    const assertion = await createAssertion({ origin: "https://example.com", challenge, credentialId: created.credentialId, userHandle: "dXNlcg", privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, userVerified: true, backupEligible: false, backupState: false });
+    expect(fromBase64Url(assertion.response.authenticatorData)[32]).toBe(0x05);
+  });
+
+  it("verifies alternating signatures from independent synced copies without advancing the RP counter", async () => {
+    const created = await createPasskey({ origin: "https://github.com", challenge, rpId: "github.com", rpName: "GitHub", userId: "dXNlcg", userName: "synthetic", userDisplayName: "Synthetic", algorithms: [-7], excludeCredentialIds: [] });
+    const publicKey = createPublicKey({ key: Buffer.from(created.publicKeySpki, "base64"), format: "der", type: "spki" });
+    const copies = [0, 0, 73].map(signCount => ({ ...created, signCount }));
+    let serverCounter = 0;
+    for (const [attempt, device] of [0, 1, 0, 2, 1, 2].entries()) {
+      const currentChallenge = Buffer.alloc(32, attempt + 1).toString("base64url");
+      const copy = copies[device];
+      // The independent-copy policy explicitly supplies zero; the crypto primitive
+      // also supports counters already committed by the Bitwarden coordinator.
+      const assertion = await createAssertion({ origin: "https://github.com", challenge: currentChallenge, rpId: "github.com", credentialId: copy.credentialId, userHandle: "dXNlcg", privateKeyPkcs8: copy.privateKeyPkcs8, signCount: 0, userVerified: true });
+      const authData = Buffer.from(assertion.response.authenticatorData, "base64url");
+      const clientData = Buffer.from(assertion.response.clientDataJSON, "base64url");
+      expect(JSON.parse(clientData.toString())).toMatchObject({ type: "webauthn.get", challenge: currentChallenge, origin: "https://github.com", crossOrigin: false });
+      expect(authData.subarray(0, 32)).toEqual(createHash("sha256").update("github.com").digest());
+      expect(authData[32] & 5).toBe(5);
+      const signed = Buffer.concat([authData, createHash("sha256").update(clientData).digest()]);
+      expect(verify("sha256", signed, publicKey, Buffer.from(assertion.response.signature, "base64url"))).toBe(true);
+      const newCounter = authData.readUInt32BE(33);
+      expect(serverCounter === 0 && newCounter === 0 || newCounter > serverCounter).toBe(true);
+      serverCounter = newCounter;
+      copy.signCount = assertion.signCount;
+      expect(copy.signCount).toBe(0);
+    }
+    expect(serverCounter).toBe(0);
   });
 });

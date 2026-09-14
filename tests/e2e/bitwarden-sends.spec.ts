@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
@@ -81,7 +82,7 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     await manager.setViewportSize({ width: 375, height: 1100 });
 
     await manager.getByRole("button", { name: "发送文本" }).click();
-    const textDialog = manager.getByRole("dialog", { name: "新建文本发送" });
+    const textDialog = dialogContent(manager, { name: "新建文本发送" });
     await expect(textDialog).toHaveCSS("border-radius", "16px");
     await textDialog.getByLabel("标题 *").fill("Created secure text");
     await textDialog.getByLabel("文本内容 *").fill("created plaintext must be encrypted");
@@ -98,7 +99,7 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     expect(server.lastTextCreate?.password).toMatch(/^[A-Za-z0-9+/]+=*$/);
 
     await manager.getByRole("button", { name: "发送文件" }).click();
-    const fileDialog = manager.getByRole("dialog", { name: "新建文件发送" });
+    const fileDialog = dialogContent(manager, { name: "新建文件发送" });
     await fileDialog.getByLabel("选择安全发送文件").setInputFiles({
       name: "browser-file.txt",
       mimeType: "text/plain",
@@ -115,7 +116,7 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
 
     await manager.getByRole("option", { name: /Initial secure text/ }).click();
     await manager.getByRole("button", { name: "编辑" }).click();
-    const editDialog = manager.getByRole("dialog", { name: "编辑安全发送" });
+    const editDialog = dialogContent(manager, { name: "编辑安全发送" });
     await expect(editDialog.getByLabel("访问密码")).toBeDisabled();
     await editDialog.getByLabel("标题 *").fill("Initial secure text updated");
     await editDialog.getByLabel("文本内容 *").fill("Updated encrypted text");

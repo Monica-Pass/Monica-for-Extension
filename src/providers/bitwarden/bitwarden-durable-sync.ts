@@ -1,13 +1,13 @@
 import { createSHA256 } from "hash-wasm";
 import type { PendingMutation, ProviderAccount, ProviderMutationReceipt, VaultItem, VaultState } from "../../core/model";
-import type { ProviderAcknowledgedMutation, ProviderSyncResult } from "../../core/provider";
+import type { ProviderAcknowledgedMutation, ProviderSyncContext, ProviderSyncGuard, ProviderSyncResult } from "../../core/provider";
 import type { BitwardenProvider } from "./bitwarden-provider";
 import { bitwardenSshComparableData } from "./bitwarden-cipher-codec";
 
 export const BITWARDEN_ITEM_SYNC_BATCH_LIMIT = 100;
 
 export interface BitwardenDurableSyncVault {
-  readState(): Promise<Pick<VaultState, "items" | "mutationQueue" | "providerMutationReceipts">>;
+  readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue" | "providerMutationReceipts">>;
   prepareProviderMutationReceipts(receipts: ProviderMutationReceipt[]): Promise<void>;
   markProviderMutationReceiptsAttempted(providerId: string, mutationIds: string[]): Promise<void>;
   commitProviderMutationReceipts(providerId: string, acknowledgements: ProviderAcknowledgedMutation[]): Promise<void>;
@@ -21,7 +21,9 @@ export interface BitwardenDurableSyncVault {
     syncSnapshot?: VaultItem[],
     acknowledgedMutations?: ProviderAcknowledgedMutation[],
     requestedMutations?: ProviderSyncResult["requestedMutations"],
-    adoptRemoteRemovals?: boolean
+    adoptRemoteRemovals?: boolean,
+    deferredMutationIds?: string[],
+    guard?: ProviderSyncGuard
   ): Promise<unknown>;
 }
 
@@ -77,16 +79,20 @@ export class BitwardenDurableSyncCoordinator {
     private readonly vault: BitwardenDurableSyncVault
   ) {}
 
-  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { allowEmptyRemote?: boolean } = {}): Promise<ProviderSyncResult> {
+  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { allowEmptyRemote?: boolean; readOnly?: boolean; itemIds?: string[]; syncHint?: ProviderSyncContext["syncHint"] } = {}): Promise<ProviderSyncResult> {
     if (account.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
     signal?.throwIfAborted();
 
-    let state = await this.vault.readState();
+    let state = await this.vault.readState(false);
     const allPending = state.mutationQueue
       .filter((mutation) => mutation.providerId === account.id)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     const allPendingById = new Map(allPending.map((mutation) => [mutation.id, mutation]));
-    const pending = allPending.slice(0, BITWARDEN_ITEM_SYNC_BATCH_LIMIT);
+    const selectedIds = options.itemIds ? new Set(options.itemIds) : undefined;
+    const eligiblePending = options.readOnly ? [] : allPending.filter(mutation => !selectedIds || selectedIds.has(mutation.itemId));
+    const pending = eligiblePending.slice(0, BITWARDEN_ITEM_SYNC_BATCH_LIMIT);
+    const processedIds = new Set(pending.map(mutation => mutation.id));
+    const deferredMutationIds = allPending.filter(mutation => !processedIds.has(mutation.id)).map(mutation => mutation.id);
     const snapshot = structuredClone(state.items);
     const providerReceipts = state.providerMutationReceipts
       .filter((receipt) => receipt.providerId === account.id)
@@ -99,7 +105,7 @@ export class BitwardenDurableSyncCoordinator {
     const staleSafeReceipts = providerReceipts.filter((receipt) => receipt.stage !== "attempted" && !allPendingById.has(receipt.mutationId));
     if (staleSafeReceipts.length) {
       await this.vault.clearProviderMutationReceipts(account.id, staleSafeReceipts.map((receipt) => receipt.mutationId));
-      state = await this.vault.readState();
+      state = await this.vault.readState(false);
     }
 
     const currentReceipts = state.providerMutationReceipts
@@ -140,7 +146,7 @@ export class BitwardenDurableSyncCoordinator {
     if (refreshedPreparedIds.length) await this.vault.clearProviderMutationReceipts(account.id, refreshedPreparedIds);
     if (newReceipts.length) {
       await this.vault.prepareProviderMutationReceipts(newReceipts);
-      state = await this.vault.readState();
+      state = await this.vault.readState(false);
     }
 
     const currentByMutationId = new Map(state.providerMutationReceipts
@@ -166,8 +172,13 @@ export class BitwardenDurableSyncCoordinator {
       acknowledgedMutations: committed,
       mutationReceipts: structuredClone(receipts),
       markMutationsAttempted: (mutationIds) => this.vault.markProviderMutationReceiptsAttempted(account.id, mutationIds),
-      allowEmptyRemote: options.allowEmptyRemote === true
+      allowEmptyRemote: options.allowEmptyRemote === true,
+      readOnly: options.readOnly === true,
+      syncHint: options.syncHint
     });
+
+    signal?.throwIfAborted();
+    if (result.unchanged) return result;
 
     const acknowledgements = uniqueAcknowledgements([...committed, ...(result.acknowledgedMutations || [])]);
     if (acknowledgements.length) await this.vault.commitProviderMutationReceipts(account.id, acknowledgements);
@@ -180,11 +191,13 @@ export class BitwardenDurableSyncCoordinator {
       snapshot,
       acknowledgements,
       result.requestedMutations,
-      result.adoptRemoteRemovals
+      result.adoptRemoteRemovals,
+      deferredMutationIds,
+      { expectedAccount: account, confirmedRemovedItemIds: result.confirmedRemovedItemIds }
     );
     if (acknowledgements.length) await this.vault.clearProviderMutationReceipts(account.id, acknowledgements.map((acknowledgement) => acknowledgement.mutationId));
 
-    if (allPending.length > BITWARDEN_ITEM_SYNC_BATCH_LIMIT) {
+    if (eligiblePending.length > BITWARDEN_ITEM_SYNC_BATCH_LIMIT) {
       result.warnings = [...result.warnings, `本轮按持久同步上限处理了 ${BITWARDEN_ITEM_SYNC_BATCH_LIMIT} 条 Bitwarden 修改，其余修改将在下次同步继续。`];
     }
     return result;

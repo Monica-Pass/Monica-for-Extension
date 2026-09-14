@@ -22,7 +22,7 @@ describe("commercial installability and least privilege", () => {
 
   it("uses only required named permissions and explicit HTTP/HTTPS host scopes", async () => {
     const manifest = await readJson<{ permissions: string[]; host_permissions: string[]; content_scripts: Array<{ matches: string[]; world?: string }> }>("public/manifest.json");
-    expect([...manifest.permissions].sort()).toEqual(["alarms", "cookies", "identity", "nativeMessaging", "storage", "webNavigation"]);
+    expect([...manifest.permissions].sort()).toEqual(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "storage", "webNavigation"]);
     expect(manifest.permissions).not.toContain("activeTab");
     expect(manifest.permissions).not.toContain("tabs");
     expect([...manifest.host_permissions].sort()).toEqual(["http://*/*", "https://*/*"]);
@@ -63,9 +63,9 @@ describe("commercial installability and least privilege", () => {
       expect(messages.extensionName.message).toContain("Monica");
       expect(messages.extensionDescription.message.length).toBeLessThanOrEqual(132);
     }
-    const theme = await read("src/nothing.css");
-    expect(theme).toContain("/fonts/doto-700.ttf");
-    expect(theme).not.toMatch(/url\(['"]?https?:/);
+    for (const stylesheet of ["src/styles.css", "src/material.css", "src/material-manager.css", "src/nothing.css", "src/passkey/verification-page.css"]) {
+      expect(await read(stylesheet)).not.toMatch(/(?:url\(|@import\s+)['"]?https?:/);
+    }
     expect(await read("scripts/package-release.mjs")).toContain('packagedEntries.set("LICENSE"');
   });
 

@@ -24,7 +24,13 @@ export class MonicaWebDavProvider implements ProviderAdapter {
   }
 
   async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
-    const loaded = await this.loadLatest(account, context.signal);
+    const config = readConfig(account);
+    const [latest] = await this.client(account).listBackups(context.signal);
+    const unchanged = context.syncHint?.type === "check-remote" && latest?.etag && config.lastEtag === latest.etag && config.lastFileName === latest.name
+      && !context.pendingMutations?.some(mutation => mutation.providerId === account.id)
+      && !context.localItems.some(item => hasProviderReference(item, account.id) && (!providerReference(item, account.id)?.revision || item.updatedAt !== providerReference(item, account.id)?.revision));
+    if (unchanged) return { items: context.localItems, conflicts: [], warnings: [], unchanged: true };
+    const loaded = latest ? await this.loadLatest(account, context.signal, latest) : null;
     // Android serialization assigns missing path references as it writes. Never
     // let that codec-side normalization leak back into the caller's baseline.
     const localItems = structuredClone(context.localItems);
@@ -51,7 +57,6 @@ export class MonicaWebDavProvider implements ProviderAdapter {
 
     const sourceRecords = await androidSourceRecords(loaded.document, account.id);
 
-    const config = readConfig(account);
     const hasBaseline = Boolean(config.lastFileName);
     const localByRemoteId = new Map(localScoped.map((item) => [remoteIdOf(item, account.id), item]));
     const remoteByRemoteId = new Map(loaded.document.items.map((item) => [remoteIdOf(item, account.id), item]));
@@ -207,9 +212,9 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     return true;
   }
 
-  async loadLatest(account: ProviderAccount, signal?: AbortSignal): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument } | null> {
+  async loadLatest(account: ProviderAccount, signal?: AbortSignal, selectedFile?: WebDavBackupFile): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument } | null> {
     const client = this.client(account);
-    const [file] = await client.listBackups(signal);
+    const file = selectedFile || (await client.listBackups(signal))[0];
     if (!file) return null;
     const config = readConfig(account);
     const remoteBytes = await client.download(file, signal);

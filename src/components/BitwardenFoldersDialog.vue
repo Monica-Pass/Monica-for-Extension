@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { computed, nextTick, onMounted, ref } from "vue";
@@ -212,13 +213,13 @@ function errorMessage(cause: unknown): string {
       <div class="bitwarden-folders-boundary"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('仅管理页可以读取文件夹名称和项目路由；Popup、内容脚本和网页无法调用这些接口。') }}</span></div>
 
       <div class="bitwarden-folders-toolbar">
-        <label><span class="sr-only">{{ tr('搜索 Bitwarden 文件夹') }}</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索文件夹')" /></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('搜索 Bitwarden 文件夹') }}</label><m3e-icon slot="prefix" name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索文件夹')" /></m3e-form-field>
         <m3e-button variant="filled" type="button" :disabled="interactionLocked" @click="openCreate"><m3e-icon slot="icon" name="create_new_folder"></m3e-icon>{{ tr('新建文件夹') }}</m3e-button>
       </div>
 
       <form v-if="createOpen" class="bitwarden-folder-create" @submit.prevent="createFolder">
         <span class="bitwarden-folder-form-icon"><m3e-icon name="create_new_folder"></m3e-icon></span>
-        <label><span>{{ tr('文件夹名称') }}</span><input ref="createNameInput" v-model="createName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('文件夹名称') }}</label><input ref="createNameInput" v-model="createName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /></m3e-form-field>
         <div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="createOpen = false">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'create' ? tr('创建中…') : tr('创建') }}</m3e-button></div>
       </form>
 
@@ -231,15 +232,15 @@ function errorMessage(cause: unknown): string {
         <div v-else-if="loaded && !displayedFolders.length" class="bitwarden-folders-empty"><m3e-icon name="folder_off"></m3e-icon><span>{{ search ? tr('没有匹配的文件夹。') : tr('当前密码库还没有个人文件夹。') }}</span></div>
         <ul v-else class="bitwarden-folders-list">
           <li v-for="folder in displayedFolders" :key="folder.folderId">
-            <button class="bitwarden-folder-row" type="button" :class="{ selected: selectedFolderId === folder.folderId }" :aria-expanded="selectedFolderId === folder.folderId" @click="selectFolder(folder)">
-              <span class="bitwarden-folder-icon" :class="{ unreadable: !folder.readable }"><m3e-icon :name="folder.readable ? 'folder' : 'folder_off'"></m3e-icon></span>
-              <span class="bitwarden-folder-copy"><strong>{{ folder.name }}</strong><small>{{ tr('{0} 个项目', { 0: folder.cipherCount }) }}<template v-if="!folder.readable"> {{ tr('· 名称无法解密') }}</template></small></span>
-              <m3e-icon name="expand_more"></m3e-icon>
-            </button>
+            <m3e-list-action role="presentation" class="bitwarden-folder-row" :class="{ selected: selectedFolderId === folder.folderId }" v-list-action="{ expanded: selectedFolderId === folder.folderId }" @click="selectFolder(folder)">
+              <span slot="leading" class="bitwarden-folder-icon" aria-hidden="true" :class="{ unreadable: !folder.readable }"><m3e-icon :name="folder.readable ? 'folder' : 'folder_off'"></m3e-icon></span>
+              <strong>{{ folder.name }}</strong><span slot="supporting-text" class="bitwarden-folder-copy"><small>{{ tr('{0} 个项目', { 0: folder.cipherCount }) }}<template v-if="!folder.readable"> {{ tr('· 名称无法解密') }}</template></small></span>
+              <m3e-icon slot="trailing" name="expand_more"></m3e-icon>
+            </m3e-list-action>
             <div v-if="selectedFolderId === folder.folderId" class="bitwarden-folder-detail">
               <p v-if="!folder.readable" class="bitwarden-folder-warning"><m3e-icon name="warning"></m3e-icon><span>{{ tr('此文件夹不能安全编辑。请使用拥有相同 Vault key 的 Bitwarden 客户端修复后再同步。') }}</span></p>
               <div v-if="!mode" class="bitwarden-folder-actions"><m3e-button variant="text" type="button" :disabled="interactionLocked || !folder.readable" @click="showMode('rename')"><m3e-icon slot="icon" name="edit"></m3e-icon>{{ tr('重命名') }}</m3e-button><m3e-button class="bitwarden-folder-delete-action" variant="text" type="button" :disabled="interactionLocked" @click="showMode('delete')"><m3e-icon slot="icon" name="delete"></m3e-icon>{{ tr('删除') }}</m3e-button></div>
-              <form v-else-if="mode === 'rename'" data-folder-mode="rename" class="bitwarden-folder-action-form" @submit.prevent="renameFolder"><label><span>{{ tr('新名称') }}</span><input v-model="renameName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /><small>{{ tr('保存前会再次检查文件夹 RevisionDate，过期选择会停止写入。') }}</small></label><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
+              <form v-else-if="mode === 'rename'" data-folder-mode="rename" class="bitwarden-folder-action-form" @submit.prevent="renameFolder"><m3e-form-field v-field-label variant="filled" hide-required-marker hide-subscript="never"><label slot="label">{{ tr('新名称') }}</label><input v-model="renameName" autocomplete="off" maxlength="256" :disabled="interactionLocked" /><small slot="hint">{{ tr('保存前会再次检查文件夹 RevisionDate，过期选择会停止写入。') }}</small></m3e-form-field><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button variant="tonal" type="submit" :disabled="interactionLocked">{{ busy === 'rename' ? tr('保存中…') : tr('保存名称') }}</m3e-button></div></form>
               <div v-else class="bitwarden-folder-delete-confirmation"><m3e-icon name="warning"></m3e-icon><span><strong>{{ tr('删除“{0}”？', { 0: folder.name }) }}</strong><small>{{ folder.cipherCount ? tr('{0} 个项目会回到无文件夹；Cipher、附件、Passkey 和未知字段不会删除。', { 0: folder.cipherCount }) : tr('文件夹为空；此操作不可恢复。') }}</small></span><div><m3e-button variant="text" type="button" :disabled="interactionLocked" @click="mode = ''">{{ tr('取消') }}</m3e-button><m3e-button data-confirm-folder-delete class="bitwarden-folder-confirm-delete" variant="tonal" type="button" :disabled="interactionLocked" @click="deleteFolder">{{ busy === 'delete' ? tr('删除中…') : tr('确认删除') }}</m3e-button></div></div>
             </div>
           </li>
@@ -250,8 +251,8 @@ function errorMessage(cause: unknown): string {
       <section class="bitwarden-folder-routing" aria-labelledby="bitwarden-folder-routing-title">
         <div class="bitwarden-folders-list-heading"><div><strong id="bitwarden-folder-routing-title">{{ tr('项目归类') }}</strong><small>{{ tr('只显示个人 Cipher；组织项目请使用 Collection。') }}</small></div><m3e-icon name="drive_file_move"></m3e-icon></div>
         <form class="bitwarden-folder-move-form" @submit.prevent="moveCipher">
-          <label><span>{{ tr('项目') }}</span><select data-move-item v-model="moveItemId" :disabled="interactionLocked"><option value="">{{ tr('选择项目') }}</option><option v-for="entry in moveItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</option></select></label>
-          <label><span>{{ tr('目标文件夹') }}</span><select data-move-target v-model="moveTargetId" :disabled="interactionLocked"><option value="">{{ tr('无文件夹') }}</option><option v-for="folder in folders" :key="folder.folderId" :value="folder.folderId" :disabled="!folder.readable">{{ folder.name }}{{ folder.readable ? '' : tr('（无法解密）') }}</option></select></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('项目') }}</label><component :is="materialSelectTag" @input="moveItemId = ($event.target as HTMLElement &amp; { value: string }).value" data-move-item  :disabled="interactionLocked"><component :is="materialOptionTag" :selected.prop="String(moveItemId ?? '') === String('')" value="">{{ tr('选择项目') }}</component><component :is="materialOptionTag" :selected.prop="String(moveItemId ?? '') === String(entry.item.id)" v-for="entry in moveItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</component></component></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('目标文件夹') }}</label><component :is="materialSelectTag" @input="moveTargetId = ($event.target as HTMLElement &amp; { value: string }).value" data-move-target  :disabled="interactionLocked"><component :is="materialOptionTag" :selected.prop="String(moveTargetId ?? '') === String('')" value="">{{ tr('无文件夹') }}</component><component :is="materialOptionTag" :selected.prop="String(moveTargetId ?? '') === String(folder.folderId)" v-for="folder in folders" :key="folder.folderId" :value="folder.folderId" :disabled="!folder.readable">{{ folder.name }}{{ folder.readable ? '' : tr('（无法解密）') }}</component></component></m3e-form-field>
           <m3e-button variant="tonal" type="submit" :disabled="interactionLocked || !moveItemId">{{ busy === 'move' ? tr('移动中…') : tr('移动项目') }}</m3e-button>
         </form>
       </section>
@@ -289,9 +290,9 @@ function errorMessage(cause: unknown): string {
 .bitwarden-folders-list, .bitwarden-folder-routing { list-style: none; margin: 0; padding: 0; }
 .bitwarden-folders-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
 .bitwarden-folders-list > li + li { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.bitwarden-folder-row { width: 100%; min-height: 72px; border: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; color: var(--app-text); background: transparent; text-align: left; font: inherit; cursor: pointer; }
-.bitwarden-folder-row:hover, .bitwarden-folder-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.bitwarden-folder-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
+.bitwarden-folder-row { min-width: 0; width: 100%; --m3e-list-item-two-line-height: 72px; }
+.bitwarden-folder-row > strong { font-weight: 500; overflow-wrap: anywhere; }
+.bitwarden-folder-row.selected {  --m3e-list-item-container-color: var(--md-sys-color-secondary-container, var(--app-selected));  }
 .bitwarden-folder-copy strong { overflow-wrap: anywhere; }
 .bitwarden-folder-detail { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; gap: 12px; padding: 12px 16px; background: var(--md-sys-color-surface-container-low, var(--app-surface)); }
 .bitwarden-folder-actions { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -2,10 +2,11 @@ import { tr } from '../i18n';
 import type { IdentityItem, LoginItem, VaultItem, VaultItemKind } from "../core/model";
 import { parseSshKeyMetadata, parseWifiMetadata } from "../core/special-login";
 
-export type VaultManagerSection = "passwords" | "wallet" | "notes" | "totp" | "passkeys";
+export type VaultManagerSection = "passwords" | "wallet" | "notes" | "totp" | "passkeys" | "api-tokens";
 
 const KIND_META: Record<VaultItemKind, { label: string; icon: string; section: VaultManagerSection }> = {
   login: { get label() { return tr('登录项'); }, icon: "password", section: "passwords" },
+  "api-token": { get label() { return tr('API 密钥'); }, icon: "key", section: "api-tokens" },
   card: { get label() { return tr('银行卡'); }, icon: "credit_card", section: "wallet" },
   identity: { get label() { return tr('证件'); }, icon: "badge", section: "wallet" },
   "billing-address": { get label() { return tr('账单地址'); }, icon: "home_pin", section: "wallet" },
@@ -28,6 +29,7 @@ export function homeItemSummary(item: VaultItem): string {
 export function itemSafeSummary(item: VaultItem): string {
   switch (item.kind) {
     case "login": return loginSafeSummary(item);
+    case "api-token": return item.provider || tr('API 密钥');
     case "card": return [item.brand || tr('银行卡'), maskedSuffix(item.number)].filter(Boolean).join(" · ");
     case "identity": return [documentLabel(item.documentType), item.fullName, maskedSuffix(item.documentNumber)].filter(Boolean).join(" · ");
     case "billing-address": return [item.fullName, item.city, item.country].filter(Boolean).join(" · ") || tr('地址信息');
@@ -41,6 +43,7 @@ export function itemSafeSummary(item: VaultItem): string {
 export function itemSearchText(item: VaultItem): string {
   const common = `${item.title} ${item.notes} ${itemKindLabel(item.kind)} ${itemSafeSummary(item)}`;
   switch (item.kind) {
+    case "api-token": return `${item.title} ${item.provider} ${itemKindLabel(item.kind)}`;
     case "login": return `${common} ${item.username} ${item.uris.join(" ")} ${loginSearchMetadata(item)}`;
     case "card": return `${common} ${item.cardholderName} ${item.brand || ""}`;
     case "identity": return `${common} ${item.firstName} ${item.middleName} ${item.lastName} ${item.email || ""} ${item.phone || ""}`;

@@ -24,6 +24,9 @@ export interface LoginMatchSummary {
   username: string;
   favorite: boolean;
   uris: string[];
+  loginType?: LoginItem["loginType"];
+  /** Website origin only; never includes URI credentials, path, query or fragment. */
+  iconOrigin?: string;
   hasTotp: boolean;
   allowLockedAutofill?: boolean;
 }
@@ -101,9 +104,19 @@ export interface PasskeyPromptContext {
   userName: string;
   userDisplayName?: string;
   userVerificationRequired?: boolean;
+  userVerificationMethod?: "master-password" | "windows-hello";
   saveTargets: Array<{ providerId: string; name: string; sourceMode: "browser-local" | "bitwarden" }>;
   defaultSaveTargetId?: string;
   credentials: Array<{ itemId: string; title: string; userName: string; userDisplayName: string; sourceMode: "browser-local" | "bitwarden"; providerName: string; isLocalSource?: boolean; credentialConflict: boolean; userVerificationRequired?: boolean; useCount: number; lastUsedAt?: string }>;
+  expiresAt: number;
+}
+
+export interface PasskeyVerificationContext {
+  verificationId: string;
+  operation: "create" | "get";
+  rpId: string;
+  origin: string;
+  accountName: string;
   expiresAt: number;
 }
 
@@ -263,12 +276,13 @@ export type ExtensionRequest =
   | { type: "VAULT_RESTORE_ENCRYPTED"; backup: EncryptedVaultBackup; backupPassword: string; replaceExisting?: boolean; currentPassword?: string }
   | { type: "VAULT_IMPORT_ITEMS"; items: VaultItem[] }
   | { type: "VAULT_LIST_ITEMS" }
+  | { type: "VAULT_ITEM_SNAPSHOT" }
   | { type: "VAULT_HOME_GET" }
   | { type: "VAULT_HOME_SET"; preferences: Partial<import("../core/home-preferences").HomePreferences> }
   | { type: "VAULT_LIST_ARCHIVED_ITEMS" }
   | { type: "VAULT_LIST_DELETED_ITEMS" }
   | { type: "VAULT_GET_ITEM"; itemId: string }
-  | { type: "VAULT_UPSERT_ITEM"; item: VaultItem; allowLockedAutofill?: boolean }
+  | { type: "VAULT_UPSERT_ITEM"; item: VaultItem; allowLockedAutofill?: boolean; expectedUpdatedAt?: string }
   | { type: "VAULT_LOCKED_AUTOFILL_IDS" }
   | { type: "VAULT_SET_LOCKED_AUTOFILL"; itemId: string; enabled: boolean }
   | { type: "VAULT_DELETE_ITEM"; itemId: string }
@@ -308,6 +322,9 @@ export type ExtensionRequest =
   | { type: "CREDENTIAL_ACCEPT"; candidateId: string; providerId?: string; existingItemId?: string }
   | { type: "CREDENTIAL_DISMISS"; candidateId: string }
   | { type: "PASSKEY_BEGIN"; request: PasskeyRequest }
+  | { type: "PASSKEY_VERIFICATION_CONTEXT"; verificationId: string }
+  | { type: "PASSKEY_VERIFY_PASSWORD"; verificationId: string; masterPassword: string }
+  | { type: "PASSKEY_CANCEL_VERIFICATION"; verificationId: string }
   | { type: "PASSKEY_ACCEPT"; candidateId: string; itemId?: string; providerId?: string }
   | { type: "PASSKEY_DISMISS"; candidateId: string }
   | { type: "PROVIDER_LIST" }

@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test as base, type Locator, type Page } from "@playwright/test";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
@@ -55,7 +56,7 @@ async function openItem(page: Page, id: string): Promise<Locator> {
   if (await menu.isVisible()) await menu.click();
   await page.locator("button.nav-item").filter({ hasText: nav }).click();
   await page.getByRole("button", { name: `查看${item.title}详情`, exact: true }).click();
-  const detail = page.getByRole("dialog");
+  const detail = dialogContent(page);
   await expect(detail).toBeVisible();
   return detail;
 }
@@ -122,7 +123,7 @@ test("protected duplicate fields reveal independently, copy exactly and reset on
   await openItem(manager, login.id);
   await expect(recoveryRows.nth(0).locator("code")).toHaveText("••••••••");
   await detail.getByRole("button", { name: "编辑", exact: true }).click();
-  await expect(manager.getByRole("dialog", { name: "编辑登录项", exact: true })).toBeVisible();
+  await expect(dialogContent(manager, { name: "编辑登录项", exact: true })).toBeVisible();
   await expect(manager.getByLabel("名称 *", { exact: true })).toHaveValue(login.title);
 });
 

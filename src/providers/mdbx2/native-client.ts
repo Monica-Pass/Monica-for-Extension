@@ -165,6 +165,10 @@ export class Mdbx2NativeClient {
     return validateMdbx2HostCapabilities(await this.request("host.hello", {}, timeoutMs));
   }
 
+  private async requireApiTokenSupport(): Promise<void> {
+    if (!(await this.hello()).supportsApiTokenMetadata) throw new Mdbx2NativeHostError("api-token-host-update-required", "本机助手不支持 API 密钥，请更新本机助手。", false);
+  }
+
   async windowsHelloStatus(bindingId?: string, timeoutMs = 15_000): Promise<Mdbx2WindowsHelloStatus> {
     const normalized = bindingId ? opaqueHandle(bindingId, "Windows Hello 绑定") : undefined;
     return windowsHelloStatus(await this.request("hello.status", { bindingId: normalized || null }, timeoutMs));
@@ -405,6 +409,7 @@ export class Mdbx2NativeClient {
   }
 
   async upsertObject(vaultHandle: string, operationId: string, input: Mdbx2ObjectUpsertInput, timeoutMs = 60_000): Promise<Mdbx2ObjectWriteResult> {
+    if (input.objectTypeId === "api-token") await this.requireApiTokenSupport();
     const logicalObjectId = textResult(input.logicalObjectId, 4096, false, "逻辑 Object ID 无效。");
     const objectTypeId = textResult(input.objectTypeId, 512, false, "Object 类型无效。");
     const title = textResult(input.title, 64 * 1024, true, "Object 标题无效。");
@@ -416,11 +421,13 @@ export class Mdbx2NativeClient {
       collectionId: input.collectionId ? opaqueHandle(input.collectionId, "Collection") : null,
       objectTypeId,
       title,
-      payloadJson
+      payloadJson,
+      ...apiTokenWriteFields(input)
     }, timeoutMs));
   }
 
   async deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string, timeoutMs = 60_000): Promise<Mdbx2ObjectDeleteResult> {
+    if (logicalObjectId.startsWith("api-token:")) await this.requireApiTokenSupport();
     return objectDeleteResult(await this.request("object.delete", {
       vaultHandle: opaqueHandle(vaultHandle, "保险库"),
       operationId: opaqueHandle(operationId, "操作"),
@@ -432,6 +439,7 @@ export class Mdbx2NativeClient {
     if (!Array.isArray(mutations) || mutations.length < 1 || mutations.length > MDBX2_MAX_OBJECT_BATCH_MUTATIONS) {
       throw new Mdbx2NativeHostError("object-batch-invalid", "MDBX2 Object 批量数量无效。", false);
     }
+    if (mutations.some(mutation => mutation.logicalObjectId?.startsWith("api-token:") || (mutation.kind === "upsert" && mutation.objectTypeId === "api-token"))) await this.requireApiTokenSupport();
     const normalized = mutations.map((mutation): Mdbx2ObjectMutationInput => {
       const logicalObjectId = textResult(mutation.logicalObjectId, 4096, false, "逻辑 Object ID 无效。");
       if (mutation.kind === "delete") return { kind: "delete", logicalObjectId };
@@ -442,7 +450,8 @@ export class Mdbx2NativeClient {
         collectionId: mutation.collectionId ? opaqueHandle(mutation.collectionId, "Collection") : undefined,
         objectTypeId: textResult(mutation.objectTypeId, 512, false, "Object 类型无效。"),
         title: textResult(mutation.title, 64 * 1024, true, "Object 标题无效。"),
-        payloadJson: textResult(mutation.payloadJson, MDBX2_MAX_OBJECT_PAYLOAD_BYTES, false, "Object 载荷无效。")
+        payloadJson: textResult(mutation.payloadJson, MDBX2_MAX_OBJECT_PAYLOAD_BYTES, false, "Object 载荷无效。"),
+        ...apiTokenWriteFields(mutation)
       };
     });
     if (normalized.length > 1 && new TextEncoder().encode(JSON.stringify(normalized)).byteLength > MDBX2_MAX_OBJECT_BATCH_INTENT_BYTES) {
@@ -1898,7 +1907,19 @@ function objectRecord(input: unknown): Mdbx2ObjectRecord {
     title: textResult(value.title, 64 * 1024, true, "Object 标题无效。"),
     payloadJson,
     payloadSchemaVersion: safeInteger(value.payloadSchemaVersion, "Object 载荷 Schema 版本"),
-    deleted: booleanResult(value.deleted, "Object 删除状态无效。")
+    deleted: booleanResult(value.deleted, "Object 删除状态无效。"),
+    ...(value.objectTypeId === "api-token" ? {
+      apiTokenMetadataJson: optionalString(value.apiTokenMetadataJson, 64 * 1024, "API 密钥补充信息"),
+      apiTokenFavorite: value.apiTokenFavorite === undefined ? undefined : booleanResult(value.apiTokenFavorite, "API 密钥收藏状态无效。")
+    } : {})
+  };
+}
+
+function apiTokenWriteFields(input: Mdbx2ObjectUpsertInput): Pick<Mdbx2ObjectUpsertInput, "apiTokenMetadataJson" | "apiTokenFavorite"> {
+  if (input.objectTypeId !== "api-token") return {};
+  return {
+    apiTokenMetadataJson: textResult(input.apiTokenMetadataJson, 64 * 1024, false, "API 密钥补充信息无效。"),
+    apiTokenFavorite: booleanResult(input.apiTokenFavorite, "API 密钥收藏状态无效。")
   };
 }
 

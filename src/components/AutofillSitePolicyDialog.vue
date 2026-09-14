@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { ref, watch } from "vue";
@@ -56,13 +57,12 @@ async function save() {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="site-policy-backdrop" role="presentation" @click.self="emit('close')">
-      <section class="site-policy-dialog" role="dialog" aria-modal="true" aria-labelledby="site-policy-title">
-        <header><div><h2 id="site-policy-title">{{ tr('自动填充排除项') }}</h2><p>{{ tr('只保存网站域名，不保存路径或浏览记录。') }}</p></div><m3e-icon-button :aria-label="tr('关闭')" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button></header>
+  <m3e-dialog v-material-dialog v-if="open" open class="material-dialog" :disableClose.prop="busy" :dismissible="!busy" :close-label="tr('关闭')" @closed.self="emit('close')">
+        <h2 slot="header">{{ tr('自动填充排除项') }}</h2>
+        <p>{{ tr('只保存网站域名，不保存路径或浏览记录。') }}</p>
         <div class="site-policy-form">
-          <select v-model="target" :aria-label="tr('排除类型')"><option value="blockedHosts">{{ tr('禁止自动填充') }}</option><option value="saveBlockedHosts">{{ tr('禁止保存提示') }}</option></select>
-          <input v-model="input" placeholder="example.com" autocomplete="off" @keydown.enter.prevent="addHost" />
+          <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('排除类型') }}</label><component :is="materialSelectTag" @input="target = ($event.target as HTMLElement &amp; { value: string }).value"  :aria-label="tr('排除类型')"><component :is="materialOptionTag" :selected.prop="String(target ?? '') === String('blockedHosts')" value="blockedHosts">{{ tr('禁止自动填充') }}</component><component :is="materialOptionTag" :selected.prop="String(target ?? '') === String('saveBlockedHosts')" value="saveBlockedHosts">{{ tr('禁止保存提示') }}</component></component></m3e-form-field>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('网站域名') }}</label><input v-model="input" placeholder="example.com" autocomplete="off" @keydown.enter.prevent="addHost" /></m3e-form-field>
           <m3e-button variant="tonal" type="button" @click="addHost"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('添加') }}</m3e-button>
         </div>
         <div class="site-policy-lists">
@@ -71,20 +71,13 @@ async function save() {
           <div><strong>{{ tr('字段级排除') }}</strong><span v-if="!blockedFields.length" class="empty">{{ tr('暂无') }}</span><ul><li v-for="field in blockedFields" :key="field.signature"><span><b>{{ field.hostname }}</b><small>{{ roleLabel(field.role) }} · {{ field.frameScope === 'frame' ? tr('嵌入框') : tr('主页面') }}</small></span><m3e-icon-button :aria-label="tr('恢复 {0} 的{1}字段', { 0: field.hostname, 1: roleLabel(field.role) })" :disabled="busy" @click="removeField(field.signature)"><m3e-icon name="restart_alt"></m3e-icon></m3e-icon-button></li></ul></div>
         </div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-        <footer><m3e-button variant="text" type="button" @click="emit('close')">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="button" :disabled="busy" @click="save">{{ busy ? tr('保存中…') : tr('保存') }}</m3e-button></footer>
-      </section>
-    </div>
-  </Teleport>
+        <footer slot="actions" end><m3e-button variant="text" type="button" :disabled="busy" @click="emit('close')">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="button" :disabled="busy" @click="save">{{ busy ? tr('保存中…') : tr('保存') }}</m3e-button></footer>
+  </m3e-dialog>
 </template>
 
 <style scoped>
-.site-policy-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
-.site-policy-dialog { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 16px; padding: 20px; color: var(--md-sys-color-on-surface, var(--app-text)); background: var(--md-sys-color-surface-container, var(--app-surface)); }
-.site-policy-dialog header, .site-policy-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.site-policy-dialog h2, .site-policy-dialog p { margin: 0; }.site-policy-dialog header p { margin-top: 4px; color: var(--app-muted); font-size: .85rem; }
 .site-policy-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; gap: 8px; margin: 20px 0 12px; }
-.site-policy-form select, .site-policy-form input { min-width: 0; min-height: 44px; border: 1px solid var(--app-outline); border-radius: 8px; padding: 0 10px; color: inherit; background: transparent; }
-.site-policy-lists { display: grid; gap: 12px; max-height: 300px; overflow: auto; }.site-policy-lists > div { border: 1px solid var(--app-outline); border-radius: 8px; padding: 10px; }.site-policy-lists ul { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }.site-policy-lists li { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }.site-policy-lists li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.site-policy-lists li b, .site-policy-lists li small { display: block; overflow: hidden; text-overflow: ellipsis; }.site-policy-lists li small { margin-top: 2px; color: var(--app-muted); font-size: .75rem; }.empty { display: block; margin-top: 8px; color: var(--app-muted); font-size: .85rem; }
-.site-policy-dialog footer { justify-content: flex-end; margin-top: 16px; }.form-error { color: var(--app-error); }
+.site-policy-lists { display: grid; gap: 12px; }.site-policy-lists > div { border-radius: 16px; padding: 16px; background: var(--md-sys-color-surface-container-highest); }.site-policy-lists ul { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }.site-policy-lists li { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }.site-policy-lists li > span { min-width: 0; overflow-wrap: anywhere; }.site-policy-lists li b, .site-policy-lists li small { display: block; }.site-policy-lists li small { margin-top: 2px; color: var(--app-muted); font-size: .75rem; }.empty { display: block; margin-top: 8px; color: var(--app-muted); font-size: .85rem; }
+.form-error { color: var(--app-error); }
 @media (max-width: 560px) { .site-policy-form { grid-template-columns: 1fr 1fr; }.site-policy-form m3e-button { grid-column: 1 / -1; } }
 </style>

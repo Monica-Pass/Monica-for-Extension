@@ -288,6 +288,26 @@ describe("MDBX2 Native Messaging client", () => {
     client.close();
   });
 
+  it.each(["upsert", "delete", "batch"] as const)("blocks API token %s on old helpers before sending credential material", async (method) => {
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: HELLO } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const logicalObjectId = `api-token:${handle}`;
+    const input = { logicalObjectId, objectTypeId: "api-token", title: "Workspace key", payloadJson: '{"schema":"monica.api-token.v1","provider":"github","api_base":"","token":"synthetic-private-token"}', apiTokenMetadataJson: '{"schema":"monica.api-token.fields.v1"}', apiTokenFavorite: false };
+    try {
+      const operation = method === "upsert" ? client.upsertObject(handle, handle, input)
+        : method === "delete" ? client.deleteObject(handle, handle, logicalObjectId)
+          : client.mutateObjects(handle, "synthetic-operation", [{ kind: "upsert", ...input }]);
+      await expect(operation).rejects.toMatchObject({ code: "api-token-host-update-required" });
+      expect(runtime.port.messages).toEqual([expect.objectContaining({ method: "host.hello" })]);
+      expect(JSON.stringify(runtime.port.messages)).not.toContain("synthetic-private-token");
+    } finally { client.close(); }
+  });
+
   it("keeps Windows Hello registration and verification material inside the Native Host contract", async () => {
     const runtime = new FakeRuntime();
     const bindingId = "11111111-1111-4111-8111-111111111111";

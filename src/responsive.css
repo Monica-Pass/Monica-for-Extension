@@ -7,10 +7,14 @@
   --app-page-gutter: clamp(16px, 2.4vw, 40px);
 }
 
-:is(#root, #popup-root) .language-picker { flex-wrap: wrap; max-width: 100%; }
-:is(#root, #popup-root) .language-picker select { flex: 1 1 10rem; width: 0; min-width: min(100%, 10rem); }
-:is(#root, #popup-root) .language-error { flex-basis: 100%; overflow-wrap: anywhere; }
+:is(#root, #popup-root) .language-picker { max-width: 100%; }
+:is(#root, #popup-root) .language-error { overflow-wrap: anywhere; }
 #root .auth-preferences .language-picker { width: min(100%, 22rem); }
+
+#root .settings-language-card .language-picker {
+  width: min(100%, 26rem);
+  margin-block: 12px;
+}
 
 :is(#root, #popup-root) m3e-button {
   min-width: 44px;
@@ -80,7 +84,6 @@
 }
 #root .sidebar .nav-count { min-width: 24px; padding: 2px 4px; background: transparent; }
 #root .sidebar-footer { padding: 12px 4px 0; gap: 8px; }
-#root .sidebar-footer .language-picker { justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
 #root .sidebar-footer .local-badge { min-height: 0; padding: 4px 0; font-size: .6875rem; background: transparent; gap: 8px; }
 #root .sidebar-footer > m3e-button { width: 100%; }
 
@@ -109,16 +112,13 @@
   flex-wrap: nowrap;
   gap: 16px;
 }
-#root .page-appbar .search {
+#root .page-appbar .appbar-search {
   flex: 1 1 16rem;
   width: 100%;
   max-width: 36rem;
-  min-height: var(--app-field-height);
-  gap: 10px;
-  padding: 8px 16px;
 }
-#root .page-appbar .search input { width: 100%; line-height: 1.5; }
-#root .page-appbar .search input::placeholder { color: var(--app-muted); }
+#root .page-appbar .appbar-search input { width: 100%; line-height: 1.5; }
+#root .page-appbar .appbar-search input::placeholder { color: var(--app-muted); }
 #root .appbar-actions {
   display: flex;
   flex: 0 0 auto;
@@ -156,7 +156,7 @@
 @container manager-content (max-width: 40rem) {
   #root .page-appbar { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px 12px; }
   #root .page-appbar .appbar-trailing { display: contents; }
-  #root .page-appbar .search { grid-column: 1 / -1; max-width: none; }
+  #root .page-appbar .appbar-search { grid-column: 1 / -1; max-width: none; }
   #root .appbar-actions { grid-column: 1 / -1; width: 100%; margin: 0; }
   #root .appbar-actions m3e-button { flex: 0 1 auto; }
   #main-content .getting-started { grid-template-columns: minmax(0, 1fr); }
@@ -211,7 +211,6 @@
 #root .editor-with-actions > footer m3e-button { min-width: 104px; }
 #root .editor-dialog:has(.editor-with-actions) > header { flex: 0 0 auto; align-items: center; margin-bottom: 12px; gap: 12px; }
 #root .editor-dialog:has(.editor-with-actions) > header h2 { font-size: 1.25rem; line-height: 1.3; }
-#root :is(.editor-form, .provider-form) :is(input:not([type='checkbox']):not([type='radio']), select) { min-height: var(--app-field-height); }
 #root .detail-dialog { container: item-detail / inline-size; }
 #root .detail-field-actions { flex-wrap: wrap; gap: var(--app-action-gap); max-width: 100%; }
 #root .detail-row dd > :not(.detail-field-actions) { max-width: 100%; }
@@ -228,7 +227,7 @@
   #root .sidebar-brand > .brand-logo { display: none; }
   body:has(.shell.nav-open) { overflow-y: hidden; }
   @container manager-content (max-width: 40rem) {
-    #root .page-appbar .search { grid-column: 2; }
+    #root .page-appbar .appbar-search { grid-column: 2; }
     #root .page-appbar .mobile-menu { grid-column: 1; grid-row: 1; }
   }
 }
@@ -276,25 +275,25 @@ body.popup-body .popup-shell {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  gap: 16px;
+  gap: 12px;
+}
+/* Give the toolbar popup its full height on first paint. Its viewport is
+   derived from the document, so dvh cannot grow it after the loading view. */
+html.action-popup body.popup-body .popup-shell {
+  min-height: 600px;
+  max-height: 600px;
 }
 #popup-root .popup-header { gap: 12px; }
 #popup-root .popup-brand { min-width: 0; }
 #popup-root .site-summary { flex-wrap: wrap; gap: 8px; padding: 0; background: transparent; }
 #popup-root .site-summary > div { flex: 1 1 0; min-width: 0; }
 #popup-root .site-summary .ready-badge { margin-inline-start: 46px; max-width: calc(100% - 46px); }
-#popup-root .credential-card { gap: 10px; }
-#popup-root .credential-icon { flex: 0 0 32px; width: 32px; height: 32px; }
-#popup-root .credential-copy strong { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
-#popup-root .fill-action { max-width: 30%; font-size: .75rem; color: var(--app-text); }
 #popup-root .popup-unlock { grid-template-columns: minmax(0, 1fr); padding: 16px; min-height: 0; }
 #popup-root .popup-unlock > div { min-width: 0; }
 #popup-root .popup-unlock > .unlock-icon { display: none; }
-#popup-root .popup-unlock input { min-height: var(--app-field-height); }
 #popup-root .popup-footer { gap: 8px 12px; margin-top: auto; padding-inline: 0; }
 #popup-root .popup-footer > button { flex-wrap: wrap; max-width: 100%; color: var(--app-text); padding: 8px 12px; line-height: 1.4; }
 #popup-root .popup-footer > span { width: 100%; text-align: end; }
-#popup-root .language-picker { flex-wrap: wrap; }
 
 @media (max-width: 360px) {
   body.popup-body .popup-shell { padding: 12px; }

@@ -24,6 +24,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+#[path = "api_token.rs"]
+mod api_token;
+
 use crate::cloud_sync;
 use crate::windows_hello::WindowsHelloStore;
 
@@ -459,6 +462,7 @@ enum ObjectMutation {
         object_type_id: String,
         title: String,
         payload_json: String,
+        api_token: Option<api_token::WriteFields>,
     },
     Delete {
         logical_object_id: String,
@@ -694,6 +698,7 @@ impl HostRuntime {
             "mdbxEngineVersion": capabilities.engine_version,
             "mdbxFormatVersion": MDBX_FORMAT_VERSION,
             "supportsMdbx1": false,
+            "supportsApiTokenMetadata": true,
             "maxBinaryChunkBytes": MAX_BINARY_CHUNK_BYTES,
             "maxInboundFileBytes": MAX_INBOUND_FILE_BYTES,
             "maxActiveTransfers": MAX_ACTIVE_TRANSFERS,
@@ -1643,7 +1648,18 @@ impl HostRuntime {
                 false,
             ));
         }
+        let api_labels = if object.object_type_id == "api-token" {
+            Some(api_token::read(
+                &vault,
+                &object.object_id,
+                &object.collection_id,
+            )?)
+        } else {
+            None
+        };
         Ok(json!({
+            "apiTokenMetadataJson": api_labels.as_ref().and_then(|labels| labels.metadata_json()),
+            "apiTokenFavorite": api_labels.as_ref().map(|labels| labels.favorite()),
             "objectId": object.object_id,
             "collectionId": object.collection_id,
             "objectTypeId": object.object_type_id,
@@ -3426,8 +3442,17 @@ impl HostRuntime {
         let title = take_string(&mut params, "title", MAX_TITLE_BYTES, true)?;
         let payload_json =
             take_string(&mut params, "payloadJson", MAX_OBJECT_PAYLOAD_BYTES, false)?;
+        let api_token = parse_api_token_fields(
+            &mut params,
+            &object_type_id,
+            &logical_object_id,
+            &title,
+            &payload_json,
+        )?;
         reject_unknown(params)?;
-        validate_monica_payload(&payload_json, &logical_object_id)?;
+        if api_token.is_none() {
+            validate_monica_payload(&payload_json, &logical_object_id)?;
+        }
         let result = self.execute_object_mutations(
             vault_handle,
             Some(operation_id),
@@ -3439,6 +3464,7 @@ impl HostRuntime {
                 object_type_id,
                 title,
                 payload_json,
+                api_token,
             }],
         )?;
         let item = result.items.into_iter().next().ok_or_else(|| {
@@ -3549,14 +3575,24 @@ impl HostRuntime {
                         MAX_OBJECT_PAYLOAD_BYTES,
                         false,
                     )?;
+                    let api_token = parse_api_token_fields(
+                        &mut mutation,
+                        &object_type_id,
+                        &logical_object_id,
+                        &title,
+                        &payload_json,
+                    )?;
                     reject_unknown(mutation)?;
-                    validate_monica_payload(&payload_json, &logical_object_id)?;
+                    if api_token.is_none() {
+                        validate_monica_payload(&payload_json, &logical_object_id)?;
+                    }
                     parsed.push(ObjectMutation::Upsert {
                         logical_object_id,
                         requested_collection_id,
                         object_type_id,
                         title,
                         payload_json,
+                        api_token,
                     });
                 }
                 "delete" => {
@@ -4181,6 +4217,7 @@ fn build_object_mutation_plan(
     let mut items = Vec::with_capacity(mutations.len());
     let mut changed_indices = Vec::new();
     let mut logical_ids = HashSet::new();
+    let mut planned_labels = HashSet::new();
     if mutations
         .iter()
         .any(|mutation| matches!(mutation, ObjectMutation::Upsert { .. }))
@@ -4232,15 +4269,19 @@ fn build_object_mutation_plan(
                 "MDBX2 Object batch contains a duplicate logical Object ID.",
             ));
         }
-        let object_id = java_name_uuid(
-            format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
-        );
+        let native_token_id = api_token::object_id(logical_object_id)?;
+        let object_id = native_token_id.clone().unwrap_or_else(|| {
+            java_name_uuid(
+                format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
+            )
+        });
         match mutation {
             ObjectMutation::Upsert {
                 requested_collection_id,
                 object_type_id,
                 title,
                 payload_json,
+                api_token,
                 ..
             } => {
                 let collection_id = match requested_collection_id {
@@ -4265,6 +4306,32 @@ fn build_object_mutation_plan(
                         false,
                     )
                 })?;
+                if native_token_id.is_some()
+                    && current
+                        .as_ref()
+                        .is_some_and(|summary| summary.object_type_id != "api-token")
+                {
+                    return Err(RpcFailure::invalid(
+                        "API token identity refers to a different object type.",
+                    ));
+                }
+                let label_plan = api_token
+                    .as_ref()
+                    .map(|fields| {
+                        api_token::plan(
+                            vault,
+                            &object_id,
+                            current
+                                .as_ref()
+                                .map(|summary| summary.collection_id.as_str()),
+                            &collection_id,
+                            fields,
+                        )
+                    })
+                    .transpose()?;
+                if let Some(plan) = &label_plan {
+                    commands.extend(plan.before_move.clone());
+                }
                 match current {
                     None => {
                         commands.push(MdbxWriteCommand::CreateEntry {
@@ -4325,6 +4392,17 @@ fn build_object_mutation_plan(
                         }));
                     }
                 }
+                if let Some(plan) = label_plan {
+                    for command in plan.after_write {
+                        if let MdbxWriteCommand::CreateObjectLabel { ref label_id, .. } = command {
+                            if !planned_labels.insert(label_id.clone()) {
+                                continue;
+                            }
+                        }
+                        commands.push(command);
+                    }
+                    plan_actions.push(plan.intent);
+                }
                 changed_indices.push(index as u32);
                 items.push(ObjectMutationResult {
                     kind: "upsert",
@@ -4343,6 +4421,15 @@ fn build_object_mutation_plan(
                         false,
                     )
                 })?;
+                if native_token_id.is_some()
+                    && current
+                        .as_ref()
+                        .is_some_and(|summary| summary.object_type_id != "api-token")
+                {
+                    return Err(RpcFailure::invalid(
+                        "API token identity refers to a different object type.",
+                    ));
+                }
                 let changed = matches!(current, Some(ref summary) if !summary.deleted);
                 if let Some(summary) = current.filter(|summary| !summary.deleted) {
                     commands.push(MdbxWriteCommand::DeleteEntry {
@@ -4394,14 +4481,22 @@ fn object_mutation_semantic_values(mutations: &[ObjectMutation]) -> Vec<Value> {
                 object_type_id,
                 title,
                 payload_json,
-            } => json!({
+                api_token,
+            } => {
+                let mut value = json!({
                 "kind": "upsert",
                 "logicalObjectId": logical_object_id,
                 "collectionId": requested_collection_id,
                 "objectTypeId": object_type_id,
                 "title": title,
                 "payloadJson": payload_json
-            }),
+                });
+                if let Some(fields) = api_token {
+                    value["apiTokenMetadataJson"] = json!(fields.metadata_json);
+                    value["apiTokenFavorite"] = json!(fields.favorite);
+                }
+                value
+            }
             ObjectMutation::Delete { logical_object_id } => json!({
                 "kind": "delete",
                 "logicalObjectId": logical_object_id
@@ -5973,6 +6068,37 @@ fn attachment_upload_result_json(transfer_id: &str, result: &AttachmentUploadRes
         "alreadyCommitted": result.already_committed,
         "changed": !result.already_committed
     })
+}
+
+fn parse_api_token_fields(
+    params: &mut Map<String, Value>,
+    object_type: &str,
+    logical_id: &str,
+    title: &str,
+    payload: &str,
+) -> Result<Option<api_token::WriteFields>, RpcFailure> {
+    if object_type != "api-token" {
+        if logical_id.starts_with("api-token:") {
+            return Err(RpcFailure::invalid(
+                "API token identity cannot be used for another object type.",
+            ));
+        }
+        return Ok(None);
+    }
+    if api_token::object_id(logical_id)?.is_none() {
+        return Err(RpcFailure::invalid("API token identity is missing."));
+    }
+    let metadata_json = take_string(params, "apiTokenMetadataJson", 64 * 1024, false)?;
+    let favorite = params
+        .remove("apiTokenFavorite")
+        .and_then(|value| value.as_bool())
+        .ok_or_else(|| RpcFailure::invalid("API token favorite state is required."))?;
+    let fields = api_token::WriteFields {
+        metadata_json,
+        favorite,
+    };
+    api_token::validate(payload, title, &fields)?;
+    Ok(Some(fields))
 }
 
 fn validate_monica_payload(payload_json: &str, logical_object_id: &str) -> Result<(), RpcFailure> {
@@ -8427,6 +8553,174 @@ mod tests {
                 json!({ "vaultHandle": vault_handle })
             )["open"],
             false
+        );
+    }
+
+    #[test]
+    fn api_tokens_round_trip_android_labels_and_native_uuids() {
+        let (_root, mut runtime) = runtime();
+        let handle = open_test_vault(&mut runtime, "synthetic-token-vault-password");
+        let vault = runtime.require_open_vault(&handle).unwrap();
+        let collection = fresh_uuid();
+        let destination = fresh_uuid();
+        let object = fresh_uuid();
+        let fields_label = fresh_uuid();
+        let favorite_label = fresh_uuid();
+        let payload = json!({ "schema": "monica.gateway.credential.v1", "provider": "github", "api_base": "https://api.github.com/", "token": "synthetic-token-for-tests-only", "note": "CLI", "future": { "version": 2 } }).to_string();
+        let metadata = json!({ "schema": "monica.api-token.fields.v1", "notes": "Android note", "custom_fields": [{ "id": 7, "title": "scope", "value": "test-only", "protected": true, "future": 3 }], "future": [1, 2] }).to_string();
+        // These are the exact native commands used by current Monica Android.
+        vault
+            .execute_write_operation(
+                fresh_uuid(),
+                "android-api-token-fixture".into(),
+                vec![
+                    MdbxWriteCommand::CreateProject {
+                        project_id: collection.clone(),
+                        title: "Android".into(),
+                    },
+                    MdbxWriteCommand::CreateProject {
+                        project_id: destination.clone(),
+                        title: "Moved".into(),
+                    },
+                    MdbxWriteCommand::CreateEntry {
+                        entry_id: object.clone(),
+                        project_id: collection.clone(),
+                        entry_type: "api-token".into(),
+                        title: "android_token".into(),
+                        payload_json: payload.clone(),
+                    },
+                    MdbxWriteCommand::CreateObjectLabel {
+                        label_id: fields_label.clone(),
+                        collection_id: collection.clone(),
+                        name: "monica:api-token:fields:v1".into(),
+                        payload_json: metadata.clone(),
+                        payload_schema_version: 1,
+                    },
+                    MdbxWriteCommand::AssignObjectLabel {
+                        assignment_id: fresh_uuid(),
+                        object_id: object.clone(),
+                        label_id: fields_label,
+                    },
+                    MdbxWriteCommand::CreateObjectLabel {
+                        label_id: favorite_label.clone(),
+                        collection_id: collection.clone(),
+                        name: "monica:api-token:favorite:v1".into(),
+                        payload_json: "{}".into(),
+                        payload_schema_version: 1,
+                    },
+                    MdbxWriteCommand::AssignObjectLabel {
+                        assignment_id: fresh_uuid(),
+                        object_id: object.clone(),
+                        label_id: favorite_label,
+                    },
+                ],
+            )
+            .unwrap();
+        let reveal = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": handle, "objectId": object }),
+        );
+        assert_eq!(reveal["apiTokenMetadataJson"], metadata);
+        assert_eq!(reveal["apiTokenFavorite"], true);
+        assert_eq!(reveal["payloadJson"], payload);
+        let mut edited: Value = serde_json::from_str(&metadata).unwrap();
+        edited["notes"] = json!("Edited in extension");
+        let mut params = json!({ "vaultHandle": handle, "operationId": fresh_uuid(), "logicalObjectId": format!("api-token:{object}"), "collectionId": collection, "objectTypeId": "api-token", "title": "android_token", "payloadJson": payload, "apiTokenMetadataJson": edited.to_string(), "apiTokenFavorite": false });
+        let written = call(&mut runtime, "object.upsert", params.clone());
+        assert_eq!(written["objectId"], object);
+        assert_eq!(
+            call(&mut runtime, "object.upsert", params.clone())["alreadyCommitted"],
+            true
+        );
+        let reveal = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": handle, "objectId": object }),
+        );
+        assert_eq!(reveal["apiTokenFavorite"], false);
+        assert_eq!(reveal["apiTokenMetadataJson"], edited.to_string());
+        assert_eq!(reveal["payloadJson"], payload); // No Room fields added to the CLI payload.
+        params["operationId"] = json!(fresh_uuid());
+        params["apiTokenFavorite"] = json!(true);
+        call(&mut runtime, "object.upsert", params.clone());
+        params["operationId"] = json!(fresh_uuid());
+        params["apiTokenFavorite"] = json!(false);
+        call(&mut runtime, "object.upsert", params.clone());
+        params["operationId"] = json!(fresh_uuid());
+        params["apiTokenFavorite"] = json!(true);
+        params["collectionId"] = json!(destination);
+        call(&mut runtime, "object.upsert", params.clone());
+        let reveal = call(
+            &mut runtime,
+            "object.reveal",
+            json!({ "vaultHandle": handle, "objectId": object }),
+        );
+        assert_eq!(reveal["collectionId"], destination);
+        assert_eq!(reveal["apiTokenFavorite"], true);
+        assert_eq!(reveal["apiTokenMetadataJson"], edited.to_string());
+        call(
+            &mut runtime,
+            "object.delete",
+            json!({ "vaultHandle": handle, "operationId": fresh_uuid(), "logicalObjectId": format!("api-token:{object}") }),
+        );
+        assert!(
+            vault
+                .get_object_summary(object.clone())
+                .unwrap()
+                .unwrap()
+                .deleted
+        );
+        params["operationId"] = json!(fresh_uuid());
+        call(&mut runtime, "object.upsert", params);
+        assert!(!vault.get_object_summary(object).unwrap().unwrap().deleted);
+    }
+
+    #[test]
+    fn api_token_batches_share_favorite_labels_without_overwriting_other_types() {
+        let (_root, mut runtime) = runtime();
+        let handle = open_test_vault(&mut runtime, "synthetic-api-batch-password");
+        let mutations: Vec<Value> = (0..2).map(|index| json!({ "kind": "upsert", "logicalObjectId": format!("api-token:{}", fresh_uuid()), "collectionId": null, "objectTypeId": "api-token", "title": format!("token_{index}"), "payloadJson": json!({ "schema": "monica.api-token.v1", "provider": "custom", "api_base": "", "token": "synthetic-test-value" }).to_string(), "apiTokenMetadataJson": "{\"schema\":\"monica.api-token.fields.v1\"}", "apiTokenFavorite": true })).collect();
+        let result = call(
+            &mut runtime,
+            "object.batch",
+            json!({ "vaultHandle": handle, "operationId": fresh_uuid(), "mutations": mutations }),
+        );
+        for item in result["items"].as_array().unwrap() {
+            let reveal = call(
+                &mut runtime,
+                "object.reveal",
+                json!({ "vaultHandle": handle, "objectId": item["objectId"] }),
+            );
+            assert_eq!(reveal["apiTokenFavorite"], true);
+        }
+        let vault = runtime.require_open_vault(&handle).unwrap();
+        let collection = result["items"][0]["collectionId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let collision = fresh_uuid();
+        vault
+            .execute_write_operation(
+                fresh_uuid(),
+                "non-token-fixture".into(),
+                vec![MdbxWriteCommand::CreateEntry {
+                    entry_id: collision.clone(),
+                    project_id: collection,
+                    entry_type: "login".into(),
+                    title: "Keep login".into(),
+                    payload_json: "{}".into(),
+                }],
+            )
+            .unwrap();
+        let error = runtime.handle("object.delete", json!({ "vaultHandle": handle, "operationId": fresh_uuid(), "logicalObjectId": format!("api-token:{collision}") })).unwrap_err();
+        assert_eq!(error.code, "params-invalid");
+        assert!(
+            !vault
+                .get_object_summary(collision)
+                .unwrap()
+                .unwrap()
+                .deleted
         );
     }
 

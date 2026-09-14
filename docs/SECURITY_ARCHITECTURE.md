@@ -22,6 +22,7 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Component | Trust level | May receive |
 | --- | --- | --- |
 | Extension manager/popup | Trusted UI | User-selected vault data and management operations |
+| Passkey verification window | Trusted extension page | One expiring request context and a freshly entered master password |
 | Background service worker | Trusted cryptographic boundary | Unlocked vault state, provider secrets and private keys |
 | Isolated-world content script | Restricted extension code | Field metadata and one explicitly selected fill payload |
 | Main-world Passkey bridge | Hostile page boundary | Public WebAuthn request/result messages only |
@@ -30,13 +31,19 @@ This is an engineering security claim, not a claim of formal verification. The r
 | Browser profile/OS | Platform trust | Encrypted vault and short-lived trusted session material |
 | Build dependencies/CI | Supply-chain boundary | Source and test fixtures, never production user secrets |
 
+## Website icons
+
+The manager and popup first read Chromium's local favicon cache using the `favicon` permission. The `_favicon` endpoint is not web-accessible. Cache misses may request only the selected website origin's `/favicon.ico`, without credentials, referrers or redirects; no third-party icon service is used. The website can observe this request and the client's IP address. Login URI userinfo, paths, queries and fragments are stripped before icon lookup. Non-web URIs and regex match rules do not become image requests. Wi-Fi, SSH and barcode records retain type icons.
+
+Direct requests require HTTPS, a public suffix and the default port. IP literals, local/special-use names (including `.onion`), HTTP and other ports use browser cache only. This name-based restriction is not a DNS-resolution guarantee: a public domain can resolve to a private address, subject to the browser's network policy. Responses are capped at 256 KiB with a three-second timeout and validated as image data. Images are rendered through inert `<img>` elements, never as document markup. Lists load icons near the viewport with at most four lookups at once, deduplicate concurrent requests, and cancel obsolete work. The bounded in-memory cache is cleared with the vault view/session; it is not serialized into vaults, backups, sync data or extension storage.
+
 ## Security invariants
 
 1. Full-vault and provider commands require an extension-page sender.
 2. Page-originated save and Passkey requests are bound to the sender's tab, frame and origin and expire.
 3. Password, card, identity, payment and TOTP values are sent to content scripts only after explicit selection.
-4. Android `privateKeyAlias` is metadata, never treated as browser signing material.
-5. Browser PKCS#8 Passkey keys remain inside the encrypted vault and are never serialized into Android backups.
+4. Android device-bound key aliases remain metadata. A `privateKeyAlias` value is usable only if it passes portable PKCS#8 validation and the algorithm is supported.
+5. Portable Passkey keys remain behind the unlocked encrypted vault/provider boundary. Android WebDAV transfer of portable keys requires the encrypted backup mode; ordinary ZIP backup handling does not enable it.
 6. Provider diagnostics contain classifications and redacted identifiers, not response bodies, credentials or tokens.
 7. No remote JavaScript, source maps, fixture secrets or plaintext vault snapshots ship in the release.
 8. Provider data and backup archives are untrusted inputs and must pass size, origin, path and format limits.
@@ -45,6 +52,8 @@ This is an engineering security claim, not a claim of formal verification. The r
 11. Steam confirmation/login messages accept only an item ID and selected request identifiers; secrets and session tokens are loaded from the unlocked vault by the service worker.
 12. Locked autofill grants are manager-only, opt-in and limited to active ordinary password logins. They never authorize OTP, custom fields, private keys, general vault reads or secret-copy APIs.
 13. Grants live in extension settings, never in provider item fields. Imports cannot grant access, and restoring a portable full-vault backup clears all grants.
+14. Passkey user verification requires a fresh master-password check in `passkey-verify.html` or a verified Windows Hello result. An unlocked device-key vault alone never sets the UV flag. Verification messages are extension-only; the page/content bridge never receives the password.
+15. A verification request has a random single-use ID, an exact extension page URL, a top-level-frame check, an expiry and a five-attempt limit. Closing, aborting, locking or navigating cancels the request. Before signing, the background rechecks the original document and credential material.
 
 ## Threat analysis
 
@@ -85,7 +94,7 @@ Repository Actions are restricted to GitHub-owned actions plus the explicitly us
 - Vault protection: master-password mode uses Argon2id v1.3 with 64 MiB memory, 3 iterations, parallelism 1 and a 32-byte salt. Optional device-key mode uses a random 256-bit key stored in extension-local browser storage and is accurately presented as lower offline protection. Imported KDF parameters are bounded; legacy PBKDF2 envelopes migrate after successful unlock/restore.
 - Android backup: AES-256-GCM with Android's `MONICA_ENC_V1` envelope and PBKDF2-HMAC-SHA256 at 100,000 iterations.
 - Randomness: Web Crypto random values.
-- Passkeys: ES256 browser-local credentials; Android aliases are non-exportable metadata.
+- Passkeys: independent and file-backed ES256 credentials sign with zero; live Bitwarden bindings follow its official zero/positive branches. Positive counters require a fresh sync, optimistic server revision check and confirmed durable write before signing. Usage statistics neither enqueue writes nor change file-provider fingerprints; interrupted prepared assertions cannot be returned as committed. Android device-bound aliases remain non-exportable metadata. Explicit backup flags are preserved. Neither zeroing nor freezing a historical positive counter resets the relying party's state; such independent copies may require re-registration.
 - Steam Guard: HMAC-SHA1 30-second codes; confirmation hashes use HMAC-SHA1 and mobile login approval signatures use HMAC-SHA256, matching Monica Android.
 
 AES-GCM, legacy PBKDF2 and ECDSA use platform Web Crypto. Argon2id uses the bundled `hash-wasm` implementation under the extension CSP; no cryptographic code is downloaded at runtime. Argon2id output is covered by an independent Python vector.

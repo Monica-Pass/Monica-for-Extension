@@ -1,4 +1,5 @@
 import { parse as parseDomain } from "tldts";
+import { assertPasskeyCounter } from "./ownership-policy";
 
 const MONICA_AAGUID = Uint8Array.of(
   0x6d, 0x6f, 0x6e, 0x69, 0x63, 0x61, 0x4d, 0x33,
@@ -39,7 +40,10 @@ export interface PasskeyAssertionInput {
   credentialId: string;
   userHandle: string;
   privateKeyPkcs8: string;
+  /** Exact counter authorized by the source policy; positive counters must already be committed. */
   signCount: number;
+  backupEligible?: boolean;
+  backupState?: boolean;
   userVerified?: boolean;
 }
 
@@ -94,12 +98,13 @@ export async function createAssertion(input: PasskeyAssertionInput): Promise<{ r
   const rpId = validateRpId(input.origin, input.rpId);
   assertChallenge(input.challenge);
   const privateKey = await crypto.subtle.importKey("pkcs8", arrayBuffer(fromBase64(input.privateKeyPkcs8)), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-  // Monica Passkeys are portable and may be restored on multiple devices.
-  // A constant zero counter is permitted by WebAuthn and avoids false clone
-  // detection when restored copies would otherwise advance independently.
-  const nextCount = 0;
+  // Counter policy and any required server commit happen before cryptographic signing.
+  assertPasskeyCounter(input.signCount);
+  const nextCount = input.signCount;
   const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
-  const flags = 0x19 | (input.userVerified ? 0x04 : 0);
+  const backupEligible = input.backupEligible !== false;
+  const backupState = backupEligible && input.backupState !== false;
+  const flags = 0x01 | (backupEligible ? 0x08 : 0) | (backupState ? 0x10 : 0) | (input.userVerified ? 0x04 : 0);
   const authenticatorData = concat(rpHash, Uint8Array.of(flags), uint32(nextCount));
   const clientDataJSON = clientData("webauthn.get", input.challenge, input.origin);
   const clientHash = new Uint8Array(await crypto.subtle.digest("SHA-256", arrayBuffer(clientDataJSON)));

@@ -1,0 +1,19 @@
+/* Short, composited transitions. No list staggering, persistent layers or loops. */
+:root { --motion-fast: 120ms; --motion-medium: 180ms; --motion-ease: cubic-bezier(.2, .7, .2, 1); }
+.page-view { min-width: 0; animation: page-arrive 160ms ease-out; }
+.motion-card, .motion-card:hover { animation: none; transform: none; filter: none; }
+.dialog-enter-active, .dialog-leave-active { transition: opacity 140ms ease-out; }
+.dialog-enter-active > [role='dialog'], .dialog-leave-active > [role='dialog'] { transition: transform 180ms var(--motion-ease); }
+.dialog-enter-from, .dialog-leave-to { opacity: 0; }
+.dialog-enter-from > [role='dialog'] { transform: translateY(10px); }
+.dialog-leave-to > [role='dialog'] { transform: translateY(4px); }
+.dialog-leave-active { pointer-events: none; }
+/* Overlays without a Vue lifecycle wrapper still receive an entrance. */
+:is(.modal-backdrop:has(.filter-dialog), .provider-dialog, .navigation-scrim) { animation: page-arrive 140ms ease-out; }
+@keyframes page-arrive { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 900px) {
+  #root .sidebar { transition: transform 180ms var(--motion-ease), visibility 180ms; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

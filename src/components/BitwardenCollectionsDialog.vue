@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
 import { computed, nextTick, onMounted, ref } from "vue";
@@ -190,7 +191,7 @@ function errorMessage(cause: unknown): string {
       <p class="bitwarden-collections-status" aria-live="polite">{{ status }}</p>
 
       <div class="bitwarden-collections-toolbar">
-        <label class="bitwarden-collections-search"><span class="sr-only">{{ tr('搜索 Collection') }}</span><m3e-icon name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索 Collection')" /></label>
+        <m3e-form-field v-field-label variant="filled" hide-required-marker class="bitwarden-collections-search"><label slot="label">{{ tr('搜索 Collection') }}</label><m3e-icon slot="prefix" name="search"></m3e-icon><input v-model="search" type="search" autocomplete="off" :placeholder="tr('搜索 Collection')" /></m3e-form-field>
         <m3e-icon-button :aria-label="tr('刷新组织 Collection')" :disabled="interactionLocked" @click="loadCollections(true)"><m3e-icon name="refresh"></m3e-icon></m3e-icon-button>
       </div>
 
@@ -199,21 +200,21 @@ function errorMessage(cause: unknown): string {
           <div class="bitwarden-collections-heading"><div><strong id="bitwarden-organizations-title">{{ tr('组织') }}</strong><small>{{ tr('{0} 个组织', { 0: organizations.length }) }}</small></div><m3e-icon name="business"></m3e-icon></div>
           <div v-if="busy === 'list' && !loaded" class="bitwarden-collections-empty" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取…') }}</span></div>
           <div v-else-if="!organizations.length" class="bitwarden-collections-empty"><m3e-icon name="business_off"></m3e-icon><span>{{ tr('没有可用组织。') }}</span></div>
-          <div v-else class="bitwarden-organization-list">
-            <button v-for="organization in organizations" :key="organization.organizationId" type="button" class="bitwarden-organization-row" :class="{ selected: organization.organizationId === selectedOrganizationId }" :aria-pressed="organization.organizationId === selectedOrganizationId" @click="selectOrganization(organization.organizationId)">
-              <span class="bitwarden-organization-icon"><m3e-icon name="business"></m3e-icon></span>
-              <span><strong>{{ organization.name }}</strong><small>{{ organization.fullAccess ? tr('完全访问') : organization.type }} · {{ organization.keyAvailable ? tr('密钥可用') : tr('密钥缺失') }}</small></span>
-              <m3e-icon name="chevron_right"></m3e-icon>
-            </button>
-          </div>
+          <m3e-selection-list v-else class="bitwarden-organization-list" hide-selection-indicator :aria-label="tr('组织')" :disabled="interactionLocked" @change="selectOrganization(($event.currentTarget as HTMLElement &amp; { value: string }).value)">
+            <m3e-list-option v-for="organization in organizations" :key="organization.organizationId" class="bitwarden-organization-row" :value="organization.organizationId" :selected.prop="organization.organizationId === selectedOrganizationId">
+              <span slot="leading" class="bitwarden-organization-icon"><m3e-icon name="business" /></span>
+              <strong>{{ organization.name }}</strong>
+              <small slot="supporting-text">{{ organization.fullAccess ? tr('完全访问') : organization.type }} · {{ organization.keyAvailable ? tr('密钥可用') : tr('密钥缺失') }}</small>
+            </m3e-list-option>
+          </m3e-selection-list>
         </aside>
 
         <section class="bitwarden-collection-panel" aria-labelledby="bitwarden-collection-list-title">
           <div class="bitwarden-collections-heading"><div><strong id="bitwarden-collection-list-title">{{ selectedOrganization?.name || 'Collection' }}</strong><small>{{ tr('{0} 个已加载', { 0: visibleCollections.length }) }}<template v-if="nextCursor">{{ tr('· 尚有更多') }}</template></small></div><span class="bitwarden-collection-count">{{ tr('{0} 个可路由', { 0: targetableCount }) }}</span></div>
           <div v-if="loaded && !visibleCollections.length" class="bitwarden-collections-empty"><m3e-icon name="folder_off"></m3e-icon><span>{{ search ? tr('没有匹配的 Collection。') : tr('当前组织没有可显示的 Collection。') }}</span></div>
           <div v-else class="bitwarden-collection-list" data-route-collections tabindex="-1">
-            <label v-for="collection in visibleCollections" :key="collection.collectionId" class="bitwarden-collection-row" :class="{ selected: selectedCollectionIds.includes(collection.collectionId), unavailable: !collection.targetable }">
-              <input type="checkbox" :checked="selectedCollectionIds.includes(collection.collectionId)" :disabled="interactionLocked || !collection.targetable" :aria-label="tr('选择 Collection {0}', { 0: collection.name })" @change="toggleCollection(collection)" />
+            <label v-choice-label v-for="collection in visibleCollections" :key="collection.collectionId" class="bitwarden-collection-row" :class="{ selected: selectedCollectionIds.includes(collection.collectionId), unavailable: !collection.targetable }">
+              <m3e-checkbox  :checked="selectedCollectionIds.includes(collection.collectionId)" :disabled="interactionLocked || !collection.targetable" :aria-label="tr('选择 Collection {0}', { 0: collection.name })" @change="toggleCollection(collection)" />
               <span class="bitwarden-collection-icon"><m3e-icon :name="collection.targetable ? 'folder_shared' : 'lock'"></m3e-icon></span>
               <span class="bitwarden-collection-copy"><strong>{{ collection.name }}</strong><small>{{ permissionLabel(collection) }}<template v-if="collection.hidePasswords">{{ tr('· 隐藏密码') }}</template><template v-if="collection.assigned === true">{{ tr('· 已分配') }}</template></small></span>
               <span class="bitwarden-collection-state" :class="collection.targetable ? 'state-ok' : 'state-muted'">{{ collection.targetable ? tr('可写') : tr('不可写') }}</span>
@@ -226,7 +227,7 @@ function errorMessage(cause: unknown): string {
       <section class="bitwarden-collection-routing" aria-labelledby="bitwarden-collection-routing-title">
         <div class="bitwarden-collections-heading"><div><strong id="bitwarden-collection-routing-title">{{ tr('项目路由') }}</strong><small>{{ tr('只显示已识别为组织 Cipher 的项目；空选表示清除 Collection（需组织权限）。') }}</small></div><m3e-icon name="drive_file_move"></m3e-icon></div>
         <div class="bitwarden-collection-route-form">
-          <label><span>{{ tr('组织项目') }}</span><select data-route-item v-model="selectedItemId" :disabled="interactionLocked" @change="selectRouteItem(selectedItemId)"><option value="">{{ tr('选择项目') }}</option><option v-for="entry in routeItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</option></select></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('组织项目') }}</label><component :is="materialSelectTag" @input="selectedItemId = ($event.target as HTMLElement &amp; { value: string }).value" data-route-item  :disabled="interactionLocked" @change="selectRouteItem(selectedItemId)"><component :is="materialOptionTag" :selected.prop="String(selectedItemId ?? '') === String('')" value="">{{ tr('选择项目') }}</component><component :is="materialOptionTag" :selected.prop="String(selectedItemId ?? '') === String(entry.item.id)" v-for="entry in routeItems" :key="entry.item.id" :value="entry.item.id">{{ entry.item.title }}</component></component></m3e-form-field>
           <div class="bitwarden-collection-selection" aria-live="polite"><span class="bitwarden-collection-selection-icon"><m3e-icon name="checklist"></m3e-icon></span><span><strong>{{ tr('{0} 个 Collection 已选择', { 0: selectedCollectionIds.length }) }}</strong><small>{{ selectedItem ? tr('当前项目：{0}', { 0: selectedItem.item.title }) : tr('选择项目后勾选右侧 Collection') }}</small></span></div>
           <m3e-button variant="tonal" type="button" :disabled="interactionLocked || !selectedItem" @click="moveCipher"><m3e-icon slot="icon" name="save"></m3e-icon>{{ busy === 'move' ? tr('保存中…') : tr('保存路由') }}</m3e-button>
         </div>
@@ -250,36 +251,28 @@ function errorMessage(cause: unknown): string {
 .bitwarden-collections-error { color: var(--md-sys-color-on-error-container, var(--app-text)); background: var(--md-sys-color-error-container, var(--app-surface-high)); border: 1px solid var(--md-sys-color-error, var(--app-primary)); }
 .bitwarden-collections-status { min-height: 24px; margin: 0 0 8px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
 .bitwarden-collections-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.bitwarden-collections-search { min-width: 0; min-height: 44px; flex: 1; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
-.bitwarden-collections-search input { min-width: 0; min-height: 42px; border: 0; outline: 0; color: var(--app-text); background: transparent; font: inherit; }
+.bitwarden-collections-search { min-width: 0; flex: 1; }
 .bitwarden-collections-layout { display: grid; grid-template-columns: minmax(220px, .78fr) minmax(0, 1.5fr); gap: 12px; }
-.bitwarden-organization-panel, .bitwarden-collection-panel, .bitwarden-collection-routing { min-width: 0; border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); border-radius: 8px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
+.bitwarden-organization-panel, .bitwarden-collection-panel, .bitwarden-collection-routing { min-width: 0; border-radius: 20px; overflow: hidden; background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); }
 .bitwarden-collections-heading { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 16px; }
 .bitwarden-collections-heading > div { min-width: 0; display: grid; gap: 2px; }
 .bitwarden-collections-heading small, .bitwarden-organization-row small, .bitwarden-collection-copy small, .bitwarden-collection-selection small { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); overflow-wrap: anywhere; }
 .bitwarden-collection-count { color: var(--md-sys-color-primary, var(--app-primary)); font-size: .875rem; font-weight: 650; white-space: nowrap; }
-.bitwarden-organization-list, .bitwarden-collection-list { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); }
-.bitwarden-organization-row { width: 100%; min-height: 72px; border: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: grid; grid-template-columns: 36px minmax(0, 1fr) 20px; align-items: center; gap: 10px; padding: 10px 12px; color: var(--app-text); background: transparent; text-align: left; font: inherit; cursor: pointer; }
-.bitwarden-organization-row:last-child { border-bottom: 0; }
-.bitwarden-organization-row:hover, .bitwarden-organization-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
-.bitwarden-organization-row:focus-visible, .bitwarden-collection-row:focus-within { outline: 3px solid color-mix(in srgb, var(--app-primary) 45%, transparent); outline-offset: -3px; }
-.bitwarden-organization-row > span:nth-child(2), .bitwarden-collection-copy, .bitwarden-collection-selection { min-width: 0; display: grid; gap: 2px; }
+.bitwarden-organization-row { width: 100%; min-width: 0; }
+.bitwarden-organization-row strong { font-weight: 500; overflow-wrap: anywhere; }
+.bitwarden-collection-copy, .bitwarden-collection-selection { min-width: 0; display: grid; gap: 2px; }
 .bitwarden-organization-icon, .bitwarden-collection-icon, .bitwarden-collection-selection-icon { width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; color: var(--app-primary); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
-.bitwarden-collection-row { min-height: 68px; display: grid; grid-template-columns: 24px 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); cursor: pointer; }
-.bitwarden-collection-row:last-child { border-bottom: 0; }
+.bitwarden-collection-row { min-height: 68px; display: grid; grid-template-columns: 24px 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; cursor: pointer; }
 .bitwarden-collection-row.selected { background: var(--md-sys-color-secondary-container, var(--app-selected)); }
 .bitwarden-collection-row.unavailable { cursor: not-allowed; opacity: .72; }
-.bitwarden-collection-row input { width: 20px; height: 20px; margin: 0; accent-color: var(--app-primary); }
 .bitwarden-collection-copy strong { overflow-wrap: anywhere; }
 .bitwarden-collection-state { min-height: 28px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; font-size: .75rem; font-weight: 650; white-space: nowrap; }
 .state-ok { color: var(--md-sys-color-on-primary-container, var(--app-text)); background: var(--md-sys-color-primary-container, var(--app-selected)); }
 .state-muted { color: var(--md-sys-color-on-surface-variant, var(--app-muted)); background: var(--md-sys-color-surface-container-high, var(--app-surface-high)); }
-.bitwarden-collections-empty { min-height: 116px; border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); text-align: center; }
-.bitwarden-collections-more { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); display: flex; justify-content: center; padding: 4px 12px; }
+.bitwarden-collections-empty { min-height: 116px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); text-align: center; }
+.bitwarden-collections-more { display: flex; justify-content: center; padding: 4px 12px; }
 .bitwarden-collection-routing { margin-top: 12px; }
 .bitwarden-collection-route-form { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(180px, .9fr) auto; align-items: end; gap: 12px; padding: 0 16px 16px; }
-.bitwarden-collection-route-form label { min-width: 0; display: grid; gap: 6px; font-weight: 600; }
-.bitwarden-collection-route-form select { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--md-sys-color-outline, var(--app-outline)); border-radius: 8px; padding: 8px 12px; color: var(--app-text); background: var(--md-sys-color-surface-container-lowest, var(--app-surface)); font: inherit; }
 .bitwarden-collection-selection { min-height: 44px; grid-template-columns: 36px minmax(0, 1fr); align-items: center; }
 .bitwarden-collections-dialog > footer { min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -291,7 +284,7 @@ function errorMessage(cause: unknown): string {
 }
 @media (max-width: 420px) {
   .bitwarden-collections-dialog { padding: 12px; }
-  .bitwarden-collections-heading, .bitwarden-collection-row, .bitwarden-organization-row { padding-inline: 12px; }
+  .bitwarden-collections-heading, .bitwarden-collection-row { padding-inline: 12px; }
   .bitwarden-collection-row { grid-template-columns: 24px 32px minmax(0, 1fr); }
   .bitwarden-collection-state { grid-column: 3; justify-self: start; }
 }

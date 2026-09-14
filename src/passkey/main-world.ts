@@ -79,12 +79,11 @@ function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: 
     let cancellationName = "NotAllowedError";
     let timeout = 0;
     let acknowledgementTimeout = 0;
-    let acknowledgementFallback = 0;
     let terminalWatchdog = 0;
+    let dispatched = false;
     const cleanup = () => {
       window.clearTimeout(timeout);
       window.clearTimeout(acknowledgementTimeout);
-      window.clearTimeout(acknowledgementFallback);
       window.clearTimeout(terminalWatchdog);
       window.removeEventListener("message", listener);
       signal?.removeEventListener("abort", abort);
@@ -92,6 +91,7 @@ function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: 
     const fail = (message: string, name: string) => { if (settled) return; settled = true; cleanup(); reject(new DOMException(message, name)); };
     const requestCancellation = (message: string, name: string) => {
       if (settled || cancellationRequested) return;
+      if (!dispatched) return fail(message, name);
       cancellationRequested = true;
       cancellationMessage = message;
       cancellationName = name;
@@ -100,10 +100,18 @@ function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: 
       window.postMessage({ source: "monica-passkey-page-cancel", requestId, message, name }, location.origin);
     };
     const listener = (event: MessageEvent) => {
-      if (event.source !== window || event.origin !== location.origin || event.data?.source !== EXTENSION_SOURCE || event.data?.requestId !== requestId) return;
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== EXTENSION_SOURCE) return;
+      if (event.data.ready === true && (!event.data.requestId || event.data.requestId === requestId)) {
+        if (!dispatched && !settled) {
+          dispatched = true;
+          window.clearTimeout(acknowledgementTimeout);
+          window.postMessage({ source: PAGE_SOURCE, requestId, request }, location.origin);
+        }
+        return;
+      }
+      if (event.data?.requestId !== requestId) return;
       if (event.data.ack === true) {
         window.clearTimeout(acknowledgementTimeout);
-        window.clearTimeout(acknowledgementFallback);
         return;
       }
       if (settled) return; settled = true; cleanup();
@@ -114,11 +122,10 @@ function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: 
     signal?.addEventListener("abort", abort, { once: true });
     window.addEventListener("message", listener);
     timeout = window.setTimeout(() => requestCancellation("Monica Passkey 请求超时。", "NotAllowedError"), timeoutMs);
-    acknowledgementTimeout = window.setTimeout(() => {
-      requestCancellation("Monica Passkey 通道没有响应。", "NotAllowedError");
-      acknowledgementFallback = window.setTimeout(() => fail(cancellationMessage, cancellationName), 1_000);
-    }, 750);
-    window.postMessage({ source: PAGE_SOURCE, requestId, request }, location.origin);
+    // MAIN runs at document_start; the isolated content script may arrive much later.
+    // Wait for readiness without retrying the credential request (which could create two keys).
+    acknowledgementTimeout = window.setTimeout(() => fail("Monica Passkey 通道没有响应。", "NotSupportedError"), 10_000);
+    window.postMessage({ source: "monica-passkey-ready-check", requestId }, location.origin);
   });
 }
 

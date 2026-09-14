@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { locale, tr } from '../i18n';
 
 import { computed, onBeforeUnmount, ref, watch } from "vue";
@@ -349,15 +350,15 @@ function errorMessage(cause: unknown): string {
             <div><h3 id="batch-selection-title">{{ tr('选择项目') }}</h3><p>{{ tr('{0} / {1} 已选择', { 0: selectedCount, 1: MAX_SELECTION }) }}</p></div>
             <m3e-button variant="text" type="button" :disabled="!selectedCount || planning || executing" @click="clearSelection">{{ tr('清除') }}</m3e-button>
           </div>
-          <label class="batch-search"><m3e-icon name="search"></m3e-icon><span class="visually-hidden">{{ tr('筛选项目') }}</span><input v-model="query" autofocus type="search" :placeholder="tr('按名称、类型或密码源筛选')" /></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="batch-search"><m3e-icon slot="prefix" name="search"></m3e-icon><label slot="label">{{ tr('筛选项目') }}</label><input v-model="query" autofocus type="search" :placeholder="tr('按名称、类型或密码源筛选')" /></m3e-form-field>
           <div class="batch-selection-toolbar">
-            <label class="batch-check batch-check-all"><input type="checkbox" :checked="allFilteredSelected" :disabled="!filteredItems.length || planning || executing" @change="toggleFiltered" /><span>{{ allFilteredSelected ? tr('取消选择当前结果') : tr('选择当前结果') }}</span></label>
+            <label v-choice-label class="batch-check batch-check-all"><m3e-checkbox  :checked="allFilteredSelected" :disabled="!filteredItems.length || planning || executing" @change="toggleFiltered" /><span>{{ allFilteredSelected ? tr('取消选择当前结果') : tr('选择当前结果') }}</span></label>
             <span class="batch-result-count">{{ tr('{0} 个结果', { 0: filteredItems.length }) }}</span>
           </div>
           <p v-if="selectionNotice" class="batch-inline-note" role="status">{{ selectionNotice }}</p>
           <div v-if="filteredItems.length" class="batch-item-list" role="list" :aria-label="tr('可传输项目')">
-            <label v-for="item in filteredItems" :key="item.id" class="batch-item-row" :class="{ selected: selectedIds.has(item.id) }" role="listitem">
-              <input type="checkbox" :checked="selectedIds.has(item.id)" :disabled="executing || (!selectedIds.has(item.id) && selectedCount >= MAX_SELECTION)" @change="toggleItem(item.id)" />
+            <label v-choice-label v-for="item in filteredItems" :key="item.id" class="batch-item-row" :class="{ selected: selectedIds.has(item.id) }" role="listitem">
+              <m3e-checkbox  :checked="selectedIds.has(item.id)" :disabled="executing || (!selectedIds.has(item.id) && selectedCount >= MAX_SELECTION)" @change="toggleItem(item.id)" />
               <span class="batch-item-icon"><m3e-icon :name="item.favorite ? 'star' : itemIcon(item.kind)"></m3e-icon></span>
               <span class="batch-item-copy"><strong>{{ item.title || tr('未命名项目') }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ sourceProviderLabel(item) }}</small><small class="batch-safe-summary">{{ safeSummary(item) }}</small></span>
             </label>
@@ -367,23 +368,23 @@ function errorMessage(cause: unknown): string {
 
         <section class="batch-panel batch-target-panel" aria-labelledby="batch-target-title">
           <div class="batch-panel-heading"><div><h3 id="batch-target-title">{{ tr('传输到') }}</h3><p>{{ tr('目标必须是已解锁的 MDBX2 本机工作副本。') }}</p></div></div>
-          <label class="batch-field"><span>{{ tr('目标密码源') }}</span><select v-model="targetProviderId" :disabled="planning || executing"><option value="" disabled>{{ tr('选择 MDBX2 密码源') }}</option><option v-for="provider in targetProviders" :key="provider.id" :value="provider.id">{{ provider.name }}{{ readyFor(provider.id) ? '' : tr('（已锁定）') }}</option></select></label>
+          <m3e-form-field v-field-label variant="filled" hide-required-marker class="batch-field"><label slot="label">{{ tr('目标密码源') }}</label><component :is="materialSelectTag" @input="targetProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="planning || executing"><component :is="materialOptionTag" :selected.prop="String(targetProviderId ?? '') === String('')" value="" disabled>{{ tr('选择 MDBX2 密码源') }}</component><component :is="materialOptionTag" :selected.prop="String(targetProviderId ?? '') === String(provider.id)" v-for="provider in targetProviders" :key="provider.id" :value="provider.id">{{ provider.name }}{{ readyFor(provider.id) ? '' : tr('（已锁定）') }}</component></component></m3e-form-field>
           <p v-if="targetProvider && !targetReady" class="batch-warning" role="status"><m3e-icon name="lock"></m3e-icon><span>{{ tr('请先在密码源页面解锁 {0}。', { 0: targetProvider.name }) }}</span></p>
 
-          <fieldset class="batch-action-picker"><legend>{{ tr('操作') }}</legend><div class="batch-action-segments"><label><input v-model="action" type="radio" value="copy" :disabled="planning || executing" /><span><m3e-icon name="content_copy"></m3e-icon><strong>{{ tr('复制') }}</strong><small>{{ tr('创建独立项目') }}</small></span></label><label><input v-model="action" type="radio" value="move" :disabled="planning || executing" /><span><m3e-icon name="drive_file_move"></m3e-icon><strong>{{ tr('移动') }}</strong><small>{{ tr('完成后移除来源绑定') }}</small></span></label></div></fieldset>
+          <fieldset class="batch-action-picker"><legend>{{ tr('操作') }}</legend><m3e-radio-group class="batch-action-segments" :aria-label="tr('操作')"><label v-choice-label><m3e-radio :checked.prop="action === 'copy'" @input="action = 'copy'"   value="copy" :disabled="planning || executing" /><span><m3e-icon name="content_copy"></m3e-icon><strong>{{ tr('复制') }}</strong><small>{{ tr('创建独立项目') }}</small></span></label><label v-choice-label><m3e-radio :checked.prop="action === 'move'" @input="action = 'move'"   value="move" :disabled="planning || executing" /><span><m3e-icon name="drive_file_move"></m3e-icon><strong>{{ tr('移动') }}</strong><small>{{ tr('完成后移除来源绑定') }}</small></span></label></m3e-radio-group></fieldset>
 
           <div class="batch-folder-section">
             <div class="batch-subheading"><div><strong>{{ tr('目标文件夹') }}</strong><small>{{ tr('选择根目录或 Android 兼容的 Collection。') }}</small></div><m3e-button variant="text" type="button" :disabled="collectionsLoading || planning || executing || !targetReady" @click="loadCollections"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('刷新') }}</m3e-button></div>
             <div v-if="collectionsLoading" class="batch-folder-state" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取文件夹…') }}</span></div>
             <p v-else-if="collectionsError" class="batch-error" role="alert">{{ collectionsError }}</p>
-            <div v-else class="batch-folder-tree" role="radiogroup" :aria-label="tr('目标 MDBX2 文件夹')">
-              <label class="batch-folder-row" :class="{ selected: !targetCollectionId }"><input v-model="targetCollectionId" type="radio" value="" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder_open"></m3e-icon></span><span><strong>{{ tr('根目录') }}</strong><small>{{ tr('未分类项目') }}</small></span></label>
-              <label v-for="row in collectionRows" :key="row.item.collectionId" class="batch-folder-row" :class="{ selected: targetCollectionId === row.item.collectionId, incomplete: row.hierarchyState !== 'ready' }" :style="{ '--folder-depth': row.depth }"><input v-model="targetCollectionId" type="radio" :value="row.item.collectionId" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder"></m3e-icon></span><span><strong>{{ folderLabel(row) }}</strong><small>{{ row.hierarchyState === 'ready' ? tr('{0} 个附件', { 0: row.item.attachmentCount }) : row.parentPath }}</small></span></label>
+            <m3e-radio-group v-else class="batch-folder-tree" :aria-label="tr('目标 MDBX2 文件夹')">
+              <label v-choice-label class="batch-folder-row" :class="{ selected: !targetCollectionId }"><m3e-radio :checked.prop="targetCollectionId === ''" @input="targetCollectionId = ''"   value="" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder_open"></m3e-icon></span><span><strong>{{ tr('根目录') }}</strong><small>{{ tr('未分类项目') }}</small></span></label>
+              <label v-choice-label v-for="row in collectionRows" :key="row.item.collectionId" class="batch-folder-row" :class="{ selected: targetCollectionId === row.item.collectionId, incomplete: row.hierarchyState !== 'ready' }" :style="{ '--folder-depth': row.depth }"><m3e-radio :checked.prop="targetCollectionId === row.item.collectionId" @input="targetCollectionId = row.item.collectionId"   :value="row.item.collectionId" :disabled="planning || executing" /><span class="batch-folder-icon"><m3e-icon name="folder"></m3e-icon></span><span><strong>{{ folderLabel(row) }}</strong><small>{{ row.hierarchyState === 'ready' ? tr('{0} 个附件', { 0: row.item.attachmentCount }) : row.parentPath }}</small></span></label>
               <p v-if="!collectionRows.length && targetReady" class="batch-folder-state"><m3e-icon name="folder_off"></m3e-icon><span>{{ tr('还没有自定义文件夹；项目会写入根目录。') }}</span></p>
-            </div>
+            </m3e-radio-group>
           </div>
 
-          <label class="batch-check batch-preserve"><input v-model="preserveCategories" type="checkbox" :disabled="planning || executing" /><span><strong>{{ tr('保留原分类层级') }}</strong><small>{{ tr('按 Android 的文件夹路径创建或复用目标 Collection。') }}</small></span></label>
+          <label v-choice-label class="batch-check batch-preserve"><m3e-checkbox :checked.prop="preserveCategories" @input="preserveCategories = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   :disabled="planning || executing" /><span><strong>{{ tr('保留原分类层级') }}</strong><small>{{ tr('按 Android 的文件夹路径创建或复用目标 Collection。') }}</small></span></label>
           <p v-if="action === 'move'" class="batch-warning"><m3e-icon name="warning"></m3e-icon><span>{{ tr('移动只会在目标项目与附件验证成功后删除来源；失败时来源保留。') }}</span></p>
         </section>
         </div>
@@ -394,7 +395,7 @@ function errorMessage(cause: unknown): string {
         <div class="batch-plan-list" role="list" :aria-label="tr('传输计划项目')">
           <div v-for="item in planResult.items" :key="item.sourceItemId" class="batch-plan-row" :class="{ blocked: item.blockedReason }" role="listitem"><m3e-icon :name="item.blockedReason ? 'block' : item.effectiveAction === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ pathLabel(item.sourcePath) }} <m3e-icon name="arrow_forward"></m3e-icon> {{ pathLabel(item.targetPath) }}</small><small v-if="item.blockedReason" class="batch-error">{{ item.blockedReason }}</small><small v-else-if="item.pathIncomplete" class="batch-inline-note">{{ tr('原分类路径不完整，已保留可解析部分。') }}</small></span></div>
         </div>
-        <label v-if="planResult.requiresMoveConfirmation" class="batch-move-confirm"><input v-model="moveConfirmed" type="checkbox" /><span><strong>{{ tr('我确认执行移动') }}</strong><small>{{ tr('目标写入、附件校验和来源删除会按顺序执行；已完成操作可安全重试。') }}</small></span></label>
+        <label v-choice-label v-if="planResult.requiresMoveConfirmation" class="batch-move-confirm"><m3e-checkbox :checked.prop="moveConfirmed" @input="moveConfirmed = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span><strong>{{ tr('我确认执行移动') }}</strong><small>{{ tr('目标写入、附件校验和来源删除会按顺序执行；已完成操作可安全重试。') }}</small></span></label>
         </section>
 
         <section v-if="executing || progress" class="batch-panel batch-progress-panel" aria-live="polite" aria-labelledby="batch-progress-title">
@@ -548,36 +549,13 @@ function errorMessage(cause: unknown): string {
 }
 
 .batch-search {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  min-width: 0;
   margin-top: 16px;
-  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
-  border-radius: 8px;
-  padding: 0 12px;
-  background: var(--md-sys-color-surface-container-lowest, var(--app-surface));
-}
-
-.batch-search:focus-within {
-  outline: 3px solid color-mix(in srgb, var(--app-primary) 38%, transparent);
-  outline-offset: 1px;
 }
 
 .batch-search m3e-icon {
   --m3e-icon-size: 20px;
   color: var(--app-muted);
-}
-
-.batch-search input {
-  min-width: 0;
-  flex: 1;
-  min-height: 42px;
-  border: 0;
-  outline: 0;
-  color: var(--app-text);
-  background: transparent;
-  font: inherit;
 }
 
 .batch-selection-toolbar {
@@ -724,30 +702,13 @@ function errorMessage(cause: unknown): string {
 }
 
 .batch-field {
-  display: grid;
-  gap: 6px;
   margin-top: 16px;
-  font-weight: 600;
 }
 
-.batch-field select {
-  box-sizing: border-box;
-  inline-size: 100%;
-  min-height: 44px;
-  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: var(--app-text);
-  background: var(--md-sys-color-surface-container-lowest, var(--app-surface));
-  font: inherit;
-}
-
-.batch-field select:focus-visible,
 .batch-check input:focus-visible,
 .batch-item-row input:focus-visible,
 .batch-folder-row input:focus-visible,
-.batch-move-confirm input:focus-visible,
-.batch-action-segments input:focus-visible + span {
+.batch-move-confirm input:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--app-primary) 42%, transparent);
   outline-offset: 2px;
 }
@@ -799,20 +760,12 @@ function errorMessage(cause: unknown): string {
   cursor: pointer;
 }
 
-.batch-action-segments input {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  opacity: 0;
-}
-
 .batch-action-segments span {
   min-height: 72px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-content: center;
   column-gap: 8px;
-  border: 1px solid var(--md-sys-color-outline, var(--app-outline));
   border-radius: 8px;
   padding: 8px 10px;
 }
@@ -826,12 +779,6 @@ function errorMessage(cause: unknown): string {
 .batch-action-segments span small {
   color: var(--md-sys-color-on-surface-variant, var(--app-muted));
   line-height: 1.3;
-}
-
-.batch-action-segments input:checked + span {
-  border-color: var(--md-sys-color-primary, var(--app-primary));
-  color: var(--md-sys-color-on-secondary-container, var(--app-text));
-  background: var(--md-sys-color-secondary-container, var(--app-selected));
 }
 
 .batch-folder-section {

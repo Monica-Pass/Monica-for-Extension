@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Route } from "@playwright/test";
 import path from "node:path";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
@@ -48,7 +49,7 @@ test("Bitwarden login completes current prelogin and new-device email verificati
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: /连接 Bitwarden/ }).click();
 
-    const dialog = page.getByRole("dialog", { name: "连接 Bitwarden" });
+    const dialog = dialogContent(page, { name: "连接 Bitwarden" });
     await dialog.getByLabel("服务器地址 *").fill(VAULT_URL);
     await dialog.getByLabel("邮箱 *").fill(EMAIL);
     await dialog.getByLabel("主密码 *").fill(MASTER_PASSWORD);

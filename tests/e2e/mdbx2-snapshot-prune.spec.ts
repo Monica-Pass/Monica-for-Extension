@@ -1,3 +1,4 @@
+import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
@@ -113,7 +114,7 @@ test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disc
     await page.getByRole("button", { name: "密码源" }).click();
     await page.getByRole("button", { name: "管理 MDBX2" }).click();
 
-    const dialog = page.getByRole("dialog", { name: "管理 自动快照演示库" });
+    const dialog = dialogContent(page, { name: "管理 自动快照演示库" });
     const panel = dialog.locator(".mdbx2-snapshot-panel");
     await expect(panel).toBeVisible();
     await expect(panel).toHaveCSS("border-radius", "8px");

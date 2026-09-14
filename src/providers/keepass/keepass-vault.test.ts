@@ -262,6 +262,26 @@ describe("entry dispatch precedence", () => {
     });
   });
 
+  it("recognizes Android Passkeys with ordinary account fields after reopening the database", async () => {
+    const snapshot = await openFixture([{
+      title: "GitHub [Passkey]",
+      fields: {
+        UserName: "alice", URL: "https://github.com", Notes: "Portable test credential",
+        [KEEPASSDX_PASSKEY_FIELDS.username]: "alice",
+        [KEEPASSDX_PASSKEY_FIELDS.relyingParty]: "github.com"
+      },
+      protectedFields: {
+        Password: "",
+        [KEEPASSDX_PASSKEY_FIELDS.privateKey]: pem(P256_PKCS8),
+        [KEEPASSDX_PASSKEY_FIELDS.credentialId]: "Y3JlZC1vbmU",
+        [KEEPASSDX_PASSKEY_FIELDS.userHandle]: "dXNlci1oYW5kbGU"
+      }
+    }]);
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]).toMatchObject({ kind: "passkey", rpId: "github.com", userName: "alice", notes: "Portable test credential", privateKeyPkcs8: P256_PKCS8 });
+    expect(snapshot.items.some(item => item.kind === "login")).toBe(false);
+  });
+
   /**
    * `analyzePasswordEntry` only skips a passkey entry as PURE_PASSKEY when username, password, url and
    * notes are all blank. One that also carries a username is a login on Android, so it is one here.

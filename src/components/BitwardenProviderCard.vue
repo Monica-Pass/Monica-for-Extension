@@ -190,10 +190,10 @@ function toggleConflicts() {
         <m3e-button v-if="conflicts.length > 2" class="bitwarden-conflict-toggle" variant="text" type="button" :aria-expanded="conflictsExpanded" @click="toggleConflicts">{{ conflictsExpanded ? tr('收起其余冲突') : tr('查看其余 {0} 个冲突', { 0: conflicts.length - 2 }) }}</m3e-button>
       </section>
 
-      <details class="bitwarden-capability-details">
-        <summary><m3e-icon name="info" aria-hidden="true"></m3e-icon><span>{{ tr('支持范围与安全边界') }}</span><m3e-icon class="details-chevron" name="expand_more" aria-hidden="true"></m3e-icon></summary>
+      <m3e-expansion-panel class="bitwarden-capability-details">
+        <span slot="header"><m3e-icon name="info" aria-hidden="true"></m3e-icon><span>{{ tr('支持范围与安全边界') }}</span></span>
         <p>{{ tr('支持登录、卡片、身份、笔记、TOTP、Passkey、SSH、加密附件与安全发送；归档和回收站项目不会进入自动填充。Popup 与内容脚本只收到候选摘要，密钥、令牌、原始 Cipher 和附件只在后台管理边界内解密。') }}</p>
-      </details>
+      </m3e-expansion-panel>
 
       <div class="bitwarden-source-actions">
         <div class="source-actions-primary">
@@ -254,10 +254,6 @@ function toggleConflicts() {
 .bitwarden-conflict-copy small { line-height: 1.4; }
 .bitwarden-conflict-toggle { justify-self: start; }
 .bitwarden-capability-details { border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline)); padding-top: 2px; color: var(--md-sys-color-on-surface-variant, var(--app-muted)); }
-.bitwarden-capability-details summary { min-height: 44px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-weight: 600; }
-.bitwarden-capability-details summary::-webkit-details-marker { display: none; }
-.bitwarden-capability-details summary:focus-visible { outline: 3px solid var(--app-primary); outline-offset: 3px; border-radius: 8px; }
-.bitwarden-capability-details summary > m3e-icon { --m3e-icon-size: 20px; }
 .bitwarden-capability-details p { padding: 0 28px 8px; line-height: 1.5; }
 .bitwarden-source-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .source-actions-primary, .source-actions-routing, .source-actions-account { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
