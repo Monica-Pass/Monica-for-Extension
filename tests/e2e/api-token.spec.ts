@@ -15,10 +15,11 @@ async function start(testInfo: TestInfo) {
 }
 
 async function openApiEditor(page: Page) {
-  await page.getByRole("button", { name: "新建", exact: true }).click();
-  await dialogContent(page, { name: "新建项目" }).getByRole("button", { name: /^API 密钥/ }).click();
+  await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "选择新建类型", exact: true });
+  await menu.getByRole("menuitem", { name: "API 密钥", exact: true }).click();
   await expect(page.getByRole("heading", { name: "添加 API 密钥", exact: true })).toBeVisible();
-  await expect(dialogContent(page, { name: "新建项目" })).toHaveCount(0);
+  await expect(menu).toBeHidden();
 }
 
 test("API keys can be created, edited and unlocked without becoming searchable login secrets", async ({}, testInfo) => {

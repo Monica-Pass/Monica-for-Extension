@@ -72,7 +72,7 @@ onBeforeUnmount(() => {
 
 <template>
   <m3e-split-button class="create-split" variant="filled" size="small" :aria-label="tr('新建项目')">
-    <m3e-button slot="leading-button" class="appbar-create" :aria-label="label" :title="currentItem ? `${tr('新建')} · ${currentItem.label}` : tr('新建项目')" @click="createCurrent">
+    <m3e-button slot="leading-button" class="appbar-create" :aria-label="label" :title="`${tr('新建')} · ${currentItem?.label ?? tr('密码')}`" @click="createCurrent">
       <m3e-icon slot="icon" name="add" />
       <span class="appbar-action-label">{{ tr('新建') }}<span v-if="currentItem" class="create-type-label">{{ currentItem.label }}</span></span>
     </m3e-button>

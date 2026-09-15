@@ -2399,7 +2399,7 @@ function errorCode(error: unknown): string | undefined {
             <div class="appbar-actions">
               <m3e-button v-if="activeSection === 'providers' && syncableBitwardenProviders.length > 1" variant="tonal" :disabled="syncingAllBitwarden || Boolean(activeSyncProviderId)" @click="syncAllBitwarden"><m3e-icon slot="icon" name="sync"></m3e-icon>{{ syncingAllBitwarden ? tr('正在同步') : tr('同步全部') }}</m3e-button>
               <m3e-button v-if="filterableSection" class="appbar-filter" variant="tonal" :aria-label="tr('筛选')" @click="filterDialogOpen = true"><m3e-icon slot="icon" name="tune"></m3e-icon><span class="appbar-action-label">{{ tr('筛选') }}</span><span v-if="hasActiveManagerFilter" class="filter-count">{{ (databaseSourceFilter !== 'all' ? 1 : 0) + (folderFilter !== 'all' ? 1 : 0) + activeQuickFilters.length + (kindFilter ? 1 : 0) }}</span></m3e-button>
-              <CreateSplitButton :context="activeSection" :current-type="currentCreateType" :label="createButtonLabel" @primary="currentCreateType ? selectCreateType(currentCreateType) : openCreateDialog()" @browse="openCreateDialog" @select="selectCreateType" />
+              <CreateSplitButton :context="activeSection" :current-type="currentCreateType" :label="createButtonLabel" @primary="selectCreateType(currentCreateType ?? 'PASSWORD')" @browse="openCreateDialog" @select="selectCreateType" />
             </div>
           </div>
         </header>

@@ -70,13 +70,13 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await expect(dialogContent(page, { name: "连接 Monica Android WebDAV" })).toHaveCount(0);
 
     await page.getByRole("button", { name: /^全部项目/ }).click();
-    await page.getByRole("button", { name: "新建", exact: true }).click();
-    const picker = dialogContent(page, { name: "新建项目" });
-    await expect(picker.getByRole("button", { name: "关闭", exact: true })).toBeVisible();
-    await expect(picker.locator("m3e-list-action")).toHaveCount(11);
-    for (const option of await picker.locator("m3e-list-action").all()) await expect(option).toBeInViewport({ ratio: 1 });
-    await picker.getByRole("button", { name: "关闭", exact: true }).click();
-    await expect(picker).toHaveCount(0);
+    await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
+    const picker = page.getByRole("menu", { name: "选择新建类型", exact: true });
+    await expect(picker).toBeVisible();
+    await expect(picker.getByRole("menuitem")).toHaveCount(11);
+    for (const option of await picker.getByRole("menuitem").all()) await expect(option).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press("Escape");
+    await expect(picker).toBeHidden();
     await page.getByRole("button", { name: "设置与备份" }).click();
     await expectAllRoundedAndClipped(page.locator("main m3e-card"));
     await page.getByRole("button", { name: "密码源" }).click();

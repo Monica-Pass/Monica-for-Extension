@@ -1,4 +1,4 @@
-import { dialogContent } from "./fixtures/material";
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
@@ -26,6 +26,7 @@ test("split primary action follows each page and the menu can create another typ
   const { page, context } = await start(testInfo);
   try {
     for (const [section, button, dialog] of [
+      [/^全部项目/, "新建", "添加登录项"],
       [/^登录项/, "新建", "添加登录项"],
       [/^API 密钥/, "新建", "添加 API 密钥"],
       [/^钱包与身份/, "添加钱包项目", "添加银行卡"],
@@ -38,6 +39,13 @@ test("split primary action follows each page and the menu can create another typ
       await page.keyboard.press("Escape");
       await expect(dialogContent(page)).toHaveCount(0);
     }
+    await navigate(page, /^全部项目/);
+    await page.getByRole("button", { name: "筛选", exact: true }).click();
+    await chooseOption(dialogContent(page, { name: "筛选密码库" }).getByRole("combobox", { name: "项目类型", exact: true }), "identity");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "新建", exact: true }).click();
+    await expect(dialogContent(page, { name: "添加证件", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     await navigate(page, /^登录项/);
     await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
     const menu = page.getByRole("menu", { name: "选择新建类型" });
@@ -121,6 +129,10 @@ test("a narrow enlarged menu stays reachable and transfers focus to the selected
     expect(box.y + box.height).toBeLessThanOrEqual(640);
     const primaryBox = (await page.locator(".appbar-create").boundingBox())!;
     const triggerBox = (await trigger.boundingBox())!;
+    const primarySurface = (await page.locator(".appbar-create .base").first().boundingBox())!;
+    const triggerSurface = (await trigger.locator(".base").first().boundingBox())!;
+    expect(Math.abs(primarySurface.height - triggerSurface.height)).toBeLessThan(1);
+    expect(Math.abs(primarySurface.y - triggerSurface.y)).toBeLessThan(1);
     expect(primaryBox.width).toBeGreaterThanOrEqual(44);
     expect(triggerBox.width).toBeGreaterThanOrEqual(44);
     expect(primaryBox.x + primaryBox.width).toBeLessThanOrEqual(triggerBox.x + 1);

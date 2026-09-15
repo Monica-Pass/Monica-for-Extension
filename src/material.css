@@ -88,9 +88,18 @@ m3e-menu {
   /* @m3e/web 2.5.8 spells this public split-button token "spit".
      Keep both glyphs inside their 24px slots when only text is enlarged. */
   --m3e-spit-button-small-trailing-button-icon-size: 20px;
+  /* Share the inner corner across both halves. The expanded trailing button
+     still uses the library's selected shape and menu animation. */
+  --app-create-inner-shape: 4px;
+  --m3e-split-button-small-inner-corner-size: var(--app-create-inner-shape);
+  --m3e-split-button-small-inner-corner-hover-size: var(--app-create-inner-shape);
+  --m3e-split-button-small-inner-corner-pressed-size: var(--app-create-inner-shape);
 }
+#root .appbar-actions .create-split:is(:hover, :focus-within) { --app-create-inner-shape: 12px; }
 #root .appbar-actions .create-split .appbar-create { min-width: 88px; --m3e-button-leading-space: 18px; --m3e-button-trailing-space: 16px; }
 #root .create-menu-trigger { flex: none; min-width: 48px; min-height: 44px; }
+/* Let the icon half stretch with enlarged or wrapped primary text. */
+#root .create-split .create-menu-trigger { height: auto; align-self: stretch; --m3e-icon-button-container-height: 100%; }
 .create-menu-trigger m3e-icon { transition: transform 180ms var(--motion-ease); }
 .create-menu-trigger[aria-expanded='true'] m3e-icon { transform: rotate(180deg); }
 .create-type-label { margin-inline-start: .3em; }
