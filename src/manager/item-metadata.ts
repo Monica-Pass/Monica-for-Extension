@@ -85,11 +85,11 @@ export function sourceLabel(sourceMode: "browser-local" | "bitwarden" | "android
   return sourceMode === "browser-local" ? tr('浏览器本地') : sourceMode === "bitwarden" ? "Bitwarden" : tr('Android 元数据');
 }
 
-function maskedSuffix(value: string): string {
+export function maskedSuffix(value: string): string {
   const suffix = value.replace(/\s+/g, "").slice(-4);
   return suffix ? `•••• ${suffix}` : "";
 }
 
-function documentLabel(type: IdentityItem["documentType"]): string {
+export function documentLabel(type: IdentityItem["documentType"]): string {
   return ({ ID_CARD: tr('身份证'), PASSPORT: tr('护照'), DRIVER_LICENSE: tr('驾驶证'), SOCIAL_SECURITY: tr('社会保障号'), OTHER: tr('其他证件') } as const)[type];
 }

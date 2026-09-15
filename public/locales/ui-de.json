@@ -1,4 +1,12 @@
 {
+  "下一组": "Nächster Code",
+  "验证码刷新倒计时": "Countdown bis zum nächsten Code",
+  "{0}的更多操作": "Weitere Aktionen für {0}",
+  "有效期 {0}": "Gültig bis {0}",
+  "查看详情": "Details anzeigen",
+  "KeePass 历史": "KeePass-Verlauf",
+  "移到回收站": "In den Papierkorb verschieben",
+  "关闭 Steam 账号": "Steam-Kontobereich schließen",
   "登录项的 Android 标识不唯一或无效，无法同步验证器绑定。": "Die Android-ID des Anmeldeeintrags ist ungültig oder mehrfach vorhanden. Die Authenticator-Verknüpfung kann nicht synchronisiert werden.",
   "验证器不在此 WebDAV 数据库中或已删除，无法同步绑定。": "Der Authenticator fehlt in dieser WebDAV-Datenbank oder wurde gelöscht. Die Verknüpfung kann nicht synchronisiert werden.",
   "Android 的独立验证器只能绑定一个登录项，请先解除重复绑定。": "Jeder Android-Authenticator kann nur mit einem Anmeldeeintrag verknüpft sein. Entfernen Sie zuerst die mehrfachen Verknüpfungen.",

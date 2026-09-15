@@ -1,0 +1,111 @@
+/* Android's compact tiles, using the same Material surfaces and controls as
+   the rest of the manager. The grid adapts to text size as well as viewport. */
+#root .tile-page { min-width: 0; display: grid; gap: 20px; container: tile-page / inline-size; }
+.vault-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: 16px; align-items: stretch; }
+.vault-tile-grid--wallet { grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); }
+#root .vault-tile {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  border-radius: 20px;
+  cursor: pointer;
+  --m3e-card-shape: 20px;
+  --m3e-card-padding: 0px;
+  --m3e-filled-card-container-color: var(--app-surface);
+  transition: background-color var(--motion-fast) ease-out;
+}
+#root .vault-tile:hover { --m3e-filled-card-container-color: color-mix(in srgb, var(--app-primary) 5%, var(--app-surface)); }
+#root .vault-tile:has(.vault-tile-open:focus-within) { --m3e-filled-card-container-color: color-mix(in srgb, var(--app-primary) 8%, var(--app-surface)); }
+.vault-tile-content { --tile-icon-width: 36px; --tile-icon-gap: 10px; --tile-header-gap: 4px; min-width: 0; min-height: 208px; height: 100%; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 16px; container: vault-tile / inline-size; }
+.vault-tile-header { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 4px; }
+#root .vault-tile .vault-tile-focus { position: absolute; inset: 0; z-index: 2; border-radius: inherit; pointer-events: none; --m3e-focus-ring-shape: 20px; }
+#root .vault-tile-open {
+  min-width: 0;
+  width: 100%;
+  --m3e-list-item-leading-space: 0px;
+  --m3e-list-item-trailing-space: 0px;
+  --m3e-list-item-between-space: 10px;
+  --m3e-list-item-one-line-height: max(48px, 3.25rem);
+  --m3e-list-item-two-line-height: max(48px, 3.25rem);
+  --m3e-list-item-three-line-height: max(48px, 3.25rem);
+  --m3e-list-item-one-line-top-space: 0px;
+  --m3e-list-item-one-line-bottom-space: 0px;
+  --m3e-list-item-two-line-top-space: 0px;
+  --m3e-list-item-two-line-bottom-space: 0px;
+  --m3e-list-item-three-line-top-space: 0px;
+  --m3e-list-item-three-line-bottom-space: 0px;
+  --m3e-list-item-container-color: transparent;
+  --m3e-list-item-hover-state-layer-opacity: 0;
+  --m3e-list-item-focus-state-layer-opacity: 0;
+  --m3e-list-item-pressed-state-layer-opacity: 0;
+  --m3e-focus-ring-visibility: hidden;
+}
+/* List-action's internal content flex item has an intrinsic minimum width.
+   Bound the slotted title to the available card space before ellipsizing it. */
+.vault-tile-open > strong, .vault-tile-open > small { display: block; min-width: 0; max-width: max(0px, calc(100cqi - 44px - var(--tile-header-gap) - var(--tile-icon-width) - var(--tile-icon-gap))); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-tile-open > strong { font: 600 1rem/1.5 var(--font-ui); }
+.vault-tile-open > small { color: var(--app-muted); font: 400 .8125rem/1.5 var(--font-ui); }
+.vault-tile-icon { width: 36px; height: 36px; color: var(--app-primary); }
+.vault-tile-icon m3e-icon { --m3e-icon-size: 28px; }
+#root .vault-tile-menu-trigger { width: 44px; height: 44px; --m3e-icon-button-container-height: 44px; --m3e-icon-button-icon-size: 20px; --m3e-icon-button-default-leading-space: 12px; --m3e-icon-button-default-trailing-space: 12px; color: var(--app-muted); }
+.vault-tile-menu { width: min(240px, calc(100vw - 24px)); }
+.vault-tile-remove { --m3e-menu-item-color: var(--md-sys-color-error, #ba1a1a); }
+.vault-tile-footer { display: flex; align-items: center; min-width: 0; margin-top: auto; color: var(--app-muted); font: 400 .75rem/1.5 var(--font-ui); }
+.vault-tile-footer > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wallet-tile-preview { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; }
+.wallet-tile-value { font: 500 clamp(1.375rem, 9cqi, 2rem)/1.3 var(--font-data); font-variant-numeric: tabular-nums; letter-spacing: .015em; overflow-wrap: anywhere; }
+.wallet-tile-value--text { font-family: var(--font-ui); font-size: 1.25rem; letter-spacing: 0; }
+.wallet-tile-person { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; color: var(--app-muted); font: 400 .8125rem/1.5 var(--font-ui); }
+.wallet-tile-person > span { min-width: 0; overflow-wrap: anywhere; }
+.wallet-tile-person > span:last-child:not(:first-child) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vault-tile-code { min-width: 0; }
+#root .totp-code-cell--tile { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; }
+#root .totp-code-cell--tile .otp-copy-button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-width: 0;
+  margin-inline-start: -8px;
+  --m3e-button-leading-space: 8px;
+  --m3e-button-trailing-space: 8px;
+  --m3e-button-shape-round: 12px;
+  --m3e-button-shape-pressed-morph: 12px;
+}
+#root .totp-code-cell--tile .otp-copy-button strong { color: var(--app-primary); font: 600 clamp(1.25rem, 15cqi, 2.375rem)/1.2 var(--font-data); font-variant-numeric: tabular-nums; letter-spacing: .015em; white-space: nowrap; }
+#root .totp-code-cell--tile.otp-code-long .otp-copy-button strong { font-size: clamp(1rem, 11cqi, 2rem); }
+#root .totp-code-cell--tile.otp-expiring .otp-copy-button strong { color: var(--md-sys-color-error, #ba1a1a); }
+#root .totp-code-cell--tile .otp-next-code { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; color: var(--app-muted); }
+.otp-next-code > span { font: 400 .75rem/1.5 var(--font-ui); }
+#root .totp-code-cell--tile .otp-next-code > strong { font: 500 1rem/1.4 var(--font-data); letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#root .totp-code-cell--tile > small { font: 400 .75rem/1.5 var(--font-ui); white-space: normal; }
+#root .totp-code-cell--tile .otp-remaining { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--app-muted); }
+#root .totp-code-cell--tile .otp-copy-status { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.totp-code-cell--tile .otp-copy-status:empty { display: none; }
+.tile-countdown { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 4px 2px; color: var(--app-primary); }
+.tile-countdown m3e-linear-progress-indicator { min-width: 0; --m3e-progress-indicator-color: var(--app-primary); --m3e-progress-indicator-track-color: var(--app-surface-high); --m3e-linear-progress-indicator-thickness: 4px; }
+.tile-countdown > span { min-width: 3.5em; font: 500 .875rem/1.5 var(--font-ui); font-variant-numeric: tabular-nums; text-align: end; }
+.tile-page-empty { min-height: 280px; border-radius: 20px; background: var(--app-surface); }
+
+#root .material-dialog.steam-account-dialog { --m3e-dialog-min-width: min(920px, calc(100vw - 24px)); --m3e-dialog-max-width: min(1100px, calc(100vw - 24px)); }
+.steam-dialog-heading { display: flex; align-items: center; gap: 12px; }
+.steam-dialog-heading > m3e-icon { flex: none; color: var(--app-primary); --m3e-icon-size: 28px; }
+.steam-dialog-heading > div { min-width: 0; }
+.steam-dialog-heading h2 { margin: 0; font: 500 1.25rem/1.4 var(--font-ui); overflow-wrap: anywhere; }
+.steam-dialog-heading p { margin: 4px 0 0; color: var(--app-muted); font: 400 .875rem/1.5 var(--font-ui); overflow-wrap: anywhere; }
+.steam-account-header--compact { padding: 16px; border-radius: 16px; background: var(--app-surface-high); flex-wrap: wrap; }
+.steam-account-dialog .steam-account-panel { padding-block: 4px 16px; }
+.steam-account-dialog .steam-account-header { overflow-wrap: anywhere; }
+.steam-account-dialog footer[slot='actions'] { display: flex; justify-content: flex-end; gap: 8px; }
+
+@container tile-page (max-width: 38rem) {
+  .vault-tile-grid:not(.vault-tile-grid--wallet) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .vault-tile-content { --tile-icon-width: 28px; --tile-icon-gap: 8px; --tile-header-gap: 0px; min-height: 184px; padding: 12px; gap: 12px; }
+  .vault-tile-icon { width: 28px; height: 32px; }
+  #root .vault-tile-open { --m3e-list-item-between-space: 8px; }
+  .vault-tile-header { gap: 0; }
+}
+@container tile-page (max-width: 21rem) {
+  .vault-tile-grid:not(.vault-tile-grid--wallet) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #root .vault-tile { transition: none; }
+}

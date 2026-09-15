@@ -14,7 +14,7 @@ type SteamTab = "approvals" | "inventory" | "market" | "devices";
 type InventoryItem = SteamInventoryPage["items"][number];
 type MarketListing = SteamMarketListingsPage["items"][number];
 
-const props = defineProps<{ item: TotpItem; query?: string }>();
+const props = defineProps<{ item: TotpItem; query?: string; compactHeader?: boolean }>();
 const activeTab = ref<SteamTab>("approvals");
 const busy = ref("");
 const error = ref("");
@@ -318,9 +318,9 @@ function formatDeviceTime(seconds?: number): string {
 
 <template>
   <article class="steam-account-panel">
-    <header class="steam-account-header">
-      <div><span class="steam-account-label">Steam Guard</span><h2>{{ item.title }}</h2><small>{{ item.steamId || tr('SteamID 未识别') }}</small></div>
-      <div class="steam-account-visual"><video v-if="profileBackground" :src="profileBackground.preferredUrl" autoplay muted loop playsinline :aria-label="tr('Steam 迷你资料背景')"></video><m3e-icon-button v-else :aria-label="tr('加载 Steam 迷你资料背景')" :title="tr('加载 Steam 迷你资料背景')" :disabled="Boolean(busy) || profileLoaded" @click="loadProfileBackground"><m3e-icon name="animated_images"></m3e-icon></m3e-icon-button><TotpCodeCell :item="item" /></div>
+    <header class="steam-account-header" :class="{ 'steam-account-header--compact': compactHeader }">
+      <div><span class="steam-account-label">Steam Guard</span><h2 v-if="!compactHeader">{{ item.title }}</h2><small>{{ item.steamId || tr('SteamID 未识别') }}</small></div>
+      <div class="steam-account-visual"><video v-if="profileBackground" :src="profileBackground.preferredUrl" autoplay muted loop playsinline :aria-label="tr('Steam 迷你资料背景')"></video><m3e-icon-button v-else :aria-label="tr('加载 Steam 迷你资料背景')" :title="tr('加载 Steam 迷你资料背景')" :disabled="Boolean(busy) || profileLoaded" @click="loadProfileBackground"><m3e-icon name="animated_images"></m3e-icon></m3e-icon-button><TotpCodeCell :item="item" allow-use /></div>
     </header>
 
     <m3e-tabs variant="primary" stretch class="steam-tabs-m3" :aria-label="tr('Steam 账号功能')">

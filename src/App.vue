@@ -29,7 +29,9 @@ import Mdbx2BatchTransferDialog from "./components/Mdbx2BatchTransferDialog.vue"
 import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
 import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
 import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
-import SteamNetworkActions from "./components/SteamNetworkActions.vue";
+const SteamAccountDialog = defineAsyncComponent(() => import("./components/SteamAccountDialog.vue"));
+import VaultItemTile from "./components/VaultItemTile.vue";
+import OtpTileCountdown from "./components/OtpTileCountdown.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import VaultItemDetail from "./components/VaultItemDetail.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
@@ -42,7 +44,8 @@ import type { LoginForm } from "./manager/login-form";
 import { normalizeHost } from "./core/matching";
 import { createLoginItem, isLoginItem, type ApiTokenItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem, type VaultItemKind } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
-import { advanceHotpCounter, findBoundTotpItem } from "./core/login-otp";
+import { advanceHotpCounter, findBoundTotpItem, parametersFromItem } from "./core/login-otp";
+import { otpSecondsRemaining } from "./core/totp";
 import { createCode128DataUrl } from "./core/barcode";
 import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
 import { activeScheme, themeColor, useThemePreferences } from "./lib/theme";
@@ -151,6 +154,7 @@ const vaultEditorOpen = ref(false);
 const vaultEditorItem = ref<VaultItem | undefined>();
 const vaultEditorKind = ref<EditableVaultKind>("card");
 const vaultDetailItem = ref<VaultItem | undefined>();
+const steamAccountId = ref<string>();
 const editingId = ref<string | null>(null);
 const editingCredentialSnapshot = shallowRef<LoginItem>();
 const specialQrDataUrl = ref("");
@@ -266,6 +270,8 @@ const steamItems = vaultDerived(() => vaultItems.value.flatMap((item) => {
   const projected = item.kind === "login" ? projectSteamItem(item) : undefined;
   return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
 }));
+const selectedSteamItem = computed(() => steamItems.value.find(item => item.id === steamAccountId.value));
+watch(selectedSteamItem, item => { if (!item) steamAccountId.value = undefined; });
 const passkeyItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
 const databaseFolders = vaultDerived(() => {
   const categories = new Map<string, { key: string; label: string }>();
@@ -336,6 +342,17 @@ const listTotal = computed(() => {
   }
 });
 const listPagination = useListPagination(() => listTotal.value, () => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, kindFilter.value]));
+const visibleTileItems = computed(() => listPagination.slice(activeSection.value === "steam" ? filteredSteamItems.value : filteredSectionItems.value));
+const tileOtpPeriod = computed(() => {
+  const periods = new Set<number>();
+  for (const item of visibleTileItems.value) {
+    if (item.kind !== "totp" || item.otpType === "HOTP") continue;
+    try { periods.add(otpSecondsRemaining(parametersFromItem(item), 0)); } catch { /* Invalid entries render their own unavailable state. */ }
+  }
+  // Share a countdown only when every timed tile follows the same window.
+  // Mixed periods retain their individual timers, including Steam/mOTP rules.
+  return periods.size === 1 ? [...periods][0] : undefined;
+});
 onMounted(initialize);
 let disconnectLiveVault: (() => void) | undefined;
 watch(editorOpen, open => { if (!open) editingCredentialSnapshot.value = undefined; });
@@ -407,7 +424,7 @@ function handleNavigationKeydown(event: KeyboardEvent) {
   }
 }
 
-const hasOpenDialog = computed(() => createDialogOpen.value || apiTokenEditorOpen.value || filterDialogOpen.value || editorOpen.value || vaultEditorOpen.value || Boolean(vaultDetailItem.value) || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
+const hasOpenDialog = computed(() => createDialogOpen.value || apiTokenEditorOpen.value || filterDialogOpen.value || editorOpen.value || vaultEditorOpen.value || Boolean(vaultDetailItem.value) || Boolean(selectedSteamItem.value) || mdbx2DialogOpen.value || mdbx2BatchTransferDialogOpen.value || webDavDialogOpen.value || bitwardenDialogOpen.value || keePassDialogOpen.value || autofillSitePolicyDialogOpen.value || Boolean(bitwardenFoldersProvider.value) || Boolean(bitwardenCollectionsProvider.value) || Boolean(keePassGroupsProvider.value) || Boolean(keePassHistoryItem.value) || exportBackupDialogOpen.value || attachmentDialogOpen.value || Boolean(confirmationDialog.value));
 let dialogTrigger: HTMLElement | null = null;
 
 watch(hasOpenDialog, async (open, wasOpen) => {
@@ -593,6 +610,7 @@ function clearVaultView() {
   lockedAutofillIds.value = [];
   vaultDetailItem.value = undefined;
   vaultEditorItem.value = undefined;
+  steamAccountId.value = undefined;
   apiTokenEditorItem.value = undefined;
   apiTokenEditorOpen.value = false;
   createDialogOpen.value = false;
@@ -1142,6 +1160,31 @@ function openVaultEdit(item: VaultItem) {
 
 function openVaultDetail(item: VaultItem) {
   vaultDetailItem.value = item;
+}
+
+function runTileAction(action: "details" | "edit" | "remove" | "attachments" | "history", item: VaultItem) {
+  // Steam tiles may be projections of Android/Bitwarden logins. Editing and
+  // deletion must target the canonical item, never persist the display shape.
+  const source = vaultItems.value.find(source => source.id === item.id);
+  if (!source) return;
+  switch (action) {
+    case "details": return openVaultDetail(source);
+    case "edit": return source.kind === "login" ? openEdit(source) : openVaultEdit(source);
+    case "remove": return removeVaultItem(source);
+    case "attachments": return openAttachmentDialog(source);
+    case "history": return openKeePassHistory(source);
+  }
+}
+
+function openTile(item: VaultItem) {
+  if (activeSection.value === "steam") steamAccountId.value = item.id;
+  else runTileAction("details", item);
+}
+
+function showSteamItemDetails() {
+  const item = selectedSteamItem.value;
+  steamAccountId.value = undefined;
+  if (item) runTileAction("details", item);
 }
 
 function editFromDetail(item: VaultItem) {
@@ -2436,9 +2479,12 @@ function errorCode(error: unknown): string | undefined {
           </m3e-card>
         </section>
 
-        <section v-else-if="activeSection === 'steam'" class="steam-page">
-          <m3e-card v-for="item in listPagination.slice(filteredSteamItems)" :key="item.id" variant="filled" class="motion-card steam-account-card"><div slot="content"><SteamNetworkActions :item="item" :query="query" /></div></m3e-card>
-          <div v-if="!filteredSteamItems.length" class="empty-state steam-page-empty"><m3e-icon name="sports_esports"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配的 Steam 项目') : tr('还没有 Steam 验证器') }}</h2><p>{{ query || hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从 Monica Android 同步，或在动态验证码中添加 Steam Guard。') }}</p><m3e-button v-if="!query && !hasActiveManagerFilter" variant="filled" :aria-label="tr('添加 Steam Guard 验证器')" @click="openVaultCreate('totp')">{{ tr('添加 Steam') }}</m3e-button></div>
+        <section v-else-if="activeSection === 'wallet' || activeSection === 'totp' || activeSection === 'steam'" class="tile-page" :aria-label="sectionTitle(activeSection)">
+          <OtpTileCountdown v-if="tileOtpPeriod" :period="tileOtpPeriod" />
+          <div v-if="visibleTileItems.length" class="vault-tile-grid" :class="{ 'vault-tile-grid--wallet': activeSection === 'wallet' }">
+            <VaultItemTile v-for="item in visibleTileItems" :key="item.id" :item="item" :provider-label="providerName(item)" :shared-period="tileOtpPeriod" :has-attachments="Boolean(attachmentProvidersFor(item).length)" :has-history="Boolean(keePassHistoryProvidersFor(item).length)" :consume-otp="advanceHotpItem" @open="openTile(item)" @details="runTileAction('details', item)" @edit="runTileAction('edit', item)" @remove="runTileAction('remove', item)" @attachments="runTileAction('attachments', item)" @history="runTileAction('history', item)" />
+          </div>
+          <div v-else class="empty-state tile-page-empty"><m3e-icon :name="activeSection === 'steam' ? 'sports_esports' : activeSection === 'wallet' ? 'wallet' : 'timer'" /><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'steam' ? tr('还没有 Steam 验证器') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p><m3e-button v-if="activeSection === 'steam' && !query && !hasActiveManagerFilter" variant="filled" :aria-label="tr('添加 Steam Guard 验证器')" @click="openVaultCreate('totp')">{{ tr('添加 Steam') }}</m3e-button></div>
         </section>
 
         <GeneratorPanel v-else-if="activeSection === 'generator'" :providers="webDavProviders" />
@@ -2471,7 +2517,7 @@ function errorCode(error: unknown): string | undefined {
           </m3e-card>
         </section>
 
-        <section v-else-if="activeSection === 'vault' || activeSection === 'api-tokens' || activeSection === 'wallet' || activeSection === 'notes' || activeSection === 'totp' || activeSection === 'passkeys'" class="content-grid">
+        <section v-else-if="activeSection === 'vault' || activeSection === 'api-tokens' || activeSection === 'notes' || activeSection === 'passkeys'" class="content-grid">
           <m3e-card variant="filled" class="data-card vault-list-card motion-card">
             <div v-if="filteredSectionItems.length" slot="content" class="item-grid">
               <article v-for="item in listPagination.slice(filteredSectionItems)" :key="item.id" class="item-card row-clickable" @click="openVaultDetail(item)">
@@ -2670,6 +2716,8 @@ function errorCode(error: unknown): string | undefined {
     <Transition name="dialog" mode="out-in" :css="lifecycle === 'unlocked'" @after-enter="focusActiveDialog" @after-leave="restoreDialogFocus">
     <CreateItemDialog v-if="createDialogOpen" @cancel="createDialogOpen = false" @select="selectCreateType" />
     <ApiTokenEditor v-else-if="apiTokenEditorOpen" :item="apiTokenEditorItem" :providers="providers" :save-item="saveVaultItem" @cancel="apiTokenEditorOpen = false; apiTokenEditorItem = undefined" />
+
+    <SteamAccountDialog v-else-if="selectedSteamItem" :key="selectedSteamItem.id" :item="selectedSteamItem" @close="steamAccountId = undefined" @details="showSteamItemDetails" />
 
     <VaultItemDetail v-else-if="vaultDetailItem" :key="vaultDetailItem.id" :item="vaultDetailItem" :items="[...vaultItems, ...archivedItems]" :providers="providers" :consume-otp="advanceHotpItem" @close="vaultDetailItem = undefined" @edit="editFromDetail" />
 

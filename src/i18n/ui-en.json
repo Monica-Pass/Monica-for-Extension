@@ -2986,5 +2986,13 @@
   "选择新建类型": "Choose item type",
   "更多信息": "More information",
   "清除搜索": "Clear search",
-  "网站域名": "Website domain"
+  "网站域名": "Website domain",
+  "下一组": "Next",
+  "验证码刷新倒计时": "Code refresh countdown",
+  "{0}的更多操作": "More actions for {0}",
+  "有效期 {0}": "Expires {0}",
+  "查看详情": "View details",
+  "KeePass 历史": "KeePass history",
+  "移到回收站": "Move to recycle bin",
+  "关闭 Steam 账号": "Close Steam account"
 }

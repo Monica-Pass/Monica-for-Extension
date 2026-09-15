@@ -105,8 +105,14 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+async function expandFieldGroup(detail: Locator, fieldLabel: string) {
+  const panel = detail.locator("m3e-expansion-panel.detail-disclosure").filter({ has: detail.page().locator("dt").getByText(fieldLabel, { exact: true }) });
+  if (await panel.count()) await panel.locator('[slot="header"]').click();
+}
+
 test("protected duplicate fields reveal independently, copy exactly and reset on reopening", async ({ manager }) => {
   const detail = await openItem(manager, login.id);
+  await expandFieldGroup(detail, "恢复密钥");
   const recoveryRows = detail.locator(".detail-row").filter({ has: manager.locator("dt", { hasText: /^恢复密钥$/ }) });
   await expect(recoveryRows).toHaveCount(2);
   await expect(recoveryRows.nth(0).locator("code")).toHaveText("••••••••");
@@ -121,6 +127,7 @@ test("protected duplicate fields reveal independently, copy exactly and reset on
   await expect(detail).toHaveCount(0);
   await expect(manager.getByRole("button", { name: `查看${login.title}详情`, exact: true })).toBeFocused();
   await openItem(manager, login.id);
+  await expandFieldGroup(detail, "恢复密钥");
   await expect(recoveryRows.nth(0).locator("code")).toHaveText("••••••••");
   await detail.getByRole("button", { name: "编辑", exact: true }).click();
   await expect(dialogContent(manager, { name: "编辑登录项", exact: true })).toBeVisible();
@@ -130,6 +137,7 @@ test("protected duplicate fields reveal independently, copy exactly and reset on
 test("short secrets stay fully masked, and special details expose their actual fields", async ({ manager }) => {
   let detail = await openItem(manager, "layout-card");
   for (const label of ["安全码", "PIN"]) {
+    await expandFieldGroup(detail, label);
     const row = detail.locator(".detail-row").filter({ has: manager.locator("dt", { hasText: new RegExp(`^${label}$`) }) });
     await expect(row.locator("code")).toHaveText("••••••••");
     await row.getByRole("button", { name: `显示${label}` }).click();
@@ -148,11 +156,13 @@ test("short secrets stay fully masked, and special details expose their actual f
   expect((await manager.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n")).toBe(privateKey);
   await detail.getByRole("button", { name: "关闭", exact: true }).click();
   detail = await openItem(manager, "layout-note");
+  await expandFieldGroup(detail, "笔记恢复码");
   await detail.getByRole("button", { name: "复制内容", exact: true }).click();
   expect((await manager.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n")).toBe(noteContent);
   await expect(detail.getByRole("button", { name: "显示笔记恢复码" })).toBeVisible();
   await detail.getByRole("button", { name: "关闭", exact: true }).click();
   detail = await openItem(manager, "layout-passkey");
+  await expandFieldGroup(detail, "可发现凭据");
   await expect(detail.getByText("可发现凭据", { exact: true })).toBeVisible();
   await expect(detail.getByText("需要用户验证", { exact: true })).toBeVisible();
   await expect(detail.getByRole("button", { name: "编辑", exact: true })).toHaveCount(0);

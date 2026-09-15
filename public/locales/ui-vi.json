@@ -1,4 +1,12 @@
 {
+  "下一组": "Mã tiếp theo",
+  "验证码刷新倒计时": "Thời gian làm mới mã",
+  "{0}的更多操作": "Thao tác khác cho {0}",
+  "有效期 {0}": "Hết hạn {0}",
+  "查看详情": "Xem chi tiết",
+  "KeePass 历史": "Lịch sử KeePass",
+  "移到回收站": "Chuyển vào thùng rác",
+  "关闭 Steam 账号": "Đóng bảng tài khoản Steam",
   "登录项的 Android 标识不唯一或无效，无法同步验证器绑定。": "ID Android của mục đăng nhập không hợp lệ hoặc bị trùng. Không thể đồng bộ liên kết trình xác thực.",
   "验证器不在此 WebDAV 数据库中或已删除，无法同步绑定。": "Trình xác thực không có trong cơ sở dữ liệu WebDAV này hoặc đã bị xóa. Không thể đồng bộ liên kết.",
   "Android 的独立验证器只能绑定一个登录项，请先解除重复绑定。": "Mỗi trình xác thực Android chỉ có thể liên kết với một mục đăng nhập. Hãy xóa các liên kết trùng trước.",
