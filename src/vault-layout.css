@@ -46,6 +46,17 @@
 #root .vault-list-card .item-card:first-child { border-start-start-radius: 12px; border-start-end-radius: 12px; }
 #root .vault-list-card .item-card:last-child { border-end-start-radius: 12px; border-end-end-radius: 12px; }
 #root .vault-list-card .item-card:is(:hover, :focus-within) { background: var(--app-surface-high); transform: none; }
+#root .vault-list-card .row-clickable {
+  position: relative;
+  transition: background-color 160ms var(--motion-ease);
+}
+/* The row owns the state surface. Its title remains the keyboard action,
+   while edit/delete keep their own independent buttons and focus rings. */
+#root .vault-list-card .vault-row-focus {
+  border-radius: inherit;
+  --m3e-focus-ring-color: var(--app-primary);
+  z-index: 1;
+}
 #root .vault-list-card :is(.item-card-main, .row-title) {
   min-width: 0;
   width: 100%;
@@ -55,6 +66,11 @@
   --m3e-list-item-one-line-height: 48px;
   --m3e-list-item-two-line-height: 48px;
   --m3e-list-item-three-line-height: 48px;
+  --m3e-list-item-container-color: transparent;
+  --m3e-list-item-hover-state-layer-opacity: 0;
+  --m3e-list-item-focus-state-layer-opacity: 0;
+  --m3e-list-item-pressed-state-layer-opacity: 0;
+  --m3e-focus-ring-visibility: hidden;
 }
 #root .vault-list-card :is(.item-card-main, .row-title) > strong { font-size: 1rem; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
 #root .vault-list-card :is(.item-card-main, .row-title) > small { font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
@@ -72,6 +88,8 @@
 #root .vault-list-card .credential-table tbody tr:first-child { border-start-start-radius: 12px; border-start-end-radius: 12px; }
 #root .vault-list-card .credential-table tbody tr:last-child { border-end-start-radius: 12px; border-end-end-radius: 12px; }
 #root .vault-list-card .credential-table tbody tr:is(:hover, :focus-within) { background: var(--app-surface-high); }
+#root .vault-list-card .credential-table tbody tr > td { background: transparent; box-shadow: none; }
+#root .vault-list-card .credential-table .item-cell { position: static; border-radius: inherit; }
 #root .vault-list-card .credential-table .item-cell { padding: 10px 16px; }
 #root .vault-list-card .credential-table .action-cell { padding-inline-end: 16px; }
 #root .vault-list-card .credential-table .row-title {
@@ -111,4 +129,8 @@
   #root .vault-list-card .item-card-actions { max-width: 88px; }
   #root .vault-list-card .credential-table .item-cell { padding: 8px 12px 4px; }
   #root .vault-list-card .credential-table .action-cell { padding: 0 12px 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root .vault-list-card .row-clickable { transition: none; }
 }

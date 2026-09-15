@@ -57,10 +57,13 @@ img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; obje
 #root :is(.settings-list-card, .bitwarden-provider-card, .source-card) { border-radius: 24px; --m3e-card-shape: 24px; }
 .boundary-row, .security-note { background: var(--app-surface-high); border: 0; border-radius: 16px; color: var(--app-muted); }
 .sr-status:not(:empty) { position: static; width: auto; height: auto; clip: auto; clip-path: none; margin: 0 0 16px; padding: 12px 16px; background: var(--app-selected); border-radius: 16px; font-size: .875rem; white-space: normal; }
-.login-card { border-radius: 28px; }
+.login-card { border-radius: 28px; --m3e-card-container-shape: 28px; }
+/* The card already pads its content slot; do not subtract that space twice. */
+.login-card > [slot='content'] { inline-size: 100%; }
+.login-card .security-note { border: 0; background: transparent; min-height: 24px; }
 .login-brand { gap: 14px; align-items: center; }
 .login-heading h1 { font-weight: 500; letter-spacing: -.025em; }
-.login-stack { gap: 24px; }
+.login-stack { gap: 20px; }
 .locked-autofill-option { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 0; border-radius: 16px; background: var(--app-surface-high); }
 .locked-autofill-option > span { display: grid; gap: 8px; min-width: 0; }
 .locked-autofill-option strong { font-size: .875rem; font-weight: 500; }

@@ -123,6 +123,11 @@ m3e-menu {
    stylesheet rules that would otherwise override their slotted native inputs. */
 m3e-form-field { width: 100%; min-width: 0; max-width: 100%; }
 m3e-form-field.field { display: inline-flex; gap: 0; }
+/* m3e-canvas textField uses a 16px outline shape. The M3E component owns its
+   56px default height, floating label, validation and focus treatment. */
+m3e-form-field.auth-password-field {
+  --m3e-outlined-form-field-container-shape: 16px;
+}
 #root m3e-form-field :is(input, textarea, select),
 #popup-root m3e-form-field :is(input, textarea, select) {
   min-width: 0; min-height: 0; max-width: 100%; width: 100%;

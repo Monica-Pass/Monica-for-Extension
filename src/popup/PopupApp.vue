@@ -339,7 +339,7 @@ function isSensitivePageAllowed(raw: string): boolean {
         <ListPagination :page="matchPagination.page.value" :total="matches.length" :page-size="20" target="popup-locked-matches" @change="matchPagination.change" /></section>
       <form class="popup-unlock" @submit.prevent="unlock">
         <span class="unlock-icon"><m3e-icon name="lock"></m3e-icon></span><div><strong>{{ tr('密码库已锁定') }}</strong><small>{{ matches.length ? tr('解锁可使用验证码、Passkey 和其他项目。') : tr('解锁以使用密码库，或先在管理页为该账号开启免解锁填写。') }}</small></div>
-        <m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('主密码（设备密钥模式留空）') }}</label><input v-model="masterPassword" :aria-label="tr('主密码')" type="password" autocomplete="current-password" :autofocus="!matches.length" /></m3e-form-field>
+        <m3e-form-field v-field-label variant="outlined" hide-required-marker hide-subscript="never" class="auth-password-field"><label slot="label">{{ tr('主密码') }}</label><input v-model="masterPassword" :aria-label="tr('主密码')" type="password" autocomplete="current-password" :autofocus="!matches.length" /><span slot="hint">{{ tr('设备密钥模式可留空解锁。') }}</span></m3e-form-field>
         <m3e-button variant="filled" type="submit" :disabled="unlocking">{{ unlocking ? tr('解锁中…') : tr('解锁') }}</m3e-button>
         <m3e-button variant="text" type="button" :disabled="unlocking" @click="openManager"><m3e-icon slot="icon" name="fingerprint"></m3e-icon>{{ tr('在管理页使用 Windows Hello') }}</m3e-button>
       </form>
