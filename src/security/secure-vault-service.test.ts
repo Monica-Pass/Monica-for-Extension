@@ -241,12 +241,13 @@ describe("encrypted vault", () => {
       isDefaultSaveTarget: false,
       config: {
         fileName: "personal.kdbx",
+        databaseId: "7",
         protectionMode: "password-and-key-file",
         password: "keepass-password-secret",
         keyFile: "keepass-key-secret"
       }
     });
-    expect(keePass.config).toEqual({ fileName: "personal.kdbx", protectionMode: "password-and-key-file" });
+    expect(keePass.config).toEqual({ fileName: "personal.kdbx", databaseId: 7, protectionMode: "password-and-key-file" });
     expect(JSON.stringify(await service.listProviders())).not.toMatch(/keepass-password-secret|keepass-key-secret/);
 
     const remoteKeePass = await service.upsertProvider({
@@ -472,6 +473,8 @@ describe("encrypted vault", () => {
     await service.setup("keep local conflict password");
     await service.upsertProvider({ id: "webdav", kind: "monica-webdav", name: "WebDAV", enabled: true, isDefaultSaveTarget: false, config: {} });
     const baseline = createLoginItem({ title: "Conflict", password: "baseline", uris: ["example.com"], providerRefs: [{ providerId: "webdav", remoteId: "42", revision: "2026-07-15T01:00:00.000Z" }] });
+    // Remote identity is adopted by authenticated sync, not supplied by a new UI draft.
+    await service.applyProviderSync("webdav", [baseline]);
     const local = await service.upsertItem({ ...baseline, password: "local-newer" });
     const remote = { ...local, password: "remote-newer", updatedAt: "2026-07-15T02:00:00.000Z" };
     await service.applyProviderSync("webdav", [local], { lastError: "发现冲突" }, [{ itemId: local.id, reason: "双方均已修改", local, remote }]);
@@ -850,12 +853,14 @@ describe("encrypted vault", () => {
     await service.upsertProvider(account);
     const local = await service.upsertItem(createLoginItem({ title: "First WebDAV item", password: "secret", uris: ["webdav.example"], providerRefs: [{ providerId: account.id }] }));
     const snapshot = structuredClone((await service.readState()).items);
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    let uploaded: Uint8Array | undefined, uploadedPath = "";
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method || "GET";
       const headers = new Headers(init?.headers);
-      if (method === "PROPFIND" && headers.get("Depth") === "1") return new Response(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`, { status: 207 });
+      if (method === "PROPFIND" && headers.get("Depth") === "1") return new Response(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">${uploaded ? `<d:response><d:href>${uploadedPath}</d:href><d:propstat><d:prop><d:getetag>"created"</d:getetag></d:prop></d:propstat></d:response>` : ""}</d:multistatus>`, { status: 207 });
       if (method === "PROPFIND") return new Response(null, { status: 207 });
-      if (method === "PUT") return new Response(null, { status: 201, headers: { etag: '"created"' } });
+      if (method === "PUT") { uploaded = new Uint8Array(await new Response(init?.body).arrayBuffer()); uploadedPath = new URL(String(input)).pathname; return new Response(null, { status: 201, headers: { etag: '"created"' } }); }
+      if (method === "GET" && uploaded) return new Response(Uint8Array.from(uploaded), { headers: { etag: '"created"' } });
       throw new Error(`Unexpected ${method}`);
     }) as unknown as typeof fetch;
 

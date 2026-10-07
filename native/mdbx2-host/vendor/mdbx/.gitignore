@@ -1,0 +1,2 @@
+# These upstream synthetic golden fixtures are source test assets, not user vaults.
+!**/*.mdbx

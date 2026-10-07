@@ -1,4 +1,5 @@
 import * as kdbxweb from "kdbxweb";
+import { KEEPASS_OTP_FIELD_NAMES } from "./keepass-field-registry";
 import type { CardItem, SecureCustomField, TotpItem, VaultItem } from "../../core/model";
 import {
   monicaItemDataToVaultItem,
@@ -19,7 +20,7 @@ import {
   type KeePassEntryFields,
   type KeePassEntryFieldValue
 } from "./keepass-login-codec";
-import { keePassTotpFieldsFor, parseKeePassTotpFields, KEEPASS_TOTP_FIELDS, type KeePassTotpData } from "./keepass-totp-codec";
+import { keePassTotpFieldsFor, parseKeePassTotpFields, parseKeePassNativeTotpFields, KEEPASS_TOTP_FIELDS, type KeePassTotpData } from "./keepass-totp-codec";
 
 /**
  * Port of the secure-item half of Android `utils/KeePassKdbxService.kt` (SHA 9930d8d8):
@@ -181,7 +182,7 @@ export function readKeePassSecureItemFields(fields: KeePassEntryFields): KeePass
  * title, username and URL supplying the issuer, account name and link the bare fields do not carry.
  */
 export function readKeePassEntryTotp(fields: KeePassEntryFields): KeePassTotpData | undefined {
-  return parseKeePassTotpFields({
+  const input = {
     otp: keePassFieldValue(fields, KEEPASS_TOTP_FIELDS.otp),
     seed: keePassFieldValue(fields, KEEPASS_TOTP_FIELDS.seed, "TOTPSeed"),
     settings: keePassFieldValue(fields, KEEPASS_TOTP_FIELDS.settings, "TOTPSettings"),
@@ -193,7 +194,10 @@ export function readKeePassEntryTotp(fields: KeePassEntryFields): KeePassTotpDat
     issuer: keePassFieldValue(fields, "Title"),
     accountName: keePassFieldValue(fields, "UserName"),
     link: keePassFieldValue(fields, "URL")
-  });
+  };
+  const uri = input.otp.includes("://") ? parseKeePassTotpFields({ otp: input.otp, issuer: input.issuer, accountName: input.accountName, link: input.link }) : undefined;
+  const get = (name: string) => keePassFieldValue(fields, name);
+  return uri || parseKeePassNativeTotpFields(get, "TimeOtp", input) || parseKeePassTotpFields(input) || parseKeePassNativeTotpFields(get, "HmacOtp", input);
 }
 
 /**
@@ -271,7 +275,6 @@ export function readKeePassSecureItemCustomFields(fields: KeePassEntryFields): S
     if (!key || key.startsWith("_etm_")) continue;
     if (RESERVED_CARD_FIELD_KEYS.has(key.toLowerCase())) continue;
     const text = keePassFieldText(value);
-    if (!text) continue;
     const isProtected = isKeePassFieldProtected(value);
     custom.push({ name: key, value: text, protected: isProtected, fieldType: isProtected ? "HIDDEN" : "TEXT" });
   }
@@ -280,6 +283,7 @@ export function readKeePassSecureItemCustomFields(fields: KeePassEntryFields): S
 
 export interface KeePassSecureItemWriteInput {
   item: VaultItem;
+  existingFields?: KeePassEntryFields;
   /** Android's `SecureItem.id`; absent for an item the browser created. */
   monicaSecureItemId?: number;
 }
@@ -295,7 +299,10 @@ export function buildKeePassSecureItemFields(
   const itemType = monicaItemTypeForKind(item.kind);
   if (!itemType) return undefined;
 
-  const itemData = vaultItemToMonicaItemData(item) ?? "";
+  const originalData = input.existingFields && keePassFieldValue(input.existingFields, KEEPASS_SECURE_ITEM_FIELDS.itemData);
+  const itemData = vaultItemToMonicaItemData(item, originalData || undefined) ?? "";
+  if (item.kind === "card" && item.cardFace) throw new Error("当前 Android KeePass 银行卡写入链不保存卡面配置，请使用 MDBX 或 Bitwarden 保存完整卡面。");
+  if (item.kind === "card" && item.customFields?.some((field) => field.fieldType === "BOOLEAN")) throw new Error("当前 Android KeePass 银行卡字段不能保留 BOOLEAN 类型，请使用 MDBX 或 Bitwarden 保存完整字段。");
   const fields = new Map<string, KeePassEntryFieldValue>();
   fields.set("Title", item.title);
   fields.set("UserName", "");
@@ -308,6 +315,7 @@ export function buildKeePassSecureItemFields(
 
   if (item.kind === "card") {
     appendBankCardFields(fields, item);
+    if (originalData) fields.set(KEEPASS_SECURE_ITEM_FIELDS.itemData, kdbxweb.ProtectedValue.fromString(itemData));
   } else {
     fields.set(KEEPASS_SECURE_ITEM_FIELDS.itemData, kdbxweb.ProtectedValue.fromString(itemData));
     if (item.kind === "totp") appendTotpFields(fields, item);
@@ -315,6 +323,8 @@ export function buildKeePassSecureItemFields(
 
   if (input.monicaSecureItemId !== undefined && input.monicaSecureItemId > 0) {
     fields.set(KEEPASS_SECURE_ITEM_FIELDS.id, String(input.monicaSecureItemId));
+  } else if (input.existingFields?.has(KEEPASS_SECURE_ITEM_FIELDS.id)) {
+    fields.set(KEEPASS_SECURE_ITEM_FIELDS.id, input.existingFields.get(KEEPASS_SECURE_ITEM_FIELDS.id)!);
   }
   return fields;
 }
@@ -333,7 +343,7 @@ export function buildKeePassSecureItemPatch(
     input.item.kind === "totp"
       ? (name: string) => isSecureItemOverlayField(name) || isKeePassTotpField(name)
       : isSecureItemOverlayField;
-  return createKeePassFieldPatch(replacementFields, removeManagedField, [...replacementFields.keys()]);
+  return createKeePassFieldPatch(replacementFields, removeManagedField, [...replacementFields.keys(), ...(input.item.kind === "totp" ? KEEPASS_OTP_FIELD_NAMES : [])]);
 }
 
 /**
@@ -392,8 +402,7 @@ function appendSecureItemCustomFields(
 
 /**
  * `appendKeePassTotpFields`. `otp` and `TOTP Seed` are protected; the rest are plain. Steam, Yandex
- * and mOTP are projected as `OTP Type: TOTP` because that is all a KeePass client can generate — the
- * real type stays in `MonicaItemData`, so a round-trip through Monica does not downgrade the item.
+ * and mOTP retain extension URI/type markers without advertising a different native generator.
  */
 function appendTotpFields(fields: Map<string, KeePassEntryFieldValue>, item: TotpItem): void {
   const projected = keePassTotpFieldsFor(
@@ -404,14 +413,15 @@ function appendTotpFields(fields: Map<string, KeePassEntryFieldValue>, item: Tot
       period: item.period,
       digits: item.digits,
       algorithm: item.algorithm,
-      otpType: item.otpType === "HOTP" ? "HOTP" : "TOTP",
+      otpType: item.otpType || "TOTP",
       counter: item.counter ?? 0,
+      pin: item.pin,
       link: item.link ?? ""
     },
     item.title
   );
   for (const [name, value] of Object.entries(projected)) {
-    const isSecret = name === KEEPASS_TOTP_FIELDS.otp || name === KEEPASS_TOTP_FIELDS.seed;
+    const isSecret = name === KEEPASS_TOTP_FIELDS.otp || name === KEEPASS_TOTP_FIELDS.seed || /^(TimeOtp|HmacOtp)-Secret/.test(name);
     fields.set(name, isSecret ? kdbxweb.ProtectedValue.fromString(value) : value);
   }
 }

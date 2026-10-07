@@ -1,13 +1,63 @@
-import { chromium, expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
 import { dialogContent } from "./fixtures/material";
+import { projectLogins } from './fixtures/project-logins';
 
 const masterPassword = "locked autofill test master password";
 const site = "https://selected.example.test/login";
 const extensionPath = path.resolve("dist");
 
+test('project labels remain identifiable in popup search, locked grant subsets and a real browser restart', async ({}, info) => {
+  const profile = info.outputPath('project-profile');
+  let fixture = await launch(profile);
+  try {
+    expect(await request(fixture.manager, {type: 'VAULT_SETUP', masterPassword})).toMatchObject({ok: true});
+    expect(await request(fixture.manager, {type: 'VAULT_IMPORT_ITEMS', items: projectLogins(site)})).toMatchObject({ok: true});
+    const summaries = await request(fixture.manager, {type: 'VAULT_LIST_LOGIN_SUMMARIES'});
+    expect(summaries).toMatchObject({ok: true});
+    expect(summaries.data.find((item: {id: string}) => item.id === 'project-password-2').credentialIdentity).toEqual({passwordNumber: 2, groupLabel: '工作账户'});
+    expect(summaries.data.find((item: {id: string}) => item.id === 'independent-project')).not.toHaveProperty('credentialIdentity');
+    expect(JSON.stringify(summaries)).not.toMatch(/project-secret-|monica.content|private-project-note/);
+    const target = await fixture.context.newPage();
+    await target.goto(site);
+    const popup = await openPopup(fixture.context, fixture.extensionId, target);
+    await popup.setViewportSize({width: 320, height: 880});
+    const search = popup.getByRole('searchbox');
+    await search.fill('备用账户');
+    await expect(popup.locator('.login-row')).toHaveCount(1);
+    await expect(popup.locator('.popup-credential-identity')).toHaveText('密码 3 · 备用账户');
+    await search.fill('密码 2');
+    await expect(popup.locator('.login-row')).toHaveCount(1);
+    await popup.screenshot({path: info.outputPath('project-popup-320.png'), animations: 'disabled'});
+    expect(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const chosen = popup.getByRole('button', {name: /填充到当前页面.*密码 2/});
+    await chosen.focus();
+    await popup.keyboard.press('Enter');
+    await expect(target.locator('#password')).toHaveValue('project-secret-2');
+    expect(await request(fixture.manager, {type: 'VAULT_SET_LOCKED_AUTOFILL', itemId: 'project-password-2', enabled: true})).toMatchObject({ok: true});
+    expect(await request(fixture.manager, {type: 'VAULT_LOCK'})).toMatchObject({ok: true});
+    await fixture.context.close();
+    fixture = await launch(profile);
+    expect(await request(fixture.manager, {type: 'VAULT_STATUS'})).toMatchObject({ok: true, data: 'locked'});
+    const restarted = await fixture.context.newPage();
+    await restarted.goto(site);
+    const lockedPopup = await openPopup(fixture.context, fixture.extensionId, restarted);
+    await lockedPopup.setViewportSize({width: 320, height: 880});
+    await expect(lockedPopup.locator('.login-row')).toHaveCount(1);
+    await expect(lockedPopup.locator('.popup-credential-identity')).toHaveText('密码 2 · 工作账户');
+    await lockedPopup.screenshot({path: info.outputPath('project-locked-320.png'), animations: 'disabled'});
+    await lockedPopup.getByRole('button', {name: /填充到当前页面.*密码 2/}).click();
+    await expect(restarted.locator('#password')).toHaveValue('project-secret-2');
+    expect(await request(fixture.manager, {type: 'VAULT_UNLOCK', masterPassword})).toMatchObject({ok: true});
+    expect(await request(fixture.manager, {type: 'VAULT_SET_LOCKED_AUTOFILL', itemId: 'project-password-2', enabled: false})).toMatchObject({ok: true});
+    expect(await request(fixture.manager, {type: 'VAULT_LOCK'})).toMatchObject({ok: true});
+    expect(await request(fixture.manager, {type: 'VAULT_MATCH_LOGINS', pageUrl: site})).toEqual({ok: true, data: []});
+  } finally { await fixture.context.close(); }
+});
+
 async function launch(profile: string) {
-  const context = await chromium.launchPersistentContext(profile, {
+  const context = await launchEdgeContext(profile, {
     channel: "chromium", headless: true, locale: "zh-CN",
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
   });
@@ -95,7 +145,8 @@ test("editor opt-in fills only the selected password while locked, survives brow
     await fixture.manager.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
     const row = fixture.manager.locator(".row-clickable").filter({ hasText: "Marked account" });
     await row.getByRole("button", { name: "编辑登录项", exact: true }).click();
-    const editor = dialogContent(fixture.manager, { name: "编辑登录项", exact: true });
+    const editor = fixture.manager.locator("m3e-dialog.material-editor-dialog");
+    await expect(editor.getByRole("heading", { name: /^编辑/ })).toBeVisible();
     await editor.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "更多选项" }).click();
     await editor.getByRole("checkbox", { name: /允许免解锁填写/ }).check();
     await editor.getByRole("button", { name: "加密保存", exact: true }).click();

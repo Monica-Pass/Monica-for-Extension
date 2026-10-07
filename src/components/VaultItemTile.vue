@@ -8,6 +8,7 @@ import { documentLabel, itemIcon, itemKindLabel, maskedSuffix } from "../manager
 import { tr } from "../i18n";
 import TotpCodeCell from "./TotpCodeCell.vue";
 import WebsiteIcon from "./WebsiteIcon.vue";
+import WalletCardFace from "./WalletCardFace.vue";
 
 const props = defineProps<{
   item: VaultItem;
@@ -15,6 +16,7 @@ const props = defineProps<{
   sharedPeriod?: number;
   hasAttachments: boolean;
   hasHistory: boolean;
+  groupSize?: number;
   consumeOtp: (item: LoginItem | TotpItem) => Promise<void>;
 }>();
 type TileAction = "open" | "details" | "edit" | "remove" | "attachments" | "history";
@@ -90,13 +92,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <m3e-card variant="filled" class="vault-tile" :class="`vault-tile--${item.kind}`" :data-item-id="item.id" @click="emit('open')">
+  <m3e-card variant="filled" class="vault-tile" :class="[`vault-tile--${item.kind}`, { 'vault-tile--card-face': ['card', 'identity', 'billing-address'].includes(item.kind) }]" :data-item-id="item.id" @click="emit('open')">
     <div class="vault-tile-content">
       <m3e-focus-ring class="vault-tile-focus" :for="actionId" inward />
+      <WalletCardFace v-if="['card', 'identity', 'billing-address'].includes(item.kind)" :item="item" />
       <header class="vault-tile-header">
         <m3e-list-action :id="actionId" role="presentation" class="vault-tile-open" v-list-action="tr('查看{0}详情', { 0: item.title })" @click.stop="emit('open')">
           <WebsiteIcon slot="leading" class="vault-tile-icon" :item="iconItem" :fallback="item.kind === 'totp' && item.otpType === 'STEAM' ? 'sports_esports' : itemIcon(item.kind)" />
-          <strong :title="item.title">{{ item.title }}</strong>
+          <strong :title="item.title">{{ item.title }}<span v-if="(groupSize||0)>1"> · {{ tr('{0} 条密码', {0: groupSize}) }}</span></strong>
           <small slot="supporting-text" :title="metadata.subtitle">{{ metadata.subtitle }}</small>
         </m3e-list-action>
         <m3e-icon-button ref="trigger" class="vault-tile-menu-trigger" :aria-label="tr('{0}的更多操作', { 0: item.title })" @click.capture="sizeMenu" @click.stop @keydown="openWithKeyboard">
@@ -107,7 +110,7 @@ onBeforeUnmount(() => {
       <div v-if="item.kind === 'totp'" class="vault-tile-code" @click.stop>
         <TotpCodeCell :item="item" layout="tile" allow-use :hide-timer="Boolean(sharedPeriod)" :consume-code="consumeOtp" />
       </div>
-      <div v-else class="wallet-tile-preview">
+      <div v-else-if="!['card', 'identity', 'billing-address'].includes(item.kind)" class="wallet-tile-preview">
         <strong class="wallet-tile-value" :class="{ 'wallet-tile-value--text': item.kind === 'billing-address' }">{{ metadata.primary }}</strong>
         <div class="wallet-tile-person"><span :title="metadata.secondary">{{ metadata.secondary }}</span><span v-if="metadata.accessory" :aria-label="item.kind === 'card' ? tr('有效期 {0}', { 0: metadata.accessory }) : undefined">{{ metadata.accessory }}</span></div>
       </div>
@@ -116,9 +119,9 @@ onBeforeUnmount(() => {
   </m3e-card>
   <m3e-menu :id="menuId" ref="menu" class="vault-tile-menu" position-x="before" :aria-label="tr('{0}的更多操作', { 0: item.title })" @click.stop @toggle="menuToggled">
     <m3e-menu-item @click="select('details')"><m3e-icon slot="icon" name="info" />{{ tr('查看详情') }}</m3e-menu-item>
-    <m3e-menu-item @click="select('edit')"><m3e-icon slot="icon" name="edit" />{{ tr('编辑') }}</m3e-menu-item>
+    <m3e-menu-item v-if="item.kind!=='opaque'" @click="select('edit')"><m3e-icon slot="icon" name="edit" />{{ tr('编辑') }}</m3e-menu-item>
     <m3e-menu-item v-if="hasAttachments" @click="select('attachments')"><m3e-icon slot="icon" name="attach_file" />{{ tr('附件') }}</m3e-menu-item>
     <m3e-menu-item v-if="hasHistory" @click="select('history')"><m3e-icon slot="icon" name="history" />{{ tr('KeePass 历史') }}</m3e-menu-item>
-    <m3e-menu-item class="vault-tile-remove" @click="select('remove')"><m3e-icon slot="icon" name="delete" />{{ tr('移到回收站') }}</m3e-menu-item>
+    <m3e-menu-item v-if="item.kind!=='opaque'" class="vault-tile-remove" @click="select('remove')"><m3e-icon slot="icon" name="delete" />{{ tr('移到回收站') }}</m3e-menu-item>
   </m3e-menu>
 </template>

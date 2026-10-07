@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import ts from "typescript";
 
 const root = resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(await readFile(resolve(root, "dist/manifest.json"), "utf8"));
@@ -11,7 +12,10 @@ if (!manifest.content_scripts.some((entry) => entry.world === "MAIN" && entry.js
 if (manifest.externally_connectable || manifest.optional_permissions || manifest.optional_host_permissions) throw new Error("Release manifest exposes an unexpected external or optional privilege surface.");
 // favicon reads the browser's local icon cache in extension pages only; the
 // _favicon endpoint remains absent from web-accessible resources below.
-if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
+// sidePanel reuses the same trusted manager path and locked session; opening is an
+// explicit popup click and does not grant a webpage access to the manager.
+if (JSON.stringify(manifest.permissions) !== JSON.stringify(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "sidePanel", "storage", "webNavigation"])) throw new Error("Release manifest permission set changed without a security review.");
+if (manifest.side_panel?.default_path !== "index.html?surface=sidepanel" || manifest.action?.default_popup !== "popup.html") throw new Error("Side panel must reuse the reviewed manager without replacing the action popup.");
 if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(["http://*/*", "https://*/*"])) throw new Error("Release manifest host access changed without a security review.");
 const csp = manifest.content_security_policy?.extension_pages || "";
 for (const directive of ["script-src 'self' 'wasm-unsafe-eval'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) {
@@ -55,11 +59,41 @@ if (!background.includes("WEB_PAGE_REQUEST_TYPES") && !background.includes("CRED
 const backgroundSource = await readFile(resolve(root, "src/background/index.ts"), "utf8");
 if (!backgroundSource.includes("if (!WEB_PAGE_REQUEST_TYPES.has(request.type)) assertExtensionPage(sender);")) throw new Error("Privileged runtime commands are not default-denied.");
 if (!backgroundSource.includes('case "MDBX2_HOST_STATUS"') || backgroundSource.includes('case "MDBX_OPEN"')) throw new Error("MDBX Native Messaging review requires MDBX2-only privileged commands.");
-const pageTypes = ["CREDENTIAL_CAPTURE", "CREDENTIAL_PENDING", "CREDENTIAL_ACCEPT", "CREDENTIAL_DISMISS", "PASSKEY_BEGIN", "PASSKEY_ACCEPT", "PASSKEY_DISMISS"];
+const pageTypes = ["CREDENTIAL_CAPTURE", "CREDENTIAL_PENDING", "CREDENTIAL_ACCEPT", "CREDENTIAL_DISMISS", "PASSKEY_BEGIN", "PASSKEY_UNLOCK_CONTINUE", "PASSKEY_ACCEPT", "PASSKEY_DISMISS"];
 const allowlistBlock = backgroundSource.match(/const WEB_PAGE_REQUEST_TYPES[\s\S]*?\]\);/)?.[0] || "";
 for (const type of pageTypes) if (!allowlistBlock.includes(`"${type}"`)) throw new Error(`Page request allowlist is missing ${type}.`);
 const messageSource = await readFile(resolve(root, "src/runtime/messages.ts"), "utf8");
-for (const type of ["PASSKEY_VERIFICATION_CONTEXT", "PASSKEY_VERIFY_PASSWORD", "PASSKEY_CANCEL_VERIFICATION"]) {
+// Parse declarations and switch clauses so quote style cannot silently exclude
+// new privileged commands or turn a real handler into a false missing-handler error.
+const messageAst = ts.createSourceFile('messages.ts', messageSource, ts.ScriptTarget.Latest, true);
+const backgroundAst = ts.createSourceFile('background.ts', backgroundSource, ts.ScriptTarget.Latest, true);
+const declaredTypes = new Set(), handlers = new Map();
+for (const node of messageAst.statements) {
+  if (!ts.isTypeAliasDeclaration(node) || node.name.text !== 'ExtensionRequest' || !ts.isUnionTypeNode(node.type)) continue;
+  for (const variant of node.type.types) {
+    if (!ts.isTypeLiteralNode(variant)) continue;
+    for (const member of variant.members) {
+      if (ts.isPropertySignature(member) && member.name.getText(messageAst) === 'type'
+        && member.type && ts.isLiteralTypeNode(member.type) && ts.isStringLiteral(member.type.literal)) declaredTypes.add(member.type.literal.text);
+    }
+  }
+}
+const requestHandler = backgroundAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'handleRequest');
+const dispatch = requestHandler?.body?.statements.find(node => ts.isSwitchStatement(node) && node.expression.getText(backgroundAst) === 'request.type');
+for (const clause of dispatch?.caseBlock.clauses || []) {
+  if (ts.isCaseClause(clause) && ts.isStringLiteral(clause.expression)) handlers.set(clause.expression.text, clause.statements.map(node=>node.getText(backgroundAst)).join('\n'));
+}
+if (!declaredTypes.size || !handlers.size) throw new Error('Runtime command declaration/dispatch audit could not be parsed.');
+for (const type of declaredTypes) if (!handlers.has(type)) throw new Error(`Runtime request ${type} has no explicit background handler.`);
+const projectCommands = [...declaredTypes].filter(type=>type.startsWith('VAULT_PASSWORD_PROJECT_') || type.startsWith('VAULT_KEEPASS_PROJECT_'));
+for (const type of projectCommands) {
+  if (new RegExp(`["']${type}["']`).test(allowlistBlock) || !handlers.get(type).includes('assertManagerPage(sender)'))
+    throw new Error(`Password project request ${type} is not restricted to the manager page.`);
+}
+for (const type of ['VAULT_PASSWORD_PROJECT_REMOVE', 'VAULT_PASSWORD_PROJECT_RESTORE', 'VAULT_KEEPASS_PROJECT_REMOVE', 'VAULT_KEEPASS_PROJECT_RESOLVE', 'VAULT_KEEPASS_PROJECT_RECOVERY_DELETE']) {
+  if (!handlers.get(type)?.includes('request.confirmed !== true')) throw new Error(`Password project request ${type} lacks explicit confirmation.`);
+}
+for (const type of ["PASSKEY_VERIFICATION_CONTEXT", "PASSKEY_VERIFY_PASSWORD", "PASSKEY_VERIFY_HELLO", "PASSKEY_CANCEL_VERIFICATION"]) {
   if (allowlistBlock.includes(`"${type}"`)) throw new Error(`Passkey identity verification request ${type} is exposed to web pages.`);
   if (!backgroundSource.includes(`case "${type}"`)) throw new Error(`Passkey identity verification handler ${type} is missing.`);
 }
@@ -92,8 +126,6 @@ for (const field of ["accessToken", "refreshToken", "identitySecret", "sharedSec
 const revocationDeclaration = steamRequestDeclarations.find((line) => line.includes('"STEAM_REVOKE_AUTHORIZED_DEVICE"')) || "";
 if (revocationDeclaration.includes("password") && !revocationDeclaration.includes("confirmed: true")) throw new Error("Steam revocation password request is missing explicit confirmation.");
 for (const line of steamRequestDeclarations.filter((entry) => entry.includes("password") && !entry.includes('"STEAM_REVOKE_AUTHORIZED_DEVICE"'))) throw new Error(`Unexpected Steam password field: ${line}`);
-const declaredTypes = [...messageSource.matchAll(/type:\s*"([A-Z0-9_]+)"/g)].map((match) => match[1]);
-for (const type of new Set(declaredTypes)) if (!backgroundSource.includes(`case "${type}"`)) throw new Error(`Runtime request ${type} has no explicit background handler.`);
 const contentSource = await readFile(resolve(root, "src/content/index.ts"), "utf8");
 if (!contentSource.includes("sender.id !== chrome.runtime.id") || !contentSource.includes("isBoundedBridgeRequest")) throw new Error("Content-script message or Passkey bridge sender limits are missing.");
 for (const name of ["content.js", "main-world.js"]) {
@@ -101,3 +133,4 @@ for (const name of ["content.js", "main-world.js"]) {
   if (source.includes("com.monica_pass.mdbx2") || source.includes("connectNative")) throw new Error(`${name} contains a forbidden Native Messaging reference.`);
 }
 console.log("Security audit passed: encrypted/trusted runtime output contains no fixture secrets or source maps.");
+console.log(`Parsed ${declaredTypes.size} runtime commands, including ${projectCommands.length} manager-only password project commands.`);

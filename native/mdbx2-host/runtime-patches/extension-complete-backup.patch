@@ -1,0 +1,68 @@
+diff --git a/crates/mdbx-ffi/src/sync_facade.rs b/crates/mdbx-ffi/src/sync_facade.rs
+--- a/crates/mdbx-ffi/src/sync_facade.rs
++++ b/crates/mdbx-ffi/src/sync_facade.rs
+@@ -1131,6 +1131,64 @@ impl MdbxBlobSyncSession {
+ 
+ #[uniffi::export]
+ impl MdbxVault {
++    /// Extension-only export: retain one SQLite read transaction for both the
++    /// database and every current/deleted/snapshot Blob reference. The caller
++    /// owns a fresh destination directory and removes it on failure.
++    pub fn create_complete_backup(
++        &self,
++        destination: String,
++        max_bytes: u64,
++    ) -> Result<MdbxExternalBlobReferencePage, MdbxFfiError> {
++        let conn = self.conn.read().map_err(|_| MdbxFfiError::LockPoisoned)?;
++        let transaction = conn.inner().unchecked_transaction().map_err(StorageError::from)?;
++        let references = collect_external_blob_references(&conn, BlobLifecycleLimits::default())?;
++        let source = vault_blob_store(&conn)?;
++        let destination = Path::new(&destination);
++        let backup = BackupService::create_portable_copy(&conn, destination)?;
++        let mut total = backup.file_size_bytes;
++        if total > max_bytes {
++            return Err(StorageError::Validation("complete backup exceeds size limit".into()).into());
++        }
++        let target = mdbx_storage::blob_store::FileSystemBlobStore::new(
++            destination.with_extension("mdbx.blobs"),
++        );
++        let mut items = Vec::with_capacity(references.blobs.len());
++        for (blob_id, maximum_bytes) in &references.blobs {
++            let (state, size) = external_blob_reference_state(&source, blob_id, *maximum_bytes as u64)?;
++            if state != MdbxExternalBlobState::Available {
++                return Err(StorageError::BlobStore("complete backup requires every referenced Blob".into()).into());
++            }
++            let size = size.ok_or_else(|| StorageError::BlobStore("missing Blob size".into()))?;
++            total = total.checked_add(size).filter(|total| *total <= max_bytes)
++                .ok_or_else(|| StorageError::Validation("complete backup exceeds size limit".into()))?;
++            let mut offset = 0;
++            let mut hash = Sha256::new();
++            while offset < size {
++                let count = (size - offset).min(FILE_HASH_BUFFER_BYTES as u64) as usize;
++                let bytes = source.read_chunk(blob_id, offset, count)?;
++                if bytes.len() != count {
++                    return Err(StorageError::BlobStore("Blob changed during complete backup".into()).into());
++                }
++                hash.update(&bytes);
++                target.write_chunk(blob_id, size, offset, &bytes, offset + bytes.len() as u64 == size)?;
++                offset += bytes.len() as u64;
++            }
++            if format!("{:x}", hash.finalize()) != *blob_id {
++                return Err(StorageError::BlobStore("complete backup Blob digest mismatch".into()).into());
++            }
++            items.push(MdbxExternalBlobReference { blob_id: blob_id.clone(), total_size: Some(size), state });
++        }
++        // Dropping the read transaction releases the SQLite snapshot, without
++        // changing the source or advancing its write revision.
++        drop(transaction);
++        Ok(MdbxExternalBlobReferencePage {
++            raw_reference_count: references.raw_reference_count as u64,
++            unique_reference_count: items.len() as u64,
++            items,
++            next_cursor: None,
++        })
++    }
++
+     /// Create the complete bootstrap and its exact incremental starting point
+     /// while holding the vault session lock. Ordinary synchronization uses
+     /// immutable incremental segments after this one-time operation.

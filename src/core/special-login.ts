@@ -1,3 +1,5 @@
+import { parseLosslessJson } from "./lossless-json";
+import { preserveUneditedProjection } from "./edited-projection";
 export interface WifiMetadata {
   ssid: string;
   hiddenNetwork: boolean;
@@ -37,20 +39,10 @@ export function parseWifiMetadata(raw: string | undefined): WifiMetadata {
 }
 
 export function serializeWifiMetadata(original: string | undefined, value: WifiMetadata): string {
-  const source = parseObject(original);
+  const source = parseObject(original, true);
   if (original && sameWifiMetadata(parseWifiMetadata(original), value)) return original;
-  const output: Record<string, unknown> = {
-    ...source,
-    ssid: value.ssid.trim(),
-    hiddenNetwork: value.hiddenNetwork,
-    security: value.security
-  };
-  assignOptional(output, "bssid", value.bssid.trim());
-  assignOptional(output, "eap", value.eap);
-  assignOptional(output, "macRandomization", value.macRandomization);
-  assignOptional(output, "proxy", value.proxy);
-  assignOptional(output, "ip", value.ip);
-  return JSON.stringify(output);
+  const edited = original ? preserveUneditedProjection(source, parseWifiMetadata(original), value as unknown as Record<string, unknown>) : value;
+  return JSON.stringify({ ...source, ...edited });
 }
 
 export function buildWifiQrPayload(value: WifiMetadata, password: string, identity = ""): string {
@@ -76,26 +68,20 @@ export function parseSshKeyMetadata(raw: string | undefined): SshKeyMetadata {
 }
 
 export function serializeSshKeyMetadata(original: string | undefined, value: SshKeyMetadata): string {
-  const source = parseObject(original);
-  if (![value.algorithm, value.publicKeyOpenSsh, value.privateKeyOpenSsh, value.fingerprintSha256].some((field) => field.trim())) return "";
+  const source = parseObject(original, true);
   if (original && sameSshKeyMetadata(parseSshKeyMetadata(original), value)) return original;
-  return JSON.stringify({
-    ...source,
-    algorithm: value.algorithm.trim(),
-    keySize: safeInteger(value.keySize),
-    publicKeyOpenSsh: value.publicKeyOpenSsh.trim(),
-    privateKeyOpenSsh: value.privateKeyOpenSsh.trim(),
-    fingerprintSha256: value.fingerprintSha256.trim(),
-    comment: value.comment.trim(),
-    format: value.format.trim() || "OPENSSH"
-  });
+  if (!original && ![value.algorithm, value.publicKeyOpenSsh, value.privateKeyOpenSsh, value.fingerprintSha256].some((field) => field.trim())) return "";
+  const edited = original ? preserveUneditedProjection(source, parseSshKeyMetadata(original), value as unknown as Record<string, unknown>) : value;
+  return JSON.stringify({ ...source, ...edited });
 }
 
-function parseObject(raw: string | undefined): Record<string, unknown> {
+function parseObject(raw: string | undefined, strict = false): Record<string, unknown> {
   try {
-    const value = raw ? JSON.parse(raw) : {};
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+    const value = raw ? parseLosslessJson(raw) : {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("元数据不是对象。");
+    return value as Record<string, unknown>;
   } catch {
+    if (strict) throw new Error("元数据格式不受支持，未覆盖原内容。");
     return {};
   }
 }
@@ -114,10 +100,10 @@ function assignOptional(output: Record<string, unknown>, key: string, value: unk
 }
 
 function sameWifiMetadata(left: WifiMetadata, right: WifiMetadata): boolean {
-  return left.ssid === right.ssid.trim()
+  return left.ssid === right.ssid
     && left.hiddenNetwork === right.hiddenNetwork
     && left.security === right.security
-    && left.bssid === right.bssid.trim()
+    && left.bssid === right.bssid
     && structuredEqual(left.eap, right.eap)
     && left.macRandomization === optional(right.macRandomization)
     && structuredEqual(left.proxy, right.proxy)
@@ -125,13 +111,13 @@ function sameWifiMetadata(left: WifiMetadata, right: WifiMetadata): boolean {
 }
 
 function sameSshKeyMetadata(left: SshKeyMetadata, right: SshKeyMetadata): boolean {
-  return left.algorithm === right.algorithm.trim()
+  return left.algorithm === right.algorithm
     && left.keySize === safeInteger(right.keySize)
-    && left.publicKeyOpenSsh === right.publicKeyOpenSsh.trim()
-    && left.privateKeyOpenSsh === right.privateKeyOpenSsh.trim()
-    && left.fingerprintSha256 === right.fingerprintSha256.trim()
-    && left.comment === right.comment.trim()
-    && left.format === (right.format.trim() || "OPENSSH");
+    && left.publicKeyOpenSsh === right.publicKeyOpenSsh
+    && left.privateKeyOpenSsh === right.privateKeyOpenSsh
+    && left.fingerprintSha256 === right.fingerprintSha256
+    && left.comment === right.comment
+    && left.format === right.format;
 }
 
 function structuredEqual(left: unknown, right: unknown): boolean {

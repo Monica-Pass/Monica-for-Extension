@@ -1,0 +1,16 @@
+[package]
+name = "mdbx-adapter-steam-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+mdbx-adapter-steam = { path = "../mdbx-adapter-steam", default-features = false }
+mdbx-storage = { path = "../mdbx-storage", default-features = false, features = ["core"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

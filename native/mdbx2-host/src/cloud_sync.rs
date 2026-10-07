@@ -271,7 +271,7 @@ fn transfer_release(runtime: &HostRuntime, params: Value) -> Result<Value, RpcFa
             .join(format!("{file_handle}.mdbx")),
         runtime.sync_inbound_segment_path(&file_handle),
     ];
-    let mut released = false;
+    let mut released = crate::local_export::release_import(&runtime.root.join("imports"), &file_handle)?;
     for path in candidates {
         if path.exists() {
             ensure_regular_file(

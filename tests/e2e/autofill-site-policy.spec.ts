@@ -1,10 +1,11 @@
+import { launchEdgeContext } from "./fixtures/edge";
 import { chooseOption, dialogContent } from "./fixtures/material";
-import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
 async function launch(testInfo: TestInfo): Promise<{ context: BrowserContext; page: Page }> {
   const extensionPath = path.resolve("dist");
-  const context = await chromium.launchPersistentContext(testInfo.outputPath("site-policy-profile"), {
+  const context = await launchEdgeContext(testInfo.outputPath("site-policy-profile"), {
     channel: "chromium",
     headless: true, locale: "zh-CN",
     viewport: { width: 375, height: 720 },

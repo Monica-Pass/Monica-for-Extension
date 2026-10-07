@@ -16,6 +16,16 @@ const CONFIG = {
 const TARGET = "http://127.0.0.1:8787/dav/files/demo/Vaults/Monica%20main.kdbx";
 
 describe("KeePass WebDAV client", () => {
+  it("connects to canonical collection paths while retaining redirect rejection", async () => {
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe(`${CONFIG.baseUrl}/`);
+      expect(init?.method).toBe("PROPFIND");
+      expect(init?.redirect).toBe("error");
+      return new Response(null, { status: 207 });
+    });
+    await new KeePassWebDavClient(CONFIG, fetcher as typeof fetch, { maxAttempts: 1 }).testConnection();
+  });
+
   it("normalizes and confines the configured remote path", () => {
     expect(normalizeKeePassRemotePath("/Vaults//Monica main.kdbx/")).toBe("Vaults/Monica main.kdbx");
     expect(keePassRemoteUrl(CONFIG.baseUrl, CONFIG.remotePath)).toBe(TARGET);
@@ -81,7 +91,7 @@ describe("KeePass WebDAV client", () => {
     const fetcher = sequenceFetcher([
       (init) => {
         const headers = new Headers(init?.headers);
-        expect(headers.get("If-Match")).toBe('W/"etag-7"');
+        expect(headers.get("If-Match")).toBe('"etag-7"');
         expect(headers.get("If-None-Match")).toBeNull();
         return new Response(null, { status: 204 });
       },
@@ -90,8 +100,60 @@ describe("KeePass WebDAV client", () => {
     ]);
     const client = new KeePassWebDavClient(CONFIG, fetcher, { maxAttempts: 1 });
 
-    await expect(client.write(bytes, 'W/"etag-7"')).resolves.toMatchObject({ etag: '"etag-8"' });
+    await expect(client.write(bytes, '"etag-7"')).resolves.toMatchObject({ etag: '"etag-8"' });
     await expect(client.write(bytes, "")).rejects.toMatchObject({ code: "remote-etag-required" });
+  });
+
+  it("waits boundedly for a fresh Apache weak validator to become strong before returning a writable snapshot", async () => {
+    const bytes = Uint8Array.of(1, 2, 3);
+    const sleep = vi.fn(async () => undefined);
+    const fetcher = sequenceFetcher([
+      () => new Response(multistatus('W/"fresh"', 3), { status: 207 }),
+      () => new Response(bytes, { headers: { ETag: 'W/"fresh"' } }),
+      () => new Response(multistatus('"settled"', 3), { status: 207 }),
+      init => {
+        expect(new Headers(init?.headers).get("If-Match")).toBe('"settled"');
+        return new Response(bytes, { headers: { ETag: '"settled"' } });
+      }
+    ]);
+    const result = await new KeePassWebDavClient(CONFIG, fetcher, { maxAttempts: 1, sleep }).read();
+    expect(result.etag).toBe('"settled"');
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps permanently weak snapshots readable but never converts them to a CAS write token", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).not.toBe("PUT");
+      return init?.method === "PROPFIND"
+        ? new Response(multistatus('W/"weak"', 1), { status: 207 })
+        : new Response(Uint8Array.of(1), { headers: { ETag: 'W/"weak"' } });
+    });
+    const client = new KeePassWebDavClient(CONFIG, fetcher as typeof fetch, { maxAttempts: 1, sleep });
+    expect((await client.read()).etag).toBe('W/"weak"');
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    await expect(client.write(Uint8Array.of(2), 'W/"weak"')).rejects.toMatchObject({ code: "remote-etag-required" });
+    expect(fetcher).toHaveBeenCalledTimes(6);
+  });
+
+  it("cancels weak-validator stabilization without another request or any write", async () => {
+    const controller = new AbortController();
+    const fetcher = sequenceFetcher([
+      () => new Response(multistatus('W/"weak"', 1), { status: 207 }),
+      () => new Response(Uint8Array.of(1), { headers: { ETag: 'W/"weak"' } })
+    ]);
+    const client = new KeePassWebDavClient(CONFIG, fetcher, { maxAttempts: 1, sleep: async () => { controller.abort(); } });
+    await expect(client.read(controller.signal)).rejects.toMatchObject({ code: "cancelled" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a different response validator instead of pairing a stale token with bytes", async () => {
+    const fetcher = sequenceFetcher([
+      () => new Response(multistatus('"before"', 1), { status: 207 }),
+      () => new Response(Uint8Array.of(1), { headers: { ETag: '"after"' } })
+    ]);
+    await expect(new KeePassWebDavClient(CONFIG, fetcher, { maxAttempts: 1 }).read()).rejects.toMatchObject({ code: "remote-metadata-invalid" });
   });
 
   it("treats a lost write response as applied only when the remote digest matches", async () => {
@@ -105,12 +167,13 @@ describe("KeePass WebDAV client", () => {
       if (init?.method === "PROPFIND") return new Response(multistatus('"etag-after"', stored.length), { status: 207 });
       return new Response(stored, { status: 200, headers: { ETag: '"etag-after"' } });
     });
-    const client = new KeePassWebDavClient(CONFIG, fetcher as typeof fetch, { maxAttempts: 1 });
+    const client = new KeePassWebDavClient(CONFIG, fetcher as typeof fetch);
 
     await expect(client.write(bytes, '"etag-before"')).resolves.toMatchObject({
       etag: '"etag-after"',
       alreadyApplied: true
     });
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
   });
 
   it("keeps a real precondition conflict when the remote content differs", async () => {

@@ -1,11 +1,17 @@
 gradle.beforeProject { project ->
     if (project.path == ':mdbx-engine') {
+        def fixtureBuildDirectory = System.getenv('MONICA_MDBX2_INTEROP_BUILD_DIR')
+        if (fixtureBuildDirectory) project.layout.buildDirectory.set(new File(fixtureBuildDirectory))
         project.afterEvaluate {
             def sourceDirectory = System.getenv('MONICA_MDBX2_INTEROP_SOURCE_DIR')
             if (sourceDirectory == null || sourceDirectory.trim().isEmpty()) {
                 throw new GradleException('MONICA_MDBX2_INTEROP_SOURCE_DIR is required')
             }
             project.android.sourceSets.androidTest.java.srcDir(sourceDirectory)
+            // The shared API-32 AVD is x86_64. Do not install other ABI libraries
+            // into its limited data partition.
+            project.android.defaultConfig.ndk.abiFilters.clear()
+            project.android.defaultConfig.ndk.abiFilters.add(System.getenv('MONICA_MDBX2_INTEROP_ABI') ?: 'x86_64')
         }
     }
 }

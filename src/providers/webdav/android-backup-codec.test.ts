@@ -635,7 +635,7 @@ describe("Android backup ZIP codec", () => {
     };
     const document = { entries: {}, items: [], records: new Map(), warnings: [] };
 
-    const output = unzipSync(writeAndroidBackup(document, [passkey], "provider-1"));
+    const output = unzipSync(writeAndroidBackup(document, [passkey], "provider-1", { allowMetadataOnlyPasskeys: true }));
     const path = "folders/_root/passkeys/passkey_abc_def.json";
     const raw = JSON.parse(strFromU8(output[path]));
 
@@ -838,7 +838,7 @@ describe("Android backup ZIP codec", () => {
         { label: "Pinned", value: "false", type: "BOOLEAN" }
       ]
     });
-    expect(written.passkey).toEqual({ ...fixture.raws.passkey, notes: "new passkey note", privateKeyAlias: "" });
+    expect(written.passkey).toEqual({ ...fixture.raws.passkey, notes: "new passkey note" });
   });
 
   it("keeps duplicate Android numeric IDs distinct and preserves malformed future records", () => {
@@ -854,8 +854,9 @@ describe("Android backup ZIP codec", () => {
       [malformedPath]: strToU8(malformed)
     }), "provider-duplicates");
 
-    expect(document.items).toHaveLength(2);
-    expect(new Set(document.items.map((item) => item.id)).size).toBe(2);
+    expect(document.items).toHaveLength(3);
+    expect(document.items.filter((item) => item.kind === "opaque")).toHaveLength(1);
+    expect(new Set(document.items.map((item) => item.id)).size).toBe(3);
     expect(document.warnings).toHaveLength(1);
 
     const output = unzipSync(writeAndroidBackup(document, document.items, "provider-duplicates"));
@@ -983,7 +984,7 @@ describe("Android backup ZIP codec", () => {
     const history = JSON.parse(strFromU8(output["password_history.json"])) as Array<Record<string, unknown>>;
     expect(history).toEqual(expect.arrayContaining([
       expect.objectContaining({ entryId: 42, password: "older", future: { keep: true } }),
-      expect.objectContaining({ entryId: 42, password: "current", lastUsedAt: 1_700_000_001_000 }),
+      expect.objectContaining({ entryId: 42, password: "current", lastUsedAt: Date.parse('2026-08-24T00:00:00.000Z') }),
       expect.objectContaining({ entryId: 999, password: "unmatched", unknownOwner: true })
     ]));
   });

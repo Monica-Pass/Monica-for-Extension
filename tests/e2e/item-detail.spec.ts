@@ -43,12 +43,12 @@ test("list rows open a masked M3E detail page for every item kind", async ({}, t
     const accessibility = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
     expect(accessibility.violations.filter((violation) => violation.impact === "serious" || violation.impact === "critical")).toEqual([]);
     await detail.getByRole("button", { name: "编辑" }).click();
-    await expect(dialogContent(page, { name: /编辑登录项/ })).toBeVisible();
+    await expect(dialogContent(page, { name: /编辑密码/ })).toBeVisible();
     await expect(dialogContent(page, { name: /Detail Login/ })).toHaveCount(0);
     await page.getByRole("button", { name: "取消" }).click();
-    await expect(dialogContent(page, { name: /编辑登录项/ })).toHaveCount(0);
+    await expect(dialogContent(page, { name: /编辑密码/ })).toHaveCount(0);
     await page.getByRole("button", { name: "编辑登录项" }).click();
-    await expect(dialogContent(page, { name: /编辑登录项/ })).toBeVisible();
+    await expect(dialogContent(page, { name: /编辑密码/ })).toBeVisible();
     await page.getByRole("button", { name: "取消" }).click();
     await expect(dialogContent(page, { name: /Detail Login/ })).toHaveCount(0);
 

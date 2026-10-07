@@ -9,6 +9,8 @@
   "include": [
     "tests/interop/**/*.ts",
     "vitest.android-interop.config.ts",
+    "vitest.android315-native.config.ts",
+    "vitest.android315-zip.config.ts",
     "vitest.bitwarden-interop.config.ts",
     "vitest.keepass-interop.config.ts"
   ]

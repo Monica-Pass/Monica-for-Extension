@@ -144,7 +144,7 @@ pub(super) fn validate(payload: &str, title: &str, fields: &WriteFields) -> Resu
     {
         return Err(invalid());
     }
-    let raw: Value = serde_json::from_str(payload).map_err(|_| invalid())?;
+    let raw: Value = mdbx_core::json::from_str(payload).map_err(|_| invalid())?;
     if !matches!(
         raw["schema"].as_str(),
         Some("monica.api-token.v1" | "monica.gateway.credential.v1")
@@ -166,7 +166,8 @@ pub(super) fn validate(payload: &str, title: &str, fields: &WriteFields) -> Resu
     if raw.get("note").is_some_and(|note| !note.is_string()) {
         return Err(invalid());
     }
-    let metadata: Value = serde_json::from_str(&fields.metadata_json).map_err(|_| invalid())?;
+    let metadata: Value =
+        mdbx_core::json::from_str(&fields.metadata_json).map_err(|_| invalid())?;
     if metadata["schema"] != "monica.api-token.fields.v1"
         || metadata
             .get("notes")
@@ -185,8 +186,7 @@ pub(super) fn validate(payload: &str, title: &str, fields: &WriteFields) -> Resu
                 Some(id) => id.as_i64().ok_or_else(invalid)?,
                 None => -(index as i64 + 1),
             };
-            if id.unsigned_abs() > 9_007_199_254_740_991
-                || !ids.insert(id)
+            if !ids.insert(id)
                 || !field["title"].is_string()
                 || !field["value"].is_string()
                 || !field["protected"].is_boolean()

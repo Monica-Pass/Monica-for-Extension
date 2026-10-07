@@ -1,0 +1,49 @@
+[package]
+name = "mdbx-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = [
+    "kdbx-import",
+    "kdbx-export",
+    "kdbx-binary-import",
+    "kdbx-binary-export",
+    "benchmarks",
+    "derived-search-index",
+    "filesystem-blob-store",
+]
+core = []
+filesystem-blob-store = []
+kdbx-import = []
+kdbx-export = []
+kdbx-binary-import = ["kdbx-import", "dep:keepass"]
+kdbx-binary-export = [
+    "kdbx-export",
+    "dep:keepass",
+    "dep:keepass-argon2",
+    "keepass/save_kdbx4",
+]
+derived-search-index = []
+benchmarks = ["derived-search-index"]
+
+[dependencies]
+mdbx-core = { path = "../mdbx-core" }
+mdbx-crypto = { path = "../mdbx-crypto" }
+mdbx-sync = { path = "../mdbx-sync", default-features = false }
+rusqlite = { version = "0.31", features = ["backup", "bundled"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+unicode-normalization = { workspace = true }
+zeroize = { workspace = true }
+base64 = "0.22"
+tempfile = "3"
+keepass = { version = "0.13.17", default-features = false, optional = true }
+keepass-argon2 = { package = "rust-argon2", version = "3.0", optional = true }
+
+[dev-dependencies]

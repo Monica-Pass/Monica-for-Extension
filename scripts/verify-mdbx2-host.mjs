@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const hostRoot = resolve(root, "native", "mdbx2-host");
-const coreRevision = "974c517465e7b6cac0947d2d59875aa4211fa16b";
-const expectedSource = `git+https://github.com/Monica-Pass/Mdbx.git?rev=${coreRevision}#${coreRevision}`;
+const coreRevision = "90005c8c608c952093a4522ffa507a562e2e39a4";
 
 const [manifest, lockfile, toolchain, hostManifest, installer, uninstaller, runtime, windowsHello, contract] = await Promise.all([
   readFile(resolve(hostRoot, "Cargo.toml"), "utf8"),
@@ -18,9 +18,40 @@ const [manifest, lockfile, toolchain, hostManifest, installer, uninstaller, runt
   readFile(resolve(root, "src", "providers", "mdbx2", "native-contract.ts"), "utf8")
 ]);
 
-if (!manifest.includes(`rev = "${coreRevision}"`)) throw new Error("MDBX2 Host core dependency is not pinned to the reviewed revision.");
+if (!manifest.includes('mdbx-ffi = { path = "vendor/mdbx/crates/mdbx-ffi" }') || !manifest.includes('mdbx-core = { path = "vendor/mdbx/crates/mdbx-core" }')) throw new Error("MDBX2 Host must use the verified Android runtime source.");
 if (!manifest.includes('uniffi = "=0.31.1"')) throw new Error("MDBX2 Host UniFFI version is not pinned to the Android release version.");
-if (!lockfile.includes(`source = "${expectedSource}"`)) throw new Error("MDBX2 Host Cargo.lock does not contain the reviewed core source identity.");
+if (lockfile.includes('git+https://github.com/Monica-Pass/Mdbx')) throw new Error("MDBX2 Host Cargo.lock still resolves an unpatched Git dependency.");
+const provenance = JSON.parse(await readFile(resolve(hostRoot, "ENGINE-PROVENANCE.json"), "utf8"));
+if (provenance.source.commit !== coreRevision || provenance.source.additional_overlays.length !== 3) throw new Error("MDBX2 Host runtime provenance does not match Android 1.0.315.");
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const normalize = (path, bytes) => /\.(rs|toml|lock|md|json)$/.test(path) || path === "LICENSE" ? Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n")) : bytes;
+const extensionHashes = {};
+for (const overlay of provenance.extension_overlays || []) {
+  if (!overlay.patch?.startsWith('runtime-patches/') || overlay.patch.includes('..')) throw new Error('Invalid extension overlay path.');
+  if (sha256(await readFile(resolve(hostRoot, overlay.patch))) !== overlay.patch_sha256) throw new Error(`Extension overlay hash differs: ${overlay.id}.`);
+  if (Object.keys(overlay.files).length !== Object.keys(overlay.base_files).length) throw new Error('Extension overlay file inventory differs.');
+  for (const [path, hash] of Object.entries(overlay.files)) {
+    if (!provenance.files[path] || (extensionHashes[path] || provenance.files[path]) !== overlay.base_files[path]) throw new Error(`Extension overlay baseline differs: ${path}.`);
+    extensionHashes[path] = hash;
+  }
+}
+for (const [path, expected] of Object.entries(provenance.files)) {
+  if (path.includes("..") || path.startsWith("/")) throw new Error("Invalid runtime provenance path.");
+  const actual = sha256(normalize(path, await readFile(resolve(hostRoot, "vendor", "mdbx", path))));
+  if (actual !== (extensionHashes[path] || expected)) throw new Error(`MDBX2 vendored source changed: ${path}.`);
+}
+for (const overlay of [provenance.source.local_overlay, ...provenance.source.additional_overlays]) {
+  const file = overlay.patch.split("/").at(-1);
+  if (sha256(await readFile(resolve(hostRoot, "runtime-patches", file))) !== overlay.patch_sha256) throw new Error(`MDBX2 Android overlay hash differs: ${file}.`);
+}
+const finalHashes = {...provenance.source.local_overlay.files, ...provenance.source.additional_overlays[0].files, ...provenance.source.final_overlay_files};
+for (const [path, hash] of Object.entries(finalHashes)) {
+  if (provenance.files[path] !== hash) throw new Error(`MDBX2 source differs from Android final runtime: ${path}.`);
+}
+if (!runtime.includes(`MDBX_CORE_REVISION: &str = "${coreRevision}"`) || !contract.includes(`MDBX2_CORE_REVISION = "${coreRevision}"`)) throw new Error("MDBX2 runtime and extension revision gates differ.");
+for (const capability of ["supportsNativeObjectIdentity", "supportsObjectRevisionPreconditions", "supportsLosslessJson", "supportsAtomicObjectAttachmentMove", "supportsVaultWriteRevision", "supportsObjectRestore"]) {
+  if (!runtime.includes(`"${capability}": true`)) throw new Error(`MDBX2 Host is missing ${capability}.`);
+}
 if (!toolchain.includes('channel = "1.86.0"')) throw new Error("MDBX2 Host Rust toolchain differs from the reviewed core release toolchain.");
 
 const parsedHostManifest = JSON.parse(hostManifest);
@@ -92,4 +123,4 @@ for (const required of ["MDBX2_MAX_ATTACHMENT_BYTES", "MDBX2_MAX_ATTACHMENT_MEMO
   if (!contract.includes(required)) throw new Error(`MDBX2 extension attachment contract is missing ${required}.`);
 }
 
-console.log(`Verified MDBX2 Host pin ${coreRevision}, Rust 1.86.0, UniFFI 0.31.1, exact-origin installer, Windows Hello foreground-window and damaged-binding boundaries, Collection, diagnostics, Tiga posture, history read/revert, snapshot prune, conflict and attachment boundaries, and manifest template.`);
+console.log(`Verified MDBX2 Host pin ${coreRevision} with all four Android overlays, ${(provenance.extension_overlays || []).length} explicit extension overlays and ${Object.keys(provenance.files).length} vendored files, Rust 1.86.0, UniFFI 0.31.1, lossless JSON/native identity/revision boundaries, exact-origin installer, Windows Hello, Collection, diagnostics, Tiga, history, snapshot, conflict and attachment boundaries.`);

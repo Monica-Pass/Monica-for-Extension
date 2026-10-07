@@ -1,0 +1,29 @@
+gradle.beforeProject { project ->
+    def buildRoot = System.getenv('MONICA_APP_INTEROP_BUILD_DIR')
+    if (buildRoot) project.layout.buildDirectory.set(new File(buildRoot, project.name))
+    if (project.path == ':app') {
+        project.afterEvaluate {
+            if (System.getenv('MONICA_APP_INTEROP_KEEP_BUILD_CONFIG') == '1') {
+                project.tasks.matching { it.name == 'generateDebugBuildConfig' }.configureEach {
+                    onlyIf('Retain hash-verified BuildConfig for an unchanged frozen source build') { false }
+                }
+            }
+            if (System.getenv('MONICA_APP_INTEROP_REUSE_VERIFIED_APPLICATION') == '1') {
+                def reusedTasks = ['generateDebugBuildConfig', 'kspDebugKotlin', 'compileDebugKotlin',
+                    'compileDebugJavaWithJavac', 'bundleDebugClassesToCompileJar']
+                project.tasks.matching { it.name in reusedTasks }.configureEach {
+                    onlyIf('Reuse the verified unchanged application build') { false }
+                }
+            }
+            def sourceDirectory = System.getenv('MONICA_APP_INTEROP_SOURCE_DIR')
+            if (!sourceDirectory || !new File(sourceDirectory).isDirectory()) {
+                throw new GradleException('MONICA_APP_INTEROP_SOURCE_DIR must name the extension-owned test source directory')
+            }
+            if (System.getenv('MONICA_APP_INTEROP_REPLACE_TEST_SOURCES') == '1') {
+                project.android.sourceSets.androidTest.java.setSrcDirs([sourceDirectory])
+            } else {
+                project.android.sourceSets.androidTest.java.srcDir(sourceDirectory)
+            }
+        }
+    }
+}

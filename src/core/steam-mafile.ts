@@ -1,3 +1,4 @@
+import { parseLosslessJson, jsonScalarText } from "./lossless-json";
 import type { TotpItem } from "./model";
 
 export interface SteamMaFileData {
@@ -21,9 +22,9 @@ export interface SteamMaFileBundleEntry {
 
 export function parseSteamMaFile(content: string, fileName = ""): SteamMaFileData {
   let root: Record<string, unknown>;
-  try { root = JSON.parse(content.trim()) as Record<string, unknown>; }
+  try { root = parseLosslessJson(content.trim()) as Record<string, unknown>; }
   catch { throw new Error("maFile 不是明文 JSON；加密 maFile 需要先在 Android/桌面客户端解密。"); }
-  if (!root || Array.isArray(root)) throw new Error("maFile 根结构无效。");
+  if (!root || typeof root !== "object" || Array.isArray(root)) throw new Error("maFile 根结构无效。");
   const session = record(first(root, "Session", "session"));
   const accountName = text(first(root, "account_name", "accountName", "AccountName")) || text(first(session, "AccountName", "account_name")) || fileName.replace(/\.maFile(?:\.json)?$/i, "") || "Steam";
   const steamLoginSecure = text(first(session, "SteamLoginSecure", "steamLoginSecure")) || text(first(root, "steamLoginSecure", "steam_login_secure"));
@@ -80,19 +81,27 @@ export async function decryptSteamMaFileText(encryptedBase64: string, password: 
 }
 
 export function exportSteamMaFile(item: TotpItem): string {
-  let root: Record<string, unknown> = {};
-  try { root = item.steamRawJson ? JSON.parse(item.steamRawJson) as Record<string, unknown> : {}; } catch { root = {}; }
-  const set = (key: string, value: unknown) => { if (typeof value === "string" && value.trim()) root[key] = value.trim(); };
-  set("account_name", item.accountName || item.title);
-  set("steamid", item.steamId);
-  set("device_id", item.steamDeviceId);
-  set("shared_secret", item.steamSharedSecretBase64 || item.secret);
-  set("identity_secret", item.steamIdentitySecret);
-  set("revocation_code", item.steamRevocationCode);
-  set("token_gid", item.steamTokenGid);
-  set("access_token", item.steamAccessToken);
-  set("refresh_token", item.steamRefreshToken);
-  set("steamLoginSecure", item.steamLoginSecure);
+  const previous = item.steamRawJson ? parseSteamMaFile(item.steamRawJson, item.title) : undefined;
+  const root = item.steamRawJson ? parseLosslessJson(item.steamRawJson) as Record<string, unknown> : {};
+  const set = (aliases: string[], value: string | undefined, before: string | undefined, sessionAliases: string[] = []) => {
+    if (previous && (value ?? "") === (before ?? "")) return;
+    const targets = aliases.filter(key => Object.prototype.hasOwnProperty.call(root, key));
+    for (const key of targets.length ? targets : [aliases[0]]) root[key] = value ?? "";
+    for (const sessionKey of ["Session", "session"]) {
+      const session = record(root[sessionKey]);
+      for (const key of sessionAliases) if (Object.prototype.hasOwnProperty.call(session, key)) session[key] = value ?? "";
+    }
+  };
+  set(["account_name", "accountName", "AccountName"], item.accountName ?? item.title, previous?.accountName, ["AccountName", "account_name"]);
+  set(["steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64", "SteamID64"], item.steamId, previous?.steamId, ["SteamID", "steamid"]);
+  set(["device_id", "deviceId"], item.steamDeviceId, previous?.deviceId, ["DeviceID", "device_id", "deviceId"]);
+  set(["shared_secret", "sharedSecret"], item.steamSharedSecretBase64 || item.secret, previous?.sharedSecretBase64);
+  set(["identity_secret", "identitySecret"], item.steamIdentitySecret, previous?.identitySecret);
+  set(["revocation_code", "revocationCode"], item.steamRevocationCode, previous?.revocationCode);
+  set(["token_gid", "tokenGid"], item.steamTokenGid, previous?.tokenGid);
+  set(["access_token", "accessToken", "oauth_token", "OAuthToken"], item.steamAccessToken, previous?.accessToken, ["AccessToken", "access_token", "OAuthToken", "oauth_token"]);
+  set(["refresh_token", "refreshToken"], item.steamRefreshToken, previous?.refreshToken, ["RefreshToken", "refresh_token"]);
+  set(["steamLoginSecure", "steam_login_secure"], item.steamLoginSecure, previous?.steamLoginSecure, ["SteamLoginSecure", "steamLoginSecure"]);
   return JSON.stringify(root, null, 2);
 }
 
@@ -114,7 +123,7 @@ function decodeBase64Bytes(value: string): Uint8Array {
 }
 function parseManifest(content: string): Array<{ filename: string; salt?: string; iv?: string }> {
   let root: Record<string, unknown>;
-  try { root = JSON.parse(content) as Record<string, unknown>; } catch { throw new Error("manifest.json 不是有效 JSON。"); }
+  try { root = parseLosslessJson(content) as Record<string, unknown>; } catch { throw new Error("manifest.json 不是有效 JSON。"); }
   const values = Array.isArray(root.entries) ? root.entries : [];
   return values.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
@@ -127,6 +136,6 @@ function parseManifest(content: string): Array<{ filename: string; salt?: string
 }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function first(value: Record<string, unknown>, ...keys: string[]): unknown { for (const key of keys) if (value[key] != null) return value[key]; return undefined; }
-function text(value: unknown): string { return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim(); }
+function text(value: unknown): string { return jsonScalarText(value).trim(); }
 function optional(value: unknown): string | undefined { return text(value) || undefined; }
 function steamIdValue(value: unknown): string | undefined { const result = text(value); return /^7656119\d{10}$/.test(result) ? result : undefined; }

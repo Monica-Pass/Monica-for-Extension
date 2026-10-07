@@ -17,6 +17,24 @@ function harness() {
 }
 
 describe("Passkey verification window boundary", () => {
+  it("routes unlock through a scoped verifier, checks its method and invalidates its guard on cancel", async () => {
+    const h = harness();
+    h.broker.cancelAll();
+    let guard!: () => void;
+    const verify = vi.fn(async (_password: string, assertActive: () => void) => { guard = assertActive; assertActive(); });
+    const completion = h.broker.request({ candidateId: "unlock", operation: "get", rpId: "github.com", origin: "https://github.com", accountName: "", expiresAt: Date.now() + 60_000, unlockRequired: true, method: "windows-hello" }, verify).then(() => "verified", () => "cancelled");
+    const url = (h.windows.create.mock.calls[1] as unknown as [{url: string}])[0].url;
+    const id = new URL(url).searchParams.get("request")!;
+    const sender = { ...h.sender, url };
+    expect(h.broker.context(id, sender)).toMatchObject({ unlockRequired: true, method: "windows-hello" });
+    await expect(h.broker.verify(id, "password", sender)).rejects.toThrow("方式");
+    expect(verify).not.toHaveBeenCalled();
+    await h.broker.verify(id, "", sender, "windows-hello");
+    expect(await completion).toBe("verified");
+    expect(() => guard()).toThrow();
+    expect(h.verify).not.toHaveBeenCalled();
+  });
+
   it("requires the exact extension verification window and rejects replay", async () => {
     const h = harness();
     expect(h.broker.context(h.id, h.sender)).toMatchObject({ rpId: "github.com", accountName: "synthetic" });

@@ -1,4 +1,4 @@
-import { chooseOption } from "./fixtures/material";
+import { chooseOption, dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
@@ -141,6 +141,7 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("分行代码", { exact: true }).fill("001");
     await manager.getByLabel("币种", { exact: true }).fill("eur");
     await manager.getByLabel("客服电话", { exact: true }).fill("+4912345");
+    await manager.locator(".billing-address-fields [slot=header]").click();
     await manager.getByLabel("账单地址 JSON", { exact: true }).fill('{"city":"Berlin","future":true}');
     await manager.locator(".editor-disclosure [slot=\"header\"]").filter({ hasText: "自定义字段" }).click();
     await manager.getByRole("button", { name: "添加字段" }).click();
@@ -148,7 +149,8 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("自定义字段 1 值").fill("true");
     await chooseOption(manager.getByLabel("自定义字段 1 类型"), "BOOLEAN");
     await manager.getByRole("button", { name: "加密保存" }).click();
-    await expect(manager.getByText("Android Complete Card", { exact: true })).toBeVisible();
+    await expect(dialogContent(manager)).toHaveCount(0);
+    await expect(manager.locator(".vault-tile-open").getByText("Android Complete Card", { exact: true })).toBeVisible();
 
     await manager.getByRole("button", { name: /安全笔记/ }).click();
     await manager.getByRole("button", { name: "添加安全笔记" }).click();
@@ -157,6 +159,7 @@ test("manager preserves complete Android card fields and Markdown note metadata"
     await manager.getByLabel("使用 Markdown").check();
     await manager.getByLabel("笔记内容 *").fill("# Recovery\n\n- Keep future fields");
     await manager.getByRole("button", { name: "加密保存" }).click();
+    await expect(dialogContent(manager)).toHaveCount(0);
     await expect(manager.getByText("Markdown Runbook", { exact: true })).toBeVisible();
 
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };

@@ -56,7 +56,7 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.reload();
     await openLoginSection(manager);
     await manager.getByRole("row").filter({ hasText: "Native SSH" }).getByRole("button", { name: "编辑登录项" }).click();
-    const nativeDialog = dialogContent(manager, { name: "编辑登录项" });
+    const nativeDialog = dialogContent(manager, { name: "编辑密码" });
     await nativeDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(nativeDialog.getByText("Bitwarden 原生 SSH Cipher（Type 5）", { exact: false })).toBeVisible();
     await expect(nativeDialog.getByLabel("算法", { exact: true })).toHaveAttribute("readonly", "");
@@ -82,7 +82,7 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.getByRole("button", { name: "关闭" }).click();
 
     await manager.getByRole("button", { name: "新建", exact: true }).click();
-    const createDialog = dialogContent(manager, { name: "添加登录项" });
+    const createDialog = dialogContent(manager, { name: "添加密码" });
     await createDialog.getByLabel("名称 *", { exact: true }).fill("Fallback SSH");
     await chooseOption(createDialog.getByRole("combobox", { name: "项目类型", exact: true }), "SSH_KEY");
     await createDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
@@ -110,7 +110,7 @@ test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fall
     await manager.reload();
     await openLoginSection(manager);
     await manager.getByRole("row").filter({ hasText: "Fallback SSH" }).getByRole("button", { name: "编辑登录项" }).click();
-    const fallbackDialog = dialogContent(manager, { name: "编辑登录项" });
+    const fallbackDialog = dialogContent(manager, { name: "编辑密码" });
     await fallbackDialog.locator("[slot=\"header\"]").filter({ hasText: "密钥信息与高级设置" }).click();
     await expect(fallbackDialog.getByText("Monica Android 兼容格式（Type 1 + 加密字段）", { exact: false })).toBeVisible();
     await expectNoGradients(fallbackDialog);

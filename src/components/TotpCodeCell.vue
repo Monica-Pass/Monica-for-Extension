@@ -4,6 +4,7 @@ import { tr } from '../i18n';
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { LoginItem, TotpItem } from "../core/model";
 import { parametersFromItem } from "../core/login-otp";
+import { nextOtpCounter } from '../core/otp-counter';
 import { otpSecondsRemaining } from "../core/totp";
 import { createOtpDisplayCache } from "../core/otp-display-cache";
 import { subscribeForegroundClock } from "../lib/foreground-clock";
@@ -42,6 +43,7 @@ let disposed = false;
 
 async function refresh(now = Date.now()) {
   const request = ++revision;
+  const sourceItem = props.item;
   try {
     const source = parameters.value;
     if (!source) throw new Error("Missing OTP parameters");
@@ -59,6 +61,7 @@ async function refresh(now = Date.now()) {
     remaining.value = seconds;
     available.value = true;
     unavailable.value = false;
+    return { item: sourceItem, code: value, parameters: source };
   } catch {
     if (disposed || request !== revision) return;
     unavailable.value = true;
@@ -73,15 +76,15 @@ async function useCode() {
   copying.value = true;
   let copied = false;
   try {
-    await refresh();
-    if (disposed || !available.value) return;
-    const isHotp = parameters.value?.otpType === "HOTP";
+    const displayed = await refresh();
+    if (disposed || !available.value || !displayed) return;
+    const isHotp = displayed.parameters.otpType === "HOTP";
     if (isHotp && !props.consumeCode) return;
-    const source = props.item;
-    await navigator.clipboard.writeText(code.value);
+    if (isHotp) nextOtpCounter(displayed.parameters.counter);
+    await navigator.clipboard.writeText(displayed.code);
     copied = true;
     // Keep copying disabled until the source counter has been saved and refreshed.
-    if (isHotp) await props.consumeCode!(source);
+    if (isHotp) await props.consumeCode!(displayed.item);
     if (disposed) return;
     copyState.value = tr('已复制');
     window.clearTimeout(copyTimer);

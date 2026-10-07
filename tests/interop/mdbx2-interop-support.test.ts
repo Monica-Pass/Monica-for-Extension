@@ -80,7 +80,7 @@ describe("MDBX2 Android interoperability prerequisite ownership", () => {
     );
   });
 
-  it("retries a bounded package-manager clear after an Android broken pipe", async () => {
+  it("retries only its synthetic fixture-directory cleanup after an Android broken pipe", async () => {
     const commandRunner = vi.fn()
       .mockRejectedValueOnce(new Error("Failure calling service package: Broken pipe (32)"))
       .mockResolvedValueOnce({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 });
@@ -91,6 +91,16 @@ describe("MDBX2 Android interoperability prerequisite ownership", () => {
     expect(commandRunner).toHaveBeenCalledTimes(2);
     expect(pause).toHaveBeenCalledOnce();
     expect(pause).toHaveBeenCalledWith(1_500);
+    expect(commandRunner).toHaveBeenLastCalledWith(environment,
+      ["-s", environment.serial, "shell", "run-as", "takagi.ru.monica.mdbx.engine.test", "rm", "-rf", "files/mdbx2-extension-interop"],
+      { timeoutMs: 30_000 });
+  });
+
+  it("does not stop the shared emulator or global ADB server on cleanup", async () => {
+    const commandRunner = vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 }));
+    await stopAndroidEnvironment({ ...environment, serial: "emulator-5554", adbServerPort: 5037,
+      startedAdbServer: false, startedEmulator: false }, commandRunner);
+    expect(commandRunner).not.toHaveBeenCalled();
   });
 
   it("does not retry a permanent package-manager error", async () => {

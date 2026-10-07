@@ -287,7 +287,7 @@ async function sleepOrCancel(
   if (signal?.aborted) throw cancelledError(operation, attempt, signal.reason);
 }
 
-function abortableSleep(delayMs: number, signal: AbortSignal): Promise<void> {
+export function abortableSleep(delayMs: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { cleanup(); resolve(); }, delayMs);

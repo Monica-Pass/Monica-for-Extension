@@ -1,0 +1,106 @@
+/* Android detail groups: 12px inset, 24px outer corners and 4px joins. */
+#root .detail-dialog .detail-scroll { padding-inline: 12px; }
+#root .detail-dialog .detail-main { gap: 20px; }
+#root .detail-dialog .detail-section { padding: 0; background: transparent; }
+#root .detail-dialog .detail-section > h3 { margin: 0 12px 10px; }
+#root .detail-dialog .detail-connected-fields { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+#root .detail-dialog .detail-connected-fields > .detail-row {
+  padding: 12px 16px;
+  gap: 0;
+  background: var(--app-surface);
+  border: 0;
+  border-radius: 4px;
+}
+#root .detail-dialog .detail-connected-fields > .detail-row:first-child { border-start-start-radius: 24px; border-start-end-radius: 24px; }
+#root .detail-dialog .detail-connected-fields > .detail-row:last-child { border-end-start-radius: 24px; border-end-end-radius: 24px; }
+#root .detail-dialog .detail-connected-fields .detail-field-value { padding-block: 4px; }
+#root .detail-dialog .detail-connected-fields .detail-field-actions { align-self: center; }
+#root .detail-dialog .detail-disclosure > .detail-grid { padding: 4px 0 0; }
+#root .detail-dialog :is(.detail-notes, .detail-note) { padding: 16px; background: var(--app-surface); border-radius: 24px; }
+#root .detail-dialog :is(.detail-notes, .detail-note) > h3 { margin-inline: 0; }
+#root .detail-dialog .detail-sidebar { border-radius: 24px; }
+
+/* One visual language for password, key and wallet creation. M3E fields retain
+   their own focus/error/disabled states; only the surrounding groups change. */
+#root .material-editor-form .structured-editor { gap: 12px; padding-block: 4px 16px; }
+#root .material-editor-form .editor-section {
+  padding: 16px;
+  border-radius: 24px;
+  background: var(--app-surface);
+  gap: 16px;
+}
+#root .material-editor-form .editor-section > h3 { color: var(--app-primary); font-size: .875rem; }
+#root .material-editor-form .editor-basics { background: var(--app-selected); }
+#root .material-editor-form .editor-meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#root .material-editor-form .editor-meta-grid > :only-child { grid-column: 1 / -1; }
+#root .material-editor-form .editor-extras { gap: 8px; }
+#root .material-editor-form .editor-disclosure { border-radius: 16px; }
+/* Sections already supply the editor gutter. Nested M3E disclosures must not
+   add another 24px on each side, especially in a 320px side panel. */
+#root .material-editor-form .editor-section m3e-expansion-panel {
+  --m3e-expansion-panel-content-padding: 0 0 12px;
+  --m3e-expansion-header-padding-left: 16px;
+  --m3e-expansion-header-padding-right: 16px;
+}
+#root .material-editor-form .editor-disclosure-body { padding: 12px 0 0; }
+#root .material-editor-form .editor-field-grid > .field-wide { grid-column: 1 / -1; }
+#root .material-editor-form .editor-field-grid > m3e-form-field:has(textarea[rows='5']) { grid-column: 1 / -1; }
+#root .material-editor-form textarea { resize: vertical; }
+#root .material-editor-form .editor-section m3e-form-field { min-width: 0; }
+@container vault-editor (max-width: 36rem) {
+  #root .material-editor-form .editor-meta-grid { grid-template-columns: minmax(0, 1fr); }
+  #root .material-editor-form .editor-section { padding: 12px; }
+}
+#root .portrait-navigation { display: none; }
+@media (max-width: 580px) {
+  html:has(#root .portrait-navigation) { scroll-padding-bottom: calc(5rem + 24px + env(safe-area-inset-bottom)); }
+  #root #main-content { padding-inline: 12px; padding-bottom: calc(5rem + 24px + env(safe-area-inset-bottom)); }
+  #root .portrait-navigation {
+    display: block;
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 5;
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--app-surface);
+    --m3e-nav-bar-container-color: var(--app-surface);
+    --m3e-nav-bar-height: 80px;
+    --m3e-nav-bar-vertical-item-width: 0px;
+    --m3e-nav-item-icon-size: 24px;
+    --m3e-vertical-nav-item-active-indicator-width: 56px;
+  }
+  #root .portrait-navigation m3e-nav-item { flex: 1 1 0; min-width: 0; }
+  #root .portrait-navigation-label { display: block; width: calc(25vw - 8px); overflow-wrap: anywhere; }
+  #root .page-view:has(> .vault-browse-bar) > .page-heading { padding-block: 12px 16px; }
+  #root .material-editor-form .editor-meta-grid { grid-template-columns: minmax(0, 1fr); }
+  #root .detail-dialog .detail-header { padding: 16px; }
+  #root .modal-backdrop:has(> .detail-dialog) { padding: 0; }
+  #root .detail-dialog[role='dialog'] {
+    width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
+    border-radius: 0; border: 0;
+  }
+  #root .detail-dialog > .detail-actions { padding: 12px 12px max(12px, env(safe-area-inset-bottom)); }
+}
+.project-removal-review { display: grid; gap: 16px; min-width: 0; padding-block: 8px; }
+.project-removal-review h3, .project-removal-review p { margin: 0; overflow-wrap: anywhere; }
+.project-removal-review ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.project-removal-review li { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 16px; box-sizing: border-box; border-radius: 4px; background: var(--md-sys-color-surface-container-low); }
+.project-removal-review li:first-child { border-start-start-radius: 24px; border-start-end-radius: 24px; }
+.project-removal-review li:last-child { border-end-start-radius: 24px; border-end-end-radius: 24px; }
+.project-removal-review li span { min-width: 0; overflow-wrap: anywhere; }
+.project-removal-review li m3e-icon { flex: 0 0 auto; color: var(--md-sys-color-primary); }
+#root .password-row [data-remove-password] { width: 48px; height: 48px; min-width: 48px; min-height: 48px; flex: 0 0 48px; --m3e-icon-button-container-height: 48px; }
+#root .lifecycle-page .item-card:has(> .restore-project-action) { grid-template-areas: 'main summary meta actions' 'restore restore restore restore'; }
+#root .lifecycle-page .item-card:has(> .restore-project-action) > .item-card-main { grid-area: main; }
+#root .lifecycle-page .item-card:has(> .restore-project-action) > .item-card-summary { grid-area: summary; }
+#root .lifecycle-page .item-card:has(> .restore-project-action) > .item-card-meta { grid-area: meta; }
+#root .lifecycle-page .item-card:has(> .restore-project-action) > .item-card-actions { grid-area: actions; }
+#root .lifecycle-page .restore-project-action { grid-area: restore; justify-self: start; min-height: 48px; margin: 4px 0 0; width: fit-content; max-width: 100%; position: relative; z-index: 1; --m3e-button-container-height: 48px; }
+@container manager-content (max-width: 58rem) {
+  #root .lifecycle-page .item-card:has(> .restore-project-action) { grid-template-areas: 'main meta actions' 'summary meta actions' 'restore restore restore'; }
+}
+@container manager-content (max-width: 38rem) {
+  #root .lifecycle-page .item-card:has(> .restore-project-action) { grid-template-areas: 'main main' 'summary summary' 'meta actions' 'restore restore'; }
+  #root .lifecycle-page .restore-project-action { width: 100%; }
+}
+#root :is(.project-restore-dialog, .pending-restores) m3e-button { min-height: 48px; --m3e-button-container-height: 48px; }
+#root :is(.project-restore-dialog, .pending-restores) m3e-icon-button { width: 48px; height: 48px; min-width: 48px; min-height: 48px; flex: 0 0 48px; --m3e-icon-button-container-height: 48px; --m3e-icon-button-container-width: 48px; }

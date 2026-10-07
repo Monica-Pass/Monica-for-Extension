@@ -265,6 +265,187 @@ const TIGA_POSTURE = {
 afterEach(() => vi.useRealTimers());
 
 describe("MDBX2 Native Messaging client", () => {
+  it.each(['success', 'old-host', 'format', 'missing-blobs', 'size', 'digest'] as const)(
+    'validates complete backup capabilities and descriptor: %s', async scenario => {
+      const handle = '11111111-1111-4111-8111-111111111111';
+      const runtime = new FakeRuntime();
+      const descriptor = { fileHandle: handle, purpose: 'vault-backup', format: 'zip', blobCount: 3, sizeBytes: 4096, sha256: 'a'.repeat(64) };
+      if (scenario === 'format') descriptor.format = 'rar';
+      if (scenario === 'missing-blobs') descriptor.format = 'mdbx';
+      if (scenario === 'size') descriptor.sizeBytes = 513 * 1024 * 1024;
+      if (scenario === 'digest') descriptor.sha256 = 'invalid';
+      runtime.port.onPost = message => {
+        const request = message as { requestId: string; method: string };
+        const result = request.method === 'host.hello' ? { ...HELLO, supportsCompleteBackup: scenario !== 'old-host' } : descriptor;
+        queueMicrotask(() => runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never));
+      };
+      const client = new Mdbx2NativeClient(runtime);
+      if (scenario === 'success') await expect(client.prepareCompleteBackup(handle)).resolves.toEqual(descriptor);
+      else await expect(client.prepareCompleteBackup(handle)).rejects.toThrow();
+      if (scenario === 'old-host') expect(runtime.port.messages).toHaveLength(1);
+      client.close();
+    });
+  it.each(['success', 'wrong-identity', 'duplicate-result', 'missing-result', 'wrong-commit', 'partial-result', 'old-host', 'missing-revision'] as const)(
+    'validates atomic group restore and never falls back to single writes: %s', async scenario => {
+      const handle = '11111111-1111-4111-8111-111111111111', second = '22222222-2222-4222-8222-222222222222';
+      const objects = [handle, second].map(objectId => ({ objectId, collectionId: handle, objectTypeId: 'login', expectedHeadCommitId: handle }));
+      const input = { objects, writeRevision: { vaultId: handle, revisionSha256: 'a'.repeat(64) } };
+      const runtime = new FakeRuntime();
+      const receipt = { changed: true, operationId: handle, commitId: handle, alreadyCommitted: false,
+        items: objects.map(row => ({ kind: 'restore', changed: true, objectId: row.objectId,
+          logicalObjectId: `native:${row.objectId}`, collectionId: handle, objectTypeId: 'login' })) };
+      if (scenario === 'wrong-identity') receipt.items[1].collectionId = second;
+      if (scenario === 'duplicate-result') receipt.items[1] = receipt.items[0];
+      if (scenario === 'missing-result') receipt.items.pop();
+      if (scenario === 'wrong-commit') receipt.commitId = 'not-a-commit';
+      if (scenario === 'partial-result') receipt.items[1].changed = false;
+      runtime.port.onPost = message => {
+        const request = message as { requestId: string; method: string };
+        const result = request.method === 'host.hello' ? { ...HELLO, supportsObjectBatchRestore: scenario !== 'old-host',
+          supportsVaultWriteRevision: scenario !== 'missing-revision' } : receipt;
+        runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+      };
+      const client = new Mdbx2NativeClient(runtime);
+      try {
+        const result = client.restoreObjects(handle, 'b'.repeat(64), input);
+        if (scenario === 'success') await expect(result).resolves.toEqual(receipt);
+        else await expect(result).rejects.toThrow();
+        const methods = runtime.port.messages.map(message => (message as { method: string }).method);
+        expect(methods).not.toContain('object.restore');
+        expect(methods).not.toContain('object.batch');
+        if (scenario === 'old-host' || scenario === 'missing-revision') expect(methods).toEqual(['host.hello']);
+        else expect(runtime.port.messages).toContainEqual(expect.objectContaining({ method: 'object.restoreBatch',
+          params: { vaultHandle: handle, operationScope: 'b'.repeat(64), ...input } }));
+      } finally { client.close(); }
+    });
+
+  it('rejects incomplete, duplicate and oversized restore targets before dispatch', async () => {
+    const handle = '11111111-1111-4111-8111-111111111111', runtime = new FakeRuntime(), client = new Mdbx2NativeClient(runtime);
+    const row = { objectId: handle, collectionId: handle, objectTypeId: 'login', expectedHeadCommitId: handle };
+    const revision = { vaultId: handle, revisionSha256: 'a'.repeat(64) };
+    try {
+      for (const objects of [[], [row, row], Array.from({ length: 51 }, () => row), [{ ...row, expectedHeadCommitId: '' }]])
+        await expect(client.restoreObjects(handle, 'b'.repeat(64), { objects, writeRevision: revision })).rejects.toThrow();
+      expect(runtime.port.messages).toEqual([]);
+    } finally { client.close(); }
+  });
+
+  it.each(['success', 'wrong-identity', 'old-host', 'missing-revision'] as const)('validates native restore requests and receipts: %s', async scenario => {
+    const handle = '11111111-1111-4111-8111-111111111111';
+    const input = { objectId: handle, collectionId: handle, objectTypeId: 'login', expectedHeadCommitId: handle,
+      writeRevision: { vaultId: handle, revisionSha256: 'a'.repeat(64) } };
+    const runtime = new FakeRuntime();
+    const receipt = { operationId: handle, commitId: handle, alreadyCommitted: false,
+      logicalObjectId: `native:${handle}`, objectId: scenario === 'wrong-identity' ? '22222222-2222-4222-8222-222222222222' : handle,
+      collectionId: handle, objectTypeId: 'login' };
+    runtime.port.onPost = message => {
+      const request = message as { requestId: string; method: string };
+      const result = request.method === 'host.hello' ? { ...HELLO, supportsObjectRestore: scenario !== 'old-host',
+        supportsVaultWriteRevision: scenario !== 'missing-revision' } : receipt;
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    try {
+      const result = client.restoreObject(handle, 'b'.repeat(64), input);
+      if (scenario === 'old-host' || scenario === 'missing-revision') {
+        await expect(result).rejects.toMatchObject({ code: 'object-restore-host-update-required' });
+        expect(runtime.port.messages.every(message => (message as { method: string }).method === 'host.hello')).toBe(true);
+      } else {
+        if (scenario === 'success') await expect(result).resolves.toEqual(receipt);
+        else await expect(result).rejects.toMatchObject({ code: 'object-restore-invalid' });
+        expect(runtime.port.messages).toContainEqual(expect.objectContaining({ method: 'object.restore',
+          params: { vaultHandle: handle, operationScope: 'b'.repeat(64), ...input } }));
+      }
+    } finally { client.close(); }
+  });
+
+  it('binds guarded deletes to the exact vault revision and rejects old Hosts before any mutation', async () => {
+    const handle = '11111111-1111-4111-8111-111111111111', revision = { vaultId: handle, revisionSha256: 'a'.repeat(64) };
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = message => {
+      const request = message as { requestId: string; method: string };
+      const result = request.method === 'host.hello' ? { ...HELLO, supportsVaultWriteRevision: true, supportsNativeObjectIdentity: true,
+        supportsObjectRevisionPreconditions: true, supportsLosslessJson: true } : request.method === 'vault.writeRevision' ? revision
+        : { changed: true, operationId: handle, commitId: handle, alreadyCommitted: false,
+          items: [{ kind: 'delete', changed: true, logicalObjectId: `native:${handle}`, objectId: handle }] };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    expect(await client.readWriteRevision(handle)).toEqual(revision);
+    await client.mutateObjects(handle, 'b'.repeat(64), [{ kind: 'delete', logicalObjectId: `native:${handle}`, expectedHeadCommitId: handle }], 120_000, revision);
+    expect(runtime.port.messages).toContainEqual(expect.objectContaining({ method: 'object.batch', params: expect.objectContaining({ writeRevision: revision }) }));
+    await expect(client.mutateObjects(handle, 'b'.repeat(64), [{ kind: 'delete', logicalObjectId: handle }], 120_000, { ...revision, revisionSha256: 'broken' })).rejects.toThrow();
+    client.close();
+    const oldRuntime = new FakeRuntime();
+    oldRuntime.port.onPost = message => { const request = message as { requestId: string };
+      oldRuntime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: HELLO } as never); };
+    const old = new Mdbx2NativeClient(oldRuntime);
+    await expect(old.readWriteRevision(handle)).rejects.toMatchObject({ code: 'vault-revision-host-update-required' });
+    await expect(old.mutateObjects(handle, 'b'.repeat(64), [{ kind: 'delete', logicalObjectId: handle }], 120_000, revision)).rejects.toMatchObject({ code: 'vault-revision-host-update-required' });
+    expect(oldRuntime.port.messages.every(message => (message as { method: string }).method === 'host.hello')).toBe(true);
+    old.close();
+  });
+
+  it.each([
+    { open: true, vaultId: "authenticated-vault-id" },
+    { open: false, vaultId: null },
+    { open: true, vaultId: undefined }
+  ])("reads authenticated vault identity with legacy/locked compatibility: %j", async ({ open, vaultId }) => {
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = message => {
+      const request = message as { requestId: string; method: string };
+      const result = request.method === "host.hello" ? HELLO : { vaultHandle: handle, open, available: true, vaultId };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    await expect(client.vaultStatus(handle)).resolves.toEqual({
+      vaultHandle: handle, open, available: true, ...(vaultId == null ? {} : { vaultId })
+    });
+    client.close();
+  });
+
+  it("forwards native deletion revision and prevents old helpers from receiving a native edit", async () => {
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = message => {
+      const request = message as {requestId: string; method: string};
+      const result = request.method === "host.hello"
+        ? { ...HELLO, supportsNativeObjectIdentity: true, supportsObjectRevisionPreconditions: true, supportsLosslessJson: true }
+        : { changed: true, logicalObjectId: `native:${handle}`, objectId: handle, commitId: handle, alreadyCommitted: false };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    await client.deleteObject(handle, handle, `native:${handle}`, handle);
+    expect(runtime.port.messages).toContainEqual(expect.objectContaining({ method: "object.delete", params: { vaultHandle: handle, operationId: handle, logicalObjectId: `native:${handle}`, expectedHeadCommitId: handle } }));
+    client.close();
+
+    const oldRuntime = new FakeRuntime();
+    oldRuntime.port.onPost = message => {
+      const request = message as {requestId: string};
+      oldRuntime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: HELLO } as never);
+    };
+    const old = new Mdbx2NativeClient(oldRuntime);
+    await expect(old.upsertObject(handle, handle, { logicalObjectId: `native:${handle}`, expectedHeadCommitId: handle, objectTypeId: "login", title: "Synthetic", payloadJson: '{"secret":"synthetic-only"}' })).rejects.toMatchObject({ code: "interop-host-update-required" });
+    expect(oldRuntime.port.messages).toHaveLength(1);
+    old.close();
+  });
+  it("blocks native collection writes through helpers without atomic attachment moves", async () => {
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = message => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true,
+        result: { ...HELLO, supportsNativeObjectIdentity: true, supportsObjectRevisionPreconditions: true, supportsLosslessJson: true } } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    const input = { logicalObjectId: `native:${handle}`, collectionId: handle, expectedHeadCommitId: handle,
+      objectTypeId: "login", title: "Synthetic", payloadJson: "{}" };
+    await expect(client.upsertObject(handle, handle, input)).rejects.toMatchObject({ code: "attachment-move-host-update-required" });
+    await expect(client.mutateObjects(handle, "ab".repeat(32), [{ kind: "upsert", ...input }])).rejects.toMatchObject({ code: "attachment-move-host-update-required" });
+    expect(runtime.port.messages.every(message => (message as { method: string }).method === "host.hello")).toBe(true);
+    client.close();
+  });
   it("performs a pinned hello request and validates MDBX2-only capabilities", async () => {
     const runtime = new FakeRuntime();
     runtime.port.onPost = (message) => {

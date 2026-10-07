@@ -1,0 +1,194 @@
+{
+  "title": "Monica · MDBX 完整备份与恢复",
+  "brief": "复用密码源页和现有导入表单；12px留白、连续列表组、明确附件保留与恢复步骤。普通MDBX保持原流程，ZIP完整备份直接还原；Android先解压，保留相邻附件目录。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "backupcompact317",
+      "name": "完整备份恢复 · 320px",
+      "x": 0,
+      "y": 0,
+      "w": 320,
+      "h": 940
+    }
+  ],
+  "groups": [
+    {
+      "id": "backuplayout-g1",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 16,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i2",
+          "icon": "close",
+          "variant": "filled",
+          "size": 296,
+          "kind": "topAppBar",
+          "label": "打开 MDBX2"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g3",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 104,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i4",
+          "icon": "check_circle",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "本机助手已就绪",
+          "supporting": "已连接，可打开数据库与完整备份"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g5",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 204,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i6",
+          "icon": null,
+          "variant": "filled",
+          "size": 296,
+          "kind": "textField",
+          "label": "显示名称",
+          "supporting": "完整备份恢复"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g7",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 300,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i8",
+          "icon": "folder_open",
+          "variant": "filled",
+          "size": 296,
+          "kind": "button",
+          "label": "选择 MDBX 或完整备份 ZIP"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g9",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 388,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i10",
+          "icon": "archive",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "complete.mdbx-backup.zip",
+          "supporting": "包含数据库和附件"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g11",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 492,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i12",
+          "icon": null,
+          "variant": "filled",
+          "size": 296,
+          "kind": "select",
+          "label": "解锁方式",
+          "supporting": "密码"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g13",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 588,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i14",
+          "icon": null,
+          "variant": "filled",
+          "size": 296,
+          "kind": "textField",
+          "label": "保险库密码（可留空）"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g15",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 704,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i16",
+          "icon": "lock_open",
+          "variant": "filled",
+          "size": 296,
+          "kind": "button",
+          "label": "验证、解锁并导入"
+        }
+      ]
+    },
+    {
+      "id": "backuplayout-g17",
+      "frameId": "backupcompact317",
+      "x": 12,
+      "y": 800,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backuplayout-i18",
+          "icon": null,
+          "variant": "text",
+          "size": 296,
+          "kind": "button",
+          "label": "取消"
+        }
+      ]
+    }
+  ]
+}

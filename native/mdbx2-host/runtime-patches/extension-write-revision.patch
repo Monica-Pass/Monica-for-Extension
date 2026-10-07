@@ -1,0 +1,135 @@
+diff --git a/crates/mdbx-ffi/src/write_facade.rs b/crates/mdbx-ffi/src/write_facade.rs
+index e571e57..3b9b2b5 100644
+--- a/crates/mdbx-ffi/src/write_facade.rs
++++ b/crates/mdbx-ffi/src/write_facade.rs
+@@ -200,6 +200,7 @@ pub(crate) fn validate_uuid(value: &str, field: &str) -> Result<(), MdbxFfiError
+         .map_err(|_| StorageError::Validation(format!("{field} {value} must be a UUID")).into())
+ }
+ 
++use mdbx_storage::connection::VaultConnection;
+ use mdbx_storage::error::{StorageError, StorageResult};
+ #[cfg(test)]
+ use mdbx_storage::repo::{
+@@ -207,8 +208,8 @@ use mdbx_storage::repo::{
+     write_operation_changes as storage_write_operation_changes,
+ };
+ use mdbx_storage::repo::{
+-    write_operation_scope as storage_write_operation_scope, AttachmentRepo, CommitChange,
+-    CommitContext, CommitOperation, OperationCoordinator, OperationCoordinatorError,
++    write_operation_scope as storage_write_operation_scope, AttachmentRepo, BranchRepo,
++    CommitChange, CommitContext, CommitOperation, OperationCoordinator, OperationCoordinatorError,
+     OperationExecution, WriteCommand as StorageWriteCommand,
+     WriteOperationLimits as InternalWriteOperationLimits, WriteOperationRequest,
+ };
+@@ -589,8 +590,111 @@ fn write_operation_result(
+     }
+ }
+ 
++/// Extension-only precondition for a write verified against all branch heads.
++/// This includes attachment-only commits which do not advance an Object head.
++#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
++pub struct MdbxWriteRevision {
++    pub vault_id: String,
++    pub revision_sha256: String,
++}
++
++fn write_revision_hash(conn: &VaultConnection, vault_id: &str) -> StorageResult<String> {
++    let mut branches = BranchRepo::list(conn)?;
++    branches.sort_by(|left, right| left.branch_id.cmp(&right.branch_id));
++    let mut hash = Sha256::new();
++    update_attachment_intent_part(&mut hash, b"monica-extension-write-revision-v1");
++    update_attachment_intent_part(&mut hash, vault_id.as_bytes());
++    for branch in branches {
++        for value in [branch.branch_id, branch.branch_name, branch.head_commit_id] {
++            update_attachment_intent_part(&mut hash, value.as_bytes());
++        }
++    }
++    Ok(format!("{:x}", hash.finalize()))
++}
++
+ #[uniffi::export]
+ impl MdbxVault {
++    pub fn read_write_revision(&self) -> Result<MdbxWriteRevision, MdbxFfiError> {
++        let conn = self.conn.lock().map_err(|_| MdbxFfiError::LockPoisoned)?;
++        Ok(MdbxWriteRevision {
++            vault_id: self.vault_id.clone(),
++            revision_sha256: write_revision_hash(&conn, &self.vault_id)?,
++        })
++    }
++
++    /// Check and write within BEGIN IMMEDIATE, covering other connections too.
++    /// The guard is part of the durable intent; only an identical committed
++    /// request may replay after its original revision no longer exists.
++    pub fn execute_write_operation_at_revision(
++        &self,
++        operation_id: String,
++        operation_kind: String,
++        commands: Vec<MdbxWriteCommand>,
++        expected: MdbxWriteRevision,
++    ) -> Result<MdbxWriteOperationResult, MdbxFfiError> {
++        validate_uuid(&expected.vault_id, "expected vault ID")?;
++        if expected.revision_sha256.len() != 64
++            || !expected
++                .revision_sha256
++                .bytes()
++                .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
++        {
++            return Err(StorageError::Validation("write revision is invalid".to_string()).into());
++        }
++        // Match OperationCoordinator's repository kinds; restore/move may not
++        // execute inside a context declared as an ordinary change.
++        let kinds = commands.iter().map(|command| match command {
++            MdbxWriteCommand::RestoreProject { .. } | MdbxWriteCommand::RestoreEntry { .. } => "restore",
++            MdbxWriteCommand::MoveProject { .. } | MdbxWriteCommand::MoveEntry { .. } => "move",
++            _ => "change",
++        }).collect::<std::collections::BTreeSet<_>>();
++        let commit_kind = if kinds.len() == 1 { *kinds.iter().next().unwrap() } else { "multi" };
++        let prepared = OperationCoordinator::prepare(WriteOperationRequest::new(
++            operation_id,
++            operation_kind,
++            commands.into_iter().map(Into::into).collect(),
++        ))?;
++        let mut intent = Sha256::new();
++        for part in [
++            b"monica-extension-guarded-write-v1".as_slice(),
++            prepared.intent_hash(),
++            expected.vault_id.as_bytes(),
++            expected.revision_sha256.as_bytes(),
++        ] {
++            update_attachment_intent_part(&mut intent, part);
++        }
++        let operation = CommitOperation::new(
++            prepared.operation_id(),
++            prepared.operation_kind(),
++            "main",
++            commit_kind,
++            prepared.change_scope(),
++            prepared.changed_objects().to_vec(),
++        )
++        .with_intent_hash(intent.finalize().to_vec());
++        let conn = self.conn.lock().map_err(|_| MdbxFfiError::LockPoisoned)?;
++        let ctx = CommitContext::new(self.device_id.clone());
++        let execution = ctx.run_operation(&conn, operation, |scoped| {
++            if expected.vault_id != self.vault_id
++                || write_revision_hash(&conn, &self.vault_id)? != expected.revision_sha256
++            {
++                return Err(StorageError::Validation(
++                    "write revision changed".to_string(),
++                ));
++            }
++            prepared.apply(&conn, scoped)
++        })?;
++        let (commit_id, already_committed) = match execution {
++            OperationExecution::Applied { commit_id, .. } => (commit_id, false),
++            OperationExecution::AlreadyCommitted { commit_id } => (commit_id, true),
++        };
++        Ok(write_operation_result(
++            prepared.changed_objects(),
++            commit_id,
++            already_committed,
++        ))
++    }
++
+     pub fn execute_write_operation(
+         &self,
+         operation_id: String,

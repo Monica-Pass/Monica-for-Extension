@@ -1,0 +1,4426 @@
+[
+  {
+    "slug": "123formbuilder",
+    "label": "123formbuilder",
+    "light": "icons-123formbuilder.png"
+  },
+  {
+    "slug": "15five",
+    "label": "15five",
+    "light": "icons-15five.png"
+  },
+  {
+    "slug": "1password",
+    "label": "1password",
+    "light": "icons-1password.png",
+    "dark": "icons-1password_dark.png"
+  },
+  {
+    "slug": "23andme",
+    "label": "23andme",
+    "light": "icons-23andme.png"
+  },
+  {
+    "slug": "34sp",
+    "label": "34sp",
+    "light": "icons-34sp.png"
+  },
+  {
+    "slug": "3cx",
+    "label": "3cx",
+    "light": "icons-3cx.png",
+    "dark": "icons-3cx_dark.png"
+  },
+  {
+    "slug": "500px",
+    "label": "500px",
+    "light": "icons-500px.png",
+    "dark": "icons-500px_dark.png"
+  },
+  {
+    "slug": "7pass",
+    "label": "7pass",
+    "light": "icons-7pass.png"
+  },
+  {
+    "slug": "accelo",
+    "label": "accelo",
+    "light": "icons-accelo.png",
+    "dark": "icons-accelo_dark.png"
+  },
+  {
+    "slug": "accessidentity",
+    "label": "accessidentity",
+    "light": "icons-accessidentity.png"
+  },
+  {
+    "slug": "actionstep",
+    "label": "actionstep",
+    "light": "icons-actionstep.png",
+    "dark": "icons-actionstep_dark.png"
+  },
+  {
+    "slug": "activestate",
+    "label": "activestate",
+    "light": "icons-activestate.png",
+    "dark": "icons-activestate_dark.png"
+  },
+  {
+    "slug": "activision",
+    "label": "activision",
+    "light": "icons-activision.png",
+    "dark": "icons-activision_dark.png"
+  },
+  {
+    "slug": "adafruit",
+    "label": "adafruit",
+    "light": "icons-adafruit.png",
+    "dark": "icons-adafruit_dark.png"
+  },
+  {
+    "slug": "addikobank",
+    "label": "addikobank",
+    "light": "icons-addikobank.png"
+  },
+  {
+    "slug": "addyio",
+    "label": "addyio",
+    "light": "icons-addyio.png"
+  },
+  {
+    "slug": "adguard",
+    "label": "adguard",
+    "light": "icons-adguard.png"
+  },
+  {
+    "slug": "admitad",
+    "label": "admitad",
+    "light": "icons-admitad.png"
+  },
+  {
+    "slug": "adobe",
+    "label": "adobe",
+    "light": "icons-adobe.png"
+  },
+  {
+    "slug": "adyen",
+    "label": "adyen",
+    "light": "icons-adyen.png"
+  },
+  {
+    "slug": "aerlingus",
+    "label": "aerlingus",
+    "light": "icons-aerlingus.png"
+  },
+  {
+    "slug": "affinity",
+    "label": "affinity",
+    "light": "icons-affinity.png",
+    "dark": "icons-affinity_dark.png"
+  },
+  {
+    "slug": "aikq",
+    "label": "aikq",
+    "light": "icons-aikq.png"
+  },
+  {
+    "slug": "airbrake",
+    "label": "airbrake",
+    "light": "icons-airbrake.png"
+  },
+  {
+    "slug": "airbus",
+    "label": "airbus",
+    "light": "icons-airbus.png",
+    "dark": "icons-airbus_dark.png"
+  },
+  {
+    "slug": "airship",
+    "label": "airship",
+    "light": "icons-airship.png"
+  },
+  {
+    "slug": "airtable",
+    "label": "airtable",
+    "light": "icons-airtable.png"
+  },
+  {
+    "slug": "airvpn",
+    "label": "airvpn",
+    "light": "icons-airvpn.png"
+  },
+  {
+    "slug": "aiven",
+    "label": "aiven",
+    "light": "icons-aiven.png"
+  },
+  {
+    "slug": "ajaxsystems",
+    "label": "ajaxsystems",
+    "light": "icons-ajaxsystems.png",
+    "dark": "icons-ajaxsystems_dark.png"
+  },
+  {
+    "slug": "algolia",
+    "label": "algolia",
+    "light": "icons-algolia.png"
+  },
+  {
+    "slug": "alibabacloud",
+    "label": "alibabacloud",
+    "light": "icons-alibabacloud.png"
+  },
+  {
+    "slug": "allegro",
+    "label": "allegro",
+    "light": "icons-allegro.png"
+  },
+  {
+    "slug": "allinkl",
+    "label": "allinkl",
+    "light": "icons-allinkl.png"
+  },
+  {
+    "slug": "allmylinks",
+    "label": "allmylinks",
+    "light": "icons-allmylinks.png"
+  },
+  {
+    "slug": "altaro",
+    "label": "altaro",
+    "light": "icons-altaro.png"
+  },
+  {
+    "slug": "amazon",
+    "label": "amazon",
+    "light": "icons-amazon.png",
+    "dark": "icons-amazon_dark.png"
+  },
+  {
+    "slug": "amazonpay",
+    "label": "amazonpay",
+    "light": "extraicons-amazonpay.png",
+    "dark": "extraicons-amazonpay_dark.png"
+  },
+  {
+    "slug": "anaconda",
+    "label": "anaconda",
+    "light": "icons-anaconda.png"
+  },
+  {
+    "slug": "android",
+    "label": "android",
+    "light": "extraicons-android.png"
+  },
+  {
+    "slug": "anycoindirect",
+    "label": "anycoindirect",
+    "light": "icons-anycoindirect.png",
+    "dark": "icons-anycoindirect_dark.png"
+  },
+  {
+    "slug": "anydesk",
+    "label": "anydesk",
+    "light": "icons-anydesk.png"
+  },
+  {
+    "slug": "anyrun",
+    "label": "anyrun",
+    "light": "icons-anyrun.png"
+  },
+  {
+    "slug": "aol",
+    "label": "aol",
+    "light": "icons-aol.png",
+    "dark": "icons-aol_dark.png"
+  },
+  {
+    "slug": "apnic",
+    "label": "apnic",
+    "light": "icons-apnic.png",
+    "dark": "icons-apnic_dark.png"
+  },
+  {
+    "slug": "apple",
+    "label": "apple",
+    "light": "extraicons-apple.png"
+  },
+  {
+    "slug": "appsignal",
+    "label": "appsignal",
+    "light": "icons-appsignal.png",
+    "dark": "icons-appsignal_dark.png"
+  },
+  {
+    "slug": "appveyor",
+    "label": "appveyor",
+    "light": "icons-appveyor.png"
+  },
+  {
+    "slug": "arbeitsagentur",
+    "label": "arbeitsagentur",
+    "light": "icons-arbeitsagentur.png"
+  },
+  {
+    "slug": "archlinux",
+    "label": "archlinux",
+    "light": "icons-archlinux.png"
+  },
+  {
+    "slug": "arduino",
+    "label": "arduino",
+    "light": "icons-arduino.png"
+  },
+  {
+    "slug": "arenanet",
+    "label": "arenanet",
+    "light": "icons-arenanet.png"
+  },
+  {
+    "slug": "arin",
+    "label": "arin",
+    "light": "icons-arin.png",
+    "dark": "icons-arin_dark.png"
+  },
+  {
+    "slug": "aruba",
+    "label": "aruba",
+    "light": "icons-aruba.png"
+  },
+  {
+    "slug": "asana",
+    "label": "asana",
+    "light": "icons-asana.png"
+  },
+  {
+    "slug": "ascendex",
+    "label": "ascendex",
+    "light": "icons-ascendex.png",
+    "dark": "icons-ascendex_dark.png"
+  },
+  {
+    "slug": "asuswebstorage",
+    "label": "asuswebstorage",
+    "light": "icons-asuswebstorage.png"
+  },
+  {
+    "slug": "atera",
+    "label": "atera",
+    "light": "icons-atera.png",
+    "dark": "icons-atera_dark.png"
+  },
+  {
+    "slug": "aternos",
+    "label": "aternos",
+    "light": "icons-aternos.png"
+  },
+  {
+    "slug": "atlassian",
+    "label": "atlassian",
+    "light": "icons-atlassian.png"
+  },
+  {
+    "slug": "autenti",
+    "label": "autenti",
+    "light": "icons-autenti.png",
+    "dark": "icons-autenti_dark.png"
+  },
+  {
+    "slug": "auth0",
+    "label": "auth0",
+    "light": "icons-auth0.png",
+    "dark": "icons-auth0_dark.png"
+  },
+  {
+    "slug": "authelia",
+    "label": "authelia",
+    "light": "icons-authelia.png"
+  },
+  {
+    "slug": "authentik",
+    "label": "authentik",
+    "light": "icons-authentik.png"
+  },
+  {
+    "slug": "autodesk",
+    "label": "autodesk",
+    "light": "icons-autodesk.png",
+    "dark": "icons-autodesk_dark.png"
+  },
+  {
+    "slug": "avanza",
+    "label": "avanza",
+    "light": "icons-avanza.png"
+  },
+  {
+    "slug": "avast",
+    "label": "avast",
+    "light": "icons-avast.png"
+  },
+  {
+    "slug": "avg",
+    "label": "avg",
+    "light": "icons-avg.png"
+  },
+  {
+    "slug": "awardwallet",
+    "label": "awardwallet",
+    "light": "icons-awardwallet.png",
+    "dark": "icons-awardwallet_dark.png"
+  },
+  {
+    "slug": "aws",
+    "label": "aws",
+    "light": "icons-aws.png",
+    "dark": "icons-aws_dark.png"
+  },
+  {
+    "slug": "azure",
+    "label": "azure",
+    "light": "extraicons-azure.png"
+  },
+  {
+    "slug": "backblaze",
+    "label": "backblaze",
+    "light": "icons-backblaze.png"
+  },
+  {
+    "slug": "backerkit",
+    "label": "backerkit",
+    "light": "icons-backerkit.png",
+    "dark": "icons-backerkit_dark.png"
+  },
+  {
+    "slug": "bahamut",
+    "label": "bahamut",
+    "light": "icons-bahamut.png",
+    "dark": "icons-bahamut_dark.png"
+  },
+  {
+    "slug": "bake",
+    "label": "bake",
+    "light": "icons-bake.png"
+  },
+  {
+    "slug": "balena",
+    "label": "balena",
+    "light": "icons-balena.png"
+  },
+  {
+    "slug": "bamboohr",
+    "label": "bamboohr",
+    "light": "icons-bamboohr.png"
+  },
+  {
+    "slug": "bandbbs",
+    "label": "bandbbs",
+    "light": "icons-bandbbs.png",
+    "dark": "icons-bandbbs_dark.png"
+  },
+  {
+    "slug": "barmenia",
+    "label": "barmenia",
+    "light": "icons-barmenia.png"
+  },
+  {
+    "slug": "barracuda",
+    "label": "barracuda",
+    "light": "icons-barracuda.png"
+  },
+  {
+    "slug": "basecamp",
+    "label": "basecamp",
+    "light": "icons-basecamp.png"
+  },
+  {
+    "slug": "beammp",
+    "label": "beammp",
+    "light": "icons-beammp.png",
+    "dark": "icons-beammp_dark.png"
+  },
+  {
+    "slug": "beehiiv",
+    "label": "beehiiv",
+    "light": "icons-beehiiv.png"
+  },
+  {
+    "slug": "bestbuy",
+    "label": "bestbuy",
+    "light": "icons-bestbuy.png"
+  },
+  {
+    "slug": "betfair",
+    "label": "betfair",
+    "light": "icons-betfair.png"
+  },
+  {
+    "slug": "bethesda",
+    "label": "bethesda",
+    "light": "icons-bethesda.png",
+    "dark": "icons-bethesda_dark.png"
+  },
+  {
+    "slug": "betterment",
+    "label": "betterment",
+    "light": "icons-betterment.png"
+  },
+  {
+    "slug": "betvictor",
+    "label": "betvictor",
+    "light": "icons-betvictor.png",
+    "dark": "icons-betvictor_dark.png"
+  },
+  {
+    "slug": "bigmind",
+    "label": "bigmind",
+    "light": "icons-bigmind.png"
+  },
+  {
+    "slug": "binance",
+    "label": "binance",
+    "light": "icons-binance.png"
+  },
+  {
+    "slug": "bingx",
+    "label": "bingx",
+    "light": "icons-bingx.png"
+  },
+  {
+    "slug": "bitbucket",
+    "label": "bitbucket",
+    "light": "extraicons-bitbucket.png"
+  },
+  {
+    "slug": "bitcoin",
+    "label": "bitcoin",
+    "light": "icons-bitcoin.png"
+  },
+  {
+    "slug": "bitcoinde",
+    "label": "bitcoinde",
+    "light": "icons-bitcoinde.png"
+  },
+  {
+    "slug": "bitdefender",
+    "label": "bitdefender",
+    "light": "icons-bitdefender.png"
+  },
+  {
+    "slug": "bitfinex",
+    "label": "bitfinex",
+    "light": "icons-bitfinex.png"
+  },
+  {
+    "slug": "bitflyer",
+    "label": "bitflyer",
+    "light": "icons-bitflyer.png"
+  },
+  {
+    "slug": "bitgo",
+    "label": "bitgo",
+    "light": "icons-bitgo.png"
+  },
+  {
+    "slug": "bitmex",
+    "label": "bitmex",
+    "light": "icons-bitmex.png"
+  },
+  {
+    "slug": "bitpanda",
+    "label": "bitpanda",
+    "light": "icons-bitpanda.png",
+    "dark": "icons-bitpanda_dark.png"
+  },
+  {
+    "slug": "bitpay",
+    "label": "bitpay",
+    "light": "icons-bitpay.png"
+  },
+  {
+    "slug": "bitrix24",
+    "label": "bitrix24",
+    "light": "icons-bitrix24.png",
+    "dark": "icons-bitrix24_dark.png"
+  },
+  {
+    "slug": "bitstamp",
+    "label": "bitstamp",
+    "light": "icons-bitstamp.png",
+    "dark": "icons-bitstamp_dark.png"
+  },
+  {
+    "slug": "bittrex",
+    "label": "bittrex",
+    "light": "icons-bittrex.png"
+  },
+  {
+    "slug": "bitvavo",
+    "label": "bitvavo",
+    "light": "icons-bitvavo.png"
+  },
+  {
+    "slug": "bitwarden",
+    "label": "bitwarden",
+    "light": "icons-bitwarden.png"
+  },
+  {
+    "slug": "blizzard",
+    "label": "blizzard",
+    "light": "icons-blizzard.png"
+  },
+  {
+    "slug": "blockchain",
+    "label": "blockchain",
+    "light": "icons-blockchain.png"
+  },
+  {
+    "slug": "blockstreamgreen",
+    "label": "blockstreamgreen",
+    "light": "icons-blockstreamgreen.png",
+    "dark": "icons-blockstreamgreen_dark.png"
+  },
+  {
+    "slug": "bluehost",
+    "label": "bluehost",
+    "light": "icons-bluehost.png"
+  },
+  {
+    "slug": "bluesky",
+    "label": "bluesky",
+    "light": "icons-bluesky.png"
+  },
+  {
+    "slug": "bonusly",
+    "label": "bonusly",
+    "light": "icons-bonusly.png"
+  },
+  {
+    "slug": "bookingcom",
+    "label": "bookingcom",
+    "light": "icons-bookingcom.png"
+  },
+  {
+    "slug": "borgbase",
+    "label": "borgbase",
+    "light": "icons-borgbase.png",
+    "dark": "icons-borgbase_dark.png"
+  },
+  {
+    "slug": "box",
+    "label": "box",
+    "light": "icons-box.png"
+  },
+  {
+    "slug": "boxcryptor",
+    "label": "boxcryptor",
+    "light": "icons-boxcryptor.png"
+  },
+  {
+    "slug": "braintree",
+    "label": "braintree",
+    "light": "icons-braintree.png",
+    "dark": "icons-braintree_dark.png"
+  },
+  {
+    "slug": "brevo",
+    "label": "brevo",
+    "light": "icons-brevo.png"
+  },
+  {
+    "slug": "brightbox",
+    "label": "brightbox",
+    "light": "icons-brightbox.png"
+  },
+  {
+    "slug": "britishairways",
+    "label": "britishairways",
+    "light": "icons-britishairways.png",
+    "dark": "icons-britishairways_dark.png"
+  },
+  {
+    "slug": "buffer",
+    "label": "buffer",
+    "light": "icons-buffer.png",
+    "dark": "icons-buffer_dark.png"
+  },
+  {
+    "slug": "bugcrowd",
+    "label": "bugcrowd",
+    "light": "icons-bugcrowd.png"
+  },
+  {
+    "slug": "bugsnag",
+    "label": "bugsnag",
+    "light": "icons-bugsnag.png",
+    "dark": "icons-bugsnag_dark.png"
+  },
+  {
+    "slug": "bugzillamozilla",
+    "label": "bugzillamozilla",
+    "light": "icons-bugzillamozilla.png"
+  },
+  {
+    "slug": "buhl",
+    "label": "buhl",
+    "light": "icons-buhl.png",
+    "dark": "icons-buhl_dark.png"
+  },
+  {
+    "slug": "buildium",
+    "label": "buildium",
+    "light": "icons-buildium.png"
+  },
+  {
+    "slug": "buildkite",
+    "label": "buildkite",
+    "light": "icons-buildkite.png"
+  },
+  {
+    "slug": "builtwith",
+    "label": "builtwith",
+    "light": "icons-builtwith.png"
+  },
+  {
+    "slug": "bunnycdn",
+    "label": "bunnycdn",
+    "light": "icons-bunnycdn.png"
+  },
+  {
+    "slug": "buymeacoffee",
+    "label": "buymeacoffee",
+    "light": "icons-buymeacoffee.png",
+    "dark": "icons-buymeacoffee_dark.png"
+  },
+  {
+    "slug": "bybit",
+    "label": "bybit",
+    "light": "icons-bybit.png",
+    "dark": "icons-bybit_dark.png"
+  },
+  {
+    "slug": "cachet",
+    "label": "cachet",
+    "light": "icons-cachet.png"
+  },
+  {
+    "slug": "caixa",
+    "label": "caixa",
+    "light": "icons-caixa.png",
+    "dark": "icons-caixa_dark.png"
+  },
+  {
+    "slug": "cal",
+    "label": "cal",
+    "light": "icons-cal.png",
+    "dark": "icons-cal_dark.png"
+  },
+  {
+    "slug": "callofduty",
+    "label": "callofduty",
+    "light": "icons-callofduty.png",
+    "dark": "icons-callofduty_dark.png"
+  },
+  {
+    "slug": "campaignmonitor",
+    "label": "campaignmonitor",
+    "light": "icons-campaignmonitor.png"
+  },
+  {
+    "slug": "canva",
+    "label": "canva",
+    "light": "icons-canva.png"
+  },
+  {
+    "slug": "capcom",
+    "label": "capcom",
+    "light": "icons-capcom.png"
+  },
+  {
+    "slug": "capsulecrm",
+    "label": "capsulecrm",
+    "light": "icons-capsulecrm.png",
+    "dark": "icons-capsulecrm_dark.png"
+  },
+  {
+    "slug": "carrd",
+    "label": "carrd",
+    "light": "icons-carrd.png",
+    "dark": "icons-carrd_dark.png"
+  },
+  {
+    "slug": "cashapp",
+    "label": "cashapp",
+    "light": "icons-cashapp.png"
+  },
+  {
+    "slug": "cashctrl",
+    "label": "cashctrl",
+    "light": "icons-cashctrl.png"
+  },
+  {
+    "slug": "caspio",
+    "label": "caspio",
+    "light": "icons-caspio.png"
+  },
+  {
+    "slug": "cexio",
+    "label": "cexio",
+    "light": "icons-cexio.png"
+  },
+  {
+    "slug": "chargebee",
+    "label": "chargebee",
+    "light": "icons-chargebee.png"
+  },
+  {
+    "slug": "charliehr",
+    "label": "charliehr",
+    "light": "icons-charliehr.png"
+  },
+  {
+    "slug": "chatwork",
+    "label": "chatwork",
+    "light": "icons-chatwork.png",
+    "dark": "icons-chatwork_dark.png"
+  },
+  {
+    "slug": "checkfront",
+    "label": "checkfront",
+    "light": "icons-checkfront.png"
+  },
+  {
+    "slug": "checkmategaming",
+    "label": "checkmategaming",
+    "light": "icons-checkmategaming.png",
+    "dark": "icons-checkmategaming_dark.png"
+  },
+  {
+    "slug": "cisco",
+    "label": "cisco",
+    "light": "icons-cisco.png"
+  },
+  {
+    "slug": "ciscomeraki",
+    "label": "ciscomeraki",
+    "light": "icons-ciscomeraki.png"
+  },
+  {
+    "slug": "clearscore",
+    "label": "clearscore",
+    "light": "icons-clearscore.png",
+    "dark": "icons-clearscore_dark.png"
+  },
+  {
+    "slug": "clicksign",
+    "label": "clicksign",
+    "light": "icons-clicksign.png",
+    "dark": "icons-clicksign_dark.png"
+  },
+  {
+    "slug": "clickup",
+    "label": "clickup",
+    "light": "icons-clickup.png"
+  },
+  {
+    "slug": "cliniko",
+    "label": "cliniko",
+    "light": "icons-cliniko.png",
+    "dark": "icons-cliniko_dark.png"
+  },
+  {
+    "slug": "close",
+    "label": "close",
+    "light": "icons-close.png"
+  },
+  {
+    "slug": "cloud66",
+    "label": "cloud66",
+    "light": "icons-cloud66.png"
+  },
+  {
+    "slug": "cloudbet",
+    "label": "cloudbet",
+    "light": "icons-cloudbet.png"
+  },
+  {
+    "slug": "cloudflare",
+    "label": "cloudflare",
+    "light": "icons-cloudflare.png"
+  },
+  {
+    "slug": "cloudhq",
+    "label": "cloudhq",
+    "light": "icons-cloudhq.png"
+  },
+  {
+    "slug": "cloudinary",
+    "label": "cloudinary",
+    "light": "icons-cloudinary.png"
+  },
+  {
+    "slug": "cloudways",
+    "label": "cloudways",
+    "light": "icons-cloudways.png",
+    "dark": "icons-cloudways_dark.png"
+  },
+  {
+    "slug": "cloze",
+    "label": "cloze",
+    "light": "icons-cloze.png"
+  },
+  {
+    "slug": "clubhouse",
+    "label": "clubhouse",
+    "light": "icons-clubhouse.png",
+    "dark": "icons-clubhouse_dark.png"
+  },
+  {
+    "slug": "coda",
+    "label": "coda",
+    "light": "icons-coda.png"
+  },
+  {
+    "slug": "codebase",
+    "label": "codebase",
+    "light": "icons-codebase.png",
+    "dark": "icons-codebase_dark.png"
+  },
+  {
+    "slug": "codeberg",
+    "label": "codeberg",
+    "light": "icons-codeberg.png",
+    "dark": "icons-codeberg_dark.png"
+  },
+  {
+    "slug": "codeship",
+    "label": "codeship",
+    "light": "icons-codeship.png",
+    "dark": "icons-codeship_dark.png"
+  },
+  {
+    "slug": "cohost",
+    "label": "cohost",
+    "light": "icons-cohost.png",
+    "dark": "icons-cohost_dark.png"
+  },
+  {
+    "slug": "coinbase",
+    "label": "coinbase",
+    "light": "icons-coinbase.png"
+  },
+  {
+    "slug": "coindcx",
+    "label": "coindcx",
+    "light": "icons-coindcx.png",
+    "dark": "icons-coindcx_dark.png"
+  },
+  {
+    "slug": "coinex",
+    "label": "coinex",
+    "light": "icons-coinex.png"
+  },
+  {
+    "slug": "coinjar",
+    "label": "coinjar",
+    "light": "icons-coinjar.png"
+  },
+  {
+    "slug": "coinloan",
+    "label": "coinloan",
+    "light": "icons-coinloan.png"
+  },
+  {
+    "slug": "coinspot",
+    "label": "coinspot",
+    "light": "icons-coinspot.png"
+  },
+  {
+    "slug": "coinstats",
+    "label": "coinstats",
+    "light": "icons-coinstats.png"
+  },
+  {
+    "slug": "cointracking",
+    "label": "cointracking",
+    "light": "icons-cointracking.png",
+    "dark": "icons-cointracking_dark.png"
+  },
+  {
+    "slug": "communityamerica",
+    "label": "communityamerica",
+    "light": "icons-communityamerica.png"
+  },
+  {
+    "slug": "companybike",
+    "label": "companybike",
+    "light": "icons-companybike.png"
+  },
+  {
+    "slug": "confluence",
+    "label": "confluence",
+    "light": "extraicons-confluence.png"
+  },
+  {
+    "slug": "contabo",
+    "label": "contabo",
+    "light": "icons-contabo.png"
+  },
+  {
+    "slug": "contentful",
+    "label": "contentful",
+    "light": "icons-contentful.png"
+  },
+  {
+    "slug": "controld",
+    "label": "controld",
+    "light": "icons-controld.png",
+    "dark": "icons-controld_dark.png"
+  },
+  {
+    "slug": "coolify",
+    "label": "coolify",
+    "light": "icons-coolify.png"
+  },
+  {
+    "slug": "coursera",
+    "label": "coursera",
+    "light": "icons-coursera.png"
+  },
+  {
+    "slug": "cpanel",
+    "label": "cpanel",
+    "light": "icons-cpanel.png"
+  },
+  {
+    "slug": "crashplan",
+    "label": "crashplan",
+    "light": "icons-crashplan.png"
+  },
+  {
+    "slug": "credly",
+    "label": "credly",
+    "light": "icons-credly.png"
+  },
+  {
+    "slug": "cronometer",
+    "label": "cronometer",
+    "light": "icons-cronometer.png"
+  },
+  {
+    "slug": "crowdin",
+    "label": "crowdin",
+    "light": "icons-crowdin.png",
+    "dark": "icons-crowdin_dark.png"
+  },
+  {
+    "slug": "crowdstrike",
+    "label": "crowdstrike",
+    "light": "icons-crowdstrike.png"
+  },
+  {
+    "slug": "crowdsupply",
+    "label": "crowdsupply",
+    "light": "icons-crowdsupply.png"
+  },
+  {
+    "slug": "cryptocom",
+    "label": "cryptocom",
+    "light": "icons-cryptocom.png",
+    "dark": "icons-cryptocom_dark.png"
+  },
+  {
+    "slug": "csfloat",
+    "label": "csfloat",
+    "light": "icons-csfloat.png"
+  },
+  {
+    "slug": "ctemplar",
+    "label": "ctemplar",
+    "light": "icons-ctemplar.png"
+  },
+  {
+    "slug": "currencyfair",
+    "label": "currencyfair",
+    "light": "icons-currencyfair.png"
+  },
+  {
+    "slug": "current",
+    "label": "current",
+    "light": "icons-current.png"
+  },
+  {
+    "slug": "curseforge",
+    "label": "curseforge",
+    "light": "icons-curseforge.png"
+  },
+  {
+    "slug": "cyon",
+    "label": "cyon",
+    "light": "icons-cyon.png"
+  },
+  {
+    "slug": "d4sign",
+    "label": "d4sign",
+    "light": "icons-d4sign.png",
+    "dark": "icons-d4sign_dark.png"
+  },
+  {
+    "slug": "dashlane",
+    "label": "dashlane",
+    "light": "icons-dashlane.png",
+    "dark": "icons-dashlane_dark.png"
+  },
+  {
+    "slug": "databox",
+    "label": "databox",
+    "light": "icons-databox.png"
+  },
+  {
+    "slug": "datev",
+    "label": "datev",
+    "light": "icons-datev.png"
+  },
+  {
+    "slug": "datto",
+    "label": "datto",
+    "light": "icons-datto.png"
+  },
+  {
+    "slug": "debian",
+    "label": "debian",
+    "light": "icons-debian.png"
+  },
+  {
+    "slug": "deepl",
+    "label": "deepl",
+    "light": "icons-deepl.png",
+    "dark": "icons-deepl_dark.png"
+  },
+  {
+    "slug": "default",
+    "label": "default",
+    "light": "icons-default.png",
+    "dark": "icons-default_dark.png"
+  },
+  {
+    "slug": "degiro",
+    "label": "degiro",
+    "light": "icons-degiro.png"
+  },
+  {
+    "slug": "delinea",
+    "label": "delinea",
+    "light": "icons-delinea.png"
+  },
+  {
+    "slug": "dell",
+    "label": "dell",
+    "light": "icons-dell.png"
+  },
+  {
+    "slug": "deputy",
+    "label": "deputy",
+    "light": "icons-deputy.png"
+  },
+  {
+    "slug": "desy",
+    "label": "desy",
+    "light": "icons-desy.png"
+  },
+  {
+    "slug": "deutschebahn",
+    "label": "deutschebahn",
+    "light": "icons-deutschebahn.png"
+  },
+  {
+    "slug": "deutschepost",
+    "label": "deutschepost",
+    "light": "icons-deutschepost.png"
+  },
+  {
+    "slug": "digitalocean",
+    "label": "digitalocean",
+    "light": "icons-digitalocean.png"
+  },
+  {
+    "slug": "digitec",
+    "label": "digitec",
+    "light": "icons-digitec.png"
+  },
+  {
+    "slug": "directadmin",
+    "label": "directadmin",
+    "light": "icons-directadmin.png"
+  },
+  {
+    "slug": "discogs",
+    "label": "discogs",
+    "light": "icons-discogs.png",
+    "dark": "icons-discogs_dark.png"
+  },
+  {
+    "slug": "discord",
+    "label": "discord",
+    "light": "icons-discord.png"
+  },
+  {
+    "slug": "disqus",
+    "label": "disqus",
+    "light": "icons-disqus.png"
+  },
+  {
+    "slug": "disroot",
+    "label": "disroot",
+    "light": "icons-disroot.png",
+    "dark": "icons-disroot_dark.png"
+  },
+  {
+    "slug": "dlive",
+    "label": "dlive",
+    "light": "icons-dlive.png"
+  },
+  {
+    "slug": "dmm",
+    "label": "dmm",
+    "light": "icons-dmm.png",
+    "dark": "icons-dmm_dark.png"
+  },
+  {
+    "slug": "docker",
+    "label": "docker",
+    "light": "icons-docker.png"
+  },
+  {
+    "slug": "docusign",
+    "label": "docusign",
+    "light": "icons-docusign.png",
+    "dark": "icons-docusign_dark.png"
+  },
+  {
+    "slug": "dolphinanty",
+    "label": "dolphinanty",
+    "light": "icons-dolphinanty.png"
+  },
+  {
+    "slug": "dreamhost",
+    "label": "dreamhost",
+    "light": "icons-dreamhost.png",
+    "dark": "icons-dreamhost_dark.png"
+  },
+  {
+    "slug": "dropbox",
+    "label": "dropbox",
+    "light": "icons-dropbox.png"
+  },
+  {
+    "slug": "dropboxsign",
+    "label": "dropboxsign",
+    "light": "icons-dropboxsign.png",
+    "dark": "icons-dropboxsign_dark.png"
+  },
+  {
+    "slug": "drupal",
+    "label": "drupal",
+    "light": "icons-drupal.png"
+  },
+  {
+    "slug": "dslogon",
+    "label": "dslogon",
+    "light": "icons-dslogon.png"
+  },
+  {
+    "slug": "ebay",
+    "label": "ebay",
+    "light": "icons-ebay.png"
+  },
+  {
+    "slug": "eclipso",
+    "label": "eclipso",
+    "light": "icons-eclipso.png",
+    "dark": "icons-eclipso_dark.png"
+  },
+  {
+    "slug": "ecobee",
+    "label": "ecobee",
+    "light": "icons-ecobee.png",
+    "dark": "icons-ecobee_dark.png"
+  },
+  {
+    "slug": "elastic",
+    "label": "elastic",
+    "light": "icons-elastic.png",
+    "dark": "icons-elastic_dark.png"
+  },
+  {
+    "slug": "eldoradogg",
+    "label": "eldoradogg",
+    "light": "icons-eldoradogg.png"
+  },
+  {
+    "slug": "electronicarts",
+    "label": "electronicarts",
+    "light": "icons-electronicarts.png"
+  },
+  {
+    "slug": "emclient",
+    "label": "emclient",
+    "light": "icons-emclient.png"
+  },
+  {
+    "slug": "emplifi",
+    "label": "emplifi",
+    "light": "icons-emplifi.png"
+  },
+  {
+    "slug": "eneba",
+    "label": "eneba",
+    "light": "icons-eneba.png"
+  },
+  {
+    "slug": "enot",
+    "label": "enot",
+    "light": "icons-enot.png"
+  },
+  {
+    "slug": "enpass",
+    "label": "enpass",
+    "light": "icons-enpass.png",
+    "dark": "icons-enpass_dark.png"
+  },
+  {
+    "slug": "ente",
+    "label": "ente",
+    "light": "icons-ente.png",
+    "dark": "icons-ente_dark.png"
+  },
+  {
+    "slug": "envato",
+    "label": "envato",
+    "light": "icons-envato.png"
+  },
+  {
+    "slug": "epicgames",
+    "label": "epicgames",
+    "light": "icons-epicgames.png",
+    "dark": "icons-epicgames_dark.png"
+  },
+  {
+    "slug": "equinix",
+    "label": "equinix",
+    "light": "icons-equinix.png"
+  },
+  {
+    "slug": "escapefromtarkov",
+    "label": "escapefromtarkov",
+    "light": "icons-escapefromtarkov.png",
+    "dark": "icons-escapefromtarkov_dark.png"
+  },
+  {
+    "slug": "eset",
+    "label": "eset",
+    "light": "icons-eset.png"
+  },
+  {
+    "slug": "eslplay",
+    "label": "eslplay",
+    "light": "icons-eslplay.png",
+    "dark": "icons-eslplay_dark.png"
+  },
+  {
+    "slug": "estateguru",
+    "label": "estateguru",
+    "light": "icons-estateguru.png"
+  },
+  {
+    "slug": "etsy",
+    "label": "etsy",
+    "light": "icons-etsy.png"
+  },
+  {
+    "slug": "eveonline",
+    "label": "eveonline",
+    "light": "icons-eveonline.png",
+    "dark": "icons-eveonline_dark.png"
+  },
+  {
+    "slug": "evernote",
+    "label": "evernote",
+    "light": "icons-evernote.png"
+  },
+  {
+    "slug": "expensify",
+    "label": "expensify",
+    "light": "icons-expensify.png",
+    "dark": "icons-expensify_dark.png"
+  },
+  {
+    "slug": "facebook",
+    "label": "facebook",
+    "light": "icons-facebook.png"
+  },
+  {
+    "slug": "faceit",
+    "label": "faceit",
+    "light": "icons-faceit.png"
+  },
+  {
+    "slug": "fanatical",
+    "label": "fanatical",
+    "light": "icons-fanatical.png"
+  },
+  {
+    "slug": "fandom",
+    "label": "fandom",
+    "light": "icons-fandom.png"
+  },
+  {
+    "slug": "fanduel",
+    "label": "fanduel",
+    "light": "icons-fanduel.png"
+  },
+  {
+    "slug": "fansly",
+    "label": "fansly",
+    "light": "icons-fansly.png"
+  },
+  {
+    "slug": "fastly",
+    "label": "fastly",
+    "light": "icons-fastly.png"
+  },
+  {
+    "slug": "fastmail",
+    "label": "fastmail",
+    "light": "icons-fastmail.png",
+    "dark": "icons-fastmail_dark.png"
+  },
+  {
+    "slug": "favro",
+    "label": "favro",
+    "light": "icons-favro.png",
+    "dark": "icons-favro_dark.png"
+  },
+  {
+    "slug": "faxplus",
+    "label": "faxplus",
+    "light": "icons-faxplus.png",
+    "dark": "icons-faxplus_dark.png"
+  },
+  {
+    "slug": "federalstudentaid",
+    "label": "federalstudentaid",
+    "light": "icons-federalstudentaid.png"
+  },
+  {
+    "slug": "fedora",
+    "label": "fedora",
+    "light": "icons-fedora.png"
+  },
+  {
+    "slug": "figma",
+    "label": "figma",
+    "light": "icons-figma.png"
+  },
+  {
+    "slug": "filen",
+    "label": "filen",
+    "light": "icons-filen.png",
+    "dark": "icons-filen_dark.png"
+  },
+  {
+    "slug": "filescom",
+    "label": "filescom",
+    "light": "icons-filescom.png"
+  },
+  {
+    "slug": "fimfiction",
+    "label": "fimfiction",
+    "light": "icons-fimfiction.png"
+  },
+  {
+    "slug": "finnair",
+    "label": "finnair",
+    "light": "icons-finnair.png",
+    "dark": "icons-finnair_dark.png"
+  },
+  {
+    "slug": "firefish",
+    "label": "firefish",
+    "light": "icons-firefish.png"
+  },
+  {
+    "slug": "firefox",
+    "label": "firefox",
+    "light": "icons-firefox.png"
+  },
+  {
+    "slug": "floatplane",
+    "label": "floatplane",
+    "light": "icons-floatplane.png"
+  },
+  {
+    "slug": "flourish",
+    "label": "flourish",
+    "light": "icons-flourish.png",
+    "dark": "icons-flourish_dark.png"
+  },
+  {
+    "slug": "flyio",
+    "label": "flyio",
+    "light": "icons-flyio.png"
+  },
+  {
+    "slug": "flywheel",
+    "label": "flywheel",
+    "light": "icons-flywheel.png"
+  },
+  {
+    "slug": "fmfw",
+    "label": "fmfw",
+    "light": "icons-fmfw.png"
+  },
+  {
+    "slug": "followmyhealth",
+    "label": "followmyhealth",
+    "light": "icons-followmyhealth.png"
+  },
+  {
+    "slug": "forge",
+    "label": "forge",
+    "light": "icons-forge.png"
+  },
+  {
+    "slug": "formstack",
+    "label": "formstack",
+    "light": "icons-formstack.png"
+  },
+  {
+    "slug": "foxbit",
+    "label": "foxbit",
+    "light": "icons-foxbit.png"
+  },
+  {
+    "slug": "fragdenstaat",
+    "label": "fragdenstaat",
+    "light": "icons-fragdenstaat.png"
+  },
+  {
+    "slug": "frameio",
+    "label": "frameio",
+    "light": "icons-frameio.png"
+  },
+  {
+    "slug": "front",
+    "label": "front",
+    "light": "icons-front.png"
+  },
+  {
+    "slug": "fsecure",
+    "label": "fsecure",
+    "light": "icons-fsecure.png"
+  },
+  {
+    "slug": "funio",
+    "label": "funio",
+    "light": "icons-funio.png"
+  },
+  {
+    "slug": "g2a",
+    "label": "g2a",
+    "light": "icons-g2a.png"
+  },
+  {
+    "slug": "gab",
+    "label": "gab",
+    "light": "icons-gab.png"
+  },
+  {
+    "slug": "gaijin",
+    "label": "gaijin",
+    "light": "icons-gaijin.png",
+    "dark": "icons-gaijin_dark.png"
+  },
+  {
+    "slug": "galaxus",
+    "label": "galaxus",
+    "light": "icons-galaxus.png",
+    "dark": "icons-galaxus_dark.png"
+  },
+  {
+    "slug": "gameguardian",
+    "label": "gameguardian",
+    "light": "icons-gameguardian.png"
+  },
+  {
+    "slug": "gamemaker",
+    "label": "gamemaker",
+    "light": "icons-gamemaker.png",
+    "dark": "icons-gamemaker_dark.png"
+  },
+  {
+    "slug": "gandi",
+    "label": "gandi",
+    "light": "icons-gandi.png"
+  },
+  {
+    "slug": "gateio",
+    "label": "gateio",
+    "light": "icons-gateio.png"
+  },
+  {
+    "slug": "gemini",
+    "label": "gemini",
+    "light": "icons-gemini.png"
+  },
+  {
+    "slug": "generalmotors",
+    "label": "generalmotors",
+    "light": "icons-generalmotors.png"
+  },
+  {
+    "slug": "getscreenme",
+    "label": "getscreenme",
+    "light": "icons-getscreenme.png"
+  },
+  {
+    "slug": "gitea",
+    "label": "gitea",
+    "light": "icons-gitea.png"
+  },
+  {
+    "slug": "github",
+    "label": "github",
+    "light": "icons-github.png",
+    "dark": "icons-github_dark.png"
+  },
+  {
+    "slug": "gitlab",
+    "label": "gitlab",
+    "light": "icons-gitlab.png"
+  },
+  {
+    "slug": "glassdoor",
+    "label": "glassdoor",
+    "light": "icons-glassdoor.png"
+  },
+  {
+    "slug": "gmail",
+    "label": "gmail",
+    "light": "extraicons-gmail.png"
+  },
+  {
+    "slug": "gmxnet",
+    "label": "gmxnet",
+    "light": "icons-gmxnet.png"
+  },
+  {
+    "slug": "godaddy",
+    "label": "godaddy",
+    "light": "icons-godaddy.png",
+    "dark": "icons-godaddy_dark.png"
+  },
+  {
+    "slug": "gog",
+    "label": "gog",
+    "light": "icons-gog.png",
+    "dark": "icons-gog_dark.png"
+  },
+  {
+    "slug": "goldsaver",
+    "label": "goldsaver",
+    "light": "icons-goldsaver.png"
+  },
+  {
+    "slug": "google",
+    "label": "google",
+    "light": "icons-google.png"
+  },
+  {
+    "slug": "googlecloud",
+    "label": "googlecloud",
+    "light": "extraicons-googlecloud.png"
+  },
+  {
+    "slug": "googledrive",
+    "label": "googledrive",
+    "light": "extraicons-googledrive.png"
+  },
+  {
+    "slug": "googlefi",
+    "label": "googlefi",
+    "light": "extraicons-googlefi.png"
+  },
+  {
+    "slug": "googlefiber",
+    "label": "googlefiber",
+    "light": "extraicons-googlefiber.png"
+  },
+  {
+    "slug": "googlefit",
+    "label": "googlefit",
+    "light": "extraicons-googlefit.png"
+  },
+  {
+    "slug": "googlepay",
+    "label": "googlepay",
+    "light": "extraicons-googlepay.png"
+  },
+  {
+    "slug": "googleplay",
+    "label": "googleplay",
+    "light": "extraicons-googleplay.png"
+  },
+  {
+    "slug": "gosuslugi",
+    "label": "gosuslugi",
+    "light": "icons-gosuslugi.png",
+    "dark": "icons-gosuslugi_dark.png"
+  },
+  {
+    "slug": "goto",
+    "label": "goto",
+    "light": "icons-goto.png",
+    "dark": "icons-goto_dark.png"
+  },
+  {
+    "slug": "govbr",
+    "label": "govbr",
+    "light": "icons-govbr.png"
+  },
+  {
+    "slug": "govuk",
+    "label": "govuk",
+    "light": "icons-govuk.png",
+    "dark": "icons-govuk_dark.png"
+  },
+  {
+    "slug": "grammarly",
+    "label": "grammarly",
+    "light": "icons-grammarly.png"
+  },
+  {
+    "slug": "greasyfork",
+    "label": "greasyfork",
+    "light": "icons-greasyfork.png",
+    "dark": "icons-greasyfork_dark.png"
+  },
+  {
+    "slug": "groupsio",
+    "label": "groupsio",
+    "light": "icons-groupsio.png"
+  },
+  {
+    "slug": "guilded",
+    "label": "guilded",
+    "light": "icons-guilded.png"
+  },
+  {
+    "slug": "hackerone",
+    "label": "hackerone",
+    "light": "icons-hackerone.png",
+    "dark": "icons-hackerone_dark.png"
+  },
+  {
+    "slug": "hackthebox",
+    "label": "hackthebox",
+    "light": "icons-hackthebox.png"
+  },
+  {
+    "slug": "hashicorp",
+    "label": "hashicorp",
+    "light": "icons-hashicorp.png",
+    "dark": "icons-hashicorp_dark.png"
+  },
+  {
+    "slug": "helpscout",
+    "label": "helpscout",
+    "light": "icons-helpscout.png"
+  },
+  {
+    "slug": "heroku",
+    "label": "heroku",
+    "light": "icons-heroku.png",
+    "dark": "icons-heroku_dark.png"
+  },
+  {
+    "slug": "hetzner",
+    "label": "hetzner",
+    "light": "icons-hetzner.png"
+  },
+  {
+    "slug": "hevodata",
+    "label": "hevodata",
+    "light": "icons-hevodata.png"
+  },
+  {
+    "slug": "hey",
+    "label": "hey",
+    "light": "icons-hey.png"
+  },
+  {
+    "slug": "heylinkme",
+    "label": "heylinkme",
+    "light": "icons-heylinkme.png"
+  },
+  {
+    "slug": "hideme",
+    "label": "hideme",
+    "light": "icons-hideme.png",
+    "dark": "icons-hideme_dark.png"
+  },
+  {
+    "slug": "hinthealth",
+    "label": "hinthealth",
+    "light": "icons-hinthealth.png"
+  },
+  {
+    "slug": "hitbtc",
+    "label": "hitbtc",
+    "light": "icons-hitbtc.png"
+  },
+  {
+    "slug": "hodlnaut",
+    "label": "hodlnaut",
+    "light": "icons-hodlnaut.png"
+  },
+  {
+    "slug": "homeassistant",
+    "label": "homeassistant",
+    "light": "icons-homeassistant.png"
+  },
+  {
+    "slug": "hootsuite",
+    "label": "hootsuite",
+    "light": "icons-hootsuite.png"
+  },
+  {
+    "slug": "hosteurope",
+    "label": "hosteurope",
+    "light": "icons-hosteurope.png"
+  },
+  {
+    "slug": "hostingcom",
+    "label": "hostingcom",
+    "light": "icons-hostingcom.png"
+  },
+  {
+    "slug": "hostinger",
+    "label": "hostinger",
+    "light": "icons-hostinger.png",
+    "dark": "icons-hostinger_dark.png"
+  },
+  {
+    "slug": "hotbit",
+    "label": "hotbit",
+    "light": "icons-hotbit.png"
+  },
+  {
+    "slug": "hover",
+    "label": "hover",
+    "light": "icons-hover.png"
+  },
+  {
+    "slug": "hp",
+    "label": "hp",
+    "light": "icons-hp.png"
+  },
+  {
+    "slug": "htx",
+    "label": "htx",
+    "light": "icons-htx.png",
+    "dark": "icons-htx_dark.png"
+  },
+  {
+    "slug": "huawei",
+    "label": "huawei",
+    "light": "icons-huawei.png"
+  },
+  {
+    "slug": "hubspot",
+    "label": "hubspot",
+    "light": "icons-hubspot.png"
+  },
+  {
+    "slug": "humblebundle",
+    "label": "humblebundle",
+    "light": "icons-humblebundle.png"
+  },
+  {
+    "slug": "hushmail",
+    "label": "hushmail",
+    "light": "icons-hushmail.png",
+    "dark": "icons-hushmail_dark.png"
+  },
+  {
+    "slug": "hypixel",
+    "label": "hypixel",
+    "light": "icons-hypixel.png"
+  },
+  {
+    "slug": "ibm",
+    "label": "ibm",
+    "light": "icons-ibm.png"
+  },
+  {
+    "slug": "icedrive",
+    "label": "icedrive",
+    "light": "icons-icedrive.png"
+  },
+  {
+    "slug": "idme",
+    "label": "idme",
+    "light": "icons-idme.png",
+    "dark": "icons-idme_dark.png"
+  },
+  {
+    "slug": "idrive",
+    "label": "idrive",
+    "light": "icons-idrive.png"
+  },
+  {
+    "slug": "ifirmapl",
+    "label": "ifirmapl",
+    "light": "icons-ifirmapl.png",
+    "dark": "icons-ifirmapl_dark.png"
+  },
+  {
+    "slug": "ifttt",
+    "label": "ifttt",
+    "light": "icons-ifttt.png",
+    "dark": "icons-ifttt_dark.png"
+  },
+  {
+    "slug": "immobilienscout24",
+    "label": "immobilienscout24",
+    "light": "icons-immobilienscout24.png"
+  },
+  {
+    "slug": "infinityfree",
+    "label": "infinityfree",
+    "light": "icons-infinityfree.png"
+  },
+  {
+    "slug": "infomaniak",
+    "label": "infomaniak",
+    "light": "icons-infomaniak.png"
+  },
+  {
+    "slug": "ing",
+    "label": "ing",
+    "light": "icons-ing.png"
+  },
+  {
+    "slug": "instagram",
+    "label": "instagram",
+    "light": "icons-instagram.png"
+  },
+  {
+    "slug": "instantgaming",
+    "label": "instantgaming",
+    "light": "icons-instantgaming.png"
+  },
+  {
+    "slug": "intercom",
+    "label": "intercom",
+    "light": "icons-intercom.png",
+    "dark": "icons-intercom_dark.png"
+  },
+  {
+    "slug": "internxt",
+    "label": "internxt",
+    "light": "icons-internxt.png",
+    "dark": "icons-internxt_dark.png"
+  },
+  {
+    "slug": "intigriti",
+    "label": "intigriti",
+    "light": "icons-intigriti.png",
+    "dark": "icons-intigriti_dark.png"
+  },
+  {
+    "slug": "intuit",
+    "label": "intuit",
+    "light": "icons-intuit.png"
+  },
+  {
+    "slug": "invoiceninja",
+    "label": "invoiceninja",
+    "light": "icons-invoiceninja.png",
+    "dark": "icons-invoiceninja_dark.png"
+  },
+  {
+    "slug": "inwx",
+    "label": "inwx",
+    "light": "icons-inwx.png"
+  },
+  {
+    "slug": "ionos",
+    "label": "ionos",
+    "light": "icons-ionos.png",
+    "dark": "icons-ionos_dark.png"
+  },
+  {
+    "slug": "ipphoneforum",
+    "label": "ipphoneforum",
+    "light": "icons-ipphoneforum.png"
+  },
+  {
+    "slug": "ironvest",
+    "label": "ironvest",
+    "light": "icons-ironvest.png",
+    "dark": "icons-ironvest_dark.png"
+  },
+  {
+    "slug": "itchio",
+    "label": "itchio",
+    "light": "icons-itchio.png"
+  },
+  {
+    "slug": "itglue",
+    "label": "itglue",
+    "light": "icons-itglue.png",
+    "dark": "icons-itglue_dark.png"
+  },
+  {
+    "slug": "ivpn",
+    "label": "ivpn",
+    "light": "icons-ivpn.png"
+  },
+  {
+    "slug": "jagex",
+    "label": "jagex",
+    "light": "icons-jagex.png"
+  },
+  {
+    "slug": "jelastic",
+    "label": "jelastic",
+    "light": "icons-jelastic.png"
+  },
+  {
+    "slug": "jetbrains",
+    "label": "jetbrains",
+    "light": "icons-jetbrains.png"
+  },
+  {
+    "slug": "jianguoyun",
+    "label": "jianguoyun",
+    "light": "icons-jianguoyun.png"
+  },
+  {
+    "slug": "jira",
+    "label": "jira",
+    "light": "extraicons-jira.png"
+  },
+  {
+    "slug": "jiraservicedesk",
+    "label": "jiraservicedesk",
+    "light": "extraicons-jiraservicedesk.png"
+  },
+  {
+    "slug": "jitbit",
+    "label": "jitbit",
+    "light": "icons-jitbit.png"
+  },
+  {
+    "slug": "jottacloud",
+    "label": "jottacloud",
+    "light": "icons-jottacloud.png"
+  },
+  {
+    "slug": "jovia",
+    "label": "jovia",
+    "light": "icons-jovia.png"
+  },
+  {
+    "slug": "jumpcloud",
+    "label": "jumpcloud",
+    "light": "icons-jumpcloud.png",
+    "dark": "icons-jumpcloud_dark.png"
+  },
+  {
+    "slug": "kagi",
+    "label": "kagi",
+    "light": "icons-kagi.png"
+  },
+  {
+    "slug": "kajabi",
+    "label": "kajabi",
+    "light": "icons-kajabi.png"
+  },
+  {
+    "slug": "kanka",
+    "label": "kanka",
+    "light": "icons-kanka.png"
+  },
+  {
+    "slug": "kaspersky",
+    "label": "kaspersky",
+    "light": "icons-kaspersky.png"
+  },
+  {
+    "slug": "kayako",
+    "label": "kayako",
+    "light": "icons-kayako.png"
+  },
+  {
+    "slug": "keeper",
+    "label": "keeper",
+    "light": "icons-keeper.png",
+    "dark": "icons-keeper_dark.png"
+  },
+  {
+    "slug": "keycdn",
+    "label": "keycdn",
+    "light": "icons-keycdn.png",
+    "dark": "icons-keycdn_dark.png"
+  },
+  {
+    "slug": "keycloak",
+    "label": "keycloak",
+    "light": "icons-keycloak.png"
+  },
+  {
+    "slug": "kick",
+    "label": "kick",
+    "light": "icons-kick.png"
+  },
+  {
+    "slug": "kickstarter",
+    "label": "kickstarter",
+    "light": "icons-kickstarter.png"
+  },
+  {
+    "slug": "kinguin",
+    "label": "kinguin",
+    "light": "icons-kinguin.png"
+  },
+  {
+    "slug": "kinopub",
+    "label": "kinopub",
+    "light": "icons-kinopub.png",
+    "dark": "icons-kinopub_dark.png"
+  },
+  {
+    "slug": "kintone",
+    "label": "kintone",
+    "light": "icons-kintone.png"
+  },
+  {
+    "slug": "klarna",
+    "label": "klarna",
+    "light": "icons-klarna.png",
+    "dark": "icons-klarna_dark.png"
+  },
+  {
+    "slug": "knack",
+    "label": "knack",
+    "light": "icons-knack.png"
+  },
+  {
+    "slug": "knowbe4",
+    "label": "knowbe4",
+    "light": "icons-knowbe4.png"
+  },
+  {
+    "slug": "kofi",
+    "label": "kofi",
+    "light": "icons-kofi.png"
+  },
+  {
+    "slug": "komoju",
+    "label": "komoju",
+    "light": "icons-komoju.png",
+    "dark": "icons-komoju_dark.png"
+  },
+  {
+    "slug": "koofr",
+    "label": "koofr",
+    "light": "icons-koofr.png"
+  },
+  {
+    "slug": "kraken",
+    "label": "kraken",
+    "light": "icons-kraken.png"
+  },
+  {
+    "slug": "kucoin",
+    "label": "kucoin",
+    "light": "icons-kucoin.png"
+  },
+  {
+    "slug": "labcorp",
+    "label": "labcorp",
+    "light": "icons-labcorp.png"
+  },
+  {
+    "slug": "laposte",
+    "label": "laposte",
+    "light": "icons-laposte.png",
+    "dark": "icons-laposte_dark.png"
+  },
+  {
+    "slug": "larianstudios",
+    "label": "larianstudios",
+    "light": "icons-larianstudios.png"
+  },
+  {
+    "slug": "lastpass",
+    "label": "lastpass",
+    "light": "icons-lastpass.png"
+  },
+  {
+    "slug": "leaseweb",
+    "label": "leaseweb",
+    "light": "icons-leaseweb.png"
+  },
+  {
+    "slug": "lednio",
+    "label": "lednio",
+    "light": "icons-lednio.png",
+    "dark": "icons-lednio_dark.png"
+  },
+  {
+    "slug": "lemmy",
+    "label": "lemmy",
+    "light": "icons-lemmy.png",
+    "dark": "icons-lemmy_dark.png"
+  },
+  {
+    "slug": "lenovo",
+    "label": "lenovo",
+    "light": "icons-lenovo.png"
+  },
+  {
+    "slug": "letterboxd",
+    "label": "letterboxd",
+    "light": "icons-letterboxd.png"
+  },
+  {
+    "slug": "lichess",
+    "label": "lichess",
+    "light": "icons-lichess.png",
+    "dark": "icons-lichess_dark.png"
+  },
+  {
+    "slug": "lihkg",
+    "label": "lihkg",
+    "light": "icons-lihkg.png"
+  },
+  {
+    "slug": "linkedin",
+    "label": "linkedin",
+    "light": "icons-linkedin.png"
+  },
+  {
+    "slug": "linode",
+    "label": "linode",
+    "light": "icons-linode.png"
+  },
+  {
+    "slug": "linustechtips",
+    "label": "linustechtips",
+    "light": "icons-linustechtips.png"
+  },
+  {
+    "slug": "lnkbio",
+    "label": "lnkbio",
+    "light": "icons-lnkbio.png"
+  },
+  {
+    "slug": "logingov",
+    "label": "logingov",
+    "light": "icons-logingov.png"
+  },
+  {
+    "slug": "logmein",
+    "label": "logmein",
+    "light": "icons-logmein.png"
+  },
+  {
+    "slug": "lufthansa",
+    "label": "lufthansa",
+    "light": "icons-lufthansa.png",
+    "dark": "icons-lufthansa_dark.png"
+  },
+  {
+    "slug": "luno",
+    "label": "luno",
+    "light": "icons-luno.png",
+    "dark": "icons-luno_dark.png"
+  },
+  {
+    "slug": "macstadium",
+    "label": "macstadium",
+    "light": "icons-macstadium.png",
+    "dark": "icons-macstadium_dark.png"
+  },
+  {
+    "slug": "maicoin",
+    "label": "maicoin",
+    "light": "icons-maicoin.png"
+  },
+  {
+    "slug": "mailboxorg",
+    "label": "mailboxorg",
+    "light": "icons-mailboxorg.png"
+  },
+  {
+    "slug": "mailchimp",
+    "label": "mailchimp",
+    "light": "icons-mailchimp.png",
+    "dark": "icons-mailchimp_dark.png"
+  },
+  {
+    "slug": "mailcom",
+    "label": "mailcom",
+    "light": "icons-mailcom.png"
+  },
+  {
+    "slug": "mailde",
+    "label": "mailde",
+    "light": "icons-mailde.png"
+  },
+  {
+    "slug": "mailfence",
+    "label": "mailfence",
+    "light": "icons-mailfence.png"
+  },
+  {
+    "slug": "mailgun",
+    "label": "mailgun",
+    "light": "icons-mailgun.png"
+  },
+  {
+    "slug": "mailinabox",
+    "label": "mailinabox",
+    "light": "icons-mailinabox.png"
+  },
+  {
+    "slug": "mailo",
+    "label": "mailo",
+    "light": "icons-mailo.png"
+  },
+  {
+    "slug": "mailru",
+    "label": "mailru",
+    "light": "icons-mailru.png"
+  },
+  {
+    "slug": "majesticrp",
+    "label": "majesticrp",
+    "light": "icons-majesticrp.png"
+  },
+  {
+    "slug": "make",
+    "label": "make",
+    "light": "icons-make.png"
+  },
+  {
+    "slug": "malwarebytes",
+    "label": "malwarebytes",
+    "light": "icons-malwarebytes.png"
+  },
+  {
+    "slug": "malwaretips",
+    "label": "malwaretips",
+    "light": "icons-malwaretips.png"
+  },
+  {
+    "slug": "mapbox",
+    "label": "mapbox",
+    "light": "icons-mapbox.png",
+    "dark": "icons-mapbox_dark.png"
+  },
+  {
+    "slug": "mastodon",
+    "label": "mastodon",
+    "light": "icons-mastodon.png"
+  },
+  {
+    "slug": "mathworks",
+    "label": "mathworks",
+    "light": "icons-mathworks.png"
+  },
+  {
+    "slug": "matomo",
+    "label": "matomo",
+    "light": "icons-matomo.png"
+  },
+  {
+    "slug": "mattermost",
+    "label": "mattermost",
+    "light": "icons-mattermost.png",
+    "dark": "icons-mattermost_dark.png"
+  },
+  {
+    "slug": "mega",
+    "label": "mega",
+    "light": "icons-mega.png"
+  },
+  {
+    "slug": "meistertask",
+    "label": "meistertask",
+    "light": "icons-meistertask.png"
+  },
+  {
+    "slug": "mercadolivre",
+    "label": "mercadolivre",
+    "light": "icons-mercadolivre.png"
+  },
+  {
+    "slug": "mercury",
+    "label": "mercury",
+    "light": "icons-mercury.png",
+    "dark": "icons-mercury_dark.png"
+  },
+  {
+    "slug": "meta",
+    "label": "meta",
+    "light": "icons-meta.png"
+  },
+  {
+    "slug": "mexc",
+    "label": "mexc",
+    "light": "icons-mexc.png"
+  },
+  {
+    "slug": "microsoft",
+    "label": "microsoft",
+    "light": "icons-microsoft.png"
+  },
+  {
+    "slug": "microsofttodo",
+    "label": "microsofttodo",
+    "light": "icons-microsofttodo.png"
+  },
+  {
+    "slug": "migadu",
+    "label": "migadu",
+    "light": "icons-migadu.png"
+  },
+  {
+    "slug": "migros",
+    "label": "migros",
+    "light": "icons-migros.png"
+  },
+  {
+    "slug": "mimecast",
+    "label": "mimecast",
+    "light": "icons-mimecast.png",
+    "dark": "icons-mimecast_dark.png"
+  },
+  {
+    "slug": "mintmobile",
+    "label": "mintmobile",
+    "light": "icons-mintmobile.png"
+  },
+  {
+    "slug": "mintos",
+    "label": "mintos",
+    "light": "icons-mintos.png",
+    "dark": "icons-mintos_dark.png"
+  },
+  {
+    "slug": "miro",
+    "label": "miro",
+    "light": "icons-miro.png"
+  },
+  {
+    "slug": "missive",
+    "label": "missive",
+    "light": "icons-missive.png",
+    "dark": "icons-missive_dark.png"
+  },
+  {
+    "slug": "misskey",
+    "label": "misskey",
+    "light": "icons-misskey.png"
+  },
+  {
+    "slug": "mistral",
+    "label": "mistral",
+    "light": "icons-mistral.png"
+  },
+  {
+    "slug": "mlab",
+    "label": "mlab",
+    "light": "icons-mlab.png"
+  },
+  {
+    "slug": "mlogin",
+    "label": "mlogin",
+    "light": "icons-mlogin.png"
+  },
+  {
+    "slug": "modrinth",
+    "label": "modrinth",
+    "light": "icons-modrinth.png"
+  },
+  {
+    "slug": "mondaycom",
+    "label": "mondaycom",
+    "light": "icons-mondaycom.png"
+  },
+  {
+    "slug": "moneyforward",
+    "label": "moneyforward",
+    "light": "icons-moneyforward.png"
+  },
+  {
+    "slug": "moneytree",
+    "label": "moneytree",
+    "light": "icons-moneytree.png"
+  },
+  {
+    "slug": "mongodb",
+    "label": "mongodb",
+    "light": "icons-mongodb.png"
+  },
+  {
+    "slug": "moqups",
+    "label": "moqups",
+    "light": "icons-moqups.png"
+  },
+  {
+    "slug": "morganstanley",
+    "label": "morganstanley",
+    "light": "icons-morganstanley.png",
+    "dark": "icons-morganstanley_dark.png"
+  },
+  {
+    "slug": "mosru",
+    "label": "mosru",
+    "light": "icons-mosru.png"
+  },
+  {
+    "slug": "mountainamericacreditunion",
+    "label": "mountainamericacreditunion",
+    "light": "icons-mountainamericacreditunion.png"
+  },
+  {
+    "slug": "mozilla",
+    "label": "mozilla",
+    "light": "icons-mozilla.png",
+    "dark": "icons-mozilla_dark.png"
+  },
+  {
+    "slug": "mural",
+    "label": "mural",
+    "light": "icons-mural.png",
+    "dark": "icons-mural_dark.png"
+  },
+  {
+    "slug": "mxtoolbox",
+    "label": "mxtoolbox",
+    "light": "icons-mxtoolbox.png"
+  },
+  {
+    "slug": "myanimelist",
+    "label": "myanimelist",
+    "light": "icons-myanimelist.png",
+    "dark": "icons-myanimelist_dark.png"
+  },
+  {
+    "slug": "myfritz",
+    "label": "myfritz",
+    "light": "icons-myfritz.png"
+  },
+  {
+    "slug": "myheritage",
+    "label": "myheritage",
+    "light": "icons-myheritage.png"
+  },
+  {
+    "slug": "myprimobox",
+    "label": "myprimobox",
+    "light": "icons-myprimobox.png"
+  },
+  {
+    "slug": "myuscis",
+    "label": "myuscis",
+    "light": "icons-myuscis.png"
+  },
+  {
+    "slug": "nable",
+    "label": "nable",
+    "light": "icons-nable.png",
+    "dark": "icons-nable_dark.png"
+  },
+  {
+    "slug": "namecheap",
+    "label": "namecheap",
+    "light": "icons-namecheap.png"
+  },
+  {
+    "slug": "namecom",
+    "label": "namecom",
+    "light": "icons-namecom.png",
+    "dark": "icons-namecom_dark.png"
+  },
+  {
+    "slug": "namesilo",
+    "label": "namesilo",
+    "light": "icons-namesilo.png",
+    "dark": "icons-namesilo_dark.png"
+  },
+  {
+    "slug": "nationsglory",
+    "label": "nationsglory",
+    "light": "icons-nationsglory.png",
+    "dark": "icons-nationsglory_dark.png"
+  },
+  {
+    "slug": "netbird",
+    "label": "netbird",
+    "light": "icons-netbird.png"
+  },
+  {
+    "slug": "netcup",
+    "label": "netcup",
+    "light": "icons-netcup.png"
+  },
+  {
+    "slug": "netlify",
+    "label": "netlify",
+    "light": "icons-netlify.png",
+    "dark": "icons-netlify_dark.png"
+  },
+  {
+    "slug": "newegg",
+    "label": "newegg",
+    "light": "icons-newegg.png"
+  },
+  {
+    "slug": "newgrounds",
+    "label": "newgrounds",
+    "light": "icons-newgrounds.png"
+  },
+  {
+    "slug": "nexo",
+    "label": "nexo",
+    "light": "icons-nexo.png",
+    "dark": "icons-nexo_dark.png"
+  },
+  {
+    "slug": "nexon",
+    "label": "nexon",
+    "light": "icons-nexon.png"
+  },
+  {
+    "slug": "nextcloud",
+    "label": "nextcloud",
+    "light": "icons-nextcloud.png"
+  },
+  {
+    "slug": "nextdns",
+    "label": "nextdns",
+    "light": "icons-nextdns.png"
+  },
+  {
+    "slug": "nexusmods",
+    "label": "nexusmods",
+    "light": "icons-nexusmods.png"
+  },
+  {
+    "slug": "ngrok",
+    "label": "ngrok",
+    "light": "icons-ngrok.png",
+    "dark": "icons-ngrok_dark.png"
+  },
+  {
+    "slug": "nicehash",
+    "label": "nicehash",
+    "light": "icons-nicehash.png"
+  },
+  {
+    "slug": "nifty",
+    "label": "nifty",
+    "light": "icons-nifty.png"
+  },
+  {
+    "slug": "nimbus",
+    "label": "nimbus",
+    "light": "icons-nimbus.png"
+  },
+  {
+    "slug": "nintendo",
+    "label": "nintendo",
+    "light": "icons-nintendo.png"
+  },
+  {
+    "slug": "nitrado",
+    "label": "nitrado",
+    "light": "icons-nitrado.png"
+  },
+  {
+    "slug": "njalla",
+    "label": "njalla",
+    "light": "icons-njalla.png",
+    "dark": "icons-njalla_dark.png"
+  },
+  {
+    "slug": "noip",
+    "label": "noip",
+    "light": "icons-noip.png"
+  },
+  {
+    "slug": "nominet",
+    "label": "nominet",
+    "light": "icons-nominet.png"
+  },
+  {
+    "slug": "nord",
+    "label": "nord",
+    "light": "icons-nord.png"
+  },
+  {
+    "slug": "nordlayer",
+    "label": "nordlayer",
+    "light": "icons-nordlayer.png"
+  },
+  {
+    "slug": "nordlocker",
+    "label": "nordlocker",
+    "light": "extraicons-nordlocker.png"
+  },
+  {
+    "slug": "nordpass",
+    "label": "nordpass",
+    "light": "extraicons-nordpass.png"
+  },
+  {
+    "slug": "norton",
+    "label": "norton",
+    "light": "icons-norton.png",
+    "dark": "icons-norton_dark.png"
+  },
+  {
+    "slug": "notesnook",
+    "label": "notesnook",
+    "light": "icons-notesnook.png",
+    "dark": "icons-notesnook_dark.png"
+  },
+  {
+    "slug": "notion",
+    "label": "notion",
+    "light": "icons-notion.png",
+    "dark": "icons-notion_dark.png"
+  },
+  {
+    "slug": "nozbe",
+    "label": "nozbe",
+    "light": "icons-nozbe.png"
+  },
+  {
+    "slug": "npm",
+    "label": "npm",
+    "light": "icons-npm.png"
+  },
+  {
+    "slug": "nuget",
+    "label": "nuget",
+    "light": "icons-nuget.png",
+    "dark": "icons-nuget_dark.png"
+  },
+  {
+    "slug": "nulab",
+    "label": "nulab",
+    "light": "icons-nulab.png"
+  },
+  {
+    "slug": "nutstore",
+    "label": "nutstore",
+    "light": "icons-nutstore.png"
+  },
+  {
+    "slug": "nvidia",
+    "label": "nvidia",
+    "light": "icons-nvidia.png"
+  },
+  {
+    "slug": "obsidian",
+    "label": "obsidian",
+    "light": "icons-obsidian.png",
+    "dark": "icons-obsidian_dark.png"
+  },
+  {
+    "slug": "obsidianmd",
+    "label": "obsidianmd",
+    "light": "icons-obsidianmd.png"
+  },
+  {
+    "slug": "odoo",
+    "label": "odoo",
+    "light": "icons-odoo.png"
+  },
+  {
+    "slug": "office",
+    "label": "office",
+    "light": "extraicons-office.png"
+  },
+  {
+    "slug": "ok",
+    "label": "ok",
+    "light": "icons-ok.png"
+  },
+  {
+    "slug": "okta",
+    "label": "okta",
+    "light": "icons-okta.png",
+    "dark": "icons-okta_dark.png"
+  },
+  {
+    "slug": "okx",
+    "label": "okx",
+    "light": "icons-okx.png",
+    "dark": "icons-okx_dark.png"
+  },
+  {
+    "slug": "olg",
+    "label": "olg",
+    "light": "icons-olg.png"
+  },
+  {
+    "slug": "onedrive",
+    "label": "onedrive",
+    "light": "extraicons-onedrive.png"
+  },
+  {
+    "slug": "onehub",
+    "label": "onehub",
+    "light": "icons-onehub.png"
+  },
+  {
+    "slug": "onelogin",
+    "label": "onelogin",
+    "light": "icons-onelogin.png",
+    "dark": "icons-onelogin_dark.png"
+  },
+  {
+    "slug": "onlyfans",
+    "label": "onlyfans",
+    "light": "icons-onlyfans.png"
+  },
+  {
+    "slug": "onshape",
+    "label": "onshape",
+    "light": "icons-onshape.png",
+    "dark": "icons-onshape_dark.png"
+  },
+  {
+    "slug": "openai",
+    "label": "openai",
+    "light": "icons-openai.png",
+    "dark": "icons-openai_dark.png"
+  },
+  {
+    "slug": "opencollective",
+    "label": "opencollective",
+    "light": "icons-opencollective.png"
+  },
+  {
+    "slug": "opendns",
+    "label": "opendns",
+    "light": "icons-opendns.png"
+  },
+  {
+    "slug": "openvpn",
+    "label": "openvpn",
+    "light": "icons-openvpn.png",
+    "dark": "icons-openvpn_dark.png"
+  },
+  {
+    "slug": "opera",
+    "label": "opera",
+    "light": "icons-opera.png"
+  },
+  {
+    "slug": "opsgenie",
+    "label": "opsgenie",
+    "light": "extraicons-opsgenie.png"
+  },
+  {
+    "slug": "optimizely",
+    "label": "optimizely",
+    "light": "icons-optimizely.png"
+  },
+  {
+    "slug": "oracle",
+    "label": "oracle",
+    "light": "icons-oracle.png"
+  },
+  {
+    "slug": "orcid",
+    "label": "orcid",
+    "light": "icons-orcid.png"
+  },
+  {
+    "slug": "otter",
+    "label": "otter",
+    "light": "icons-otter.png"
+  },
+  {
+    "slug": "outlook",
+    "label": "outlook",
+    "light": "extraicons-outlook.png"
+  },
+  {
+    "slug": "ovh",
+    "label": "ovh",
+    "light": "icons-ovh.png",
+    "dark": "icons-ovh_dark.png"
+  },
+  {
+    "slug": "pachca",
+    "label": "pachca",
+    "light": "icons-pachca.png",
+    "dark": "icons-pachca_dark.png"
+  },
+  {
+    "slug": "parallels",
+    "label": "parallels",
+    "light": "icons-parallels.png"
+  },
+  {
+    "slug": "parimatch",
+    "label": "parimatch",
+    "light": "icons-parimatch.png"
+  },
+  {
+    "slug": "parsec",
+    "label": "parsec",
+    "light": "icons-parsec.png"
+  },
+  {
+    "slug": "particle",
+    "label": "particle",
+    "light": "icons-particle.png"
+  },
+  {
+    "slug": "patreon",
+    "label": "patreon",
+    "light": "icons-patreon.png",
+    "dark": "icons-patreon_dark.png"
+  },
+  {
+    "slug": "paxos",
+    "label": "paxos",
+    "light": "icons-paxos.png"
+  },
+  {
+    "slug": "paykassa",
+    "label": "paykassa",
+    "light": "icons-paykassa.png"
+  },
+  {
+    "slug": "paypal",
+    "label": "paypal",
+    "light": "icons-paypal.png"
+  },
+  {
+    "slug": "pcloud",
+    "label": "pcloud",
+    "light": "icons-pcloud.png"
+  },
+  {
+    "slug": "peertube",
+    "label": "peertube",
+    "light": "icons-peertube.png",
+    "dark": "icons-peertube_dark.png"
+  },
+  {
+    "slug": "phrase",
+    "label": "phrase",
+    "light": "icons-phrase.png",
+    "dark": "icons-phrase_dark.png"
+  },
+  {
+    "slug": "pihole",
+    "label": "pihole",
+    "light": "icons-pihole.png"
+  },
+  {
+    "slug": "pinterest",
+    "label": "pinterest",
+    "light": "icons-pinterest.png"
+  },
+  {
+    "slug": "pixelfed",
+    "label": "pixelfed",
+    "light": "icons-pixelfed.png"
+  },
+  {
+    "slug": "pixieset",
+    "label": "pixieset",
+    "light": "icons-pixieset.png",
+    "dark": "icons-pixieset_dark.png"
+  },
+  {
+    "slug": "pixiv",
+    "label": "pixiv",
+    "light": "icons-pixiv.png"
+  },
+  {
+    "slug": "plarium",
+    "label": "plarium",
+    "light": "icons-plarium.png",
+    "dark": "icons-plarium_dark.png"
+  },
+  {
+    "slug": "playstation",
+    "label": "playstation",
+    "light": "icons-playstation.png"
+  },
+  {
+    "slug": "pleo",
+    "label": "pleo",
+    "light": "icons-pleo.png",
+    "dark": "icons-pleo_dark.png"
+  },
+  {
+    "slug": "plesk",
+    "label": "plesk",
+    "light": "icons-plesk.png",
+    "dark": "icons-plesk_dark.png"
+  },
+  {
+    "slug": "plex",
+    "label": "plex",
+    "light": "icons-plex.png"
+  },
+  {
+    "slug": "pluralsight",
+    "label": "pluralsight",
+    "light": "icons-pluralsight.png"
+  },
+  {
+    "slug": "plurk",
+    "label": "plurk",
+    "light": "icons-plurk.png"
+  },
+  {
+    "slug": "plutus",
+    "label": "plutus",
+    "light": "icons-plutus.png"
+  },
+  {
+    "slug": "pochta",
+    "label": "pochta",
+    "light": "icons-pochta.png",
+    "dark": "icons-pochta_dark.png"
+  },
+  {
+    "slug": "podio",
+    "label": "podio",
+    "light": "icons-podio.png"
+  },
+  {
+    "slug": "poeditor",
+    "label": "poeditor",
+    "light": "icons-poeditor.png"
+  },
+  {
+    "slug": "poloniex",
+    "label": "poloniex",
+    "light": "icons-poloniex.png",
+    "dark": "icons-poloniex_dark.png"
+  },
+  {
+    "slug": "porkbun",
+    "label": "porkbun",
+    "light": "icons-porkbun.png"
+  },
+  {
+    "slug": "posteo",
+    "label": "posteo",
+    "light": "icons-posteo.png"
+  },
+  {
+    "slug": "postman",
+    "label": "postman",
+    "light": "icons-postman.png"
+  },
+  {
+    "slug": "practicebetter",
+    "label": "practicebetter",
+    "light": "icons-practicebetter.png",
+    "dark": "icons-practicebetter_dark.png"
+  },
+  {
+    "slug": "premierleague",
+    "label": "premierleague",
+    "light": "icons-premierleague.png"
+  },
+  {
+    "slug": "prey",
+    "label": "prey",
+    "light": "icons-prey.png",
+    "dark": "icons-prey_dark.png"
+  },
+  {
+    "slug": "printful",
+    "label": "printful",
+    "light": "icons-printful.png"
+  },
+  {
+    "slug": "privacy",
+    "label": "privacy",
+    "light": "icons-privacy.png",
+    "dark": "icons-privacy_dark.png"
+  },
+  {
+    "slug": "privateinternetaccess",
+    "label": "privateinternetaccess",
+    "light": "icons-privateinternetaccess.png"
+  },
+  {
+    "slug": "protolabs",
+    "label": "protolabs",
+    "light": "icons-protolabs.png",
+    "dark": "icons-protolabs_dark.png"
+  },
+  {
+    "slug": "proton",
+    "label": "proton",
+    "light": "icons-proton.png"
+  },
+  {
+    "slug": "protonmail",
+    "label": "protonmail",
+    "light": "extraicons-protonmail.png"
+  },
+  {
+    "slug": "protonvpn",
+    "label": "protonvpn",
+    "light": "extraicons-protonvpn.png"
+  },
+  {
+    "slug": "proxmox",
+    "label": "proxmox",
+    "light": "icons-proxmox.png",
+    "dark": "icons-proxmox_dark.png"
+  },
+  {
+    "slug": "pusher",
+    "label": "pusher",
+    "light": "icons-pusher.png",
+    "dark": "icons-pusher_dark.png"
+  },
+  {
+    "slug": "pushover",
+    "label": "pushover",
+    "light": "icons-pushover.png"
+  },
+  {
+    "slug": "put",
+    "label": "put",
+    "light": "icons-put.png",
+    "dark": "icons-put_dark.png"
+  },
+  {
+    "slug": "pypi",
+    "label": "pypi",
+    "light": "icons-pypi.png"
+  },
+  {
+    "slug": "pythonanywhere",
+    "label": "pythonanywhere",
+    "light": "icons-pythonanywhere.png",
+    "dark": "icons-pythonanywhere_dark.png"
+  },
+  {
+    "slug": "qantas",
+    "label": "qantas",
+    "light": "icons-qantas.png"
+  },
+  {
+    "slug": "qnap",
+    "label": "qnap",
+    "light": "icons-qnap.png",
+    "dark": "icons-qnap_dark.png"
+  },
+  {
+    "slug": "rackspace",
+    "label": "rackspace",
+    "light": "icons-rackspace.png"
+  },
+  {
+    "slug": "raindrop",
+    "label": "raindrop",
+    "light": "icons-raindrop.png"
+  },
+  {
+    "slug": "rakuten",
+    "label": "rakuten",
+    "light": "icons-rakuten.png"
+  },
+  {
+    "slug": "raspberrypi",
+    "label": "raspberrypi",
+    "light": "icons-raspberrypi.png"
+  },
+  {
+    "slug": "razer",
+    "label": "razer",
+    "light": "icons-razer.png"
+  },
+  {
+    "slug": "realdebrid",
+    "label": "realdebrid",
+    "light": "icons-realdebrid.png"
+  },
+  {
+    "slug": "realme",
+    "label": "realme",
+    "light": "icons-realme.png",
+    "dark": "icons-realme_dark.png"
+  },
+  {
+    "slug": "realvnc",
+    "label": "realvnc",
+    "light": "icons-realvnc.png"
+  },
+  {
+    "slug": "recruit",
+    "label": "recruit",
+    "light": "icons-recruit.png"
+  },
+  {
+    "slug": "reddit",
+    "label": "reddit",
+    "light": "icons-reddit.png"
+  },
+  {
+    "slug": "reddotpay",
+    "label": "reddotpay",
+    "light": "icons-reddotpay.png"
+  },
+  {
+    "slug": "redhat",
+    "label": "redhat",
+    "light": "icons-redhat.png"
+  },
+  {
+    "slug": "redis",
+    "label": "redis",
+    "light": "icons-redis.png"
+  },
+  {
+    "slug": "redshelf",
+    "label": "redshelf",
+    "light": "icons-redshelf.png"
+  },
+  {
+    "slug": "registrobr",
+    "label": "registrobr",
+    "light": "icons-registrobr.png"
+  },
+  {
+    "slug": "render",
+    "label": "render",
+    "light": "icons-render.png",
+    "dark": "icons-render_dark.png"
+  },
+  {
+    "slug": "republic",
+    "label": "republic",
+    "light": "icons-republic.png"
+  },
+  {
+    "slug": "restorecord",
+    "label": "restorecord",
+    "light": "icons-restorecord.png",
+    "dark": "icons-restorecord_dark.png"
+  },
+  {
+    "slug": "restream",
+    "label": "restream",
+    "light": "icons-restream.png",
+    "dark": "icons-restream_dark.png"
+  },
+  {
+    "slug": "retrospring",
+    "label": "retrospring",
+    "light": "icons-retrospring.png"
+  },
+  {
+    "slug": "rewe",
+    "label": "rewe",
+    "light": "icons-rewe.png"
+  },
+  {
+    "slug": "rewind",
+    "label": "rewind",
+    "light": "icons-rewind.png"
+  },
+  {
+    "slug": "ricardo",
+    "label": "ricardo",
+    "light": "icons-ricardo.png"
+  },
+  {
+    "slug": "ring",
+    "label": "ring",
+    "light": "icons-ring.png",
+    "dark": "icons-ring_dark.png"
+  },
+  {
+    "slug": "ripencc",
+    "label": "ripencc",
+    "light": "icons-ripencc.png"
+  },
+  {
+    "slug": "ripio",
+    "label": "ripio",
+    "light": "icons-ripio.png"
+  },
+  {
+    "slug": "robertsspaceindustries",
+    "label": "robertsspaceindustries",
+    "light": "icons-robertsspaceindustries.png"
+  },
+  {
+    "slug": "roblox",
+    "label": "roblox",
+    "light": "icons-roblox.png",
+    "dark": "icons-roblox_dark.png"
+  },
+  {
+    "slug": "roboform",
+    "label": "roboform",
+    "light": "icons-roboform.png"
+  },
+  {
+    "slug": "rocketbeanstv",
+    "label": "rocketbeanstv",
+    "light": "icons-rocketbeanstv.png"
+  },
+  {
+    "slug": "rockstargames",
+    "label": "rockstargames",
+    "light": "icons-rockstargames.png"
+  },
+  {
+    "slug": "roundcube",
+    "label": "roundcube",
+    "light": "icons-roundcube.png"
+  },
+  {
+    "slug": "runcloud",
+    "label": "runcloud",
+    "light": "icons-runcloud.png",
+    "dark": "icons-runcloud_dark.png"
+  },
+  {
+    "slug": "runescape",
+    "label": "runescape",
+    "light": "icons-runescape.png",
+    "dark": "icons-runescape_dark.png"
+  },
+  {
+    "slug": "runpod",
+    "label": "runpod",
+    "light": "icons-runpod.png"
+  },
+  {
+    "slug": "runsignup",
+    "label": "runsignup",
+    "light": "icons-runsignup.png"
+  },
+  {
+    "slug": "rustdesk",
+    "label": "rustdesk",
+    "light": "icons-rustdesk.png"
+  },
+  {
+    "slug": "salesforce",
+    "label": "salesforce",
+    "light": "icons-salesforce.png"
+  },
+  {
+    "slug": "samsung",
+    "label": "samsung",
+    "light": "icons-samsung.png",
+    "dark": "icons-samsung_dark.png"
+  },
+  {
+    "slug": "sanebox",
+    "label": "sanebox",
+    "light": "icons-sanebox.png"
+  },
+  {
+    "slug": "sap",
+    "label": "sap",
+    "light": "icons-sap.png"
+  },
+  {
+    "slug": "sapomail",
+    "label": "sapomail",
+    "light": "icons-sapomail.png"
+  },
+  {
+    "slug": "satoshitango",
+    "label": "satoshitango",
+    "light": "icons-satoshitango.png"
+  },
+  {
+    "slug": "scaleway",
+    "label": "scaleway",
+    "light": "icons-scaleway.png",
+    "dark": "icons-scaleway_dark.png"
+  },
+  {
+    "slug": "schibsted",
+    "label": "schibsted",
+    "light": "icons-schibsted.png",
+    "dark": "icons-schibsted_dark.png"
+  },
+  {
+    "slug": "screenconnect",
+    "label": "screenconnect",
+    "light": "icons-screenconnect.png",
+    "dark": "icons-screenconnect_dark.png"
+  },
+  {
+    "slug": "scryfall",
+    "label": "scryfall",
+    "light": "icons-scryfall.png"
+  },
+  {
+    "slug": "seatgeek",
+    "label": "seatgeek",
+    "light": "icons-seatgeek.png"
+  },
+  {
+    "slug": "securitytrails",
+    "label": "securitytrails",
+    "light": "icons-securitytrails.png",
+    "dark": "icons-securitytrails_dark.png"
+  },
+  {
+    "slug": "sefcu",
+    "label": "sefcu",
+    "light": "icons-sefcu.png"
+  },
+  {
+    "slug": "segment",
+    "label": "segment",
+    "light": "icons-segment.png"
+  },
+  {
+    "slug": "sendcloud",
+    "label": "sendcloud",
+    "light": "icons-sendcloud.png"
+  },
+  {
+    "slug": "sendsafely",
+    "label": "sendsafely",
+    "light": "icons-sendsafely.png"
+  },
+  {
+    "slug": "sentry",
+    "label": "sentry",
+    "light": "icons-sentry.png",
+    "dark": "icons-sentry_dark.png"
+  },
+  {
+    "slug": "servertown",
+    "label": "servertown",
+    "light": "icons-servertown.png",
+    "dark": "icons-servertown_dark.png"
+  },
+  {
+    "slug": "seznam",
+    "label": "seznam",
+    "light": "icons-seznam.png"
+  },
+  {
+    "slug": "sffirecu",
+    "label": "sffirecu",
+    "light": "icons-sffirecu.png"
+  },
+  {
+    "slug": "shadow",
+    "label": "shadow",
+    "light": "icons-shadow.png"
+  },
+  {
+    "slug": "shopify",
+    "label": "shopify",
+    "light": "icons-shopify.png"
+  },
+  {
+    "slug": "shortcut",
+    "label": "shortcut",
+    "light": "icons-shortcut.png"
+  },
+  {
+    "slug": "shortio",
+    "label": "shortio",
+    "light": "icons-shortio.png",
+    "dark": "icons-shortio_dark.png"
+  },
+  {
+    "slug": "simplelogin",
+    "label": "simplelogin",
+    "light": "icons-simplelogin.png"
+  },
+  {
+    "slug": "sketch",
+    "label": "sketch",
+    "light": "icons-sketch.png",
+    "dark": "icons-sketch_dark.png"
+  },
+  {
+    "slug": "skinport",
+    "label": "skinport",
+    "light": "icons-skinport.png"
+  },
+  {
+    "slug": "skype",
+    "label": "skype",
+    "light": "extraicons-skype.png"
+  },
+  {
+    "slug": "slack",
+    "label": "slack",
+    "light": "icons-slack.png"
+  },
+  {
+    "slug": "smarkets",
+    "label": "smarkets",
+    "light": "icons-smarkets.png",
+    "dark": "icons-smarkets_dark.png"
+  },
+  {
+    "slug": "smartsurvey",
+    "label": "smartsurvey",
+    "light": "icons-smartsurvey.png"
+  },
+  {
+    "slug": "smspool",
+    "label": "smspool",
+    "light": "icons-smspool.png"
+  },
+  {
+    "slug": "snapchat",
+    "label": "snapchat",
+    "light": "icons-snapchat.png"
+  },
+  {
+    "slug": "snelstart",
+    "label": "snelstart",
+    "light": "icons-snelstart.png"
+  },
+  {
+    "slug": "socialbakers",
+    "label": "socialbakers",
+    "light": "icons-socialbakers.png"
+  },
+  {
+    "slug": "societegenerale",
+    "label": "societegenerale",
+    "light": "icons-societegenerale.png",
+    "dark": "icons-societegenerale_dark.png"
+  },
+  {
+    "slug": "socketlabs",
+    "label": "socketlabs",
+    "light": "icons-socketlabs.png"
+  },
+  {
+    "slug": "sogo",
+    "label": "sogo",
+    "light": "icons-sogo.png"
+  },
+  {
+    "slug": "solarwinds",
+    "label": "solarwinds",
+    "light": "icons-solarwinds.png"
+  },
+  {
+    "slug": "sony",
+    "label": "sony",
+    "light": "icons-sony.png",
+    "dark": "icons-sony_dark.png"
+  },
+  {
+    "slug": "sophos",
+    "label": "sophos",
+    "light": "icons-sophos.png"
+  },
+  {
+    "slug": "soundcloud",
+    "label": "soundcloud",
+    "light": "icons-soundcloud.png"
+  },
+  {
+    "slug": "sourceforge",
+    "label": "sourceforge",
+    "light": "icons-sourceforge.png"
+  },
+  {
+    "slug": "spacehey",
+    "label": "spacehey",
+    "light": "icons-spacehey.png"
+  },
+  {
+    "slug": "spaceship",
+    "label": "spaceship",
+    "light": "icons-spaceship.png"
+  },
+  {
+    "slug": "spcbrasil",
+    "label": "spcbrasil",
+    "light": "icons-spcbrasil.png"
+  },
+  {
+    "slug": "spigotmc",
+    "label": "spigotmc",
+    "light": "icons-spigotmc.png"
+  },
+  {
+    "slug": "splashtop",
+    "label": "splashtop",
+    "light": "icons-splashtop.png"
+  },
+  {
+    "slug": "spotify",
+    "label": "spotify",
+    "light": "icons-spotify.png"
+  },
+  {
+    "slug": "spoutible",
+    "label": "spoutible",
+    "light": "icons-spoutible.png",
+    "dark": "icons-spoutible_dark.png"
+  },
+  {
+    "slug": "spring",
+    "label": "spring",
+    "light": "icons-spring.png",
+    "dark": "icons-spring_dark.png"
+  },
+  {
+    "slug": "sproutsocial",
+    "label": "sproutsocial",
+    "light": "icons-sproutsocial.png"
+  },
+  {
+    "slug": "square",
+    "label": "square",
+    "light": "icons-square.png",
+    "dark": "icons-square_dark.png"
+  },
+  {
+    "slug": "squareenixgames",
+    "label": "squareenixgames",
+    "light": "icons-squareenixgames.png",
+    "dark": "icons-squareenixgames_dark.png"
+  },
+  {
+    "slug": "squarespace",
+    "label": "squarespace",
+    "light": "icons-squarespace.png",
+    "dark": "icons-squarespace_dark.png"
+  },
+  {
+    "slug": "stackpath",
+    "label": "stackpath",
+    "light": "icons-stackpath.png",
+    "dark": "icons-stackpath_dark.png"
+  },
+  {
+    "slug": "standardnotes",
+    "label": "standardnotes",
+    "light": "icons-standardnotes.png"
+  },
+  {
+    "slug": "starlingbank",
+    "label": "starlingbank",
+    "light": "icons-starlingbank.png"
+  },
+  {
+    "slug": "startmail",
+    "label": "startmail",
+    "light": "icons-startmail.png",
+    "dark": "icons-startmail_dark.png"
+  },
+  {
+    "slug": "statuspage",
+    "label": "statuspage",
+    "light": "extraicons-statuspage.png"
+  },
+  {
+    "slug": "steam",
+    "label": "steam",
+    "light": "icons-steam.png",
+    "dark": "icons-steam_dark.png"
+  },
+  {
+    "slug": "stiftungwarentest",
+    "label": "stiftungwarentest",
+    "light": "icons-stiftungwarentest.png"
+  },
+  {
+    "slug": "stormgain",
+    "label": "stormgain",
+    "light": "icons-stormgain.png"
+  },
+  {
+    "slug": "strato",
+    "label": "strato",
+    "light": "icons-strato.png"
+  },
+  {
+    "slug": "stripe",
+    "label": "stripe",
+    "light": "icons-stripe.png"
+  },
+  {
+    "slug": "studioninja",
+    "label": "studioninja",
+    "light": "icons-studioninja.png"
+  },
+  {
+    "slug": "substack",
+    "label": "substack",
+    "light": "icons-substack.png"
+  },
+  {
+    "slug": "surfshark",
+    "label": "surfshark",
+    "light": "icons-surfshark.png"
+  },
+  {
+    "slug": "sync",
+    "label": "sync",
+    "light": "icons-sync.png"
+  },
+  {
+    "slug": "synology",
+    "label": "synology",
+    "light": "icons-synology.png"
+  },
+  {
+    "slug": "tankionline",
+    "label": "tankionline",
+    "light": "icons-tankionline.png"
+  },
+  {
+    "slug": "teamviewer",
+    "label": "teamviewer",
+    "light": "icons-teamviewer.png",
+    "dark": "icons-teamviewer_dark.png"
+  },
+  {
+    "slug": "teamwork",
+    "label": "teamwork",
+    "light": "icons-teamwork.png",
+    "dark": "icons-teamwork_dark.png"
+  },
+  {
+    "slug": "technicpack",
+    "label": "technicpack",
+    "light": "icons-technicpack.png"
+  },
+  {
+    "slug": "techpowerup",
+    "label": "techpowerup",
+    "light": "icons-techpowerup.png"
+  },
+  {
+    "slug": "telnyx",
+    "label": "telnyx",
+    "light": "icons-telnyx.png"
+  },
+  {
+    "slug": "tencentcloud",
+    "label": "tencentcloud",
+    "light": "icons-tencentcloud.png"
+  },
+  {
+    "slug": "termius",
+    "label": "termius",
+    "light": "icons-termius.png",
+    "dark": "icons-termius_dark.png"
+  },
+  {
+    "slug": "tesla",
+    "label": "tesla",
+    "light": "icons-tesla.png"
+  },
+  {
+    "slug": "therapynotes",
+    "label": "therapynotes",
+    "light": "icons-therapynotes.png"
+  },
+  {
+    "slug": "thrivecart",
+    "label": "thrivecart",
+    "light": "icons-thrivecart.png"
+  },
+  {
+    "slug": "tibia",
+    "label": "tibia",
+    "light": "icons-tibia.png"
+  },
+  {
+    "slug": "ticketsource",
+    "label": "ticketsource",
+    "light": "icons-ticketsource.png"
+  },
+  {
+    "slug": "tiktok",
+    "label": "tiktok",
+    "light": "icons-tiktok.png",
+    "dark": "icons-tiktok_dark.png"
+  },
+  {
+    "slug": "tildes",
+    "label": "tildes",
+    "light": "icons-tildes.png"
+  },
+  {
+    "slug": "time4vps",
+    "label": "time4vps",
+    "light": "icons-time4vps.png"
+  },
+  {
+    "slug": "ting",
+    "label": "ting",
+    "light": "icons-ting.png"
+  },
+  {
+    "slug": "tinyurl",
+    "label": "tinyurl",
+    "light": "icons-tinyurl.png",
+    "dark": "icons-tinyurl_dark.png"
+  },
+  {
+    "slug": "titanemail",
+    "label": "titanemail",
+    "light": "icons-titanemail.png",
+    "dark": "icons-titanemail_dark.png"
+  },
+  {
+    "slug": "tmobile",
+    "label": "tmobile",
+    "light": "icons-tmobile.png"
+  },
+  {
+    "slug": "todoist",
+    "label": "todoist",
+    "light": "icons-todoist.png"
+  },
+  {
+    "slug": "tokopedia",
+    "label": "tokopedia",
+    "light": "icons-tokopedia.png"
+  },
+  {
+    "slug": "toodledo",
+    "label": "toodledo",
+    "light": "icons-toodledo.png"
+  },
+  {
+    "slug": "torbox",
+    "label": "torbox",
+    "light": "icons-torbox.png"
+  },
+  {
+    "slug": "torguard",
+    "label": "torguard",
+    "light": "icons-torguard.png",
+    "dark": "icons-torguard_dark.png"
+  },
+  {
+    "slug": "torontomu",
+    "label": "torontomu",
+    "light": "icons-torontomu.png"
+  },
+  {
+    "slug": "trading212",
+    "label": "trading212",
+    "light": "icons-trading212.png"
+  },
+  {
+    "slug": "transifex",
+    "label": "transifex",
+    "light": "icons-transifex.png"
+  },
+  {
+    "slug": "trello",
+    "label": "trello",
+    "light": "extraicons-trello.png"
+  },
+  {
+    "slug": "tresorit",
+    "label": "tresorit",
+    "light": "icons-tresorit.png"
+  },
+  {
+    "slug": "trimble",
+    "label": "trimble",
+    "light": "icons-trimble.png"
+  },
+  {
+    "slug": "trovo",
+    "label": "trovo",
+    "light": "icons-trovo.png"
+  },
+  {
+    "slug": "truckersmp",
+    "label": "truckersmp",
+    "light": "icons-truckersmp.png",
+    "dark": "icons-truckersmp_dark.png"
+  },
+  {
+    "slug": "tryhackme",
+    "label": "tryhackme",
+    "light": "icons-tryhackme.png",
+    "dark": "icons-tryhackme_dark.png"
+  },
+  {
+    "slug": "tuberlin",
+    "label": "tuberlin",
+    "light": "icons-tuberlin.png"
+  },
+  {
+    "slug": "tumblr",
+    "label": "tumblr",
+    "light": "icons-tumblr.png",
+    "dark": "icons-tumblr_dark.png"
+  },
+  {
+    "slug": "tuta",
+    "label": "tuta",
+    "light": "icons-tuta.png"
+  },
+  {
+    "slug": "tweakers",
+    "label": "tweakers",
+    "light": "icons-tweakers.png"
+  },
+  {
+    "slug": "twilio",
+    "label": "twilio",
+    "light": "icons-twilio.png"
+  },
+  {
+    "slug": "twitch",
+    "label": "twitch",
+    "light": "icons-twitch.png"
+  },
+  {
+    "slug": "twitter",
+    "label": "twitter",
+    "light": "icons-twitter.png"
+  },
+  {
+    "slug": "uber",
+    "label": "uber",
+    "light": "icons-uber.png",
+    "dark": "icons-uber_dark.png"
+  },
+  {
+    "slug": "ubiquiti",
+    "label": "ubiquiti",
+    "light": "icons-ubiquiti.png"
+  },
+  {
+    "slug": "ubisoft",
+    "label": "ubisoft",
+    "light": "icons-ubisoft.png",
+    "dark": "icons-ubisoft_dark.png"
+  },
+  {
+    "slug": "ubuntuone",
+    "label": "ubuntuone",
+    "light": "icons-ubuntuone.png"
+  },
+  {
+    "slug": "ultimaker",
+    "label": "ultimaker",
+    "light": "icons-ultimaker.png"
+  },
+  {
+    "slug": "unbounce",
+    "label": "unbounce",
+    "light": "icons-unbounce.png"
+  },
+  {
+    "slug": "unionbanktrust",
+    "label": "unionbanktrust",
+    "light": "icons-unionbanktrust.png"
+  },
+  {
+    "slug": "uniteddomains",
+    "label": "uniteddomains",
+    "light": "icons-uniteddomains.png",
+    "dark": "icons-uniteddomains_dark.png"
+  },
+  {
+    "slug": "unity",
+    "label": "unity",
+    "light": "icons-unity.png",
+    "dark": "icons-unity_dark.png"
+  },
+  {
+    "slug": "unleashedsoftware",
+    "label": "unleashedsoftware",
+    "light": "icons-unleashedsoftware.png"
+  },
+  {
+    "slug": "unraid",
+    "label": "unraid",
+    "light": "icons-unraid.png"
+  },
+  {
+    "slug": "unstoppabledomains",
+    "label": "unstoppabledomains",
+    "light": "icons-unstoppabledomains.png"
+  },
+  {
+    "slug": "upb",
+    "label": "upb",
+    "light": "icons-upb.png"
+  },
+  {
+    "slug": "updraft",
+    "label": "updraft",
+    "light": "icons-updraft.png"
+  },
+  {
+    "slug": "uphold",
+    "label": "uphold",
+    "light": "icons-uphold.png"
+  },
+  {
+    "slug": "uptimekuma",
+    "label": "uptimekuma",
+    "light": "icons-uptimekuma.png"
+  },
+  {
+    "slug": "uptimerobot",
+    "label": "uptimerobot",
+    "light": "icons-uptimerobot.png"
+  },
+  {
+    "slug": "upwork",
+    "label": "upwork",
+    "light": "icons-upwork.png"
+  },
+  {
+    "slug": "vancity",
+    "label": "vancity",
+    "light": "icons-vancity.png"
+  },
+  {
+    "slug": "veeam",
+    "label": "veeam",
+    "light": "icons-veeam.png"
+  },
+  {
+    "slug": "ventraip",
+    "label": "ventraip",
+    "light": "icons-ventraip.png"
+  },
+  {
+    "slug": "vicroads",
+    "label": "vicroads",
+    "light": "icons-vicroads.png"
+  },
+  {
+    "slug": "vimeo",
+    "label": "vimeo",
+    "light": "icons-vimeo.png"
+  },
+  {
+    "slug": "vintagestory",
+    "label": "vintagestory",
+    "light": "icons-vintagestory.png"
+  },
+  {
+    "slug": "virustotal",
+    "label": "virustotal",
+    "light": "icons-virustotal.png"
+  },
+  {
+    "slug": "visualstudioonline",
+    "label": "visualstudioonline",
+    "light": "extraicons-visualstudioonline.png"
+  },
+  {
+    "slug": "vivaldi",
+    "label": "vivaldi",
+    "light": "icons-vivaldi.png"
+  },
+  {
+    "slug": "vivionid",
+    "label": "vivionid",
+    "light": "icons-vivionid.png"
+  },
+  {
+    "slug": "vk",
+    "label": "vk",
+    "light": "icons-vk.png"
+  },
+  {
+    "slug": "vmware",
+    "label": "vmware",
+    "light": "icons-vmware.png"
+  },
+  {
+    "slug": "vodafone",
+    "label": "vodafone",
+    "light": "icons-vodafone.png"
+  },
+  {
+    "slug": "voipms",
+    "label": "voipms",
+    "light": "icons-voipms.png"
+  },
+  {
+    "slug": "volcanoengine",
+    "label": "volcanoengine",
+    "light": "icons-volcanoengine.png"
+  },
+  {
+    "slug": "volet",
+    "label": "volet",
+    "light": "icons-volet.png"
+  },
+  {
+    "slug": "vrchat",
+    "label": "vrchat",
+    "light": "icons-vrchat.png"
+  },
+  {
+    "slug": "vtex",
+    "label": "vtex",
+    "light": "icons-vtex.png"
+  },
+  {
+    "slug": "vultr",
+    "label": "vultr",
+    "light": "icons-vultr.png",
+    "dark": "icons-vultr_dark.png"
+  },
+  {
+    "slug": "wargaming",
+    "label": "wargaming",
+    "light": "icons-wargaming.png"
+  },
+  {
+    "slug": "wasabi",
+    "label": "wasabi",
+    "light": "icons-wasabi.png"
+  },
+  {
+    "slug": "wax",
+    "label": "wax",
+    "light": "icons-wax.png",
+    "dark": "icons-wax_dark.png"
+  },
+  {
+    "slug": "wazirx",
+    "label": "wazirx",
+    "light": "icons-wazirx.png"
+  },
+  {
+    "slug": "wbgames",
+    "label": "wbgames",
+    "light": "icons-wbgames.png"
+  },
+  {
+    "slug": "wealthfront",
+    "label": "wealthfront",
+    "light": "icons-wealthfront.png"
+  },
+  {
+    "slug": "wealthsimple",
+    "label": "wealthsimple",
+    "light": "icons-wealthsimple.png"
+  },
+  {
+    "slug": "webde",
+    "label": "webde",
+    "light": "icons-webde.png"
+  },
+  {
+    "slug": "webflow",
+    "label": "webflow",
+    "light": "icons-webflow.png"
+  },
+  {
+    "slug": "webhostmanager",
+    "label": "webhostmanager",
+    "light": "icons-webhostmanager.png"
+  },
+  {
+    "slug": "webuntis",
+    "label": "webuntis",
+    "light": "icons-webuntis.png"
+  },
+  {
+    "slug": "weclapp",
+    "label": "weclapp",
+    "light": "icons-weclapp.png"
+  },
+  {
+    "slug": "wellfound",
+    "label": "wellfound",
+    "light": "icons-wellfound.png",
+    "dark": "icons-wellfound_dark.png"
+  },
+  {
+    "slug": "wetransfer",
+    "label": "wetransfer",
+    "light": "icons-wetransfer.png",
+    "dark": "icons-wetransfer_dark.png"
+  },
+  {
+    "slug": "whalefin",
+    "label": "whalefin",
+    "light": "icons-whalefin.png"
+  },
+  {
+    "slug": "wheniwork",
+    "label": "wheniwork",
+    "light": "icons-wheniwork.png"
+  },
+  {
+    "slug": "whimsical",
+    "label": "whimsical",
+    "light": "icons-whimsical.png",
+    "dark": "icons-whimsical_dark.png"
+  },
+  {
+    "slug": "whitebit",
+    "label": "whitebit",
+    "light": "icons-whitebit.png",
+    "dark": "icons-whitebit_dark.png"
+  },
+  {
+    "slug": "whois",
+    "label": "whois",
+    "light": "icons-whois.png"
+  },
+  {
+    "slug": "wiggle",
+    "label": "wiggle",
+    "light": "icons-wiggle.png",
+    "dark": "icons-wiggle_dark.png"
+  },
+  {
+    "slug": "wikipedia",
+    "label": "wikipedia",
+    "light": "icons-wikipedia.png",
+    "dark": "icons-wikipedia_dark.png"
+  },
+  {
+    "slug": "windscribe",
+    "label": "windscribe",
+    "light": "icons-windscribe.png",
+    "dark": "icons-windscribe_dark.png"
+  },
+  {
+    "slug": "wireguard",
+    "label": "wireguard",
+    "light": "icons-wireguard.png"
+  },
+  {
+    "slug": "wise",
+    "label": "wise",
+    "light": "icons-wise.png",
+    "dark": "icons-wise_dark.png"
+  },
+  {
+    "slug": "withings",
+    "label": "withings",
+    "light": "icons-withings.png"
+  },
+  {
+    "slug": "wix",
+    "label": "wix",
+    "light": "icons-wix.png",
+    "dark": "icons-wix_dark.png"
+  },
+  {
+    "slug": "wolfbet",
+    "label": "wolfbet",
+    "light": "icons-wolfbet.png",
+    "dark": "icons-wolfbet_dark.png"
+  },
+  {
+    "slug": "woodforestnationalbank",
+    "label": "woodforestnationalbank",
+    "light": "icons-woodforestnationalbank.png"
+  },
+  {
+    "slug": "wordfence",
+    "label": "wordfence",
+    "light": "icons-wordfence.png"
+  },
+  {
+    "slug": "wordpress",
+    "label": "wordpress",
+    "light": "icons-wordpress.png",
+    "dark": "icons-wordpress_dark.png"
+  },
+  {
+    "slug": "workato",
+    "label": "workato",
+    "light": "icons-workato.png"
+  },
+  {
+    "slug": "workflowy",
+    "label": "workflowy",
+    "light": "icons-workflowy.png"
+  },
+  {
+    "slug": "workplace",
+    "label": "workplace",
+    "light": "icons-workplace.png",
+    "dark": "icons-workplace_dark.png"
+  },
+  {
+    "slug": "wpengine",
+    "label": "wpengine",
+    "light": "icons-wpengine.png"
+  },
+  {
+    "slug": "wrike",
+    "label": "wrike",
+    "light": "icons-wrike.png"
+  },
+  {
+    "slug": "wykop",
+    "label": "wykop",
+    "light": "icons-wykop.png"
+  },
+  {
+    "slug": "wyze",
+    "label": "wyze",
+    "light": "icons-wyze.png"
+  },
+  {
+    "slug": "x",
+    "label": "x",
+    "light": "icons-x.png",
+    "dark": "icons-x_dark.png"
+  },
+  {
+    "slug": "xbox",
+    "label": "xbox",
+    "light": "extraicons-xbox.png"
+  },
+  {
+    "slug": "xda",
+    "label": "xda",
+    "light": "icons-xda.png"
+  },
+  {
+    "slug": "xero",
+    "label": "xero",
+    "light": "icons-xero.png"
+  },
+  {
+    "slug": "xing",
+    "label": "xing",
+    "light": "icons-xing.png"
+  },
+  {
+    "slug": "yahoo",
+    "label": "yahoo",
+    "light": "icons-yahoo.png"
+  },
+  {
+    "slug": "yandex",
+    "label": "yandex",
+    "light": "icons-yandex.png"
+  },
+  {
+    "slug": "ynab",
+    "label": "ynab",
+    "light": "icons-ynab.png"
+  },
+  {
+    "slug": "youtube",
+    "label": "youtube",
+    "light": "extraicons-youtube.png"
+  },
+  {
+    "slug": "youtubemusic",
+    "label": "youtubemusic",
+    "light": "extraicons-youtubemusic.png"
+  },
+  {
+    "slug": "yoyogames",
+    "label": "yoyogames",
+    "light": "icons-yoyogames.png"
+  },
+  {
+    "slug": "yubico",
+    "label": "yubico",
+    "light": "icons-yubico.png"
+  },
+  {
+    "slug": "zabbix",
+    "label": "zabbix",
+    "light": "icons-zabbix.png"
+  },
+  {
+    "slug": "zapier",
+    "label": "zapier",
+    "light": "icons-zapier.png"
+  },
+  {
+    "slug": "zendesk",
+    "label": "zendesk",
+    "light": "icons-zendesk.png",
+    "dark": "icons-zendesk_dark.png"
+  },
+  {
+    "slug": "zerodha",
+    "label": "zerodha",
+    "light": "icons-zerodha.png"
+  },
+  {
+    "slug": "zimbra",
+    "label": "zimbra",
+    "light": "icons-zimbra.png"
+  },
+  {
+    "slug": "zoho",
+    "label": "zoho",
+    "light": "icons-zoho.png"
+  },
+  {
+    "slug": "zohomail",
+    "label": "zohomail",
+    "light": "icons-zohomail.png"
+  },
+  {
+    "slug": "zondacrypto",
+    "label": "zondacrypto",
+    "light": "icons-zondacrypto.png",
+    "dark": "icons-zondacrypto_dark.png"
+  },
+  {
+    "slug": "zoolz",
+    "label": "zoolz",
+    "light": "icons-zoolz.png"
+  },
+  {
+    "slug": "zoom",
+    "label": "zoom",
+    "light": "icons-zoom.png"
+  },
+  {
+    "slug": "zyxel",
+    "label": "zyxel",
+    "light": "icons-zyxel.png"
+  }
+]

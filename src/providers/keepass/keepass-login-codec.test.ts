@@ -91,8 +91,9 @@ describe("resolveKeePassEntryPassword", () => {
     expect(resolveKeePassEntryPassword(fields({ Password: secret("hunter2") }))).toBe("hunter2");
   });
 
-  it("ignores a Password field that just repeats the label", () => {
-    expect(resolveKeePassEntryPassword(fields({ Password: secret("password"), 密码: secret("真密码") }))).toBe("真密码");
+  it("keeps an explicit Password even when it matches a label or is empty", () => {
+    expect(resolveKeePassEntryPassword(fields({ Password: secret("password"), 密码: secret("真密码") }))).toBe("password");
+    expect(resolveKeePassEntryPassword(fields({ Password: secret(""), "Recovery code": secret("do-not-promote") }))).toBe("");
   });
 
   it("promotes an unknown protected field when there is no password anywhere else", () => {
@@ -134,6 +135,45 @@ describe("buildKeePassLoginFields", () => {
     expect(written.get("MonicaLoginType")).toBe("SSO");
     expect(written.get("SSO Provider")).toBe("Okta");
     expect(written.get("MonicaSsoRefEntryId")).toBe("42");
+  });
+
+  it.each(["MonicaSsoRefEntryId", "SsoRefEntryId", "MonicaSsoRefId"])("preserves then explicitly clears legacy SSO alias %s", name => {
+    const original = fields({ Title: "Site", MonicaLoginType: "SSO", [name]: "42", "Future data": "keep" });
+    const decoded = readKeePassLoginFields(original);
+    expect(decoded.ssoRefEntryId).toBe(42);
+    expect(decoded.customFields.some(field => field.name === name)).toBe(false);
+    const item = login({ ...decoded, title: "Renamed" });
+    const renamed = applyKeePassFieldPatch(original, buildKeePassLoginPatch({ item, existingFields: original }));
+    expect(readKeePassLoginFields(renamed).ssoRefEntryId).toBe(42);
+    expect(keePassFieldText(renamed.get(name))).toBe("42");
+    const unlinked = applyKeePassFieldPatch(renamed, buildKeePassLoginPatch({ item: { ...item, ssoRefEntryId: undefined, ssoRefLogicalId: "password:account" }, existingFields: renamed }));
+    expect(readKeePassLoginFields(unlinked).ssoRefEntryId).toBeUndefined();
+    expect(unlinked.has(name)).toBe(false);
+    expect(unlinked.get("Future data")).toBe("keep");
+  });
+
+  it("preserves an unrecognized canonical SSO reference during unrelated edits", () => {
+    const original = fields({ Title: "Site", MonicaLoginType: "SSO", MonicaSsoRefEntryId: secret("9007199254740993") });
+    const item = login({ ...readKeePassLoginFields(original), title: "Renamed" });
+    const result = applyKeePassFieldPatch(original, buildKeePassLoginPatch({ item, existingFields: original }));
+    expect(result.get("MonicaSsoRefEntryId")).toBe(original.get("MonicaSsoRefEntryId"));
+  });
+
+  it("preserves a stable SSO reference through edits and removes it on explicit unlink", () => {
+    const item = login({ loginType: "SSO", ssoRefLogicalId: "password:stable-account" });
+    const original = buildKeePassLoginFields({ item });
+    original.set("External plugin", "keep");
+    const decoded = readKeePassLoginFields(original);
+    expect(decoded.ssoRefLogicalId).toBe(item.ssoRefLogicalId);
+    expect(decoded.customFields.some(field => field.name === "MonicaSsoRefLogicalId")).toBe(false);
+    const renamed = applyKeePassFieldPatch(original, buildKeePassLoginPatch({ item: { ...item, ...decoded, title: "Renamed" }, existingFields: original }));
+    expect(readKeePassLoginFields(renamed).ssoRefLogicalId).toBe(item.ssoRefLogicalId);
+    expect(renamed.get("External plugin")).toBe("keep");
+    expect(renamed.has("MonicaSsoRefEntryId")).toBe(false);
+    const unlinked = applyKeePassFieldPatch(renamed, buildKeePassLoginPatch({ item: { ...item, ...readKeePassLoginFields(renamed), ssoRefLogicalId: undefined }, existingFields: renamed }));
+    expect(unlinked.has("MonicaSsoRefLogicalId")).toBe(false);
+    expect(readKeePassLoginFields(unlinked).ssoRefLogicalId).toBeUndefined();
+    expect(unlinked.get("External plugin")).toBe("keep");
   });
 
   it("round-trips a barcode marker without changing its protected payload", () => {
@@ -211,12 +251,13 @@ describe("buildKeePassLoginPatch", () => {
     expect(updated.has("App Name")).toBe(false);
   });
 
-  it("deletes a custom field whose value was cleared rather than leaving it blank", () => {
+  it("keeps an explicitly cleared custom value distinct from an absent field", () => {
     const existing = fields({ Title: "GitHub", "Recovery code": "ABCD" });
 
     const updated = applyKeePassFieldPatch(existing, buildKeePassLoginPatch({ item: login({ customFields: [{ name: "Recovery code", value: "", protected: false }] }) }));
 
-    expect(updated.has("Recovery code")).toBe(false);
+    expect(keePassFieldText(updated.get("Recovery code"))).toBe("");
+    expect(updated.has("Recovery code")).toBe(true);
   });
 
   it("keeps a custom field the item still carries", () => {

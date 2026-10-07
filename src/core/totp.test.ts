@@ -22,11 +22,14 @@ describe("Android-compatible OTP", () => {
     const yandex = parseTotpParameters("otpauth://yaotp/Yandex:user?secret=Q3GXYNZ7INQOWXTVKGKYBLKDU4&issuer=Yandex&pin=2452544424551078&pin_length=16");
     expect(yandex).toMatchObject({ otpType: "YANDEX", pin: "2452544424551078", pinLength: 16 });
     await expect(generateOtpWithParameters(yandex, 1_700_000_000_000)).resolves.toBe("dkpcmema");
-    expect(parseTotpParameters(generateOtpUri(yandex))).toMatchObject({ otpType: "YANDEX", pin: "2452544424551078", pinLength: 16 });
+    expect(parseTotpParameters(generateOtpUri(yandex, undefined, { includePin: true }))).toMatchObject({ otpType: "YANDEX", pin: "2452544424551078", pinLength: 16 });
+    expect(generateOtpUri(yandex)).not.toContain("pin=");
   });
 
   it("rejects YAOTP without a valid PIN or matching pin_length", async () => {
-    expect(() => parseTotpParameters("otpauth://yaotp/Yandex:user?secret=Q3GXYNZ7INQOWXTVKGKYBLKDU4&pin_length=4")).toThrow("YAOTP PIN");
+    const withoutPin = parseTotpParameters("otpauth://yaotp/Yandex:user?secret=Q3GXYNZ7INQOWXTVKGKYBLKDU4&pin_length=4");
+    expect(withoutPin.pin).toBe("");
+    await expect(generateOtpWithParameters(withoutPin, 0)).rejects.toThrow("YAOTP PIN");
     await expect(generateOtpWithParameters({ secret: "Q3GXYNZ7INQOWXTVKGKYBLKDU4", algorithm: "SHA1", digits: 6, period: 30, otpType: "YANDEX", pin: "0012", pinLength: 5 }, 0)).rejects.toThrow("pin_length");
   });
 
@@ -44,6 +47,12 @@ describe("Android-compatible OTP", () => {
     const payload = Uint8Array.from([0x0a, item.length, ...item]);
     const data = btoa(String.fromCharCode(...payload));
     expect(parseOtpUris(`otpauth-migration://offline?data=${encodeURIComponent(data)}`)[0].parameters).toMatchObject({ secret: "JBUQ", issuer: "Example", accountName: "alice", otpType: "HOTP", counter: 9 });
+  });
+
+  it("preserves a Long HOTP counter in a protobuf migration", () => {
+    const item = Uint8Array.from([0x0a, 0x02, 0x48, 0x69, 0x1a, 0x01, 0x41, 0x20, 0x01, 0x28, 0x01, 0x30, 0x01, 0x38, ...Array(8).fill(255), 127]);
+    const data = btoa(String.fromCharCode(0x0a, item.length, ...item));
+    expect(parseOtpUris(`otpauth-migration://offline?data=${encodeURIComponent(data)}`)[0].parameters.counter).toBe("9223372036854775807");
   });
 
   it("parses the Bitwarden steam:// payload Monica Android writes for Steam Guard", async () => {

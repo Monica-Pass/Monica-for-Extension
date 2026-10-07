@@ -1,7 +1,14 @@
 import { isLoginItem, createLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PasskeyItem, type PaymentAccountItem, type ProviderAccount, type ProviderConflict, type ProviderConflictSummary, type TotpItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
+import { customIconProjection } from '../core/custom-icon';
+import { KeePassProjectRemovalWorkflow } from './keepass-project-removal';
+import { KeePassProjectResolutionWorkflow } from './keepass-project-resolution';
+import { KeePassRecoveryDownloads } from './keepass-recovery-download';
+import { IndexedDbKeePassConflictRecoveryStorage } from '../providers/keepass/keepass-conflict-recovery-store';
 import { readInlineAutofillEnabled } from "../autofill/inline-preferences";
 import { assertInlineSessionId, INLINE_SUGGESTION_LIMIT, type InlineAutofillResult } from "../autofill/inline-contract";
+import { websiteAutofillFields } from "../autofill/custom-fields";
+import { autofillCredentialIdentities } from "../autofill/credential-identity";
 import { resolveLoginOtp } from "../core/login-otp";
 import { projectSteamItem } from "../core/steam-item";
 import { ProviderRegistry, sameProviderBinding, type ProviderSyncContext, type ProviderSyncResult } from "../core/provider";
@@ -34,6 +41,13 @@ import { BitwardenFolderError, BitwardenFolderService, type BitwardenFolderMutat
 import { BitwardenCollectionError, BitwardenCollectionService, type BitwardenCollectionMutationResult } from "../providers/bitwarden/bitwarden-collections";
 import { BitwardenSendError, BitwardenSendService, type BitwardenSendFileInput } from "../providers/bitwarden/bitwarden-sends";
 import { Mdbx2NativeClient, createChromeMdbx2NativeRuntime } from "../providers/mdbx2/native-client";
+import { Mdbx2LocalFileExports } from "../providers/mdbx2/local-file-export";
+import { Mdbx2RestoreCoordinator } from '../providers/mdbx2/mdbx2-restore';
+import { Mdbx2RestoreBatchCoordinator } from '../providers/mdbx2/mdbx2-restore-batch';
+import { PasswordProjectRestoreWorkflow, PasswordProjectRestoreNotStagedError } from './password-project-restore';
+import { Mdbx2PasswordProjectRemovalCoordinator } from '../providers/mdbx2/mdbx2-project-removal';
+import { PasswordProjectRemovalWorkflow, PasswordProjectRemovalNotStagedError } from './password-project-removal';
+import { ProviderOperationQueue } from './provider-operation-queue';
 import { MDBX2_MAX_BINARY_CHUNK_BYTES, MDBX2_WINDOWS_HELLO_PROTOCOL_VERSION, MDBX2_WINDOWS_HELLO_RP_ID, Mdbx2NativeHostError, type Mdbx2SyncStateStatus, type Mdbx2WindowsHelloStatus } from "../providers/mdbx2/native-contract";
 import { Mdbx2Provider } from "../providers/mdbx2/mdbx2-provider";
 import { Mdbx2BatchTransferCoordinator, type Mdbx2BatchTransferProgress, type Mdbx2BatchTransferStatus } from "../providers/mdbx2/mdbx2-batch-transfer-coordinator";
@@ -48,6 +62,10 @@ import { KeePassGroupError, type KeePassGroupMutationResult } from "../providers
 import { KeePassHistoryError, type KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import { keePassMutationIntentSha256, keePassRemoteFailureInfo, KeePassRemoteSessionError, KeePassRemoteSessionService, type KeePassRemoteFailureInfo } from "../providers/keepass/keepass-remote-session";
 import { KeePassWebDavError } from "../providers/keepass/keepass-webdav-client";
+import { isRemoteKeePassSource } from "../providers/keepass/keepass-source";
+import { OneDriveSessionService } from "../providers/onedrive/onedrive-session";
+import { OneDriveAuthorizationError } from "../providers/onedrive/onedrive-auth";
+import { OneDriveKeePassConnections } from "./onedrive-keepass-connection";
 import {
   IndexedDbKeePassWorkingCopyStorage,
   KeePassWorkingCopyStoreError,
@@ -56,6 +74,7 @@ import {
   type KeePassDurableMutationResult
 } from "../providers/keepass/keepass-working-copy-store";
 import { MonicaWebDavProvider, type MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
+import { finishWebDavAttachmentUpload } from "./webdav-attachment-upload";
 import { normalizeServerUrl } from "../providers/webdav/webdav-client";
 import { cancelSteamMarketListing, getSteamInventoryOverview, getSteamMarketQuote, getSteamMiniProfileBackground, listSteamInventoryItems, listSteamMarketListings, sellSteamMarketItems } from "../providers/steam/steam-market";
 import { listSteamAuthorizedDevices, listSteamConfirmations, listSteamPendingLogins, respondToSteamConfirmation, respondToSteamLogin } from "../providers/steam/steam-network";
@@ -68,10 +87,12 @@ import type { CredentialCaptureInput, ExtensionRequest, ExtensionResponse, Login
 import { assertTrustedExtensionPage, assertTrustedManagerPage, isSecureSensitivePageUrl, requireTrustedWebPageSender } from "../runtime/sender-policy";
 import { createAssertion, createPasskey, normalizeRpId, validateRpId } from "../passkey/webauthn-core";
 import { validatePasskeyRequest } from "../passkey/request-policy";
+import { selectPasskeyRegistrationAlgorithm } from "../passkey/registration-policy";
 import { PasskeyUserVerification } from "../passkey/user-verification";
 import { duplicatePasskeyCredentialIds, hasExcludedUsablePasskey, normalizeCredentialId, passkeyAvailability, passkeyMatchesPageHost, passkeyRpIdsEqual, selectPasskeyCandidates } from "../passkey/source-policy";
 import { assertPasskeyCounterNotRegressed, resolvePasskeyOwnership, samePasskeySigningIdentity } from "../passkey/ownership-policy";
 import { prepareBitwardenAssertion } from "../passkey/bitwarden-assertion";
+import { prepareFileAssertion } from "../passkey/file-assertion";
 import { base64ToBytes, bytesToBase64 } from "../security/encoding";
 import { ChromeVaultSessionStore } from "../security/vault-session";
 import { SecureVaultService, VaultHelloRequiredError, VaultLockedError } from "../security/secure-vault-service";
@@ -83,7 +104,7 @@ import { normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from
 import type { AutofillFieldContext } from "../content/field-signature";
 import { configureSessionStorageAccess } from "./startup";
 import { runtimeInfo } from "../runtime/version";
-import { AutomaticSyncScheduler } from "./automatic-sync";
+import { AutomaticSyncScheduler, mdbx2AutomaticSyncEligible } from "./automatic-sync";
 import { BitwardenNotifications } from "../providers/bitwarden/bitwarden-notifications";
 import { AUTO_SYNC_PREFERENCES_KEY, readAutomaticSyncEnabled } from "../providers/sync-preferences";
 
@@ -100,6 +121,19 @@ const bitwardenProvider = new BitwardenProvider();
 providers.register(bitwardenProvider);
 const bitwardenDurableSync = new BitwardenDurableSyncCoordinator(bitwardenProvider, service);
 const mdbx2NativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime());
+const mdbx2Restores = new Mdbx2RestoreCoordinator(mdbx2NativeClient, service);
+const mdbx2RestoreBatches = new Mdbx2RestoreBatchCoordinator(mdbx2NativeClient, service);
+const providerOperations = new ProviderOperationQueue();
+const passwordProjectRemovals = new PasswordProjectRemovalWorkflow(service,
+  new Mdbx2PasswordProjectRemovalCoordinator(mdbx2NativeClient, service), mdbx2Restores, providerOperations, () => publishVaultChanged());
+const passwordProjectRestores = new PasswordProjectRestoreWorkflow(service, mdbx2RestoreBatches, providerOperations, () => publishVaultChanged());
+const mdbx2LocalFileExports = new Mdbx2LocalFileExports(mdbx2NativeClient, async providerId => {
+  const state = await service.readState(false);
+  const account = state.providers.find(provider => provider.id === providerId);
+  if (!account || account.kind !== "mdbx2" || !account.enabled || typeof account.config.vaultHandle !== "string" || !account.config.vaultHandle) throw new Error("MDBX2 密码源不存在或尚未连接。");
+  if (state.mutationQueue.some(mutation => mutation.providerId === providerId) || state.providerConflicts.some(conflict => conflict.providerId === providerId)) throw new Error("请先同步所有待写入修改并处理冲突，再导出 MDBX 数据库。");
+  return { vaultHandle: account.config.vaultHandle, fileName: `${(account.name || "Monica").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 100)}.mdbx` };
+});
 const windowsHelloNativeClient = new Mdbx2NativeClient(createChromeMdbx2NativeRuntime(), undefined, "com.monica_pass.windows_hello", "Monica Windows Hello");
 const mdbx2SyncCoordinator = new Mdbx2SyncCoordinator(mdbx2NativeClient);
 const mdbx2Provider = new Mdbx2Provider(mdbx2NativeClient, mdbx2SyncCoordinator);
@@ -120,7 +154,47 @@ async function savePromptBlocked(pageUrl: string): Promise<boolean> {
 const keePassProvider = new KeePassProvider();
 providers.register(keePassProvider);
 const keePassWorkingCopies = new IndexedDbKeePassWorkingCopyStorage();
-const keePassRemoteSessions = new KeePassRemoteSessionService(keePassProvider, keePassWorkingCopies);
+const oneDriveSessions = new OneDriveSessionService({
+  sessionId: () => service.passkeySessionId(),
+  getProvider: id => service.getProvider(id),
+  rotateOneDriveTokens: (...args) => service.rotateOneDriveTokens(...args)
+});
+const keePassRemoteSessions = new KeePassRemoteSessionService(keePassProvider, keePassWorkingCopies, undefined,
+  (account, identity) => oneDriveSessions.fileClient(account, identity));
+const keePassProjectRemovals = new KeePassProjectRemovalWorkflow(service, keePassRemoteSessions, providerOperations,
+  () => publishVaultChanged(), {
+    runMutationExclusive: runKeePassMutationExclusive,
+    beforeCapture: async account => {
+      await ensureKeePassSession(account, true);
+      await flushKeePassPendingMutations(account);
+      const persisted = await keePassRemoteSessions.persistWorkingCopy(account);
+      if (persisted) await applyKeePassRemoteAccountConfig(account, persisted.accountConfig);
+    },
+    invalidateSession: providerId => {
+      keePassProvider.lockAccount(providerId);
+      clearKeePassPendingPersistence(providerId);
+    }
+  });
+const keePassProjectResolutions = new KeePassProjectResolutionWorkflow(service, keePassRemoteSessions, keePassWorkingCopies,
+  new IndexedDbKeePassConflictRecoveryStorage(), providerOperations, {
+    runMutationExclusive: runKeePassMutationExclusive,
+    beforeCapture: async account => {
+      await keePassProjectRemovals.assertProviderReady(account.id);
+      await ensureKeePassSession(account, true);
+      await flushKeePassPendingMutations(account);
+      const persisted = await keePassRemoteSessions.persistWorkingCopy(account);
+      if (persisted) await applyKeePassRemoteAccountConfig(account, persisted.accountConfig);
+    },
+    beforeResolve: async account => {
+      await keePassProjectRemovals.assertProviderReady(account.id);
+      await ensureKeePassSession(account, true);
+      await flushKeePassPendingMutations(account);
+    },
+    invalidateSession: providerId => keePassProvider.lockAccount(providerId)
+  }, () => publishVaultChanged());
+const keePassRecoveryDownloads = new KeePassRecoveryDownloads(providerId => keePassProjectRemovals.sourceToken(providerId));
+const oneDriveConnections = new OneDriveKeePassConnections(service, keePassProvider, keePassRemoteSessions, keePassWorkingCopies,
+  oneDriveSessions, flushKeePassPendingMutations);
 const keePassDurableSync = new KeePassDurableSyncCoordinator(
   keePassProvider,
   keePassRemoteSessions,
@@ -221,6 +295,8 @@ interface PendingPasskeyRequest {
   matches: string[];
   saveTargets: Array<{ providerId: string; name: string; kind: "local" | "bitwarden" | "mdbx2" | "keepass" }>;
   defaultSaveTargetId?: string;
+  unlockRequired?: boolean;
+  unlockSessionId?: string;
 }
 
 const PASSKEY_PENDING_PREFIX = "monica.passkey.pending.v1.";
@@ -271,6 +347,7 @@ const WEB_PAGE_REQUEST_TYPES = new Set<ExtensionRequest["type"]>([
   "CREDENTIAL_ACCEPT",
   "CREDENTIAL_DISMISS",
   "PASSKEY_BEGIN",
+  "PASSKEY_UNLOCK_CONTINUE",
   "PASSKEY_ACCEPT",
   "PASSKEY_DISMISS"
 ]);
@@ -279,9 +356,11 @@ void configureSessionStorageAccess(chrome.storage.session.setAccessLevel?.bind(c
 
 chrome.storage.onChanged.addListener((changes, area) => {
   const change = changes["monica.secureVault.session.v1"];
-  const previous = change?.oldValue as { rawKey?: unknown } | undefined;
-  const next = change?.newValue as { rawKey?: unknown } | undefined;
-  if (area === "session" && change && (!next || previous?.rawKey !== next.rawKey)) {
+  const previous = change?.oldValue as { id?: unknown; rawKey?: unknown } | undefined;
+  const next = change?.newValue as { id?: unknown; rawKey?: unknown } | undefined;
+  if (area === "session" && change && (!next || previous?.rawKey !== next.rawKey || previous?.id !== next.id)) {
+    keePassRecoveryDownloads.clear();
+    oneDriveSessions.clear();
     void dismissInlineMenus();
     if (!next?.rawKey) stopAutomaticSync();
     else void reconcileAutomaticSync().catch(() => undefined);
@@ -347,8 +426,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     void service.status().then((status) => {
       if (status !== "unlocked") pendingCredentialCaptures.clear();
       if (status !== "unlocked") void clearPendingUsernameContexts();
-      if (status !== "unlocked") void clearPendingPasskeyRequests();
+      if (status !== "unlocked") void clearPendingPasskeyRequests(true);
       if (status !== "unlocked") abortProviderSyncs();
+      if (status !== "unlocked") void mdbx2LocalFileExports.clear();
       if (status !== "unlocked") mdbx2NativeClient.close();
       if (status !== "unlocked") mdbx2Provider.lock();
       if (status !== "unlocked") keePassProvider.lock();
@@ -364,12 +444,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse: (response: ExtensionResponse) => void) => {
   handleRequest(message, sender)
     .then((data) => {
-      if (["VAULT_DELETE_ITEM", "VAULT_UPSERT_ITEM", "VAULT_SET_LOCKED_AUTOFILL", "VAULT_RESTORE_ENCRYPTED", "AUTOFILL_SITE_POLICY_SET", "AUTOFILL_FIELD_POLICY_SET_CURRENT", "AUTOFILL_FIELD_POLICY_REMOVE"].includes(message.type)) void dismissInlineMenus();
+      if (["VAULT_DELETE_ITEM", "VAULT_DELETE_PASSWORD_GROUP", "VAULT_CONSUME_HOTP", "VAULT_UNARCHIVE_ITEM", "VAULT_DELETE_PASSWORD_HISTORY", "VAULT_UPSERT_ITEM", "VAULT_SAVE_PASSWORD_GROUP", "VAULT_SET_PASSWORD_COVER", "VAULT_SET_PASSWORD_STACK", "VAULT_PASSWORD_PROJECT_REMOVE", "VAULT_PASSWORD_PROJECT_REMOVAL_RESUME", "VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL", "VAULT_KEEPASS_PROJECT_REMOVE", "VAULT_KEEPASS_PROJECT_REMOVAL_RESUME", "VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL", "VAULT_PASSWORD_PROJECT_RESTORE", "VAULT_PASSWORD_PROJECT_RESTORE_RESUME", "VAULT_SET_LOCKED_AUTOFILL", "VAULT_RESTORE_ENCRYPTED", "AUTOFILL_SITE_POLICY_SET", "AUTOFILL_FIELD_POLICY_SET_CURRENT", "AUTOFILL_FIELD_POLICY_REMOVE"].includes(message.type)) void dismissInlineMenus();
       sendResponse({ ok: true, data });
       void afterRuntimeRequest(message, data).catch(() => undefined);
     })
     .catch((error: unknown) => {
-      const code = error instanceof VaultLockedError
+      const code = error instanceof PasswordProjectRemovalNotStagedError || error instanceof PasswordProjectRestoreNotStagedError ? error.code : error instanceof VaultLockedError
         ? "VAULT_LOCKED"
         : error instanceof VaultHelloRequiredError
           ? "VAULT_HELLO_REQUIRED"
@@ -460,7 +540,9 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "VAULT_LOCK": {
       assertExtensionPage(sender);
+      keePassRecoveryDownloads.clear();
       abortProviderSyncs();
+      void mdbx2LocalFileExports.clear();
       mdbx2NativeClient.close();
       mdbx2Provider.lock();
       keePassProvider.lock();
@@ -484,6 +566,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertExtensionPage(sender);
       const replacedHelloBindingId = request.replaceExisting ? await service.windowsHelloBindingIdForRuntime() : undefined;
       abortProviderSyncs();
+      void mdbx2LocalFileExports.clear();
       mdbx2NativeClient.close();
       mdbx2Provider.lock();
       keePassProvider.lock();
@@ -537,6 +620,25 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         if (typeof request.allowLockedAutofill !== "boolean") throw new Error("免解锁填写标记无效。");
       }
       return service.upsertItem(request.item, request.allowLockedAutofill, request.expectedUpdatedAt);
+    case "VAULT_SAVE_PASSWORD_GROUP":
+      assertManagerPage(sender);
+      if (request.allowLockedAutofill !== undefined && typeof request.allowLockedAutofill !== "boolean") throw new Error("免解锁填写设置必须是布尔值。");
+      return service.savePasswordGroup(request.items, request.expected, request.allowLockedAutofill);
+    case 'VAULT_CONSUME_HOTP':
+      assertManagerPage(sender);
+      return service.consumeHotp(request.usage);
+    case 'VAULT_UNARCHIVE_ITEM':
+      assertManagerPage(sender);
+      return service.unarchiveItem(request.itemId, request.expectedUpdatedAt);
+    case 'VAULT_DELETE_PASSWORD_HISTORY':
+      assertManagerPage(sender);
+      return service.deletePasswordHistory(request.itemId, request.index, request.expectedUpdatedAt);
+    case "VAULT_SET_PASSWORD_COVER":
+      assertManagerPage(sender);
+      return service.setPasswordCover(request.anchorItemId, request.enabled, request.expected);
+    case "VAULT_SET_PASSWORD_STACK":
+      assertManagerPage(sender);
+      return service.setPasswordStack(request.anchorItemIds, request.action, request.expected);
     case "VAULT_LOCKED_AUTOFILL_IDS":
       assertManagerPage(sender);
       return service.listLockedAutofillItemIds();
@@ -547,9 +649,91 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "VAULT_DELETE_ITEM":
       assertExtensionPage(sender);
       return service.deleteItem(request.itemId);
+    case "VAULT_DELETE_PASSWORD_GROUP":
+      assertManagerPage(sender);
+      return service.deletePasswordGroup(request.anchorItemId, request.expected);
     case "VAULT_RESTORE_ITEM":
       assertManagerPage(sender);
-      return service.restoreItem(request.itemId);
+      return restoreVaultItem(request.itemId);
+    case 'VAULT_PASSWORD_PROJECT_RESTORE':
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error('请先确认整组恢复的范围。');
+      return passwordProjectRestores.start(request.input);
+    case 'VAULT_PASSWORD_PROJECT_RESTORES':
+      assertManagerPage(sender);
+      return passwordProjectRestores.pending(request.operationId);
+    case 'VAULT_PASSWORD_PROJECT_RESTORE_RESUME':
+      assertManagerPage(sender);
+      return passwordProjectRestores.resume(request.operationId);
+    case 'VAULT_PASSWORD_PROJECT_REMOVE':
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error('请先确认移除的密码成员。');
+      return passwordProjectRemovals.stage(request.input);
+    case 'VAULT_PASSWORD_PROJECT_REMOVALS':
+      assertManagerPage(sender);
+      return passwordProjectRemovals.pending(request.operationId);
+    case 'VAULT_PASSWORD_PROJECT_REMOVAL_RESUME':
+      assertManagerPage(sender);
+      return passwordProjectRemovals.resume(request.operationId);
+    case 'VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL':
+      assertManagerPage(sender);
+      return passwordProjectRemovals.cancel(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_SOURCE_TOKEN':
+      assertManagerPage(sender);
+      return keePassProjectRemovals.sourceToken(request.providerId);
+    case 'VAULT_KEEPASS_PROJECT_REMOVE':
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error('请先确认移除的密码成员。');
+      return keePassProjectRemovals.stageFromManager(request.input);
+    case 'VAULT_KEEPASS_PROJECT_REMOVALS':
+      assertManagerPage(sender);
+      return keePassProjectRemovals.pending(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_REMOVAL_RESUME':
+      assertManagerPage(sender);
+      return keePassProjectRemovals.resume(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL':
+      assertManagerPage(sender);
+      return keePassProjectRemovals.cancel(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_CONFLICT_REVIEW':
+      assertManagerPage(sender);
+      return keePassProjectResolutions.review(request.providerId);
+    case 'VAULT_KEEPASS_PROJECT_RESOLVE':
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error('请先确认各项目保留的版本。');
+      return keePassProjectResolutions.resolve(request.providerId, request.input);
+    case 'VAULT_KEEPASS_PROJECT_RESOLUTIONS':
+      assertManagerPage(sender);
+      return keePassProjectResolutions.pending(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_RESOLUTION_RESUME':
+      assertManagerPage(sender);
+      return keePassProjectResolutions.resume(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_RESOLUTION_CANCEL':
+      assertManagerPage(sender);
+      return keePassProjectResolutions.cancel(request.operationId);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_LIST':
+      assertManagerPage(sender);
+      return keePassProjectResolutions.recoveryCopies(request.providerId);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_DELETE':
+      assertManagerPage(sender);
+      if (request.confirmed !== true) throw new Error('请先确认删除所选恢复副本。');
+      return keePassProjectResolutions.deleteRecoveryCopy(request.providerId, request.operationId, request.expectedIntentTag);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_BEGIN':
+      assertManagerPage(sender);
+      if (typeof request.requestId !== 'string') throw new Error('恢复副本下载请求无效。');
+      return keePassRecoveryDownloads.begin(request.providerId, mdbx2ExportOwner(sender), () =>
+        keePassProjectResolutions.exportRecoveryCopy(request.providerId, request.operationId, request.expectedIntentTag, request.exportPassword), request.requestId);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_STATUS':
+      assertManagerPage(sender);
+      return keePassRecoveryDownloads.status(request.providerId, mdbx2ExportOwner(sender), request.requestId);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_CANCEL':
+      assertManagerPage(sender);
+      return keePassRecoveryDownloads.cancel(request.providerId, mdbx2ExportOwner(sender), request.requestId);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_READ':
+      assertManagerPage(sender);
+      return keePassRecoveryDownloads.read(request.providerId, mdbx2ExportOwner(sender), request.downloadHandle, request.offset);
+    case 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_RELEASE':
+      assertManagerPage(sender);
+      return keePassRecoveryDownloads.release(request.providerId, mdbx2ExportOwner(sender), request.downloadHandle);
     case "AUTOFILL_INLINE_QUERY":
       return queryInlineAutofill(sender, request.sessionId);
     case "AUTOFILL_INLINE_FILL": {
@@ -574,14 +758,16 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (isAutofillBlocked(request.pageUrl, { blockedHosts: context.blockedHosts, saveBlockedHosts: [] })) return [];
       if (request.fieldSignature && context.blockedFieldSignatures.includes(request.fieldSignature)) return [];
       return matchingLogins(context.items.filter(isLoginItem), request.pageUrl)
-        .map((item) => ({ ...toMatchSummary(item), allowLockedAutofill: context.allowedIds.includes(item.id) }));
+        .map((item) => ({ ...toMatchSummary(item, context.credentialIdentities[item.id]), allowLockedAutofill: context.allowedIds.includes(item.id) }));
     }
     case "VAULT_LIST_LOGIN_SUMMARIES": {
       assertExtensionPage(sender);
-      return (await service.listItems())
+      const items = await service.listItems();
+      const identities = autofillCredentialIdentities(items);
+      return items
         .filter((item): item is LoginItem => isLoginItem(item) && !item.deletedAt)
         .sort((left, right) => Number(right.favorite) - Number(left.favorite) || right.updatedAt.localeCompare(left.updatedAt))
-        .map(toMatchSummary);
+        .map(item => toMatchSummary(item, identities[item.id]));
     }
     case "VAULT_LOGIN_SECRET": {
       assertExtensionPage(sender);
@@ -718,6 +904,8 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       return dismissCredentialCandidate(request.candidateId, sender);
     case "PASSKEY_BEGIN":
       return beginPasskeyRequest(request.request, sender);
+    case "PASSKEY_UNLOCK_CONTINUE":
+      return unlockAndContinuePasskeyRequest(request.candidateId, sender);
     case "PASSKEY_ACCEPT":
       return acceptPasskeyRequest(request.candidateId, request.itemId, request.providerId, sender);
     case "PASSKEY_DISMISS":
@@ -729,6 +917,9 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
         await passkeyUserVerification.verify(request.verificationId, request.masterPassword, sender);
         return { verified: true };
       } finally { request.masterPassword = ""; }
+    case "PASSKEY_VERIFY_HELLO":
+      await passkeyUserVerification.verify(request.verificationId, "", sender, "windows-hello");
+      return { verified: true };
     case "PASSKEY_CANCEL_VERIFICATION":
       passkeyUserVerification.cancel(request.verificationId, sender);
       return { cancelled: true };
@@ -1051,6 +1242,15 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "MDBX2_HOST_STATUS":
       assertManagerPage(sender);
       return new Mdbx2NativeClient(createChromeMdbx2NativeRuntime()).probe();
+    case "MDBX2_FILE_EXPORT_BEGIN":
+      assertManagerPage(sender);
+      return mdbx2LocalFileExports.begin(request.providerId, mdbx2ExportOwner(sender));
+    case "MDBX2_FILE_EXPORT_READ":
+      assertManagerPage(sender);
+      return mdbx2LocalFileExports.read(request.providerId, mdbx2ExportOwner(sender), request.downloadHandle, request.offset);
+    case "MDBX2_FILE_EXPORT_RELEASE":
+      assertManagerPage(sender);
+      return mdbx2LocalFileExports.release(request.providerId, mdbx2ExportOwner(sender), request.downloadHandle);
     case "MDBX2_TRANSFER_BEGIN":
       assertManagerPage(sender);
       return mdbx2NativeClient.beginInboundTransfer(request.sizeBytes, request.sha256);
@@ -1090,6 +1290,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           mdbxGeneration: 2,
           formatVersion: "MDBX-2",
           vaultHandle: session.vaultHandle,
+          nativeVaultId: session.vaultId,
           schemaVersion: session.schemaVersion,
           hostVerifiedAt: new Date().toISOString()
         },
@@ -1150,6 +1351,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "MDBX2_VAULT_LOCK": {
       assertManagerPage(sender);
+      void mdbx2LocalFileExports.clear();
       const account = await service.getProvider(request.providerId);
       if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
       await setProviderAutoSyncPaused([request.providerId], true);
@@ -1296,11 +1498,14 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     case "MDBX2_OBJECT_DELETE": {
       assertManagerPage(sender);
       const vaultHandle = await requireMdbx2VaultHandle(request.providerId);
-      return mdbx2NativeClient.deleteObject(vaultHandle, request.operationId, request.logicalObjectId);
+      return mdbx2NativeClient.deleteObject(vaultHandle, request.operationId, request.logicalObjectId, request.expectedHeadCommitId);
     }
     case "MDBX2_BATCH_TRANSFER_PLAN":
       assertManagerPage(sender);
       return mdbx2BatchTransferCoordinator.plan(request.input);
+    case "MDBX2_PENDING_MOVES":
+      assertManagerPage(sender);
+      return mdbx2BatchTransferCoordinator.pendingMoves();
     case "MDBX2_BATCH_TRANSFER_EXECUTE": {
       assertManagerPage(sender);
       pruneMdbx2BatchTransferStatuses();
@@ -1796,6 +2001,9 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
           clearBitwardenOrganizationKeys(context.organizationKeys);
         }
       }
+      if (account.kind === "monica-webdav") {
+        return finishWebDavAttachmentUpload(providerAttachmentUploads, monicaWebDavProvider, account, item, request);
+      }
       throw unsupportedAttachmentProvider(account.kind);
     }
     case "PROVIDER_ATTACHMENT_UPLOAD_ABORT": {
@@ -1866,11 +2074,34 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       if (account.kind === "monica-webdav") return { changed: await monicaWebDavProvider.deleteAttachment(account, item, request.attachmentId) };
       throw unsupportedAttachmentProvider(account.kind);
     }
+    case "ONEDRIVE_LOGIN": {
+      assertManagerPage(sender);
+      return oneDriveSessions.login(request.loginId, chrome.identity.getRedirectURL("onedrive"), launchOneDriveIdentityFlow, request.clientId);
+    }
+    case "ONEDRIVE_LOGIN_CANCEL": {
+      assertManagerPage(sender);
+      oneDriveSessions.cancel(request.loginId);
+      return undefined;
+    }
+    case "ONEDRIVE_BROWSE": {
+      assertManagerPage(sender);
+      return oneDriveSessions.browse(request.input);
+    }
+    case "KEEPASS_ONEDRIVE_OPEN": {
+      assertManagerPage(sender);
+      const input = { ...request.input };
+      request.input.databasePassword = "";
+      request.input.keyFile = undefined;
+      // Shared ordering with manual/automatic sync, then attachment/group writes.
+      const queueId = input.providerId || input.loginId || "onedrive-new-connection";
+      return providerOperations.run(queueId, () => runKeePassMutationExclusive(queueId, () => oneDriveConnections.connect(input)));
+    }
     case "KEEPASS_WEBDAV_TEST": {
       assertManagerPage(sender);
       const input = { ...request.input };
       const existing = input.providerId ? await service.getProvider(input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      if (existing?.config.sourceMode === "onedrive") throw new Error("请在 OneDrive 设置中重新连接原数据库；连接其他来源请新增密码源。");
       if (!input.webDavPassword && existing?.config.sourceMode === "webdav" && typeof existing.config.webDavPassword === "string") {
         input.webDavPassword = existing.config.webDavPassword;
       }
@@ -1885,6 +2116,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      if (existing?.config.sourceMode === "onedrive") throw new Error("请在 OneDrive 设置中重新连接原数据库；连接其他来源请新增密码源。");
       const input = { ...request.input };
       if (existing?.config.sourceMode === "webdav") {
         if (!input.webDavPassword && typeof existing.config.webDavPassword === "string") input.webDavPassword = existing.config.webDavPassword;
@@ -1959,6 +2191,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
       assertManagerPage(sender);
       const existing = request.input.providerId ? await service.getProvider(request.input.providerId) : undefined;
       if (existing && existing.kind !== "keepass") throw new Error("所选密码源不是 KeePass 数据库。");
+      if (existing?.config.sourceMode === "onedrive") throw new Error("请在 OneDrive 设置中重新连接原数据库；连接其他来源请新增密码源。");
       const input = { ...request.input };
       request.input.password = "";
       request.input.keyFile = undefined;
@@ -2132,6 +2365,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "KEEPASS_LOCK": {
       assertManagerPage(sender);
+      keePassRecoveryDownloads.clear();
       const ids = request.providerId ? [request.providerId] : (await service.readState(false)).providers.filter(account => account.kind === "keepass").map(account => account.id);
       await setProviderAutoSyncPaused(ids, true);
       await Promise.allSettled(ids.map(id => keePassMutationQueues.get(id)));
@@ -2166,6 +2400,7 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
     }
     case "PROVIDER_REMOVE":
       assertManagerPage(sender);
+      void mdbx2LocalFileExports.clear();
       activeProviderSyncs.get(request.providerId)?.abort(new DOMException("密码源已移除", "AbortError"));
       {
         const account = await service.getProvider(request.providerId);
@@ -2185,17 +2420,29 @@ async function handleRequest(request: ExtensionRequest, sender: chrome.runtime.M
   throw new Error("不支持的 Monica 运行时命令。");
 }
 
+async function restoreVaultItem(itemId: string): Promise<VaultItem> {
+  const state = await service.readState();
+  const source = state.items.find(row => row.id === itemId);
+  const providerId = source?.providerRefs.find(ref => state.providers.some(account => account.id === ref.providerId && account.kind === 'mdbx2'))?.providerId;
+  if (!providerId) return mdbx2Restores.restore(itemId);
+  return providerOperations.run(providerId, () => mdbx2Restores.restore(itemId));
+}
+
 function synchronizeProvider(providerId: string, options: { allowEmptyRemote?: boolean; automatic?: boolean; syncHint?: ProviderSyncContext["syncHint"] } = {}): Promise<ProviderSyncResult> {
   const running = providerSyncPromises.get(providerId);
-  if (running) return options.allowEmptyRemote ? running.then(() => synchronizeProvider(providerId, options)) : running;
-  const operation = executeProviderSync(providerId, options).finally(() => {
+  // A manual sync must include writes made after the in-flight snapshot was read.
+  // Automatic callers can share that snapshot; an explicit retry also survives its failure.
+  if (running) return options.allowEmptyRemote || !options.automatic
+    ? running.catch(() => undefined).then(() => synchronizeProvider(providerId, options)) : running;
+  const operation = providerOperations.run(providerId, () => executeProviderSync(providerId, options)).finally(() => {
     if (providerSyncPromises.get(providerId) === operation) providerSyncPromises.delete(providerId);
   });
   providerSyncPromises.set(providerId, operation);
   return operation;
 }
 
-async function executeProviderSync(providerId: string, options: { allowEmptyRemote?: boolean; automatic?: boolean; syncHint?: ProviderSyncContext["syncHint"] }): Promise<ProviderSyncResult> {
+async function executeProviderSync(providerId: string, options: { allowEmptyRemote?: boolean; automatic?: boolean; syncHint?: ProviderSyncContext["syncHint"] }, signal?: AbortSignal): Promise<ProviderSyncResult> {
+  signal?.throwIfAborted();
   const account = await service.getProvider(providerId);
   if (!account) throw new Error("密码源不存在。");
   if (account.kind === "local") throw new Error("本地密码源不需要同步。");
@@ -2204,14 +2451,26 @@ async function executeProviderSync(providerId: string, options: { allowEmptyRemo
   if (options.automatic && (await readPausedSyncProviders()).has(providerId)) throw new Error("此密码源已锁定。");
   if (activeProviderSyncs.has(account.id)) throw new Error("此密码源正在同步。");
   const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   activeProviderSyncs.set(account.id, controller);
   if (options.automatic) automaticSyncControllers.add(controller);
   const timeout = options.automatic ? setTimeout(() => controller.abort(new DOMException("自动同步超时", "TimeoutError")), 120_000) : undefined;
   const startedAt = Date.now();
   try {
     controller.signal.throwIfAborted();
+    if (account.kind === 'mdbx2') {
+      await passwordProjectRemovals.recoverProvider(account.id, controller.signal);
+      for (const batch of (await service.readMdbx2RestoreBatches()).filter(row => row.status === 'prepared' && row.members[0].provider.id === account.id)) {
+        controller.signal.throwIfAborted();
+        await mdbx2RestoreBatches.resume(batch.id);
+      }
+    }
     let result: ProviderSyncResult;
     if (account.kind === "keepass") {
+      await keePassProjectResolutions.recoverProvider(account.id, controller.signal);
+      await keePassProjectRemovals.recoverProvider(account.id, controller.signal);
       result = await synchronizeKeePassProvider(account, controller.signal, options.syncHint?.type === "check-remote");
     } else if (account.kind === "bitwarden") {
       result = await bitwardenDurableSync.synchronize(account, controller.signal, { allowEmptyRemote: options.allowEmptyRemote === true, syncHint: options.syncHint });
@@ -2224,6 +2483,8 @@ async function executeProviderSync(providerId: string, options: { allowEmptyRemo
         signal: controller.signal,
         now: new Date().toISOString(),
         localItems: structuredClone(snapshot),
+        passwordProjectRemovals: structuredClone(state.passwordProjectRemovals),
+        mdbx2RestoreBatches: structuredClone(state.mdbx2RestoreBatches),
         pendingMutations: structuredClone(state.mutationQueue.filter(mutation => mutation.providerId === account.id)),
         syncHint: options.syncHint
       });
@@ -2239,18 +2500,18 @@ async function executeProviderSync(providerId: string, options: { allowEmptyRemo
       durationMs: Date.now() - startedAt,
       message: result.conflicts.length ? `发现 ${result.conflicts.length} 个同步冲突。` : "同步完成。"
     }));
-    if (account.kind === "keepass" && account.config.sourceMode === "webdav") {
+    if (account.kind === "keepass" && isRemoteKeePassSource(account.config.sourceMode)) {
       await persistKeePassRemoteFailure(account.id, undefined);
     }
     if (!result.unchanged) publishVaultChanged();
     if (!options.automatic) automaticSync.completed(account.id);
     return result;
   } catch (error) {
-    if (account.kind === "keepass" && account.config.sourceMode === "webdav") {
+    if (account.kind === "keepass" && isRemoteKeePassSource(account.config.sourceMode)) {
       keePassProvider.lockAccount(account.id);
       clearKeePassPendingPersistence(account.id);
     }
-    const remoteFailure = account.kind === "keepass" && account.config.sourceMode === "webdav"
+    const remoteFailure = account.kind === "keepass" && isRemoteKeePassSource(account.config.sourceMode)
       ? keePassRemoteFailureInfo(error)
       : undefined;
     const diagnostic = createProviderDiagnostic(account.id, account.kind, error, new Date().toISOString(), {
@@ -2275,6 +2536,7 @@ async function executeProviderSync(providerId: string, options: { allowEmptyRemo
       retryAfterMs: error instanceof ProviderTransportError ? error.retryAfterMs : undefined
     });
   } finally {
+    signal?.removeEventListener("abort", abort);
     if (timeout !== undefined) clearTimeout(timeout);
     automaticSyncControllers.delete(controller);
     if (activeProviderSyncs.get(account.id) === controller) activeProviderSyncs.delete(account.id);
@@ -2301,6 +2563,7 @@ async function runSteamOperation<T>(itemId: string, operation: (item: TotpItem) 
 }
 
 function abortProviderSyncs(): void {
+  oneDriveSessions.clear();
   stopAutomaticSync();
   for (const controller of activeProviderSyncs.values()) controller.abort(new DOMException("密码库已锁定", "AbortError"));
   activeProviderSyncs.clear();
@@ -2338,8 +2601,8 @@ function reconcileAutomaticSync(): Promise<void> {
       const accounts = state.providers.filter(account => account.enabled && !paused.has(account.id) && (
         account.kind === "bitwarden" && typeof account.config.accessToken === "string" && Boolean(account.config.accessToken)
         || account.kind === "monica-webdav" && Boolean(account.config.baseUrl)
-        || account.kind === "keepass" && account.config.sourceMode === "webdav"
-        || account.kind === "mdbx2" && Boolean(account.config.vaultHandle && account.config.syncStateHandle && account.config.webDavBaseUrl && account.config.remotePath)
+        || account.kind === "keepass" && isRemoteKeePassSource(account.config.sourceMode)
+        || account.kind === "mdbx2" && mdbx2AutomaticSyncEligible(account.config)
       ));
       const visible = [...liveVaultPorts.values()].some(Boolean);
       automaticSync.configure(accounts.map(account => ({
@@ -2440,12 +2703,19 @@ async function setProviderAutoSyncPaused(providerIds: string[], paused: boolean)
 
 async function afterRuntimeRequest(request: ExtensionRequest, data?: unknown): Promise<void> {
   const type = request.type;
+  if (type === 'VAULT_KEEPASS_PROJECT_RESOLVE' || type === 'VAULT_KEEPASS_PROJECT_RESOLUTION_RESUME') {
+    const result = data as import('./keepass-project-resolution').KeePassProjectResolutionStatus | undefined;
+    if (result?.localAdoptionCompleted) {
+      publishVaultChanged(); await reconcileAutomaticSync();
+      automaticSync.request(result.providerId, { type: 'full' }, 700);
+    }
+  }
   if (["VAULT_FILL_LOGIN", "VAULT_FILL_WALLET", "AUTOFILL_INLINE_FILL", "PASSKEY_ACCEPT", "CREDENTIAL_ACCEPT"].includes(type)) void service.recordUserActivity().catch(() => undefined);
-  const itemMutation = ["VAULT_UPSERT_ITEM", "VAULT_DELETE_ITEM", "VAULT_RESTORE_ITEM", "VAULT_IMPORT_ITEMS", "PROVIDER_CONFLICT_RESOLVE", "CREDENTIAL_ACCEPT", "PASSKEY_ACCEPT"].includes(type);
+  const itemMutation = ["VAULT_CONSUME_HOTP", "VAULT_UNARCHIVE_ITEM", "VAULT_DELETE_PASSWORD_HISTORY", "VAULT_UPSERT_ITEM", "VAULT_SAVE_PASSWORD_GROUP", "VAULT_SET_PASSWORD_COVER", "VAULT_SET_PASSWORD_STACK", "VAULT_PASSWORD_PROJECT_REMOVE", "VAULT_PASSWORD_PROJECT_REMOVAL_RESUME", "VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL", "VAULT_KEEPASS_PROJECT_REMOVE", "VAULT_KEEPASS_PROJECT_REMOVAL_RESUME", "VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL", "VAULT_PASSWORD_PROJECT_RESTORE", "VAULT_PASSWORD_PROJECT_RESTORE_RESUME", "VAULT_DELETE_ITEM", "VAULT_DELETE_PASSWORD_GROUP", "VAULT_RESTORE_ITEM", "VAULT_IMPORT_ITEMS", "PROVIDER_CONFLICT_RESOLVE", "CREDENTIAL_ACCEPT", "PASSKEY_ACCEPT"].includes(type);
   const providerMutation = ["BITWARDEN_CIPHER_MOVE_FOLDER", "BITWARDEN_CIPHER_MOVE_COLLECTIONS", "PROVIDER_ATTACHMENT_UPLOAD_FINISH", "PROVIDER_ATTACHMENT_DELETE"].includes(type)
     || /^(?:BITWARDEN_(?:FOLDER|CIPHER)_|KEEPASS_(?:GROUP|HISTORY)_|MDBX2_(?:OBJECT|COLLECTION|HISTORY|CONFLICT|SNAPSHOT)_)/.test(type)
       && /(?:CREATE|RENAME|MOVE|DELETE|RESTORE|UPSERT|REVERT|RESOLVE)$/.test(type);
-  const connectionChange = ["BITWARDEN_LOGIN", "BITWARDEN_LOGOUT", "WEBDAV_SAVE", "PROVIDER_REMOVE", "MDBX2_VAULT_OPEN", "MDBX2_WEBDAV_SAVE", "MDBX2_BOOTSTRAP_PUBLISH", "MDBX2_BOOTSTRAP_REGISTER", "KEEPASS_WEBDAV_OPEN", "KEEPASS_OPEN", "KEEPASS_REMOTE_RESTORE"].includes(type);
+  const connectionChange = ["BITWARDEN_LOGIN", "BITWARDEN_LOGOUT", "WEBDAV_SAVE", "PROVIDER_REMOVE", "MDBX2_VAULT_OPEN", "MDBX2_WEBDAV_SAVE", "MDBX2_BOOTSTRAP_PUBLISH", "MDBX2_BOOTSTRAP_REGISTER", "KEEPASS_WEBDAV_OPEN", "KEEPASS_ONEDRIVE_OPEN", "KEEPASS_OPEN", "KEEPASS_REMOTE_RESTORE"].includes(type);
   const unlocked = ["VAULT_SETUP", "VAULT_UNLOCK", "VAULT_UNLOCK_HELLO", "VAULT_RESTORE_ENCRYPTED"].includes(type);
   if (type === "KEEPASS_LOCK" || type === "MDBX2_VAULT_LOCK") {
     publishVaultChanged();
@@ -2468,6 +2738,10 @@ async function afterRuntimeRequest(request: ExtensionRequest, data?: unknown): P
   if (providerMutation && "providerId" in request && request.providerId) {
     bitwardenProvider.lockAccount(request.providerId);
     automaticSync.request(request.providerId, { type: "full" }, 700);
+  }
+  if (type === 'VAULT_KEEPASS_PROJECT_REMOVE' || type === 'VAULT_KEEPASS_PROJECT_REMOVAL_RESUME') {
+    const result = data as import('./keepass-project-removal').KeePassProjectRemovalStatus | undefined;
+    if (result?.localAdoptionCompleted && result.providerId) automaticSync.request(result.providerId, { type: 'full' }, 700);
   }
 }
 
@@ -2826,7 +3100,7 @@ async function deletePasskeyCompletionReceipt(candidateId: string): Promise<void
   await chrome.storage.session.remove(passkeyCompletionStorageKey(candidateId));
 }
 
-function passkeyReceiptMatchesSource(receipt: PasskeyCompletionReceipt, source: { tabId: number; frameId: number; documentId: string; origin: string }): boolean {
+function passkeyReceiptMatchesSource(receipt: Pick<PasskeyCompletionReceipt, "tabId" | "frameId" | "documentId" | "origin">, source: { tabId: number; frameId: number; documentId: string; origin: string }): boolean {
   return receipt.tabId === source.tabId
     && receipt.frameId === source.frameId
     && receipt.documentId === source.documentId
@@ -2890,8 +3164,8 @@ async function cancelPendingPasskeyRequest(candidateId: string): Promise<boolean
   }
 }
 
-async function clearPendingPasskeyRequests(): Promise<void> {
-  passkeyUserVerification.cancelAll();
+async function clearPendingPasskeyRequests(preserveUnlockRequests = false): Promise<void> {
+  if (!preserveUnlockRequests) passkeyUserVerification.cancelAll();
   for (const controller of passkeySyncControllers.values()) controller.abort(new DOMException("密码库已锁定", "AbortError"));
   const stored = await chrome.storage.session.get(null);
   const pendingById = new Map(pendingPasskeyRequests);
@@ -2901,18 +3175,25 @@ async function clearPendingPasskeyRequests(): Promise<void> {
     if (pending?.id && pending.expiresAt > Date.now()) pendingById.set(pending.id, pending);
   }
   const cancelled: string[] = [];
+  const keep = (id: string) => preserveUnlockRequests && pendingById.get(id)?.unlockRequired === true && pendingById.get(id)!.expiresAt > Date.now();
   for (const candidateId of processingPasskeyRequests) {
+    if (keep(candidateId)) continue;
     if (!committingPasskeyRequests.has(candidateId)) {
       cancelledPasskeyRequests.add(candidateId);
       cancelled.push(candidateId);
     }
   }
   await Promise.allSettled(cancelled.map((candidateId) => deletePasskeyCompletionReceipt(candidateId)));
-  pendingPasskeyRequests.clear();
-  const keys = Object.keys(stored).filter((key) => key.startsWith(PASSKEY_PENDING_PREFIX));
+  for (const id of pendingById.keys()) {
+    if (keep(id)) continue;
+    pendingPasskeyRequests.delete(id);
+    passkeyUserVerification.cancelCandidate(id);
+  }
+  const keys = Object.keys(stored).filter((key) => key.startsWith(PASSKEY_PENDING_PREFIX) && !keep(key.slice(PASSKEY_PENDING_PREFIX.length)));
   if (keys.length) await chrome.storage.session.remove(keys);
   const cancelledPending: PendingPasskeyRequest[] = [];
   for (const pending of pendingById.values()) {
+    if (keep(pending.id)) continue;
     if (committingPasskeyRequests.has(pending.id)) continue;
     const receipt = await loadPasskeyCompletionReceipt(pending.id);
     if (receipt) {
@@ -2970,13 +3251,25 @@ function schedulePasskeyExpiry(candidateId: string, expiresAt: number): void {
   })(), Math.max(0, expiresAt - Date.now()) + 100);
 }
 
-async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runtime.MessageSender): Promise<PasskeyPromptContext> {
+async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runtime.MessageSender, resumed?: PendingPasskeyRequest): Promise<PasskeyPromptContext> {
   request = validatePasskeyRequest(request);
   const source = assertWebPageSender(sender);
-  if ((await service.status()) !== "unlocked") throw new VaultLockedError("密码库已锁定，请先解锁 Monica。");
-  if (await autofillBlocked(source.url)) throw new Error("此网站已禁止使用 Monica 自动填充和 Passkey。");
-  if (passkeyRequiresUserVerification(request)) await assertPasskeyUserVerificationAvailable();
   const rpId = validateRpId(source.origin, request.rpId);
+  const status = await service.status();
+  const id = resumed?.id || crypto.randomUUID();
+  const expiresAt = resumed?.expiresAt || Date.now() + (request.timeoutMs || 120_000);
+  if (status === "uninitialized") throw new PasskeyUnavailableError("请先设置 Monica 密码库。");
+  if (await autofillBlocked(source.url)) throw new Error("此网站已禁止使用 Monica 自动填充和 Passkey。");
+  if (status !== "unlocked") {
+    if (resumed) throw new PasskeyCancelledError("密码库已锁定，Passkey 请求已取消。");
+    const method = await assertPasskeyUserVerificationAvailable() === "master-password" ? "master-password" : "windows-hello";
+    const pending: PendingPasskeyRequest = { id, request, tabId: source.tabId, frameId: source.frameId, documentId: source.documentId, origin: source.origin, rpId, expiresAt, matches: [], saveTargets: [], unlockRequired: true };
+    await assertPasskeyDocumentCurrent(pending);
+    await persistPendingPasskeyRequest(pending);
+    schedulePasskeyExpiry(id, expiresAt);
+    return { candidateId: id, operation: request.operation, rpId, rpName: request.operation === "create" ? request.rpName : rpId, origin: source.origin, userName: "", credentials: [], saveTargets: [], expiresAt, unlockRequired: true, userVerificationRequired: true, userVerificationMethod: method };
+  }
+  if (passkeyRequiresUserVerification(request)) await assertPasskeyUserVerificationAvailable();
   let state = await service.readState();
   let passkeys = state.items.filter((item): item is PasskeyItem => item.kind === "passkey" && !item.deletedAt && passkeyRpIdsEqual(item.rpId, rpId));
   if (request.operation === "get") {
@@ -3006,20 +3299,20 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   }
   const saveTargets = state.providers
     .filter((provider): provider is ProviderAccount & { kind: "local" | "bitwarden" | "mdbx2" | "keepass" } => provider.enabled && (provider.kind === "local" || provider.kind === "bitwarden" || provider.kind === "mdbx2" || provider.kind === "keepass"))
+    .filter(provider => request.operation !== "create" || selectPasskeyRegistrationAlgorithm(request.algorithms, provider.kind) !== undefined)
     .map((provider) => ({ providerId: provider.id, name: provider.name, kind: provider.kind }));
   const configuredTarget = saveTargets.find((provider) => provider.providerId === state.settings.defaultProviderId);
   const defaultSaveTarget = configuredTarget || saveTargets.find((provider) => provider.kind === "local") || saveTargets[0];
   let matches: PasskeyItem[] = [];
   if (request.operation === "create") {
     if (!request.rpName || !request.userName || !request.userId) throw new Error("Passkey 注册请求缺少用户或网站信息。");
-    if (!request.algorithms.includes(-7)) throw new Error("当前仅支持 ES256 Passkey。");
+    if (!saveTargets.length) throw new PasskeyUnavailableError("所选 Passkey 保存位置不可用。");
     if (hasExcludedUsablePasskey(passkeys, rpId, request.excludeCredentialIds)) throw new PasskeyExcludedError("网站已排除此账户现有的 Passkey。");
   } else {
     matches = selectPasskeyCandidates(passkeys, rpId, request.allowCredentialIds);
     if (!matches.length) throw new PasskeyUnavailableError("Monica 中没有可用于此网站的 Passkey。");
   }
-  const id = crypto.randomUUID(); const expiresAt = Date.now() + (request.timeoutMs || 120_000);
-  const pending: PendingPasskeyRequest = { id, request, tabId: source.tabId, frameId: source.frameId, documentId: source.documentId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), saveTargets: request.operation === "create" ? saveTargets : [], defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined };
+  const pending: PendingPasskeyRequest = { id, request, tabId: source.tabId, frameId: source.frameId, documentId: source.documentId, origin: source.origin, rpId, expiresAt, matches: matches.map((item) => item.id), saveTargets: request.operation === "create" ? saveTargets : [], defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined, unlockSessionId: resumed?.unlockSessionId };
   await assertPasskeyDocumentCurrent(pending);
   await persistPendingPasskeyRequest(pending);
   schedulePasskeyExpiry(id, expiresAt);
@@ -3034,6 +3327,7 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
     userDisplayName: request.operation === "create" ? request.userDisplayName : matches[0]?.userDisplayName,
     userVerificationRequired: passkeyRequiresUserVerification(request) || matches.some(item => item.userVerificationRequired),
     userVerificationMethod: await service.protectionModeForRuntime() === "master-password" ? "master-password" : "windows-hello",
+    userVerified: Boolean(pending.unlockSessionId && pending.unlockSessionId === await service.passkeySessionId()),
     saveTargets: request.operation === "create" ? saveTargets.map((target) => ({ providerId: target.providerId, name: target.name, sourceMode: target.kind === "bitwarden" ? "bitwarden" : "browser-local" })) : [],
     defaultSaveTargetId: request.operation === "create" ? defaultSaveTarget?.providerId : undefined,
     credentials: matches.map((item) => {
@@ -3058,8 +3352,50 @@ async function beginPasskeyRequest(request: PasskeyRequest, sender: chrome.runti
   };
 }
 
+async function unlockAndContinuePasskeyRequest(candidateId: string, sender: chrome.runtime.MessageSender): Promise<PasskeyPromptContext> {
+  const source = assertWebPageSender(sender);
+  const pending = await loadPendingPasskeyRequest(candidateId);
+  if (!pending || !passkeyReceiptMatchesSource(pending, source)) throw new PasskeyCancelledError("Passkey 请求已过期或来源不匹配。");
+  if (processingPasskeyRequests.has(candidateId)) throw new Error("Passkey 请求正在处理中。");
+  processingPasskeyRequests.add(candidateId);
+  try {
+    await assertPasskeyDocumentCurrent(pending);
+    if (await autofillBlocked(source.url)) throw new PasskeyCancelledError("此网站已禁止使用 Monica 自动填充和 Passkey。");
+    if (pending.unlockRequired) {
+      const binding = await assertPasskeyUserVerificationAvailable();
+      await passkeyUserVerification.request({ candidateId, operation: pending.request.operation, rpId: pending.rpId, origin: pending.origin, accountName: "", expiresAt: pending.expiresAt, unlockRequired: true, method: binding === "master-password" ? "master-password" : "windows-hello" }, async (password, assertActive) => {
+        await assertPasskeyDocumentCurrent(pending);
+        if (await autofillBlocked(source.url)) throw new PasskeyCancelledError("此网站已禁止使用 Monica 自动填充和 Passkey。");
+        const guard = () => { assertActive(); if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。"); };
+        if (binding === "master-password") {
+          if (await service.protectionModeForRuntime() !== "master-password") throw new PasskeyCancelledError("密码库保护方式已变化。");
+          await service.unlock(password, guard);
+        } else {
+          if (await service.windowsHelloBindingIdForRuntime() !== binding) throw new PasskeyCancelledError("密码库保护方式已变化。");
+          await service.unlockWithWindowsHello((bindingId, challenge) => windowsHelloNativeClient.verifyWindowsHello(bindingId, challenge).then(result => { if (!result.verified) throw new Error("Windows Hello 未确认用户身份。"); }), guard);
+        }
+        guard();
+        pending.unlockSessionId = await service.passkeySessionId();
+        if (!pending.unlockSessionId) throw new PasskeyCancelledError("密码库已锁定，Passkey 请求已取消。");
+      });
+      await assertPasskeyDocumentCurrent(pending);
+      publishVaultChanged();
+      void reconcileAutomaticSync().catch(() => undefined);
+    }
+    return await beginPasskeyRequest(pending.request, sender, pending);
+  } catch (error) {
+    await deletePendingPasskeyRequest(candidateId);
+    if (error instanceof PasskeyUnavailableError || error instanceof PasskeyExcludedError) throw error;
+    throw new PasskeyCancelledError(error instanceof Error ? error.message : "Passkey 身份验证未完成。");
+  } finally {
+    processingPasskeyRequests.delete(candidateId);
+    cancelledPasskeyRequests.delete(candidateId);
+  }
+}
+
 function passkeyRequiresUserVerification(request: PasskeyRequest): boolean {
-  return request.operation === "create" ? request.userVerificationRequired === true : request.userVerification === "required";
+  // WebAuthn defaults userVerification to "preferred", which an authenticator that can verify must honour.
+  return request.operation === "create" ? request.userVerificationRequired !== false : request.userVerification !== "discouraged";
 }
 
 async function assertPasskeyUserVerificationAvailable(): Promise<string> {
@@ -3077,6 +3413,7 @@ async function assertPasskeyUserVerificationAvailable(): Promise<string> {
 
 async function verifyPasskeyUserIfRequired(pending: PendingPasskeyRequest, credentialRequiresVerification = false, accountName = ""): Promise<boolean> {
   const request = pending.request;
+  if (pending.unlockSessionId && pending.unlockSessionId === await service.passkeySessionId()) return true;
   if (!passkeyRequiresUserVerification(request) && !credentialRequiresVerification) return false;
   const bindingId = await assertPasskeyUserVerificationAvailable();
   if (bindingId === "master-password") {
@@ -3140,9 +3477,14 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
     if (activePending.request.operation === "create") {
       const target = activePending.saveTargets.find((candidate) => candidate.providerId === (providerId || activePending.defaultSaveTargetId));
       if (!target) throw new Error("所选 Passkey 保存位置不可用。");
+      const algorithm = selectPasskeyRegistrationAlgorithm(activePending.request.algorithms, target.kind);
+      if (algorithm === undefined) throw new Error("不支持此 Passkey 签名算法。");
       const userVerified = await verifyPasskeyUserIfRequired(activePending);
       await assertPasskeyDocumentCurrent(activePending);
-      const created = await createPasskey({ ...activePending.request, origin: activePending.origin, rpId: activePending.rpId, userVerified });
+      // Android and Bitwarden both understand UUID credential IDs. The WebAuthn response
+      // still contains their original bytes; existing credential IDs are never rewritten.
+      const created = await createPasskey({ ...activePending.request, algorithms: [algorithm], origin: activePending.origin, rpId: activePending.rpId, userVerified,
+        credentialIdFormat: target.kind === "bitwarden" ? "uuid" : undefined });
       if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
       const liveState = await service.readState();
       const liveTarget = liveState.providers.find((candidate) => candidate.id === target.providerId && candidate.enabled && candidate.kind === target.kind);
@@ -3154,7 +3496,7 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
       }
       const now = new Date().toISOString();
       const bitwarden = target.kind === "bitwarden";
-      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: target.kind === "local" ? [] : [{ providerId: target.providerId }], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: -7, keyAlgorithm: "ECDSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: activePending.request.userVerificationRequired === true, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
+      const item: PasskeyItem = { id: candidateId, kind: "passkey", title: activePending.request.rpName || activePending.rpId, favorite: false, notes: "", createdAt: now, updatedAt: now, providerRefs: target.kind === "local" ? [] : [{ providerId: target.providerId }], credentialId: created.credentialId, rpId: created.rpId, rpName: activePending.request.rpName, userHandle: activePending.request.userId, userName: activePending.request.userName, userDisplayName: activePending.request.userDisplayName, algorithm: created.response.publicKeyAlgorithm, keyAlgorithm: created.response.publicKeyAlgorithm === -7 ? "ECDSA" : "RSA", publicKey: created.publicKeySpki, privateKeyPkcs8: created.privateKeyPkcs8, signCount: 0, discoverable: activePending.request.discoverable === true, userVerificationRequired: activePending.request.userVerificationRequired === true, transports: ["internal"], aaguid: "", lastUsedAt: now, useCount: 0, passkeyMode: target.kind === "keepass" ? "KEEPASS_COMPAT" : "BW_COMPAT", sourceMode: bitwarden ? "bitwarden" : "browser-local" };
       const result: PasskeyResult = { operation: "create", id: created.credentialId, rawId: created.credentialId, response: created.response, clientExtensionResults: activePending.request.credProps ? { credProps: { rk: item.discoverable } } : {} };
       preparedReceipt = {
         id: candidateId,
@@ -3218,9 +3560,23 @@ async function acceptPasskeyRequest(candidateId: string, itemId: string | undefi
         item = await prepareBitwardenAssertion(item, service, bitwardenDurableSync, () => assertPasskeyDocumentCurrent(activePending), syncController.signal);
       }
       signatureCounter = item.signCount;
+    } else if (ownership.kind === "local") {
+      item = await service.advanceLocalPasskeyCounter(item);
+      signatureCounter = item.signCount;
+    } else {
+      assertPasskeyCounterNotRegressed(item);
+      if (item.signCount > 0) {
+        const selected = item;
+        syncController = new AbortController();
+        passkeySyncControllers.set(candidateId, syncController);
+        const signal = syncController.signal;
+        item = await providerOperations.run(ownership.account.id, () => prepareFileAssertion(selected, service,
+          (account, signal) => executeProviderSync(account.id, {}, signal), () => assertPasskeyDocumentCurrent(activePending), signal));
+      }
+      signatureCounter = item.signCount;
     }
     await assertPasskeyDocumentCurrent(activePending);
-    const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8!, signCount: signatureCounter, backupEligible: item.backupEligible, backupState: item.backupState, userVerified });
+    const assertion = await createAssertion({ origin: activePending.origin, challenge: activePending.request.challenge, rpId: activePending.rpId, credentialId: item.credentialId, userHandle: item.userHandle, privateKeyPkcs8: item.privateKeyPkcs8!, algorithm: item.algorithm, signCount: signatureCounter, backupEligible: item.backupEligible, backupState: item.backupState, userVerified });
     if (cancelledPasskeyRequests.has(candidateId)) throw new PasskeyCancelledError("Passkey 请求已取消。");
     const id = normalizeCredentialId(item.credentialId);
     const result: PasskeyResult = { operation: "get", id, rawId: id, response: assertion.response };
@@ -3366,6 +3722,7 @@ async function queryInlineAutofill(sender: chrome.runtime.MessageSender, session
     sessionId, enabled: !blocked, status: context.locked ? "locked" : "unlocked", total: matches.length,
     candidates: matches.slice(0, INLINE_SUGGESTION_LIMIT).map(item => ({
       id: item.id, title: item.title.slice(0, 160), username: item.username.slice(0, 160),
+      ...(context.credentialIdentities[item.id] ? {credentialIdentity: context.credentialIdentities[item.id]} : {}),
       hasTotp: !context.locked && toMatchSummary(item).hasTotp, allowLockedAutofill: context.allowedIds.includes(item.id)
     }))
   };
@@ -3388,10 +3745,15 @@ async function fillLogin(itemId: string, tabId: number, frameId?: number, docume
     type: inlineSessionId ? "MONICA_FILL_INLINE_CREDENTIAL" : "MONICA_FILL_CREDENTIAL",
     sessionId: inlineSessionId,
     expectedOrigin: target.origin,
-    credential: inlineSessionId && field?.role === "totp" ? { totpCode: otp?.code } : { username: item.username, password: item.password, totpCode: otp?.code, customFields: item.customFields.map(({ name, value }) => ({ name, value })) }
+    credential: inlineSessionId && field?.role === "totp" ? { totpCode: otp?.code } : { username: item.username, password: item.password, totpCode: otp?.code, customFields: websiteAutofillFields(item.customFields) }
   }, { documentId: target.documentId }))) as { ok?: boolean; error?: string; filledUsername?: boolean; filledPassword?: boolean; filledTotp?: boolean; filledCustomFields?: number };
+  // A later custom control can fail after the code has already reached its field.
+  // Acknowledge that successful code fill before reporting the remaining error.
+  if (response?.filledTotp === true && otp?.usage && await service.consumeHotp(otp.usage)) {
+    void dismissInlineMenus();
+    void afterRuntimeRequest({ type: 'VAULT_CONSUME_HOTP', usage: otp.usage }).catch(() => undefined);
+  }
   if (!response?.ok) throw new Error(response?.error || "网页拒绝了填充请求。");
-  if (response.filledTotp && otp?.updatedItem) await service.upsertItem(otp.updatedItem);
   return { filledUsername: Boolean(response.filledUsername), filledPassword: Boolean(response.filledPassword), filledTotp: Boolean(response.filledTotp), filledCustomFields: response.filledCustomFields || 0 };
 }
 
@@ -3496,6 +3858,11 @@ async function requireMdbx2Account(providerId: string): Promise<ProviderAccount>
   const account = await service.getProvider(providerId);
   if (!account || account.kind !== "mdbx2") throw new Error("MDBX2 密码源不存在。");
   return account;
+}
+
+function mdbx2ExportOwner(sender: chrome.runtime.MessageSender): string {
+  if (!sender.documentId) throw new Error("此 Edge 页面缺少安全下载会话标识，请重新打开拓展页面。");
+  return sender.documentId;
 }
 
 function mdbx2WebDavSyncConfig(account: ProviderAccount): Mdbx2WebDavSyncConfig {
@@ -3872,10 +4239,12 @@ async function executeKeePassDurableMutation<T>(input: {
   replay: (result: KeePassDurableMutationResult) => T | Promise<T>;
   mutate: () => { result: T; durableResult: KeePassDurableMutationResult } | Promise<{ result: T; durableResult: KeePassDurableMutationResult }>;
 }): Promise<T> {
-  if (input.account.kind !== "keepass" || input.account.config.sourceMode !== "webdav") {
+  if (input.account.kind !== "keepass" || !isRemoteKeePassSource(input.account.config.sourceMode)) {
     return (await input.mutate()).result;
   }
   return runKeePassMutationExclusive(input.account.id, async () => {
+    await keePassProjectRemovals.assertProviderReady(input.account.id);
+    await keePassProjectResolutions.assertProviderReady(input.account.id);
     const account = await reconcileKeePassRemoteAccount(input.account);
     const intentSha256 = await keePassMutationIntentSha256(input.intent);
     const durable = await keePassRemoteSessions.readDurableReceipt(account, input.operationId, input.kind, intentSha256);
@@ -3928,6 +4297,29 @@ async function runKeePassMutationExclusive<T>(providerId: string, task: () => Pr
     release();
     if (keePassMutationQueues.get(providerId) === queued) keePassMutationQueues.delete(providerId);
   }
+}
+
+async function flushKeePassPendingMutations(account: ProviderAccount): Promise<void> {
+  for (const [key, pending] of keePassPendingPersistence) {
+    if (pending.providerId !== account.id) continue;
+    const operationId = key.slice(account.id.length + 1);
+    const persisted = await keePassRemoteSessions.persistWorkingCopy(account, {
+      providerId: account.id, operationId, kind: pending.kind, intentSha256: pending.intentSha256,
+      completedAt: pending.completedAt, result: pending.durableResult
+    });
+    if (persisted) await applyKeePassRemoteAccountConfig(account, persisted.accountConfig);
+    keePassPendingPersistence.delete(key);
+  }
+}
+
+function launchOneDriveIdentityFlow(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow({ url, interactive: true }, redirect => {
+      // Chrome's raw error can contain callback details; expose no OAuth material.
+      if (chrome.runtime.lastError || !redirect) reject(new OneDriveAuthorizationError("OneDrive 登录未完成，请重试。"));
+      else resolve(redirect);
+    });
+  });
 }
 
 function clearKeePassPendingPersistence(providerId?: string): void {
@@ -3984,7 +4376,7 @@ async function synchronizeKeePassProvider(account: ProviderAccount, signal: Abor
     signal.throwIfAborted();
     await ensureKeePassSession(account, true);
     signal.throwIfAborted();
-    if (account.config.sourceMode === "webdav") {
+    if (isRemoteKeePassSource(account.config.sourceMode)) {
       return keePassDurableSync.synchronize(await reconcileKeePassRemoteAccount(account), signal, { checkOnly });
     }
     signal.throwIfAborted();
@@ -4011,15 +4403,16 @@ async function requireKeePassAccountRecord(providerId: string): Promise<Provider
 async function ensureKeePassSession(account: ProviderAccount, required: true): Promise<KeePassSessionSummary>;
 async function ensureKeePassSession(account: ProviderAccount, required: false): Promise<KeePassSessionSummary | undefined>;
 async function ensureKeePassSession(account: ProviderAccount, required: boolean): Promise<KeePassSessionSummary | undefined> {
+  await keePassProjectResolutions.assertProviderReady(account.id);
   if ((await readPausedSyncProviders()).has(account.id)) {
     if (required) throw new KeePassRemoteSessionError("remote-working-copy-missing", "此 KeePass 数据库已锁定，请先重新解锁。");
     return undefined;
   }
   if (keePassProvider.isUnlocked(account.id)) {
-    if (account.config.sourceMode === "webdav") await reconcileKeePassRemoteAccount(account);
+    if (isRemoteKeePassSource(account.config.sourceMode)) await reconcileKeePassRemoteAccount(account);
     return keePassProvider.summarize(account.id);
   }
-  if (account.config.sourceMode === "webdav") {
+  if (isRemoteKeePassSource(account.config.sourceMode)) {
     const restored = await keePassRemoteSessions.restore(account);
     try {
       const current = await service.getProvider(account.id);
@@ -4038,7 +4431,7 @@ async function ensureKeePassSession(account: ProviderAccount, required: boolean)
 }
 
 async function reconcileKeePassRemoteAccount(account: ProviderAccount): Promise<ProviderAccount> {
-  if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return account;
+  if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return account;
   return applyKeePassRemoteAccountConfig(account, await keePassRemoteSessions.reconcileAccountConfig(account));
 }
 
@@ -4059,7 +4452,7 @@ function sameKeePassAccountConfig(left: Record<string, unknown>, right: Record<s
 
 async function persistKeePassRemoteFailure(providerId: string, failure?: KeePassRemoteFailureInfo, message?: string): Promise<void> {
   const latest = await service.getProvider(providerId);
-  if (!latest || latest.kind !== "keepass" || latest.config.sourceMode !== "webdav") return;
+  if (!latest || latest.kind !== "keepass" || !isRemoteKeePassSource(latest.config.sourceMode)) return;
   if (!failure && !latest.config.remoteLastErrorCode && !latest.lastError) return;
   const config = { ...latest.config };
   delete config.remoteLastErrorCode;
@@ -4246,8 +4639,8 @@ function base64UrlBytes(bytes: Uint8Array): string {
   return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function toMatchSummary(item: LoginItem): LoginMatchSummary {
-  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, loginType: item.loginType, iconOrigin: loginWebsiteOrigin(item), hasTotp: Boolean(item.totpSecret || item.boundTotpItemId) };
+function toMatchSummary(item: LoginItem, credentialIdentity?: LoginMatchSummary['credentialIdentity']): LoginMatchSummary {
+  return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, loginType: item.loginType, iconOrigin: loginWebsiteOrigin(item), ...customIconProjection(item), hasTotp: Boolean(item.totpSecret || item.boundTotpItemId), ...(credentialIdentity ? {credentialIdentity} : {}) };
 }
 
 async function readLegacyItems(): Promise<VaultItem[]> {

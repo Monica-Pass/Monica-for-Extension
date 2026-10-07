@@ -1,10 +1,12 @@
 import type { LoginItem, VaultItem, VaultState } from "../core/model";
+import { autofillCredentialIdentities, type AutofillCredentialIdentity } from "../autofill/credential-identity";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
 import type { VaultEnvelope } from "./vault-crypto";
 
 /** This is a device-local grant, never a provider field or a portable credential. */
 export interface LockedAutofillSnapshot {
   logins: LoginItem[];
+  credentialIdentities?: Record<string, AutofillCredentialIdentity>;
   blockedHosts: string[];
   blockedFieldSignatures: string[];
 }
@@ -31,9 +33,13 @@ export function supportsLockedAutofill(item: VaultItem): item is LoginItem {
 export function lockedAutofillSnapshot(state: VaultState): LockedAutofillSnapshot {
   const allowed = new Set(state.settings.lockedAutofillItemIds || []);
   const providers = new Map(state.providers.map((provider) => [provider.id, provider]));
+  const granted = state.items.filter(supportsLockedAutofill)
+    .filter((item) => allowed.has(item.id) && item.providerRefs.every((ref) => providers.get(ref.providerId)?.enabled));
+  const identities = granted.length ? autofillCredentialIdentities(state.items) : {};
   return {
-    logins: state.items.filter(supportsLockedAutofill)
-      .filter((item) => allowed.has(item.id) && item.providerRefs.every((ref) => providers.get(ref.providerId)?.enabled))
+    // Keep original numbering, but retain no label or ID of an ungranted member.
+    credentialIdentities: Object.fromEntries(granted.filter(item => identities[item.id]).map(item => [item.id, identities[item.id]])),
+    logins: granted
       .map((item) => ({
         // Deliberately project only the explicitly granted username/password.
         // OTPs, custom fields, notes, provider credentials and private keys stay in the vault.

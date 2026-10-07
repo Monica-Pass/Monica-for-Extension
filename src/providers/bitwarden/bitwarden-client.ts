@@ -1,6 +1,7 @@
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 import { ProviderTransportError, providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
-import { readBoundedJsonObject, readBoundedResponseText } from "../bounded-body";
+import { readBoundedResponseText } from "../bounded-body";
+import { parseLosslessJson } from "../../core/lossless-json";
 import {
   decryptBitwardenSymmetricKey,
   deriveBitwardenMasterKey,
@@ -502,7 +503,12 @@ export class BitwardenClient {
     if (rawUploadType !== 0 && rawUploadType !== 1) throw new Error("Bitwarden 返回了未知的附件上传模式。");
     const url = optionalStringValue(body, "Url", "url");
     if (rawUploadType === 1 && !url) throw new Error("Bitwarden Azure 附件上传响应缺少签名地址。");
-    if (url) validateAttachmentSignedUrl(url);
+    // Vaultwarden Direct mode returns an informational API-relative path. We
+    // never follow it: uploadAttachmentDirect constructs its authenticated URL
+    // from the configured API and these validated IDs. Only accept that exact
+    // hint; Azure/signed uploads must still supply a valid absolute HTTPS URL.
+    const directHint = `/ciphers/${encodeURIComponent(cipherId)}/attachment/${encodeURIComponent(attachmentId)}`;
+    if (url && !(rawUploadType === 0 && url === directHint)) validateAttachmentSignedUrl(url);
     return {
       session: active,
       upload: {
@@ -830,8 +836,12 @@ export class BitwardenClient {
     return limits;
   }
 
-  private responseJson(response: Response, maximum: number, label: string, signal: AbortSignal): Promise<Record<string, unknown>> {
-    return readBoundedJsonObject(response, maximum, label, signal);
+  private async responseJson(response: Response, maximum: number, label: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const text = await readBoundedResponseText(response, maximum, label, signal);
+    try {
+      const parsed = parseLosslessJson(text);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch { return {}; }
   }
 }
 

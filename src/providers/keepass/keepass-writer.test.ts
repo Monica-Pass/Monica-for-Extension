@@ -171,8 +171,8 @@ describe("writeKeePassEntry", () => {
     expect(entry.fields.get("Password")).toBeInstanceOf(kdbxweb.ProtectedValue);
   });
 
-  /** Clearing a custom field has to delete it; leaving an empty one would look like a typed value. */
-  it("removes a custom field the user cleared", async () => {
+  /** Clearing a value and deleting the field are distinct user actions. */
+  it("preserves a custom field with an explicitly empty value", async () => {
     const snapshot = await openFixture([
       { title: "GitHub", fields: { UserName: "alice", "Security question": "母亲的姓" } }
     ]);
@@ -187,7 +187,8 @@ describe("writeKeePassEntry", () => {
       )
     });
 
-    expect(entry.fields.has("Security question")).toBe(false);
+    expect(entry.fields.has("Security question")).toBe(true);
+    expect(entry.fields.get("Security question")).toBe("");
   });
 
   it("refuses an item kind that projects onto no KeePass entry shape", async () => {

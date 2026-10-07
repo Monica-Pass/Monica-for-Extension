@@ -1,4 +1,6 @@
 export interface VaultSessionRecord {
+  /** Changes on every unlock, including an unlock with the same key. */
+  id?: string;
   rawKey: string;
   lastActivityAt: number;
   expiresAt: number;

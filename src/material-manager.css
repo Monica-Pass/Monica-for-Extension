@@ -60,6 +60,7 @@ img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; obje
 .login-card { border-radius: 28px; --m3e-card-container-shape: 28px; }
 /* The card already pads its content slot; do not subtract that space twice. */
 .login-card > [slot='content'] { inline-size: 100%; }
+.source-card > [slot='content'] { inline-size: 100%; }
 .login-card .security-note { border: 0; background: transparent; min-height: 24px; }
 .login-brand { gap: 14px; align-items: center; }
 .login-heading h1 { font-weight: 500; letter-spacing: -.025em; }
@@ -83,6 +84,19 @@ img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; obje
   #root .editor-basics { padding: 4px 4px 8px; }
   .getting-started-actions { flex-wrap: wrap; }
   .source-actions > m3e-button { width: 100%; }
+  #root .source-card .source-actions > :is(m3e-button, m3e-icon-button) {
+    min-height: 48px;
+    min-width: 48px;
+    --app-control-height: 48px;
+    --m3e-button-container-height: 48px;
+  }
+  #root .source-card .source-actions > m3e-icon-button {
+    width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+    --m3e-icon-button-container-height: 48px;
+    --m3e-icon-button-container-width: 48px;
+  }
   :where([role='dialog']) { max-inline-size: calc(100vw - 16px); max-block-size: calc(100dvh - 16px); }
 }
 
@@ -131,4 +145,33 @@ img.brand-logo { display: block; flex: 0 0 44px; width: 44px; height: 44px; obje
 @media (max-width: 620px) {
   #root .create-type-groups { grid-template-columns: minmax(0, 1fr); }
   #root .material-dialog { --m3e-dialog-min-width: calc(100vw - 24px); --m3e-dialog-max-width: calc(100vw - 24px); }
+}
+/* Android's selected-note summary keeps the target visible beside the binding action. */
+#root .bound-note-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 24px;
+  min-width: 0;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+#root .bound-note-preview > m3e-icon { flex: 0 0 24px; }
+#root .bound-note-preview > div { min-width: 0; }
+m3e-option.bound-note-choice { --m3e-option-container-height: 72px; }
+.bound-note-option-text { display: inline-grid; gap: 4px; width: 100%; min-width: 0; white-space: normal; }
+.bound-note-option-title, .bound-note-option-excerpt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bound-note-option-excerpt { font-size: 12px; font-weight: 400; }
+#root .bound-note-section > m3e-button { min-height: 48px; }
+#root .bound-note-preview strong { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+#root .bound-note-preview p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

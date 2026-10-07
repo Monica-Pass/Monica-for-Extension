@@ -552,7 +552,7 @@ function selectVaultFile(event: Event) {
   inspection.value = undefined;
   error.value = "";
   void releasePendingSource();
-  if (file && form.name === "Monica MDBX2") form.name = file.name.replace(/\.mdbx$/i, "") || "Monica MDBX2";
+  if (file && form.name === "Monica MDBX2") form.name = file.name.replace(/(?:\.mdbx-backup\.zip|\.mdbx|\.zip)$/i, "") || "Monica MDBX2";
 }
 
 function selectSecurityKey(event: Event) {
@@ -1269,8 +1269,9 @@ function resetSnapshotStructures() {
 
 async function stageLocalFile(): Promise<Mdbx2VaultSource> {
   const file = vaultFile.value;
-  if (!file) throw new Error(tr('请选择 MDBX2 .mdbx 文件。'));
-  if (!file.name.toLocaleLowerCase().endsWith(".mdbx")) throw new Error(tr('MDBX2 可移植备份必须使用 .mdbx 扩展名。'));
+  if (!file || !/\.(mdbx|zip)$/i.test(file.name)) throw new Error(tr('请选择 MDBX2 数据库或 Monica 完整备份 ZIP。'));
+  if (/\.zip$/i.test(file.name) && !hostStatus.value?.capabilities?.supportsCompleteBackup) throw new Error(tr('请更新本机助手后使用 MDBX2 完整备份。'));
+  if (/\.zip$/i.test(file.name) && file.size > 512 * 1024 * 1024) throw new Error(tr('完整备份 ZIP 及其内容合计不得超过 512 MiB。'));
   if (!file.size || file.size > MDBX2_MAX_INBOUND_FILE_BYTES) throw new Error(tr('MDBX2 文件为空或超过 2 GiB 安全上限。'));
   const originKey = `local:${file.name}:${file.size}:${file.lastModified}`;
   if (pendingSource.value && pendingOriginKey.value === originKey) return pendingSource.value;
@@ -1576,7 +1577,7 @@ function conflictErrorMessage(cause: unknown): string {
         </template>
 
         <template v-if="!isExisting && form.mode === 'local'">
-          <div class="field field-wide"><span>{{ tr('MDBX2 可移植备份 *') }}</span><label class="file-action provider-file-action"><m3e-icon name="folder_open" /><span>{{ vaultFile?.name || tr('选择 .mdbx 文件') }}</span><input type="file" accept=".mdbx,application/octet-stream" :aria-label="tr('MDBX2 可移植备份')" @change="selectVaultFile" /></label><small>{{ tr('扩展从 MDBX2 开始支持；MDBX1 和 MDBX1-DRAFT 会在只读检查阶段拒绝。') }}</small></div>
+          <div class="field field-wide"><span>{{ tr('MDBX2 可移植备份 *') }}</span><label class="file-action provider-file-action"><m3e-icon name="folder_open" /><span>{{ vaultFile?.name || tr('选择 MDBX 或完整备份 ZIP') }}</span><input type="file" accept=".mdbx,.zip,application/octet-stream,application/zip" :aria-label="tr('MDBX2 可移植备份')" @change="selectVaultFile" /></label><small>{{ tr('完整备份 ZIP 会同时恢复数据库和附件。MDBX1 不受支持。') }}</small></div>
         </template>
 
         <template v-if="form.mode === 'remote' || isExisting">
@@ -2815,6 +2816,8 @@ code { overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Code", Cons
 }
 @media (max-width: 700px) {
   .mdbx2-form { display: flex; align-items: stretch; flex-direction: column; }
+  /* The form scrolls; its sections must retain their content height. */
+  .mdbx2-form > * { flex: 0 0 auto; }
   .mdbx2-host-row { grid-template-columns: 24px minmax(0, 1fr); }
   .mdbx2-host-row > small { grid-column: 2; }
   .mdbx2-mode-picker > div,

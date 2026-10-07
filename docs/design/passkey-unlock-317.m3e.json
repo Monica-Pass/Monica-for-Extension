@@ -1,0 +1,385 @@
+{
+  "title": "Monica · Passkey 解锁并继续",
+  "brief": "真实流程草图：显式多密码、内容排序、OTP与Passkey和恢复备注共存、完整钱包副本、未知类型只读。只用合成数据。连续分组左右12dp、外侧24px内侧4px圆角，Segoe UI/Roboto正文与等宽凭据；沿用Monica青绿色。popup/side panel 420px与200%字号允许滚动，底部操作可达。 2026-10-01：参照 Android password-detail-m3e-315、unified-wallet-editors-315 与 PasswordDetailScreen；详情连续字段外侧24内侧4圆角，网站独立分组，新建按类型分区，保持数据顺序与保存入口。 卡包修订：遵循Android BankCardFaceArtwork，卡面比例1.586、圆角28、卡面与元信息分离、数字脱敏；ALL/卡号/HIDDEN在列表详情编辑一致。使用现有主题字体和颜色，不增加装饰。 恢复入口：密码源页提供未完成移动列表，来源到目标清晰可读；锁库状态提供解锁路径；确认页列出项目与附件，只在核对通过后继续。 图标选择：参照Android CustomIconActionDialog，离线搜索与Emoji预览，保留未知和未同步上传图标；选择暂存在草稿，保存项目后生效。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "passkeylocked317",
+      "name": "Passkey · 解锁继续",
+      "x": 0,
+      "y": 0,
+      "w": 420,
+      "h": 740
+    },
+    {
+      "id": "passkeyunlockverify317",
+      "name": "Passkey · 安全解锁窗口",
+      "x": 500,
+      "y": 0,
+      "w": 420,
+      "h": 740
+    },
+    {
+      "id": "passkeyunlocked317",
+      "name": "Passkey · 解锁后的账户选择",
+      "x": 1000,
+      "y": 0,
+      "w": 420,
+      "h": 740
+    }
+  ],
+  "groups": [
+    {
+      "id": "passkeylocked317-0",
+      "frameId": "passkeylocked317",
+      "x": 12,
+      "y": 24,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeylocked317-0-control",
+          "kind": "listItem",
+          "label": "解锁 Monica 以继续",
+          "supporting": "解锁后选择 Passkey 账户或保存位置",
+          "icon": "lock",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeylocked317-1",
+      "frameId": "passkeylocked317",
+      "x": 12,
+      "y": 136,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeylocked317-1-control",
+          "kind": "listItem",
+          "label": "registration.example.test",
+          "supporting": "已验证 Passkey 范围",
+          "icon": "language",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeylocked317-2",
+      "frameId": "passkeylocked317",
+      "x": 12,
+      "y": 248,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeylocked317-2-control",
+          "kind": "listItem",
+          "label": "密码库已锁定",
+          "supporting": "主密码仅在 Monica 安全窗口中输入",
+          "icon": "shield",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeylocked317-3",
+      "frameId": "passkeylocked317",
+      "x": 12,
+      "y": 360,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeylocked317-3-control",
+          "kind": "button",
+          "label": "解锁并继续",
+          "supporting": "",
+          "icon": "lock_open",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeylocked317-4",
+      "frameId": "passkeylocked317",
+      "x": 12,
+      "y": 424,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeylocked317-4-control",
+          "kind": "button",
+          "label": "取消",
+          "supporting": "",
+          "icon": "close",
+          "size": 396,
+          "variant": "outlined",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-0",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 24,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-0-control",
+          "kind": "listItem",
+          "label": "解锁 Monica",
+          "supporting": "本次 Passkey 请求",
+          "icon": "lock",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-1",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 136,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-1-control",
+          "kind": "listItem",
+          "label": "registration.example.test",
+          "supporting": "正在访问的网站",
+          "icon": "language",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-2",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 248,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-2-control",
+          "kind": "textField",
+          "label": "Monica 主密码",
+          "supporting": "",
+          "icon": "password",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-3",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 360,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-3-control",
+          "kind": "listItem",
+          "label": "确认后返回账户选择",
+          "supporting": "本次验证仅用于当前网站的这次请求",
+          "icon": "shield",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-4",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 472,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-4-control",
+          "kind": "button",
+          "label": "解锁并继续",
+          "supporting": "",
+          "icon": "lock_open",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlockverify317-5",
+      "frameId": "passkeyunlockverify317",
+      "x": 512,
+      "y": 536,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlockverify317-5-control",
+          "kind": "button",
+          "label": "取消",
+          "supporting": "",
+          "icon": "close",
+          "size": 396,
+          "variant": "outlined",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-0",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 24,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-0-control",
+          "kind": "listItem",
+          "label": "使用 Monica Passkey 登录？",
+          "supporting": "确认网站并选择账户",
+          "icon": "passkey",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-1",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 136,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-1-control",
+          "kind": "listItem",
+          "label": "registration.example.test",
+          "supporting": "已验证 Passkey 范围",
+          "icon": "language",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-2",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 248,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-2-control",
+          "kind": "listItem",
+          "label": "个人账户",
+          "supporting": "synthetic · Monica 本地库",
+          "icon": "person",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-3",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 360,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-3-control",
+          "kind": "listItem",
+          "label": "已验证身份",
+          "supporting": "确认后完成本次 Passkey 操作",
+          "icon": "verified_user",
+          "size": 396,
+          "variant": "filled",
+          "radius": 8
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-4",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 472,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-4-control",
+          "kind": "button",
+          "label": "继续登录",
+          "supporting": "",
+          "icon": "login",
+          "size": 396,
+          "variant": "filled",
+          "radius": 24
+        }
+      ]
+    },
+    {
+      "id": "passkeyunlocked317-5",
+      "frameId": "passkeyunlocked317",
+      "x": 1012,
+      "y": 536,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "passkeyunlocked317-5-control",
+          "kind": "button",
+          "label": "取消",
+          "supporting": "",
+          "icon": "close",
+          "size": 396,
+          "variant": "outlined",
+          "radius": 24
+        }
+      ]
+    }
+  ],
+  "dynamicColor": false
+}

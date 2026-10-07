@@ -262,7 +262,7 @@ function activeRecycleBinUuid(database: kdbxweb.Kdbx): string | undefined {
   return uuid && !uuid.empty ? uuid.toString() : undefined;
 }
 
-function isInRecycleBin(database: kdbxweb.Kdbx, group: kdbxweb.KdbxGroup): boolean {
+export function isInRecycleBin(database: kdbxweb.Kdbx, group: kdbxweb.KdbxGroup): boolean {
   const recycleBinUuid = activeRecycleBinUuid(database);
   if (!recycleBinUuid) return false;
   let current: kdbxweb.KdbxGroup | undefined = group;

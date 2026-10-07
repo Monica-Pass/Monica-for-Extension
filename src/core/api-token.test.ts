@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ApiTokenItem } from "./model";
-import { apiTokenFromPayload, apiTokenValidationError, decodeApiTokenPayload, serializeApiTokenMetadata, serializeApiTokenPayload } from "./api-token";
+import { apiTokenFromPayload, apiTokenValidationError, decodeApiTokenMetadata, decodeApiTokenPayload, serializeApiTokenMetadata, serializeApiTokenPayload } from "./api-token";
+import { jsonScalarText, parseLosslessJson } from "./lossless-json";
 import { normalizeImportedVaultItem } from "../manager/import-items";
 import { itemSearchText, itemSafeSummary } from "../manager/item-metadata";
 import { decodeMdbx2Object, encodeMdbx2Object } from "../providers/mdbx2/mdbx2-item-codec";
@@ -58,7 +59,7 @@ describe("Android native API tokens", () => {
   });
 
   it("preserves unsupported/partial records instead of offering a destructive editor", () => {
-    expect(decodeMdbx2Object({ ...record, apiTokenFavorite: undefined }, meta, "p").item).toBeUndefined();
+    expect(decodeMdbx2Object({ ...record, apiTokenFavorite: undefined }, meta, "p").item).toMatchObject({ kind: "opaque", nativeType: "api-token" });
     expect(decodeMdbx2Object({ ...record, apiTokenMetadataJson: '{"schema":"future"}' }, meta, "p").unsupportedReason).toBeTruthy();
     expect(apiTokenFromPayload(payload, '{"schema":"monica.api-token.fields.v1","custom_fields":[{}]}')).toBeUndefined();
     expect(decodeApiTokenPayload(JSON.stringify({ schema: "monica.api-token.v2" }))).toBeUndefined();
@@ -78,6 +79,52 @@ describe("Android native API tokens", () => {
       const error = apiTokenValidationError(invalid);
       expect(error).toBeTruthy();
       expect(error).not.toContain(item.token);
+    }
+  });
+
+  it("projects signed Long field IDs exactly and preserves unknown data through reordered edits", () => {
+    const longMetadata = '{"schema":"monica.api-token.fields.v1","notes":"","future":null,"precise":0.12345678901234567890123456789,"custom_fields":[{"id":9223372036854775807,"title":"maximum","value":"before","protected":true,"future":{"$serde_json::private::Number":"literal","counter":18446744073709551615,"null":null}},{"id":-9223372036854775808,"title":"minimum","value":"","protected":false},{"id":12,"title":"small","value":"x","protected":false}]}';
+    const item = { ...token(), ...apiTokenFromPayload(payload, longMetadata)! };
+    expect(item.customFields.map(field => field.id)).toEqual(["9223372036854775807", "-9223372036854775808", 12]);
+    item.customFields = [item.customFields[1], { ...item.customFields[0], value: "after" }, item.customFields[2], { name: "added", value: "", protected: false }];
+    const serialized = serializeApiTokenMetadata(item);
+    expect(serialized).toContain('"id":9223372036854775807');
+    expect(serialized).toContain('"id":-9223372036854775808');
+    expect(serialized).toContain('"precise":0.12345678901234567890123456789');
+    const restored = decodeApiTokenMetadata(serialized)!;
+    const fields = restored.custom_fields as Array<Record<string, unknown>>;
+    expect(fields[1].future).toEqual((parseLosslessJson(longMetadata) as {custom_fields: Array<Record<string, unknown>>}).custom_fields[0].future);
+    expect(restored.future).toBeNull();
+    expect(jsonScalarText(fields[0].id)).toBe("-9223372036854775808");
+    expect(fields[3].id).toBe(-1);
+    expect(apiTokenFromPayload(payload, serialized)?.customFields.map(field => field.id)).toEqual(["-9223372036854775808", "9223372036854775807", 12, -1]);
+  });
+
+  it("keeps unknown precise payload numbers and literal marker keys while changing the token", () => {
+    const source = '{"schema":"monica.api-token.v1","provider":"synthetic","api_base":"","token":"synthetic-token","future":{"$serde_json::private::RawValue":"literal","counter":9007199254740993,"decimal":0.1234567890123456789,"nullable":null}}';
+    const item = { ...token(), ...apiTokenFromPayload(source)!, token: "changed-synthetic" };
+    const written = serializeApiTokenPayload(item);
+    expect(written).toContain('"counter":9007199254740993');
+    expect(written).toContain('"decimal":0.1234567890123456789');
+    expect((parseLosslessJson(written) as {future: unknown}).future).toEqual((parseLosslessJson(source) as {future: unknown}).future);
+  });
+
+  it("rejects non-integer, out-of-Long and duplicate wire IDs without normalizing them", () => {
+    const field = (id: string) => `{"id":${id},"title":"synthetic","value":"","protected":false}`;
+    const label = (ids: string[]) => `{"schema":"monica.api-token.fields.v1","custom_fields":[${ids.map(field).join(",")}]}`;
+    for (const id of ["9223372036854775808", "-9223372036854775809", '"9007199254740993"', "null", "1.5", "1e0"]) {
+      expect(decodeApiTokenMetadata(label([id]))).toBeUndefined();
+    }
+    for (const ids of [["0", "-0"], ["9007199254740993", "9007199254740993"]]) {
+      expect(decodeApiTokenMetadata(label(ids))).toBeUndefined();
+    }
+    expect(decodeApiTokenMetadata(label(["9223372036854775807", "-9223372036854775808"]))).toBeDefined();
+  });
+
+  it("compares projected IDs numerically and rejects duplicate or rounded model IDs", () => {
+    const field = { name: "synthetic", value: "", protected: false };
+    for (const ids of [[12, "12"], [0, "-0"], [9007199254740992], ["9223372036854775808"], ["01"]]) {
+      expect(() => serializeApiTokenMetadata({ ...token(), customFields: ids.map(id => ({ ...field, id })) })).toThrow();
     }
   });
 

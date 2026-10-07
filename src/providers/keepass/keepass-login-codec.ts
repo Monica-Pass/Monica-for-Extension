@@ -1,6 +1,12 @@
 import * as kdbxweb from "kdbxweb";
+import { assertPortablePasswordHistory } from '../../core/password-history';
 import type { LoginItem, SecureCustomField, VaultItem } from "../../core/model";
+import { parseLosslessJson } from "../../core/lossless-json";
+import { assertWritableSshKeyData } from "../../core/ssh-key-data";
+import { parsePasswordCoverField } from "../../core/password-cover";
+import { keePassTotpFieldsFor, parseKeePassTotpFields } from "./keepass-totp-codec";
 import {
+  KEEPASS_OTP_FIELD_NAMES,
   isKeePassTotpField,
   isMonicaOwnedField,
   isPasswordEntryOverlayField,
@@ -22,6 +28,9 @@ import { createKeePassFieldPatch, type KeePassFieldPatch } from "./keepass-field
 export type KeePassEntryFieldValue = string | kdbxweb.ProtectedValue;
 export type KeePassEntryFields = ReadonlyMap<string, KeePassEntryFieldValue>;
 
+// Extension transport field. Current Android KeePass mapping retains it as a custom field.
+const GROUP_COVER_FIELD = "MonicaGroupCover";
+
 /** Values are read through this rather than `String(value)` so a protected field is not stringified. */
 export function keePassFieldText(value: KeePassEntryFieldValue | undefined): string {
   if (value === undefined) return "";
@@ -32,16 +41,21 @@ export function isKeePassFieldProtected(value: KeePassEntryFieldValue | undefine
   return value instanceof kdbxweb.ProtectedValue;
 }
 
-/** Case-insensitive, first non-blank wins — `getFieldValueIgnoreCase` in Android. */
+/** Marker/number readers need normalized text; stored login content must stay exact. */
 export function keePassFieldValue(fields: KeePassEntryFields, ...names: string[]): string {
+  return keePassFieldContent(fields, ...names).trim();
+}
+
+/** Keep original text after checking presence, as Android's field resolver does. */
+function keePassFieldContent(fields: KeePassEntryFields, ...names: string[]): string {
   const byKey = new Map<string, KeePassEntryFieldValue>();
   for (const [name, value] of fields) {
     const key = name.trim().toLowerCase();
     if (!byKey.has(key)) byKey.set(key, value);
   }
   for (const name of names) {
-    const text = keePassFieldText(byKey.get(name.trim().toLowerCase())).trim();
-    if (text) return text;
+    const text = keePassFieldText(byKey.get(name.trim().toLowerCase()));
+    if (text.trim()) return text;
   }
   return "";
 }
@@ -68,12 +82,23 @@ const EXTENDED_READ_ALIASES = {
   ssoRefEntryId: ["MonicaSsoRefEntryId", "SsoRefEntryId", "MonicaSsoRefId"]
 } as const;
 
+const PASSWORD_METADATA_ALIASES = {
+  ...EXTENDED_READ_ALIASES,
+  creditCardNumber: ['Card Number', 'CardNumber', 'Credit Card Number', 'CreditCardNumber'],
+  creditCardHolder: ['Card Holder', 'CardHolder', 'Credit Card Holder', 'CreditCardHolder'],
+  creditCardExpiry: ['Card Expiry', 'CardExpiry', 'Expiration Date', 'Expiry Date'],
+  creditCardCVV: ['Card CVV', 'CardCVV', 'CVV', 'CVC']
+} as const;
+const TEXT_METADATA_KEYS = Object.keys(PASSWORD_METADATA_ALIASES).filter(name => name !== 'ssoRefEntryId' && name !== 'ssoProvider') as Array<Exclude<keyof typeof PASSWORD_METADATA_ALIASES, 'ssoRefEntryId' | 'ssoProvider'>>;
+const TEXT_METADATA_NAMES = new Set(TEXT_METADATA_KEYS.flatMap(name => [...PASSWORD_METADATA_ALIASES[name]].map(alias => alias.toLowerCase())));
+
 const MONICA_LOCAL_ID = "MonicaLocalId";
 const MONICA_LOGIN_TYPE = "MonicaLoginType";
 const MONICA_WIFI_DATA = "MonicaWifiData";
 const WIFI_SSID = "SSID";
 const SSO_PROVIDER = "SSO Provider";
 const MONICA_SSO_REF_ENTRY_ID = "MonicaSsoRefEntryId";
+const isSsoReferenceName = (name: string) => EXTENDED_READ_ALIASES.ssoRefEntryId.some(alias => alias.toLowerCase() === name.trim().toLowerCase());
 const SSH_FIELDS = {
   algorithm: "MonicaSshAlgorithm",
   keySize: "MonicaSshKeySize",
@@ -84,6 +109,7 @@ const SSH_FIELDS = {
   format: "MonicaSshFormat"
 } as const;
 const SSH_DEFAULT_FORMAT = "OPENSSH";
+const SSH_FIELD_NAMES = new Set(Object.values(SSH_FIELDS).map(name => name.toLowerCase()));
 
 /** Guards against an entry whose `Password` holds the word "password" rather than a password. */
 const LABEL_TOKENS = new Set(["password", "pass", "pwd", "pin", "密码", "口令"]);
@@ -101,12 +127,14 @@ function isLikelyLabelValue(value: string, key?: string): boolean {
  * promoting it would put the wrong secret in the autofill dropdown.
  */
 export function resolveKeePassEntryPassword(fields: KeePassEntryFields): string {
-  const standard = keePassFieldValue(fields, ...KEEPASS_STANDARD_READ_ALIASES.password);
+  // An explicitly present Password, including empty and label-like secrets, is authoritative.
+  for (const [name, value] of fields) if (name.toLowerCase() === "password") return keePassFieldText(value);
+  const standard = keePassFieldContent(fields, ...KEEPASS_STANDARD_READ_ALIASES.password);
   if (standard && !isLikelyLabelValue(standard, "Password")) return standard;
   let fallback = standard || "";
 
   for (const key of ["密码", "口令", "PIN", "pwd", "pass", "password"]) {
-    const value = keePassFieldValue(fields, key);
+    const value = keePassFieldContent(fields, key);
     if (!value) continue;
     if (!isLikelyLabelValue(value, key)) return value;
     if (!fallback) fallback = value;
@@ -114,6 +142,8 @@ export function resolveKeePassEntryPassword(fields: KeePassEntryFields): string 
 
   for (const [name, value] of fields) {
     if (!isPasswordSecretFallbackCandidateField(name)) continue;
+    if (name === GROUP_COVER_FIELD) continue;
+    if (TEXT_METADATA_NAMES.has(name.trim().toLowerCase())) continue;
     if (!isKeePassFieldProtected(value)) continue;
     const content = keePassFieldText(value);
     if (!content) continue;
@@ -132,9 +162,11 @@ export interface KeePassLoginProjection {
   notes: string;
   monicaLocalId?: number;
   loginType: NonNullable<LoginItem["loginType"]>;
+  isGroupCover?: boolean;
   wifiMetadata?: string;
   ssoProvider?: string;
   ssoRefEntryId?: number;
+  ssoRefLogicalId?: string;
   appPackageName?: string;
   appName?: string;
   email?: string;
@@ -144,38 +176,50 @@ export interface KeePassLoginProjection {
   state?: string;
   zipCode?: string;
   country?: string;
+  creditCardNumber?: string;
+  creditCardHolder?: string;
+  creditCardExpiry?: string;
+  creditCardCVV?: string;
   sshKeyData?: string;
   customFields: SecureCustomField[];
 }
 
 export function readKeePassLoginFields(fields: KeePassEntryFields): KeePassLoginProjection {
-  const title = keePassFieldValue(fields, ...KEEPASS_STANDARD_READ_ALIASES.title);
+  const primary = (name: string, aliases: readonly string[]) => fields.has(name) ? keePassFieldText(fields.get(name)) : keePassFieldContent(fields, ...aliases);
+  const title = primary("Title", KEEPASS_STANDARD_READ_ALIASES.title);
   const monicaLoginType = keePassFieldValue(fields, MONICA_LOGIN_TYPE);
-  const wifiJson = keePassFieldValue(fields, MONICA_WIFI_DATA);
-  const ssid = keePassFieldValue(fields, WIFI_SSID);
-  const ssoProvider = keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.ssoProvider);
-  const { loginType, wifiMetadata } = resolveLoginType({ monicaLoginType, wifiJson, ssid, ssoProvider, title });
+  const wifiJson = keePassFieldContent(fields, MONICA_WIFI_DATA);
+  const ssid = keePassFieldContent(fields, WIFI_SSID);
+  const ssoProvider = keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.ssoProvider);
+  const marker = keePassFieldValue(fields, "monica_gpg_type") === "GPG_KEY" ? "GPG_KEY" : keePassFieldValue(fields, "monica_api_key_type") === "API_KEY" ? "API_KEY" : monicaLoginType;
+  const { loginType, wifiMetadata } = resolveLoginType({ monicaLoginType: marker, wifiJson, ssid, ssoProvider, title });
 
   return {
     title,
-    username: keePassFieldValue(fields, ...KEEPASS_STANDARD_READ_ALIASES.username),
+    username: primary("UserName", KEEPASS_STANDARD_READ_ALIASES.username),
     password: resolveKeePassEntryPassword(fields),
-    url: keePassFieldValue(fields, ...KEEPASS_STANDARD_READ_ALIASES.url),
-    notes: keePassFieldValue(fields, ...KEEPASS_STANDARD_READ_ALIASES.notes),
+    url: primary("URL", KEEPASS_STANDARD_READ_ALIASES.url),
+    notes: primary("Notes", KEEPASS_STANDARD_READ_ALIASES.notes),
     monicaLocalId: optionalInteger(keePassFieldValue(fields, MONICA_LOCAL_ID)),
     loginType,
+    isGroupCover: parsePasswordCoverField(keePassFieldText(fields.get(GROUP_COVER_FIELD))),
     wifiMetadata,
     ssoProvider: ssoProvider || undefined,
     ssoRefEntryId: optionalInteger(keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.ssoRefEntryId)),
-    appPackageName: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.appPackageName) || undefined,
-    appName: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.appName) || undefined,
-    email: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.email) || undefined,
-    phone: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.phone) || undefined,
-    addressLine: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.addressLine) || undefined,
-    city: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.city) || undefined,
-    state: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.state) || undefined,
-    zipCode: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.zipCode) || undefined,
-    country: keePassFieldValue(fields, ...EXTENDED_READ_ALIASES.country) || undefined,
+    ssoRefLogicalId: keePassFieldValue(fields, "MonicaSsoRefLogicalId") || undefined,
+    appPackageName: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.appPackageName) || undefined,
+    appName: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.appName) || undefined,
+    email: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.email) || undefined,
+    phone: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.phone) || undefined,
+    addressLine: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.addressLine) || undefined,
+    city: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.city) || undefined,
+    state: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.state) || undefined,
+    zipCode: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.zipCode) || undefined,
+    country: keePassFieldContent(fields, ...EXTENDED_READ_ALIASES.country) || undefined,
+    creditCardNumber: keePassFieldContent(fields, "Card Number", "CardNumber", "Credit Card Number", "CreditCardNumber") || undefined,
+    creditCardHolder: keePassFieldContent(fields, "Card Holder", "CardHolder", "Credit Card Holder", "CreditCardHolder") || undefined,
+    creditCardExpiry: keePassFieldContent(fields, "Card Expiry", "CardExpiry", "Expiration Date", "Expiry Date") || undefined,
+    creditCardCVV: keePassFieldContent(fields, "Card CVV", "CardCVV", "CVV", "CVC") || undefined,
     sshKeyData: readSshKeyData(fields),
     customFields: readKeePassCustomFields(fields)
   };
@@ -185,8 +229,9 @@ export function readKeePassLoginFields(fields: KeePassEntryFields): KeePassLogin
  * A bare `SSID` field with no `MonicaLoginType` still means Wi-Fi: that is how KeePass2Android's own
  * WLan template writes it, and Android classifies it that way so those entries are not seen as logins.
  */
-function resolveLoginType(input: { monicaLoginType: string; wifiJson: string; ssid: string; ssoProvider: string; title: string }) {
+function resolveLoginType(input: { monicaLoginType: string; wifiJson: string; ssid: string; ssoProvider: string; title: string }): { loginType: NonNullable<LoginItem["loginType"]>; wifiMetadata?: string } {
   const declared = input.monicaLoginType.toUpperCase();
+  if (declared === "GPG_KEY" || declared === "API_KEY") return { loginType: declared, wifiMetadata: undefined };
   if (declared === "WIFI" && input.wifiJson) return { loginType: "WIFI" as const, wifiMetadata: input.wifiJson };
   if (declared === "WIFI") return { loginType: "WIFI" as const, wifiMetadata: wifiJsonFor(input.ssid || input.title) };
   if (input.ssid) return { loginType: "WIFI" as const, wifiMetadata: wifiJsonFor(input.ssid) };
@@ -201,13 +246,14 @@ function wifiJsonFor(ssid: string): string {
 }
 
 function readSshKeyData(fields: KeePassEntryFields): string | undefined {
-  const algorithm = keePassFieldValue(fields, SSH_FIELDS.algorithm);
-  const publicKey = keePassFieldValue(fields, SSH_FIELDS.publicKey);
-  const privateKey = keePassFieldValue(fields, SSH_FIELDS.privateKey);
-  const fingerprint = keePassFieldValue(fields, SSH_FIELDS.fingerprint);
-  const comment = keePassFieldValue(fields, SSH_FIELDS.comment);
-  const keySize = optionalInteger(keePassFieldValue(fields, SSH_FIELDS.keySize)) ?? 0;
-  if (!algorithm && !publicKey && !privateKey && !fingerprint && !comment && !keySize) return undefined;
+  const algorithm = keePassFieldContent(fields, SSH_FIELDS.algorithm);
+  const publicKey = keePassFieldContent(fields, SSH_FIELDS.publicKey);
+  const privateKey = keePassFieldContent(fields, SSH_FIELDS.privateKey);
+  const fingerprint = keePassFieldContent(fields, SSH_FIELDS.fingerprint);
+  const comment = keePassFieldContent(fields, SSH_FIELDS.comment);
+  const parsedSize = optionalInteger(keePassFieldValue(fields, SSH_FIELDS.keySize));
+  const keySize = parsedSize !== undefined && parsedSize >= 0 ? parsedSize : 0;
+  if (![...fields.keys()].some(name => SSH_FIELD_NAMES.has(name.trim().toLowerCase()))) return undefined;
   return JSON.stringify({
     algorithm,
     keySize,
@@ -215,7 +261,7 @@ function readSshKeyData(fields: KeePassEntryFields): string | undefined {
     privateKeyOpenSsh: privateKey,
     fingerprintSha256: fingerprint,
     comment,
-    format: keePassFieldValue(fields, SSH_FIELDS.format) || SSH_DEFAULT_FORMAT
+    format: keePassFieldContent(fields, SSH_FIELDS.format) || SSH_DEFAULT_FORMAT
   });
 }
 
@@ -224,9 +270,10 @@ export function readKeePassCustomFields(fields: KeePassEntryFields): SecureCusto
   const custom: SecureCustomField[] = [];
   for (const [name, value] of fields) {
     const key = name.trim();
-    if (!key || isReservedPasswordProjectionField(key)) continue;
+    if (!key || isReservedPasswordProjectionField(key) || TEXT_METADATA_NAMES.has(key.toLowerCase())) continue;
     const text = keePassFieldText(value);
-    if (!text) continue;
+    if (key === GROUP_COVER_FIELD && parsePasswordCoverField(text) !== undefined) continue;
+    if (isSsoReferenceName(key) && optionalInteger(text) !== undefined) continue;
     custom.push({ name: key, value: text, protected: isKeePassFieldProtected(value) });
   }
   return custom;
@@ -234,6 +281,8 @@ export function readKeePassCustomFields(fields: KeePassEntryFields): SecureCusto
 
 export interface KeePassLoginWriteInput {
   item: LoginItem;
+  existingFields?: KeePassEntryFields;
+  preserveOtpFields?: boolean;
   /** Android's `MonicaLocalId`; absent for an item the browser created. */
   monicaLocalId?: number;
 }
@@ -243,15 +292,19 @@ export interface KeePassLoginWriteInput {
  * blank so a clean entry does not acquire a wall of empty fields in KeePassXC.
  */
 export function buildKeePassLoginFields(input: KeePassLoginWriteInput): Map<string, KeePassEntryFieldValue> {
+  assertPortablePasswordHistory(input.item);
   const { item } = input;
+  assertWritableSshKeyData(item.sshKeyData);
   const fields = new Map<string, KeePassEntryFieldValue>();
   fields.set("Title", item.title);
   fields.set("UserName", item.username);
   fields.set("Password", kdbxweb.ProtectedValue.fromString(item.password));
-  fields.set("URL", item.uris[0] ?? "");
+  fields.set("URL", item.uris.join("\n"));
   fields.set("Notes", item.notes);
   if (input.monicaLocalId !== undefined && input.monicaLocalId > 0) {
     fields.set(MONICA_LOCAL_ID, String(input.monicaLocalId));
+  } else if (input.existingFields?.has(MONICA_LOCAL_ID)) {
+    fields.set(MONICA_LOCAL_ID, input.existingFields.get(MONICA_LOCAL_ID)!);
   }
 
   const plain = (name: string, value: string | undefined) => {
@@ -270,11 +323,16 @@ export function buildKeePassLoginFields(input: KeePassLoginWriteInput): Map<stri
   plain("State", item.state);
   plain("Postal Code", item.zipCode);
   plain("Country", item.country);
+  secret("Card Number", item.creditCardNumber);
+  plain("Card Holder", item.creditCardHolder);
+  plain("Card Expiry", item.creditCardExpiry);
+  secret("Card CVV", item.creditCardCVV);
 
   if (item.loginType === "SSO") {
     fields.set(MONICA_LOGIN_TYPE, "SSO");
     plain(SSO_PROVIDER, item.ssoProvider);
     if (item.ssoRefEntryId !== undefined) plain(MONICA_SSO_REF_ENTRY_ID, String(item.ssoRefEntryId));
+    plain("MonicaSsoRefLogicalId", item.ssoRefLogicalId);
   }
 
   if (item.loginType === "WIFI") {
@@ -286,7 +344,28 @@ export function buildKeePassLoginFields(input: KeePassLoginWriteInput): Map<stri
 
   if (item.loginType === "SSH_KEY") fields.set(MONICA_LOGIN_TYPE, "SSH_KEY");
   if (item.loginType === "BARCODE") fields.set(MONICA_LOGIN_TYPE, "BARCODE");
+  // A valid existing marker is a custom field: append it in the user's order
+  // with its original protection instead of preempting it with a plain value.
+  if (item.loginType === "GPG_KEY" && !item.customFields?.some(field => field.name === "monica_gpg_type" && field.value === "GPG_KEY")) fields.set("monica_gpg_type", "GPG_KEY");
+  if (item.loginType === "API_KEY" && !item.customFields?.some(field => field.name === "monica_api_key_type" && field.value === "API_KEY")) fields.set("monica_api_key_type", "API_KEY");
+  if (item.totpSecret && !input.preserveOtpFields) {
+    const otp = parseKeePassTotpFields({ otp: item.totpSecret, issuer: item.title, accountName: item.username });
+    if (!otp) throw new Error("OTP 格式无法安全写入 KeePass，原条目保持不变。");
+    for (const [name, value] of Object.entries(keePassTotpFieldsFor(otp, item.title))) {
+      fields.set(name, name === "otp" || name === "TOTP Seed" || /^(TimeOtp|HmacOtp)-Secret/.test(name) ? kdbxweb.ProtectedValue.fromString(value) : value);
+    }
+    // A source URI may carry future parameters; the internal carrier stays exact.
+    if (item.totpSecret.includes("://")) fields.set("otp", kdbxweb.ProtectedValue.fromString(item.totpSecret));
+  }
   writeSshFields(fields, item.sshKeyData, plain, secret);
+  if (item.isGroupCover !== undefined) {
+    const original = input.existingFields?.get(GROUP_COVER_FIELD);
+    if (original !== undefined && parsePasswordCoverField(keePassFieldText(original)) === undefined
+      || item.customFields.some(field => field.name.trim() === GROUP_COVER_FIELD && parsePasswordCoverField(field.value) === undefined)) {
+      throw new Error("封面字段版本未知，无法安全修改。请保留原始数据。");
+    }
+    fields.set(GROUP_COVER_FIELD, String(item.isGroupCover));
+  }
   appendCustomFields(fields, item.customFields);
   return fields;
 }
@@ -314,7 +393,11 @@ function appendCustomFields(fields: Map<string, KeePassEntryFieldValue>, customF
   const used = new Set([...fields.keys()].map((name) => name.trim().toLowerCase()));
   for (const field of customFields ?? []) {
     const name = field.name.trim();
-    if (!name || !field.value || name.toLowerCase().startsWith("_etm_")) continue;
+    if (SSH_FIELD_NAMES.has(name.toLowerCase())) continue;
+    if (TEXT_METADATA_NAMES.has(name.toLowerCase())) continue;
+    if (isSsoReferenceName(name) && optionalInteger(field.value) !== undefined) continue;
+    if (name === GROUP_COVER_FIELD && parsePasswordCoverField(field.value) !== undefined) continue;
+    if (!name || name.toLowerCase().startsWith("_etm_")) continue;
     if (used.has(name.toLowerCase())) continue;
     used.add(name.toLowerCase());
     fields.set(name, field.protected ? kdbxweb.ProtectedValue.fromString(field.value) : field.value);
@@ -327,11 +410,81 @@ function appendCustomFields(fields: Map<string, KeePassEntryFieldValue>, customF
  */
 export function buildKeePassLoginPatch(input: KeePassLoginWriteInput): KeePassFieldPatch<KeePassEntryFieldValue> {
   const replacementFields = buildKeePassLoginFields(input);
+  const originalCover = input.existingFields?.get(GROUP_COVER_FIELD);
+  const previousCover = parsePasswordCoverField(keePassFieldText(originalCover));
+  const coverRemovals = previousCover !== undefined ? [GROUP_COVER_FIELD] : [];
+  // Older encrypted snapshots predate this projection. Only explicit model edits clear it.
+  if (originalCover !== undefined && !Object.prototype.hasOwnProperty.call(input.item, "isGroupCover")) {
+    replacementFields.set(GROUP_COVER_FIELD, originalCover);
+  }
+  if (originalCover !== undefined && previousCover !== undefined && input.item.isGroupCover !== undefined) {
+    replacementFields.set(GROUP_COVER_FIELD, previousCover === input.item.isGroupCover ? originalCover
+      : isKeePassFieldProtected(originalCover) ? kdbxweb.ProtectedValue.fromString(String(input.item.isGroupCover)) : String(input.item.isGroupCover));
+  }
+  const sshRemovals: string[] = [];
+  if (input.existingFields) {
+    const previous = parseJsonObject(readSshKeyData(input.existingFields));
+    const current = parseJsonObject(input.item.sshKeyData);
+    const properties = { algorithm: 'algorithm', keySize: 'keySize', publicKey: 'publicKeyOpenSsh', privateKey: 'privateKeyOpenSsh', fingerprint: 'fingerprintSha256', comment: 'comment', format: 'format' } as const;
+    for (const [key, name] of Object.entries(SSH_FIELDS) as Array<[keyof typeof SSH_FIELDS, string]>) {
+      const originals = [...input.existingFields].filter(([original]) => original.trim().toLowerCase() === name.toLowerCase());
+      const value = replacementFields.get(name);
+      const unchanged = current && previous && current[properties[key]] === previous[properties[key]];
+      if (unchanged && originals.length) replacementFields.delete(name);
+      for (const [original, raw] of originals) {
+        const size = key === 'keySize' ? optionalInteger(keePassFieldText(raw)) : undefined;
+        const unknownSize = key === 'keySize' && (size === undefined || size < 0);
+        sshRemovals.push(original);
+        if (unchanged || unknownSize && value === undefined) replacementFields.set(original, key === 'privateKey' && !isKeePassFieldProtected(raw) ? kdbxweb.ProtectedValue.fromString(keePassFieldText(raw)) : raw);
+        else if (value !== undefined) {
+          const protectedValue = isKeePassFieldProtected(value) || originals.some(([, old]) => isKeePassFieldProtected(old));
+          const replacement = protectedValue ? kdbxweb.ProtectedValue.fromString(keePassFieldText(value)) : value;
+          replacementFields.set(name, replacement);
+          replacementFields.set(original, replacement);
+        }
+      }
+    }
+  }
+  const metadataRemovals: string[] = [];
+  if (input.existingFields) {
+    for (const property of TEXT_METADATA_KEYS) {
+      const aliases = PASSWORD_METADATA_ALIASES[property];
+      const names = new Set(aliases.map(name => name.toLowerCase()));
+      const originals = [...input.existingFields].filter(([name]) => names.has(name.trim().toLowerCase()));
+      metadataRemovals.push(...originals.map(([name]) => name));
+      const unchanged = keePassFieldContent(input.existingFields, ...aliases) === (input.item[property] || '');
+      const current = replacementFields.get(aliases[0]);
+      if (unchanged && originals.length) {
+        replacementFields.delete(aliases[0]);
+        for (const [name, value] of originals) replacementFields.set(name, value);
+      } else if (current !== undefined && originals.length) {
+        const hidden = isKeePassFieldProtected(current) || originals.some(([, value]) => isKeePassFieldProtected(value));
+        const value = hidden ? kdbxweb.ProtectedValue.fromString(keePassFieldText(current)) : current;
+        replacementFields.set(aliases[0], value);
+        for (const [name] of originals) replacementFields.set(name, value);
+      }
+    }
+  }
+  const referenceFields = [...input.existingFields ?? []].filter(([name]) => isSsoReferenceName(name));
+  const previousReference = input.existingFields ? optionalInteger(keePassFieldValue(input.existingFields, ...EXTENDED_READ_ALIASES.ssoRefEntryId)) : undefined;
+  const unchangedReference = input.item.loginType === "SSO" && previousReference !== undefined && previousReference === input.item.ssoRefEntryId;
+  if (unchangedReference) replacementFields.delete(MONICA_SSO_REF_ENTRY_ID);
+  for (const [name, value] of referenceFields) {
+    // Keep legacy spelling/protection on unrelated edits. Unknown numeric data
+    // is not an editable relation and must survive the managed-field cleanup.
+    if (unchangedReference || optionalInteger(keePassFieldText(value)) === undefined && !replacementFields.has(name)) replacementFields.set(name, value);
+  }
   const removeFieldNames = [
+    ...coverRemovals,
+    ...sshRemovals,
+    ...metadataRemovals,
+    ...referenceFields.filter(([, value]) => optionalInteger(keePassFieldText(value)) !== undefined).map(([name]) => name),
     ...replacementFields.keys(),
-    ...(input.item.customFields ?? []).map((field) => field.name.trim())
+    ...(!input.preserveOtpFields && input.item.totpSecret !== undefined ? KEEPASS_OTP_FIELD_NAMES : []),
+    ...(input.item.customFields ?? []).map((field) => field.name.trim()),
+    ...(input.existingFields ? readKeePassCustomFields(input.existingFields).map((field) => field.name) : [])
   ];
-  return createKeePassFieldPatch(replacementFields, isPasswordEntryOverlayField, removeFieldNames);
+  return createKeePassFieldPatch(replacementFields, (name) => isPasswordEntryOverlayField(name) || Boolean(!input.preserveOtpFields && input.item.totpSecret && isKeePassTotpField(name)), removeFieldNames);
 }
 
 /**
@@ -383,7 +536,7 @@ function wifiSsidOf(wifiMetadata: string | undefined): string {
 function parseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
   if (!value?.trim()) return undefined;
   try {
-    const parsed = JSON.parse(value);
+    const parsed = parseLosslessJson(value);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
   } catch {
     return undefined;

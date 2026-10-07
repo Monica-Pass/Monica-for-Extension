@@ -35,6 +35,39 @@ const baseLogin = (): LoginItem => ({
 });
 
 describe("MDBX2 batch transfer planner", () => {
+  it.each(['copy', 'move'] as const)('refuses %s with history when only a pending target reference exists', action => {
+    const source = { ...baseLogin(), boundTotpItemId: undefined, providerRefs: [{ providerId: 'target' }],
+      passwordHistory: [{ password: 'synthetic old', lastUsedAt: '1970-01-01T00:00:00.000Z' }] };
+    const plan = planMdbx2BatchTransfer([source], { action, targetProviderId: 'target', preserveCategories: false });
+    expect(plan.blockedCount).toBe(1);
+    expect(plan.items[0].targetItem).toBeUndefined();
+    expect(plan.items[0].blockedReason).toContain('密码历史');
+  });
+
+  it('allows a history-free copy but blocks duplicating a native object with local history', () => {
+    const source = { ...baseLogin(), boundTotpItemId: undefined, providerRefs: [{ providerId: 'target', remoteId: 'object' }], passwordHistory: [] };
+    expect(planMdbx2BatchTransfer([source], { action: 'copy', targetProviderId: 'target', preserveCategories: false }).blockedCount).toBe(0);
+    const withHistory = { ...source, passwordHistory: [{ password: 'synthetic old', lastUsedAt: '1970-01-01T00:00:00.000Z' }] };
+    expect(planMdbx2BatchTransfer([withHistory], { action: 'copy', targetProviderId: 'target', preserveCategories: false }).blockedCount).toBe(1);
+    expect(planMdbx2BatchTransfer([withHistory], { action: 'move', targetProviderId: 'target', preserveCategories: false }).blockedCount).toBe(0);
+  });
+
+  it("retains unresolved legacy and cyclic SSO links instead of silently unlinking copies", () => {
+    const source={...baseLogin(),boundTotpItemId:undefined,ssoRefEntryId:42};
+    expect(planMdbx2BatchTransfer([source],{action:'copy',preserveCategories:false}).blockedCount).toBe(1);
+    const cyclic={...source,ssoRefEntryId:undefined,ssoRefLogicalId:source.replicaGroupId};
+    expect(planMdbx2BatchTransfer([cyclic],{action:'copy',preserveCategories:false}).blockedCount).toBe(1);
+    expect(source.ssoRefEntryId).toBe(42);
+  });
+  it("does not silently discard a stable note link without a legacy Room ID", () => {
+    const source = { ...baseLogin(), boundTotpItemId: undefined, boundNoteEntryId: "note:stable" };
+    for (const action of ["copy", "move"] as const) {
+      const plan = planMdbx2BatchTransfer([source], { action, targetCollectionId: "target", preserveCategories: false });
+      expect(plan.blockedCount).toBe(1);
+      expect(plan.items[0].targetItem).toBeUndefined();
+      expect(source.boundNoteEntryId).toBe("note:stable");
+    }
+  });
   it("resets Android copy bindings and creates a fresh identity", () => {
     const source = baseLogin();
     const copied = normalizeMdbx2TransferItem(source, {
@@ -207,4 +240,30 @@ describe("MDBX2 batch transfer planner", () => {
     const item = { ...baseLogin(), boundTotpItemId: undefined };
     expect(() => planMdbx2BatchTransfer([item, item], { action: "copy", preserveCategories: false })).toThrow("重复 ID");
   });
+});
+
+it('rebases copied Android credential metadata to the new project and preserves it verbatim on move', () => {
+  const group = '00000000-0000-0000-0000-000000000001';
+  const members = [0, 1].map(index => ({ ...baseLogin(), id: `source-${index}`, boundTotpItemId: undefined, passwordGroupId: group,
+    customFields: [{ name: 'monica.content.credential', protected: true, value: JSON.stringify({version:1, projectId:group,
+      groupId:'00000000-0000-0000-0000-000000000002',passwordId:`00000000-0000-0000-0000-00000000001${index}`,
+      label:'Account',primary:true,groupOrder:0,passwordOrder:index}).replace(/}$/, ',"future":9007199254740993}') }] }));
+  const original = JSON.stringify(members);
+  const copied = planMdbx2BatchTransfer(members, { action: 'copy', preserveCategories: false,
+    idFactory: (_item, index) => `00000000-0000-0000-0000-00000000002${index}` });
+  expect(copied.blockedCount).toBe(0);
+  for (const [index, planned] of copied.items.entries()) {
+    const target = planned.targetItem as LoginItem;
+    const metadata = JSON.parse(target.customFields[0].value);
+    expect(metadata.projectId).toBe(target.passwordGroupId);
+    expect(metadata.projectId).not.toBe(group);
+    expect(metadata.passwordId).toBe(JSON.parse(members[index].customFields[0].value).passwordId);
+    expect(target.customFields[0].value).toContain('9007199254740993');
+    expect(target.customFields[0].protected).toBe(true);
+  }
+  expect(new Set(copied.items.map(item => (item.targetItem as LoginItem).passwordGroupId)).size).toBe(1);
+  const moved = planMdbx2BatchTransfer(members, { action: 'move', preserveCategories: false });
+  expect(moved.blockedCount).toBe(0);
+  for (const [index, planned] of moved.items.entries()) expect((planned.targetItem as LoginItem).customFields).toEqual(members[index].customFields);
+  expect(JSON.stringify(members)).toBe(original);
 });

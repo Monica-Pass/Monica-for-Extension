@@ -1,9 +1,10 @@
-import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
+import { expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 
 async function launchExtension(testInfo: TestInfo, profileName: string): Promise<{ context: BrowserContext; extensionId: string; manager: Page }> {
   const extensionPath = path.resolve("dist");
-  const context = await chromium.launchPersistentContext(testInfo.outputPath(profileName), {
+  const context = await launchEdgeContext(testInfo.outputPath(profileName), {
     channel: "chromium",
     headless: true, locale: "zh-CN",
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
@@ -15,6 +16,37 @@ async function launchExtension(testInfo: TestInfo, profileName: string): Promise
   expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "dynamic e2e master password" }))).toMatchObject({ ok: true });
   return { context, extensionId, manager };
 }
+
+test('popup rejects synchronous field replacement, then retries without filling internal project carriers', async ({}, testInfo) => {
+  const { context, extensionId, manager } = await launchExtension(testInfo, 'synchronous-fill');
+  try {
+    const now = new Date().toISOString();
+    const internalName = 'monica.content.block.11111111-1111-4111-8111-111111111111.0000';
+    expect(await manager.evaluate(item => chrome.runtime.sendMessage({ type: 'VAULT_UPSERT_ITEM', item }), {
+      id: 'synchronous-login', kind: 'login', title: 'Synchronous Account', favorite: false, notes: '', createdAt: now, updatedAt: now, providerRefs: [],
+      username: 'synthetic-user', password: 'synthetic-secret', uris: ['synchronous.example.test'], customFields: [
+        {name: 'tenant', value: 'synthetic-team', protected: false}, {name: internalName, value: 'SYNTHETIC INTERNAL PAYLOAD', protected: true}, {name: 'monica_gpg_private', value: 'SYNTHETIC PRIVATE KEY', protected: true}
+      ]
+    })).toMatchObject({ ok: true });
+    await context.route('https://synchronous.example.test/**', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Synchronous form</title><form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password"><input name="tenant"><input name="${internalName}"><input name="monica_gpg_private"></form><script>username.addEventListener('input',()=>{window.detached=document.querySelector('#password');detached.replaceWith(detached.cloneNode());},{once:true});</script>` }));
+    const page = await context.newPage(); await page.goto('https://synchronous.example.test/');
+    const popup = await context.newPage(); await page.bringToFront(); await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+    await popup.getByRole('button', { name: /Synchronous Account/ }).click();
+    await expect(popup.getByText('页面字段已变化，请重新选择输入框后填写。', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => (window as any).detached.value)).toBe('');
+    await expect(page.locator('#password')).toHaveValue('');
+    await popup.screenshot({ path: testInfo.outputPath('field-changed.png'), animations: 'disabled' });
+    await page.locator('#password').focus();
+    await page.bringToFront(); await popup.reload();
+    await popup.getByRole('button', { name: /Synchronous Account/ }).click();
+    await expect(page.locator('#password')).toHaveValue('synthetic-secret');
+    await expect(page.locator('[name=tenant]')).toHaveValue('synthetic-team');
+    await expect(page.locator(`[name="${internalName}"]`)).toHaveValue('');
+    await expect(page.locator('[name=monica_gpg_private]')).toHaveValue('');
+    const stored = await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_LIST_ITEMS' }));
+    expect(stored.data[0].customFields).toContainEqual({name: internalName, value: 'SYNTHETIC INTERNAL PAYLOAD', protected: true});
+  } finally { await context.close(); }
+});
 
 test("popup explicitly fills a login inserted later inside an open shadow root", async ({}, testInfo) => {
   let context: BrowserContext | undefined;

@@ -13,6 +13,7 @@ import app.keemobile.kotpass.database.modifiers.modifyParentGroup
 import app.keemobile.kotpass.models.BinaryData
 import app.keemobile.kotpass.models.BinaryReference
 import app.keemobile.kotpass.models.CustomDataValue
+import app.keemobile.kotpass.models.CustomIcon
 import app.keemobile.kotpass.models.Entry
 import app.keemobile.kotpass.models.EntryFields
 import app.keemobile.kotpass.models.EntryValue
@@ -31,8 +32,11 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import takagi.ru.monica.data.ItemType
+import takagi.ru.monica.data.model.SshKeyData
+import takagi.ru.monica.data.model.SshKeyDataCodec
 import takagi.ru.monica.passkey.PasskeyPrivateKeySupport
 import takagi.ru.monica.utils.KeePassCodecSupport
+import takagi.ru.monica.utils.KeePassFieldReferenceResolver
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
@@ -55,6 +59,7 @@ class ExtensionKeePassInteropFixtureTest {
         writeFixture(output.resolve(ANDROID_AES_FILE), BaseCiphers.Aes.uuid)
         writeFixture(output.resolve(ANDROID_CHACHA20_FILE), BaseCiphers.ChaCha20.uuid)
         writeFixture(output.resolve(ANDROID_TWOFISH_FILE), TwofishCipher.uuid)
+        for (variant in listOf("aes", "chacha20")) writePlainTextFixture(output, variant)
     }
 
     @Test
@@ -78,6 +83,106 @@ class ExtensionKeePassInteropFixtureTest {
         )
         verifyPasskeyPortability(output, "aes")
         verifyPasskeyPortability(output, "chacha20")
+        verifySshPortability(output, "aes")
+        verifySshPortability(output, "chacha20")
+        for (variant in listOf("aes", "chacha20")) verifyPlainTextPortability(output, variant)
+    }
+
+    private fun writePlainTextFixture(output: Path, variant: String) {
+        val database = decode(Files.readAllBytes(output.resolve("android-$variant.kdbx")), credentials())
+        val original = requireNotNull(findEntry(database.content.group, SSH_ENTRY_UUID))
+        val fields = original.fields.toMutableMap()
+        fields["MonicaSshComment"] = EntryValue.Plain(XML_PLAIN_TEXT)
+        fields["MonicaSshPublicKey"] = EntryValue.Plain("ssh-rsa\tplain-public")
+        fields["Email"] = EntryValue.Plain(XML_PLAIN_TEXT)
+        fields["Notes"] = EntryValue.Plain(XML_PLAIN_TEXT)
+        fields["Future plain\tfield"] = EntryValue.Plain(XML_PLAIN_TEXT)
+        val updated = original.copy(fields = EntryFields.of(*fields.map { it.key to it.value }.toTypedArray()))
+        val next = database.modifyParentGroup { copy(groups = groups.map { group ->
+            if (group.uuid == INTEROP_GROUP_UUID) group.copy(entries = group.entries.map { if (it.uuid == SSH_ENTRY_UUID) updated else it }) else group
+        }) }
+        val bytes = encode(next)
+        Files.write(output.resolve("android-plain-$variant.kdbx"), bytes)
+        val decoded = requireNotNull(findEntry(decode(bytes, credentials()).content.group, SSH_ENTRY_UUID))
+        for (name in listOf("MonicaSshComment", "Email", "Notes", "Future plain\tfield")) {
+            assertTrue(decoded.fields.getValue(name) is EntryValue.Plain)
+            assertEquals(XML_PLAIN_TEXT, KeePassFieldReferenceResolver.getFieldValue(decoded, name))
+        }
+    }
+
+    private fun verifyPlainTextPortability(output: Path, variant: String) {
+        val database = decode(Files.readAllBytes(output.resolve("extension-plain-$variant.kdbx")), credentials())
+        val entry = requireNotNull(findEntry(database.content.group, SSH_ENTRY_UUID))
+        assertEquals("Plain SSH renamed", entry.fields.getValue("Title").content)
+        assertEquals(XML_PLAIN_TEXT + " Extension edit", KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshComment"))
+        assertEquals("ssh-rsa\tplain-public", KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshPublicKey"))
+        assertEquals(SSH_PRIVATE_TEXT, KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshPrivateKey"))
+        for (name in listOf("Email", "Notes", "Future plain\tfield")) {
+            assertEquals(XML_PLAIN_TEXT, KeePassFieldReferenceResolver.getFieldValue(entry, name))
+            assertTrue(entry.fields.getValue(name) is EntryValue.Encrypted)
+        }
+        val fields = entry.fields.toMutableMap()
+        fields["MonicaSshComment"] = EntryValue.Plain(XML_PLAIN_TEXT + " Android returned")
+        val updated = entry.copy(fields = EntryFields.of(*fields.map { it.key to it.value }.toTypedArray()))
+        val returned = database.modifyParentGroup { copy(groups = groups.map { group ->
+            if (group.uuid == INTEROP_GROUP_UUID) group.copy(entries = group.entries.map { if (it.uuid == SSH_ENTRY_UUID) updated else it }) else group
+        }) }
+        Files.write(output.resolve("android-plain-return-$variant.kdbx"), encode(returned))
+    }
+
+    private fun verifySshPortability(output: Path, variant: String) {
+        val names = listOf("MonicaSshAlgorithm", "MonicaSshKeySize", "MonicaSshPublicKey", "MonicaSshPrivateKey", "MonicaSshFingerprint", "MonicaSshComment", "MonicaSshFormat")
+        for (stage in listOf("rename", "edit", "clear")) {
+            val database = decode(Files.readAllBytes(output.resolve("extension-ssh-$stage-$variant.kdbx")), credentials())
+            val entry = requireNotNull(findEntry(database.content.group, SSH_ENTRY_UUID))
+            assertEquals("unknown SSH data", entry.fields.getValue("Future SSH Field").content)
+            assertTrue(entry.fields.getValue("Future SSH Field") is EntryValue.Encrypted)
+            if (stage == "clear") {
+                assertTrue(names.none { entry.fields.containsKey(it) })
+                assertEquals("SSH_KEY", entry.fields.getValue("MonicaLoginType").content)
+                continue
+            }
+            for (name in names.filter { it != "MonicaSshKeySize" || stage == "rename" }) assertTrue(entry.fields.getValue(name) is EntryValue.Encrypted)
+            if (stage == "rename") {
+                assertEquals("Android SSH renamed", entry.fields.getValue("Title").content)
+                assertEquals("4096", entry.fields.getValue("MonicaSshKeySize").content)
+                assertEquals(SSH_COMMENT_TEXT, KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshComment"))
+                assertEquals(SSH_PRIVATE_TEXT, KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshPrivateKey"))
+                continue
+            }
+            assertFalse(entry.fields.containsKey("MonicaSshKeySize"))
+            // Field extraction matches KeePassKdbxService; the codec below is copied verbatim from Android.
+            val raw = SshKeyDataCodec.encode(SshKeyData(
+                algorithm = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshAlgorithm"),
+                publicKeyOpenSsh = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshPublicKey"),
+                privateKeyOpenSsh = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshPrivateKey"),
+                fingerprintSha256 = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshFingerprint"),
+                comment = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshComment"),
+                format = KeePassFieldReferenceResolver.getFieldValue(entry, "MonicaSshFormat")
+            ))
+            val ssh = requireNotNull(SshKeyDataCodec.decode(raw))
+            assertEquals(" ssh-rsa extension-public\n", ssh.publicKeyOpenSsh)
+            assertEquals(SSH_EDITED_COMMENT, ssh.comment)
+            assertEquals(SSH_PRIVATE_TEXT, ssh.privateKeyOpenSsh)
+            val returnedData = requireNotNull(SshKeyDataCodec.decode(SshKeyDataCodec.encode(ssh.copy(comment = SSH_RETURNED_COMMENT))))
+            val updated = entry.copy(fields = EntryFields.of(*entry.fields.map { (name, value) ->
+                name to if (name == "MonicaSshComment") EntryValue.Encrypted(EncryptedValue.fromString(returnedData.comment)) else value
+            }.toTypedArray()))
+            val returned = database.modifyParentGroup { copy(groups = groups.map { group ->
+                if (group.uuid == INTEROP_GROUP_UUID) group.copy(entries = group.entries.map { if (it.uuid == SSH_ENTRY_UUID) updated else it }) else group
+            }) }
+            Files.write(output.resolve("android-ssh-$variant.kdbx"), encode(returned))
+        }
+        val copiedDb = decode(Files.readAllBytes(output.resolve("extension-ssh-copy-$variant.kdbx")), credentials())
+        fun copiedEntry(group: Group): Entry? = group.entries.firstOrNull { it.fields["Title"]?.content == "SSH copied text" }
+            ?: group.groups.firstNotNullOfOrNull { copiedEntry(it) }
+        val copied = requireNotNull(copiedEntry(copiedDb.content.group))
+        assertEquals(SSH_PRIVATE_TEXT, KeePassFieldReferenceResolver.getFieldValue(copied, "MonicaSshPrivateKey"))
+        assertEquals(SSH_COMMENT_TEXT, KeePassFieldReferenceResolver.getFieldValue(copied, "MonicaSshComment"))
+        assertEquals(SSH_COMMENT_TEXT, KeePassFieldReferenceResolver.getFieldValueIgnoreCase(copied, null, "Email"))
+        assertTrue(copied.fields.getValue("Email") is EntryValue.Encrypted)
+        // Current Android discards metadata-only SSH JSON; record this limitation, do not hide it.
+        assertEquals("", SshKeyDataCodec.encode(SshKeyData(comment = "comment only", format = "PEM")))
     }
 
     private fun verifyPasskeyPortability(output: Path, variant: String) {
@@ -153,6 +258,7 @@ class ExtensionKeePassInteropFixtureTest {
             rootName = "Root",
             meta = Meta(
                 generator = "Monica Android interop",
+                customIcons = mapOf(ICON_UUID to CustomIcon(data = ICON_BYTES, name = "Android icon", lastModified = META_TIME)),
                 settingsChanged = META_TIME,
                 name = "Android KeePass interoperability",
                 nameChanged = META_TIME,
@@ -184,6 +290,7 @@ class ExtensionKeePassInteropFixtureTest {
                         tags = listOf("android-group", "interop"),
                         entries = listOf(
                             loginEntry(attachment),
+                            sshEntry(),
                             passkeyEntry(),
                             bankCardEntry(cardReceipt),
                             documentEntry(documentReceipt)
@@ -278,6 +385,8 @@ class ExtensionKeePassInteropFixtureTest {
         assertEquals("future secret must stay", future.fields.getValue("Future Protected Field").content)
 
         val login = group.entries.single { it.uuid == LOGIN_ENTRY_UUID }
+        assertEquals(ICON_UUID, login.customIconUuid)
+        assertArrayEquals(ICON_BYTES, database.content.meta.customIcons.getValue(ICON_UUID).data)
         assertEquals("GitHub", login.fields.getValue("Title").content)
         assertEquals(expectedUsername, login.fields.getValue("UserName").content)
         assertEquals(expectedNotes, login.fields.getValue("Notes").content)
@@ -363,6 +472,7 @@ class ExtensionKeePassInteropFixtureTest {
         )
         return Entry(
             uuid = LOGIN_ENTRY_UUID,
+            customIconUuid = ICON_UUID,
             fields = EntryFields.of(
                 "Title" to EntryValue.Plain("GitHub"),
                 "UserName" to EntryValue.Plain("octocat"),
@@ -415,6 +525,16 @@ class ExtensionKeePassInteropFixtureTest {
             qualityCheck = false
         )
     }
+
+    private fun sshEntry(): Entry = Entry(
+        uuid = SSH_ENTRY_UUID,
+        fields = EntryFields.of(
+            "Title" to EntryValue.Plain("Android SSH"),
+            "Password" to EntryValue.Encrypted(EncryptedValue.fromString("")),
+            "MonicaLoginType" to EntryValue.Plain("SSH_KEY"),
+            *listOf("MonicaSshAlgorithm" to "RSA", "MonicaSshKeySize" to "4096", "MonicaSshPublicKey" to " ssh-rsa android-public\n", "MonicaSshPrivateKey" to SSH_PRIVATE_TEXT, "MonicaSshFingerprint" to "SHA256:synthetic", "MonicaSshComment" to SSH_COMMENT_TEXT, "MonicaSshFormat" to "PEM", "Future SSH Field" to "unknown SSH data").map { (name, value) -> name to EntryValue.Encrypted(EncryptedValue.fromString(value)) }.toTypedArray()
+        )
+    )
 
     private fun bankCardEntry(receipt: BinaryData): Entry {
         return Entry(
@@ -528,7 +648,7 @@ class ExtensionKeePassInteropFixtureTest {
 
     private fun encode(database: KeePassDatabase): ByteArray {
         return ByteArrayOutputStream().use { output ->
-            database.encode(output, cipherProviders = KeePassCodecSupport.cipherProviders)
+            database.encode(output, contentParser = KeePassCodecSupport.contentParser, cipherProviders = KeePassCodecSupport.cipherProviders)
             output.toByteArray()
         }
     }
@@ -537,6 +657,7 @@ class ExtensionKeePassInteropFixtureTest {
         return KeePassDatabase.decode(
             ByteArrayInputStream(bytes),
             credentials,
+            contentParser = KeePassCodecSupport.contentParser,
             cipherProviders = KeePassCodecSupport.cipherProviders
         )
     }
@@ -549,6 +670,8 @@ class ExtensionKeePassInteropFixtureTest {
     }
 
     companion object {
+        private val ICON_UUID = UUID.fromString("20000000-0000-4000-8000-000000000099")
+        private val ICON_BYTES = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=")
         private const val INTEROP_DIRECTORY_ENV = "MONICA_KEEPASS_INTEROP_DIR"
         private const val PASSWORD = "monica-android-extension-interop-password"
         private const val ANDROID_AES_FILE = "android-aes.kdbx"
@@ -588,6 +711,12 @@ class ExtensionKeePassInteropFixtureTest {
         private val FUTURE_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000004")
         private val CARD_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000005")
         private val DOCUMENT_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000006")
+        private val SSH_ENTRY_UUID = UUID.fromString("20000000-0000-4000-8000-000000000007")
+        private const val SSH_PRIVATE_TEXT = "\n-----BEGIN OPENSSH PRIVATE KEY-----\r\nsynthetic-private\r\n-----END OPENSSH PRIVATE KEY-----\n"
+        private const val SSH_COMMENT_TEXT = " \tAndroid comment\r\n "
+        private const val SSH_EDITED_COMMENT = " \tExtension comment\r\n "
+        private const val SSH_RETURNED_COMMENT = " \tAndroid returned\r\n "
+        private const val XML_PLAIN_TEXT = " \tAndroid plain text\nsecond line\t "
         private val GROUP_TIMES = timeData("2026-06-24T00:00:00Z", 4)
         private val NESTED_GROUP_TIMES = timeData("2026-06-24T00:05:00Z", 2)
         private val LOGIN_TIMES = timeData("2026-06-24T00:10:00Z", 7, expires = true)

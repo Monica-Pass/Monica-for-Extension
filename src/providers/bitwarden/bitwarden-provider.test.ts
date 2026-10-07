@@ -12,6 +12,35 @@ const RSA_FIXTURE_TIMEOUT_MS = 15_000;
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("Bitwarden provider", () => {
+  it('refuses incomplete history before creating even a category folder', async () => {
+    const fetcher = vi.fn(async () => { throw new Error('No network action expected'); }) as unknown as typeof fetch;
+    const item: LoginItem = { id: 'partial-history', kind: 'login', title: 'History', username: 'test', password: 'current',
+      passwordHistoryIncomplete: true, passwordHistory: [], categoryName: 'Must not create', uris: [], customFields: [],
+      favorite: false, notes: '', createdAt: OLD_REVISION, updatedAt: OLD_REVISION, providerRefs: [] };
+    await expect(new BitwardenProvider(fetcher).create(account(), item)).rejects.toThrow(/历史/);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('keeps a readable login available when only a native history row is unreadable', async () => {
+    const raw = { ...await loginCipher('current', OLD_REVISION), PasswordHistory: [
+      { Password: await encryptBitwardenString('old', KEY), LastUsedDate: OLD_REVISION },
+      { Password: '2.future-unreadable', LastUsedDate: OLD_REVISION }
+    ] };
+    const fetcher = vi.fn(async () => json({ Profile: { Id: 'user' }, Ciphers: [raw] })) as unknown as typeof fetch;
+    const result = await new BitwardenProvider(fetcher).sync(account(), { localItems: [], now: OLD_REVISION });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ kind: 'login', password: 'current', passwordHistory: [{ password: 'old', lastUsedAt: OLD_REVISION }], passwordHistoryIncomplete: true });
+    expect(result.warnings.join(' ')).toContain('历史');
+  });
+  it.each(['create', 'update'] as const)('rejects malformed SSH before %s can create a category or contact the server', async operation => {
+    const fetcher = vi.fn(async () => { throw new Error('Server must not be called'); }) as unknown as typeof fetch;
+    const item: LoginItem = {
+      id: 'invalid-ssh', kind: 'login', title: 'SSH', username: '', password: '', uris: [], customFields: [],
+      loginType: 'SSH_KEY', sshKeyData: '{', categoryName: 'Must not create', favorite: false, notes: '',
+      createdAt: OLD_REVISION, updatedAt: OLD_REVISION, providerRefs: [{providerId: 'provider-1', remoteId: 'cipher-1'}]
+    };
+    await expect(new BitwardenProvider(fetcher)[operation](account(), item)).rejects.toThrow('SSH');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("routes a new Android category to an existing encrypted Bitwarden folder", async () => {
     let written: Record<string, unknown> | undefined;
     let folderPostCount = 0;
@@ -220,9 +249,9 @@ describe("Bitwarden provider", () => {
     expect(migratedLogin.customFields).toEqual(cached.customFields);
     await expect(decryptedRequestFields(writes[0])).resolves.toEqual([
       ["Boolean", "true", 2, undefined],
-      ["Remote", "remote", 0, null],
-      ["Duplicate", "same", 0, null],
-      ["Duplicate", "same", 0, null],
+      ["Remote", "remote", 0, undefined],
+      ["Duplicate", "same", 0, undefined],
+      ["Duplicate", "same", 0, undefined],
       ["Duplicate", "same", 0, null],
       ["LocalOnly", "local", 1, null]
     ]);
@@ -238,8 +267,8 @@ describe("Bitwarden provider", () => {
     expect(writes).toHaveLength(2);
     await expect(decryptedRequestFields(writes[1])).resolves.toEqual([
       ["Boolean", "true", 2, undefined],
-      ["Duplicate", "same", 0, null],
-      ["Duplicate", "same", 0, null],
+      ["Duplicate", "same", 0, undefined],
+      ["Duplicate", "same", 0, undefined],
       ["Duplicate", "same", 0, null]
     ]);
   });
@@ -525,7 +554,7 @@ describe("Bitwarden provider", () => {
     expect(result.accountPatch).toMatchObject({ requiresEmptyRemoteConfirmation: true });
   });
 
-  it("persists a count-only compatibility status for future Cipher types while retaining the raw record", async () => {
+  it("exposes a future Cipher as readonly while retaining its raw record and compatibility count", async () => {
     const futureCipher = {
       Id: "future-cipher",
       Type: 99,
@@ -537,9 +566,16 @@ describe("Bitwarden provider", () => {
     };
     const fetcher = vi.fn(async () => json({ Profile: { Id: "user" }, Ciphers: [futureCipher] })) as unknown as typeof fetch;
 
-    const result = await new BitwardenProvider(fetcher).sync(account(), { now: "2026-07-15T03:03:00.000Z", localItems: [] });
+    const provider = new BitwardenProvider(fetcher);
+    const result = await provider.sync(account(), { now: "2026-07-15T03:03:00.000Z", localItems: [] });
 
-    expect(result.items).toEqual([]);
+    expect(result.items).toEqual([expect.objectContaining({ kind: "opaque", nativeType: "bitwarden:99", title: "Future record" })]);
+    const unknown = result.items[0];
+    vi.mocked(fetcher).mockClear();
+    await expect(provider.create(account(), { ...unknown, categoryName: "must not create folder" })).rejects.toThrow(/未知/);
+    await expect(provider.update(account(), unknown)).rejects.toThrow(/未知/);
+    await expect(provider.remove(account(), unknown)).rejects.toThrow(/未知/);
+    expect(fetcher).not.toHaveBeenCalled();
     expect(result.conflicts).toEqual([]);
     expect(result.accountPatch).toMatchObject({
       requiresEmptyRemoteConfirmation: false,
@@ -571,10 +607,19 @@ describe("Bitwarden provider", () => {
 
     const result = await provider.sync(account(), { now: "2026-07-15T03:03:00.000Z", localItems: [local], pendingMutations: [] });
 
-    expect(result.items).toEqual([local]);
+    expect(result.items).toEqual([local, expect.objectContaining({ kind: "opaque", nativeType: "bitwarden:99", title: "Future replacement" })]);
+    await expect(provider.update(account(), { ...local, categoryName: "Do not create folder" })).rejects.toThrow(/未知/);
+    await expect(provider.remove(account(), local)).rejects.toThrow(/未知/);
     expect(writeCount).toBe(0);
     expect(result.accountPatch?.compatibility).toEqual({ preservedUnsupportedRecords: 1, unreadableRecords: 0 });
     expect(JSON.parse(result.sourceRecords?.[0]?.payload || "{}")).toEqual(remote);
+    const repeated = await provider.sync(account(), { now: "2026-07-15T03:04:00.000Z", localItems: result.items, pendingMutations: [] });
+    expect(repeated.items).toHaveLength(2);
+    expect(new Set(repeated.items.map(item => item.id)).size).toBe(2);
+    remote = await loginCipher("supported-again", "2026-07-15T03:05:00.000Z");
+    const recognized = await provider.sync(account(), { now: "2026-07-15T03:06:00.000Z", localItems: repeated.items, pendingMutations: [] });
+    expect(recognized.items).toHaveLength(1);
+    expect(recognized.items[0]).toMatchObject({ kind: "login", password: "supported-again" });
   });
 
   it("creates and trashes a personal Cipher through provider sync", async () => {
@@ -696,12 +741,14 @@ describe("Bitwarden provider", () => {
     expect(result.items.find((candidate) => candidate.kind === "passkey")?.providerRefs[0]).toMatchObject({ remoteId: "passkey-cipher#fido2:new-credential", revision: "2026-07-15T05:05:00.000Z" });
   });
 
-  it("preserves the Monica Passkey identity through create update and child-only delete", async () => {
+  it.each(["stable-credential", "00010203-0405-0607-0809-0a0b0c0d0e0f", "AAECAwQFBgcICQoLDA0ODw"])("preserves Passkey identity through create update and child-only delete: %s", async credentialId => {
     let remote: Record<string, unknown> | undefined;
+    let postCount = 0;
     let putCount = 0;
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: remote ? [remote] : [] });
       if (init?.method === "POST") {
+        postCount += 1;
         remote = { ...(JSON.parse(String(init.body)) as Record<string, unknown>), id: "stable-passkey-cipher", revisionDate: "2026-07-15T05:10:00.000Z", creationDate: OLD_REVISION };
         return json(remote);
       }
@@ -713,10 +760,11 @@ describe("Bitwarden provider", () => {
       throw new Error(`Unexpected ${init?.method} ${String(input)}`);
     }) as unknown as typeof fetch;
     const provider = new BitwardenProvider(fetcher);
-    const local = localPasskey("stable-credential");
+    const local = localPasskey(credentialId);
 
     const created = await provider.sync(account(), { now: "2026-07-15T05:10:30.000Z", localItems: [local] });
     expect(created.conflicts).toEqual([]);
+    expect(created.items.filter((item) => item.kind === "passkey")).toHaveLength(1);
     expect(created.items.find((item) => item.kind === "passkey")?.id).toBe(local.id);
 
     const usedAt = "2026-07-15T05:10:45.000Z";
@@ -724,6 +772,7 @@ describe("Bitwarden provider", () => {
     const updated = await provider.sync(account(), { now: "2026-07-15T05:11:30.000Z", localItems: used });
     const updatedPasskey = updated.items.find((item): item is PasskeyItem => item.kind === "passkey")!;
     expect(updated.conflicts).toEqual([]);
+    expect(updated.items.filter((item) => item.kind === "passkey")).toHaveLength(1);
     expect(updatedPasskey).toMatchObject({ id: local.id, useCount: 1, lastUsedAt: usedAt, publicKey: local.publicKey });
 
     const deleted = updated.items.map((item) => item.kind === "passkey" ? { ...item, deletedAt: "2026-07-15T05:11:45.000Z", updatedAt: "2026-07-15T05:11:45.000Z" } : item) as VaultItem[];
@@ -731,6 +780,7 @@ describe("Bitwarden provider", () => {
     expect(afterDelete.conflicts).toEqual([]);
     expect(afterDelete.items.map((item) => item.kind)).toEqual(["login"]);
     expect(putCount).toBe(2);
+    expect(postCount).toBe(1);
   });
 
   it("coalesces login and Passkey changes for the same Cipher into one update", async () => {
@@ -954,6 +1004,7 @@ describe("Bitwarden provider", () => {
     const calls: string[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push(`${init?.method} ${new URL(String(input)).pathname}`);
+      if (String(input).includes("/sync")) return json({ Ciphers: [await loginCipher("remote-secret", OLD_REVISION)] });
       return new Response(null, { status: 200 });
     }) as unknown as typeof fetch;
     const item: LoginItem = {
@@ -973,7 +1024,7 @@ describe("Bitwarden provider", () => {
 
     await new BitwardenProvider(fetcher).remove(account(), item);
 
-    expect(calls).toEqual(["PUT /api/ciphers/cipher-1/delete"]);
+    expect(calls).toEqual(["GET /api/sync", "PUT /api/ciphers/cipher-1/delete"]);
   });
 
   it("defers local edits outside the durable batch instead of overwriting them", async () => {

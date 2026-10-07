@@ -32,10 +32,18 @@ const DOCUMENT_RECEIPT_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x3
 const PASSKEY_CREDENTIAL_ID = "YW5kcm9pZC1pbnRlcm9wLWNyZWRlbnRpYWw";
 const PRIVATE_KEY_BASE64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkW37q4De5OLmElVzGV+eVyxKWzUYTgiSmQGGNnkVvqKhRANCAATo31tQ78NEbm2ja6k1Omi1xPfSUGS3V74fv6x7WzvFrNxBDYm+FGmQVEiECyXmpcFTNeV0D/WFBONp8oJJZPn0";
 const PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----\n${PRIVATE_KEY_BASE64}\n-----END PRIVATE KEY-----`;
+const SSH_PRIVATE_TEXT = '\n-----BEGIN OPENSSH PRIVATE KEY-----\r\nsynthetic-private\r\n-----END OPENSSH PRIVATE KEY-----\n';
+const SSH_COMMENT_TEXT = ' \tAndroid comment\r\n ';
+const SSH_EDITED_COMMENT = ' \tExtension comment\r\n ';
+const SSH_RETURNED_COMMENT = ' \tAndroid returned\r\n ';
+const XML_PLAIN_TEXT = ' \tAndroid plain text\nsecond line\t ';
 const JVM_ANDROID_SOURCES = [
+  "data/model/SshKeyModels.kt",
+  "utils/KeePassFieldReferenceResolver.kt",
   "data/PasskeyEntry.kt", "data/SecureItem.kt", "data/LocalKeePassDatabase.kt",
   "keepass/KeePassChangeSet.kt", "keepass/KeePassSecureItemPhotoAttachments.kt",
   "keepass/KeePassPasskeySyncCodec.kt", "utils/KeePassCodecSupport.kt",
+  "keepass/KeePassXmlContentParser.kt", "keepass/KeePassKotpassXmlReader.java",
   "passkey/PasskeyPrivateKeySupport.kt"
 ];
 
@@ -108,7 +116,7 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         expect(summary).toMatchObject({
           versionMajor: 4,
           cipherName: variant.cipherName,
-          itemCount: 4,
+          itemCount: 6, // Five modeled entries plus the preserved read-only future entry.
           dirty: false
         });
         expect(summary.skipped).toHaveLength(1);
@@ -120,6 +128,9 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         });
         const login = synchronized.items.find((item): item is LoginItem => item.kind === "login" && item.title === "GitHub");
         expect(login).toBeDefined();
+        const ssh = synchronized.items.find((item): item is LoginItem => item.kind === "login" && item.title === "Android SSH");
+        expect(ssh?.loginType).toBe("SSH_KEY");
+        expect(JSON.parse(ssh!.sshKeyData!)).toEqual({algorithm:"RSA",keySize:4096,publicKeyOpenSsh:" ssh-rsa android-public\n",privateKeyOpenSsh:SSH_PRIVATE_TEXT,fingerprintSha256:"SHA256:synthetic",comment:SSH_COMMENT_TEXT,format:"PEM"});
         const passkey = synchronized.items.find((item): item is PasskeyItem => item.kind === "passkey" && item.credentialId === PASSKEY_CREDENTIAL_ID);
         expect(passkey).toMatchObject({
           rpId: "github.com", userName: "octocat", privateKeyPkcs8: PRIVATE_KEY_BASE64,
@@ -139,9 +150,11 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         expect(document).toMatchObject({
           documentType: "PASSPORT",
           documentNumber: "P99887766",
-          fullName: "Android Document"
+          fullName: "Android Document Holder"
         });
         expect(login).toMatchObject({
+          customIconType: "KEEPASS_CUSTOM_ICON",
+          customIconValue: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=",
           username: "octocat",
           password: "old-password",
           notes: "original notes",
@@ -152,6 +165,7 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
           expect.objectContaining({ name: "Recovery PIN", value: "123456", protected: true })
         ]));
         expect(synchronized.sourceRecords).toHaveLength(1);
+        expect(synchronized.items.filter(item => item.kind === "opaque")).toHaveLength(1);
         expect(synchronized.sourceRecords?.[0].payload).toContain("Future Plugin Field");
 
         const attachment = provider.listAttachments(target, login!);
@@ -247,6 +261,16 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
           challenge, publicKeySpki: fixturePublicKey().export({ type: "spki", format: "der" }).toString("base64"),
           ...assertion.response
         }));
+        const renamedSsh = await provider.update(target, { ...ssh!, title: "Android SSH renamed" }) as LoginItem;
+        await writeFile(join(runRoot, `extension-ssh-rename-${variant.id}.kdbx`), await provider.exportFile(target.id));
+        const editedSsh = await provider.update(target, { ...renamedSsh, sshKeyData: JSON.stringify({ ...JSON.parse(renamedSsh.sshKeyData!), keySize: 0, publicKeyOpenSsh: " ssh-rsa extension-public\n", comment: SSH_EDITED_COMMENT }) }) as LoginItem;
+        await writeFile(join(runRoot, `extension-ssh-edit-${variant.id}.kdbx`), await provider.exportFile(target.id));
+        await provider.update(target, { ...editedSsh, sshKeyData: undefined });
+        await writeFile(join(runRoot, `extension-ssh-clear-${variant.id}.kdbx`), await provider.exportFile(target.id));
+        // A new entry has no old field map to conceal projection or XML text loss.
+        const copied = await provider.create(target, { ...ssh!, id:`ssh-copy-${variant.id}`, providerRefs:[], title:'SSH copied text', email:SSH_COMMENT_TEXT }) as LoginItem;
+        expect(JSON.parse(copied.sshKeyData!).privateKeyOpenSsh).toBe(SSH_PRIVATE_TEXT);
+        await writeFile(join(runRoot, `extension-ssh-copy-${variant.id}.kdbx`), await provider.exportFile(target.id));
       }
 
       const twofish = new Uint8Array(await readFile(join(runRoot, "android-twofish.kdbx")));
@@ -263,8 +287,43 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         message: expect.stringContaining("AES-256")
       });
 
+      const plainTextVariants: Record<string, unknown>[] = [];
+      for (const variant of SUPPORTED_VARIANTS) {
+        const input = new Uint8Array(await readFile(join(runRoot, `android-plain-${variant.id}.kdbx`)));
+        const provider = new KeePassProvider(), target = account(`plain-xml-${variant.id}`, 94);
+        await provider.unlock(target, input, {password:PASSWORD});
+        const items = (await provider.sync(target,{now:new Date().toISOString(),localItems:[]})).items;
+        const item = items.find((item): item is LoginItem => item.kind==='login'&&item.title==='Android SSH')!;
+        expect(item.email).toBe(XML_PLAIN_TEXT);expect(item.notes).toBe(XML_PLAIN_TEXT);
+        expect(item.customFields).toContainEqual({name:'Future plain\tfield',value:XML_PLAIN_TEXT,protected:false});
+        expect(JSON.parse(item.sshKeyData!)).toMatchObject({comment:XML_PLAIN_TEXT,publicKeyOpenSsh:'ssh-rsa\tplain-public',privateKeyOpenSsh:SSH_PRIVATE_TEXT});
+        await provider.update(target,{...item,title:'Plain SSH renamed',sshKeyData:JSON.stringify({...JSON.parse(item.sshKeyData!),comment:XML_PLAIN_TEXT+' Extension edit'})});
+        const bytes = await provider.exportFile(target.id);
+        await writeFile(join(runRoot, `extension-plain-${variant.id}.kdbx`), bytes);
+        plainTextVariants.push({cipher:variant.cipherName,inputSha256:sha256Hex(input),outputSha256:sha256Hex(bytes)});
+        provider.lock();
+      }
       await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "verifyExtensionKdbxExports", jvmProject);
       for (const variant of SUPPORTED_VARIANTS) {
+        const bytes = new Uint8Array(await readFile(join(runRoot, `android-plain-return-${variant.id}.kdbx`)));
+        const provider = new KeePassProvider(), target = account(`plain-return-${variant.id}`,95);
+        await provider.unlock(target,bytes,{password:PASSWORD});
+        const item = (await provider.sync(target,{now:new Date().toISOString(),localItems:[]})).items.find((item):item is LoginItem=>item.kind==='login'&&item.title==='Plain SSH renamed')!;
+        expect(item.email).toBe(XML_PLAIN_TEXT);expect(item.notes).toBe(XML_PLAIN_TEXT);
+        expect(item.customFields).toContainEqual({name:'Future plain\tfield',value:XML_PLAIN_TEXT,protected:true});
+        expect(JSON.parse(item.sshKeyData!)).toMatchObject({comment:XML_PLAIN_TEXT+' Android returned',publicKeyOpenSsh:'ssh-rsa\tplain-public',privateKeyOpenSsh:SSH_PRIVATE_TEXT});
+        plainTextVariants.find(value=>value.cipher===variant.cipherName)!.returnSha256=sha256Hex(bytes);
+        provider.lock();
+      }
+      for (const variant of SUPPORTED_VARIANTS) {
+        const sshProvider = new KeePassProvider();
+        const sshAccount = account(`android-ssh-returned-${variant.id}`, 46);
+        await sshProvider.unlock(sshAccount, new Uint8Array(await readFile(join(runRoot, `android-ssh-${variant.id}.kdbx`))), {password:PASSWORD});
+        const sshItems = (await sshProvider.sync(sshAccount, {now:new Date().toISOString(),localItems:[]})).items;
+        const returnedSsh = sshItems.find((item): item is LoginItem => item.kind === "login" && item.title === "Android SSH renamed");
+        expect(JSON.parse(returnedSsh!.sshKeyData!)).toEqual({algorithm:"RSA",keySize:0,publicKeyOpenSsh:" ssh-rsa extension-public\n",privateKeyOpenSsh:SSH_PRIVATE_TEXT,fingerprintSha256:"SHA256:synthetic",comment:SSH_RETURNED_COMMENT,format:"PEM"});
+        expect(returnedSsh!.customFields).toContainEqual({name:"Future SSH Field",value:"unknown SSH data",protected:true});
+        sshProvider.lock();
         const request = JSON.parse(await readFile(join(runRoot, `extension-passkey-${variant.id}.json`), "utf8"));
         const signatures: string[] = JSON.parse(await readFile(join(runRoot, `android-passkey-${variant.id}.json`), "utf8"));
         const signedData = Buffer.concat([
@@ -277,6 +336,10 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         const target = account(`android-returned-${variant.id}`, variant.id === "aes" ? 44 : 45);
         await returnedProvider.unlock(target, new Uint8Array(await readFile(join(runRoot, `android-passkey-${variant.id}.kdbx`))), { password: PASSWORD });
         const returned = await returnedProvider.sync(target, { now: "2026-09-14T00:02:00.000Z", localItems: [] });
+        expect(returned.items.find(item => item.kind === "login" && item.title === "GitHub")).toMatchObject({
+          customIconType: "KEEPASS_CUSTOM_ICON",
+          customIconValue: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII="
+        });
         const passkey = returned.items.find((item): item is PasskeyItem => item.kind === "passkey");
         expect(passkey).toMatchObject({ credentialId: PASSKEY_CREDENTIAL_ID, privateKeyPkcs8: PRIVATE_KEY_BASE64, signCount: 0, useCount: 5, backupEligible: true, backupState: true });
         await signPortablePasskey(passkey!, request.challenge);
@@ -287,6 +350,8 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         androidSourceSha256: sourceHashes,
         supportedCiphers: variantEvidence,
         rejectedCipher: "Twofish",
+        plainTextPortability: {variants:plainTextVariants,androidPlainFieldsVerified:true,rawTabsPreserved:true,fields:['SSH public key','SSH comment','Email','Notes','custom field name and value'],androidApplicationVerified:false},
+        sshPortability: { ciphers: ["AES-256", "ChaCha20"], protectedFields: true, renameEditClear: true, copiedTextExact:true, whitespaceAndCrLfExact:true, androidFieldResolver:'KeePassFieldReferenceResolver', androidCodec: "SshKeyDataCodec", androidReturnedComment: true, unknownFieldsPreserved: true, androidMetadataOnlySupported: false, androidApplicationVerified: false },
         passkeyPortability: {
           recognizedWithUsernameAndUrl: true,
           legacyStoredCounter: 4,
@@ -298,6 +363,7 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
         },
         preserved: [
           "protected fields",
+          "native custom icon UUID and image bytes (Android Kotpass roundtrip)",
           "OTP parameters",
           "unknown fields",
           "entry and group CustomData",
@@ -347,6 +413,10 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
     if (finalErrors.length === 1) throw finalErrors[0];
     if (finalErrors.length > 1) throw new AggregateError(finalErrors, "KeePass interoperability cleanup checks failed.");
     expect(evidence).toBeDefined();
+    if (process.env.MONICA_KEEPASS_INTEROP_KEEP === '1') {
+      await writeFile(join(runRoot, 'evidence.json'), JSON.stringify({ ...evidence, status:'passed' }, null, 2));
+      process.stdout.write(`KEEPASS_RETAINED_EVIDENCE ${runRoot}\n`);
+    }
   });
 });
 
@@ -411,7 +481,7 @@ async function prepareStandaloneJvm(extensionRoot: string, coreSources: string, 
   await mkdir(project, { recursive: true });
   for (const name of ["build.gradle", "settings.gradle"]) await cp(join(template, name), join(project, name));
   for (const file of JVM_ANDROID_SOURCES) {
-    const target = join(project, "src/main/kotlin/takagi/ru/monica", file);
+    const target = join(project, file.endsWith(".java") ? "src/main/java/takagi/ru/monica" : "src/main/kotlin/takagi/ru/monica", file);
     await mkdir(dirname(target), { recursive: true });
     await cp(join(coreSources, file), target);
   }

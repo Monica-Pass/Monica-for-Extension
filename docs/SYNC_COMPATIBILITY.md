@@ -23,7 +23,7 @@
 
 Android `WebDavHelper` 当前普通改动备份默认有 **2 分钟静默期、15 分钟最小上传间隔**。这段时间数据还未到服务器，插件无法提前读取。Bitwarden 本地修改桥接到前台同步控制器或即时 WorkManager；MDBX2、KDBX 也需手机侧完成自己的上传。
 
-15 秒是页面可见时的检查间隔，不是全链路延迟保证。Chrome/Edge 的后台暂停、浏览器关闭、锁库、网络、服务器和手机上传调度都会影响接收时间。最低支持 Chrome 109；Chrome 116 及之后的 WebSocket 心跳可保持通知 worker 活跃，旧版本由每分钟 alarm 兜底唤醒。
+15 秒是页面可见时的检查间隔，不是全链路延迟保证。Chrome/Edge 的后台暂停、浏览器关闭、锁库、网络、服务器和手机上传调度都会影响接收时间。当前 Manifest 最低 Chromium API 版本为 128（无损 JSON 读取和真实侧栏要求）；WebSocket 心跳可保持通知 worker 活跃，每分钟 alarm 仍提供兜底唤醒。本次互通实际浏览器验收使用 Microsoft Edge。
 
 ## Bitwarden 的实现与恢复
 

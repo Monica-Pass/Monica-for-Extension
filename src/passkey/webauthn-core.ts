@@ -1,5 +1,10 @@
 import { parse as parseDomain } from "tldts";
 import { assertPasskeyCounter } from "./ownership-policy";
+import { selectPasskeyRegistrationAlgorithm, type PasskeyRegistrationAlgorithm } from "./registration-policy";
+
+export function supportsPasskeySigningAlgorithm(algorithm: number): boolean {
+  return [-7, -257, -37, -8].includes(algorithm);
+}
 
 const MONICA_AAGUID = Uint8Array.of(
   0x6d, 0x6f, 0x6e, 0x69, 0x63, 0x61, 0x4d, 0x33,
@@ -17,10 +22,13 @@ export interface PasskeyCreateInput {
   algorithms: number[];
   excludeCredentialIds: string[];
   userVerified?: boolean;
+  /** Internal storage choice. UUID credentials retain the same 16 bytes in WebAuthn responses. */
+  credentialIdFormat?: "uuid";
 }
 
 export interface PasskeyCreateOutput {
   credentialId: string;
+  credentialIdUuid?: string;
   rpId: string;
   publicKeySpki: string;
   privateKeyPkcs8: string;
@@ -29,7 +37,7 @@ export interface PasskeyCreateOutput {
     attestationObject: string;
     authenticatorData: string;
     publicKey: string;
-    publicKeyAlgorithm: -7;
+    publicKeyAlgorithm: PasskeyRegistrationAlgorithm;
   };
 }
 
@@ -40,6 +48,8 @@ export interface PasskeyAssertionInput {
   credentialId: string;
   userHandle: string;
   privateKeyPkcs8: string;
+  /** Defaults to ES256 for existing callers; imported credentials must pass their COSE ID. */
+  algorithm?: number;
   /** Exact counter authorized by the source policy; positive counters must already be committed. */
   signCount: number;
   backupEligible?: boolean;
@@ -62,25 +72,34 @@ export function validateRpId(origin: string, requestedRpId?: string): string {
 export async function createPasskey(input: PasskeyCreateInput): Promise<PasskeyCreateOutput> {
   const rpId = validateRpId(input.origin, input.rpId);
   assertChallenge(input.challenge);
-  if (!input.algorithms.includes(-7)) throw new Error("当前仅支持 ES256 Passkey。");
-  const credentialBytes = crypto.getRandomValues(new Uint8Array(32));
+  const algorithm = selectPasskeyRegistrationAlgorithm(input.algorithms);
+  if (algorithm === undefined) throw new Error("不支持此 Passkey 签名算法。");
+  const credentialIdUuid = input.credentialIdFormat === "uuid" ? crypto.randomUUID() : undefined;
+  const credentialBytes = credentialIdUuid
+    ? Uint8Array.from(credentialIdUuid.replace(/-/g, "").match(/../g)!, byte => Number.parseInt(byte, 16))
+    : crypto.getRandomValues(new Uint8Array(32));
   const credentialId = toBase64Url(credentialBytes);
   if (input.excludeCredentialIds.includes(credentialId)) throw new Error("此凭据已被网站排除。");
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const pair = algorithm === -7
+    ? await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])
+    : await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: "SHA-256" }, true, ["sign", "verify"]);
   const [jwk, spki, pkcs8] = await Promise.all([
     crypto.subtle.exportKey("jwk", pair.publicKey),
     crypto.subtle.exportKey("spki", pair.publicKey),
     crypto.subtle.exportKey("pkcs8", pair.privateKey)
   ]);
-  if (!jwk.x || !jwk.y) throw new Error("无法导出 ES256 公钥。");
+  if (algorithm === -7 && (!jwk.x || !jwk.y) || algorithm === -257 && (!jwk.n || !jwk.e)) throw new Error("不支持此 Passkey 签名算法。");
   const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rpId)));
-  const coseKey = encodeCbor(new Map<unknown, unknown>([[1, 2], [3, -7], [-1, 1], [-2, fromBase64Url(jwk.x)], [-3, fromBase64Url(jwk.y)]]));
+  const coseKey = encodeCbor(algorithm === -7
+    ? new Map<unknown, unknown>([[1, 2], [3, -7], [-1, 1], [-2, fromBase64Url(jwk.x!)], [-3, fromBase64Url(jwk.y!)]])
+    : new Map<unknown, unknown>([[1, 3], [3, -257], [-1, fromBase64Url(jwk.n!)], [-2, fromBase64Url(jwk.e!)]]));
   const flags = 0x59 | (input.userVerified ? 0x04 : 0);
   const authenticatorData = concat(rpHash, Uint8Array.of(flags), uint32(0), MONICA_AAGUID, uint16(credentialBytes.length), credentialBytes, coseKey);
   const attestationObject = encodeCbor(new Map<unknown, unknown>([["fmt", "none"], ["attStmt", new Map()], ["authData", authenticatorData]]));
   const clientDataJSON = clientData("webauthn.create", input.challenge, input.origin);
   return {
     credentialId,
+    ...(credentialIdUuid ? { credentialIdUuid } : {}),
     rpId,
     publicKeySpki: toBase64(new Uint8Array(spki)),
     privateKeyPkcs8: toBase64(new Uint8Array(pkcs8)),
@@ -89,7 +108,7 @@ export async function createPasskey(input: PasskeyCreateInput): Promise<PasskeyC
       attestationObject: toBase64Url(attestationObject),
       authenticatorData: toBase64Url(authenticatorData),
       publicKey: toBase64Url(new Uint8Array(spki)),
-      publicKeyAlgorithm: -7
+      publicKeyAlgorithm: algorithm
     }
   };
 }
@@ -97,7 +116,12 @@ export async function createPasskey(input: PasskeyCreateInput): Promise<PasskeyC
 export async function createAssertion(input: PasskeyAssertionInput): Promise<{ response: { clientDataJSON: string; authenticatorData: string; signature: string; userHandle: string }; signCount: number }> {
   const rpId = validateRpId(input.origin, input.rpId);
   assertChallenge(input.challenge);
-  const privateKey = await crypto.subtle.importKey("pkcs8", arrayBuffer(fromBase64(input.privateKeyPkcs8)), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const algorithm = input.algorithm ?? -7;
+  if (!supportsPasskeySigningAlgorithm(algorithm)) throw new Error("不支持此 Passkey 签名算法。");
+  const keyAlgorithm = algorithm === -7 ? { name: "ECDSA", namedCurve: "P-256" }
+    : algorithm === -8 ? { name: "Ed25519" }
+      : { name: algorithm === -37 ? "RSA-PSS" : "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+  const privateKey = await crypto.subtle.importKey("pkcs8", arrayBuffer(fromBase64(input.privateKeyPkcs8)), keyAlgorithm, false, ["sign"]);
   // Counter policy and any required server commit happen before cryptographic signing.
   assertPasskeyCounter(input.signCount);
   const nextCount = input.signCount;
@@ -108,12 +132,14 @@ export async function createAssertion(input: PasskeyAssertionInput): Promise<{ r
   const authenticatorData = concat(rpHash, Uint8Array.of(flags), uint32(nextCount));
   const clientDataJSON = clientData("webauthn.get", input.challenge, input.origin);
   const clientHash = new Uint8Array(await crypto.subtle.digest("SHA-256", arrayBuffer(clientDataJSON)));
-  const rawSignature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, arrayBuffer(concat(authenticatorData, clientHash))));
+  const signatureAlgorithm = algorithm === -7 ? { name: "ECDSA", hash: "SHA-256" }
+    : algorithm === -37 ? { name: "RSA-PSS", saltLength: 32 } : { name: keyAlgorithm.name };
+  const rawSignature = new Uint8Array(await crypto.subtle.sign(signatureAlgorithm, privateKey, arrayBuffer(concat(authenticatorData, clientHash))));
   return {
     response: {
       clientDataJSON: toBase64Url(clientDataJSON),
       authenticatorData: toBase64Url(authenticatorData),
-      signature: toBase64Url(ecdsaRawToDer(rawSignature)),
+      signature: toBase64Url(algorithm === -7 ? ecdsaRawToDer(rawSignature) : rawSignature),
       userHandle: input.userHandle
     },
     signCount: nextCount

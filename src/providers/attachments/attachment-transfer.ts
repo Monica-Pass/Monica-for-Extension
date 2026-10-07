@@ -127,7 +127,7 @@ export class ProviderAttachmentTransferCoordinator {
       let targetAttachment: ProviderAttachmentSummary;
       try {
         targetAttachment = validateTargetMutation(targetCommitted, source);
-        const targetDigest = await hashAttachment(
+        const targetDigest = await hashProviderAttachment(
           backend,
           request.targetProviderId,
           request.targetItemId,
@@ -265,8 +265,8 @@ async function copySourceToTarget(
   return hasher.digest("hex");
 }
 
-async function hashAttachment(
-  backend: ProviderAttachmentTransferBackend,
+export async function hashProviderAttachment(
+  backend: Pick<ProviderAttachmentTransferBackend, 'beginRead' | 'readChunk' | 'releaseRead'>,
   providerId: string,
   itemId: string,
   attachmentId: string,
@@ -274,15 +274,13 @@ async function hashAttachment(
   expectedSize: number
 ): Promise<string> {
   const read = await backend.beginRead(providerId, itemId, attachmentId);
-  validateReadBegin(read, attachmentId);
-  if (read.fileName !== expectedName || read.sizeBytes !== expectedSize) {
-    await backend.releaseRead(providerId, read.readHandle).catch(() => false);
-    throw new ProviderAttachmentError("attachment-transfer-target-mismatch", "目标附件名称或大小与来源不一致。");
-  }
-  const hasher = await createSHA256();
-  hasher.init();
-  let offset = 0;
   try {
+    validateReadBegin(read, attachmentId);
+    if (read.fileName !== expectedName || read.sizeBytes !== expectedSize)
+      throw new ProviderAttachmentError("attachment-transfer-target-mismatch", "目标附件名称或大小与来源不一致。");
+    const hasher = await createSHA256();
+    hasher.init();
+    let offset = 0;
     while (offset < read.sizeBytes) {
       const maxBytes = Math.min(read.maxChunkBytes, PROVIDER_ATTACHMENT_CHUNK_BYTES, read.sizeBytes - offset);
       const chunk = await backend.readChunk(providerId, read.readHandle, offset, maxBytes);

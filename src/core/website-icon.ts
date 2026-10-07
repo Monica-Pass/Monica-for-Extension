@@ -3,6 +3,8 @@ import type { LoginItem, LoginUriRule, VaultItemKind } from "./model";
 
 /** Only display metadata is needed; passwords and provider records stay out of icon requests. */
 export interface WebsiteIconItem {
+  customIconType?: string;
+  customIconValue?: string;
   kind?: VaultItemKind;
   uris?: readonly string[];
   uriRules?: readonly LoginUriRule[];

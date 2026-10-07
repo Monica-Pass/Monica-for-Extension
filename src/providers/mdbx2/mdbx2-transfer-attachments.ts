@@ -1,3 +1,5 @@
+import { parseLosslessJson } from "../../core/lossless-json";
+import type { Mdbx2MoveAttachmentProof } from "../../core/mdbx2-move-journal";
 import type { ProviderAccount, ProviderSourceRecord, VaultItem } from "../../core/model";
 import { base64ToBytes } from "../../security/encoding";
 import {
@@ -102,6 +104,35 @@ export class Mdbx2TransferAttachmentService implements Mdbx2BatchTransferAttachm
     return copied;
   }
 
+  async captureMoveAttachmentProofs(account: ProviderAccount, sourceItem: VaultItem,
+    targetAccount: ProviderAccount, targetItem: VaultItem, operationId: string): Promise<Mdbx2MoveAttachmentProof[]> {
+    const source = await this.listSourceAttachments(account, sourceItem);
+    const proofs: Mdbx2MoveAttachmentProof[] = [];
+    for (const attachment of source) {
+      const bytes = await this.readSourceAttachment(account, sourceItem, attachment);
+      proofs.push({ itemId: targetItem.id,
+        attachmentId: account.id === targetAccount.id ? attachment.attachmentId : await mdbx2TransferUuid(operationId, `attachment:${attachment.attachmentId}`),
+        fileName: attachment.fileName, mediaType: attachment.mediaType, sizeBytes: attachment.sizeBytes, sha256: await sha256Hex(bytes) });
+    }
+    await this.verifyMoveAttachmentProofs(targetAccount, targetItem, proofs);
+    return proofs;
+  }
+
+  /** Uses saved digests only; the source may already have been deleted on recovery. */
+  async verifyMoveAttachmentProofs(targetAccount: ProviderAccount, targetItem: VaultItem,
+    proofs: readonly Mdbx2MoveAttachmentProof[]): Promise<void> {
+    if (targetAccount.kind !== "mdbx2" || proofs.some(proof => proof.itemId !== targetItem.id)) throw new Error("移动附件校验失败，来源项目已保留。");
+    const actual = await this.listSourceAttachments(targetAccount, targetItem);
+    if (actual.length !== proofs.length || new Set(proofs.map(proof => proof.attachmentId)).size !== proofs.length) throw new Error("移动附件校验失败，来源项目已保留。");
+    for (const proof of proofs) {
+      const attachment = actual.find(item => item.attachmentId === proof.attachmentId);
+      if (!attachment || attachment.fileName !== proof.fileName || attachment.sizeBytes !== proof.sizeBytes
+        || (attachment.mediaType || "") !== (proof.mediaType || "")) throw new Error("移动附件校验失败，来源项目已保留。");
+      const bytes = await this.readSourceAttachment(targetAccount, targetItem, attachment);
+      if (await sha256Hex(bytes) !== proof.sha256) throw new Error("移动附件校验失败，来源项目已保留。");
+    }
+  }
+
   private async readSourceAttachment(
     account: ProviderAccount,
     item: VaultItem,
@@ -127,10 +158,12 @@ export class Mdbx2TransferAttachmentService implements Mdbx2BatchTransferAttachm
     if (account.kind === "mdbx2") {
       const reference = item.providerRefs.find((candidate) => candidate.providerId === account.id);
       const read = await this.nativeClient.beginAttachmentRead(vaultHandleOf(account), attachment.attachmentId);
-      if (read.attachmentId !== attachment.attachmentId || read.sizeBytes !== attachment.sizeBytes) throw new Error("MDBX2 附件读取目标不一致。");
       try {
+        if (read.attachmentId !== attachment.attachmentId || read.sizeBytes !== attachment.sizeBytes || read.fileName !== attachment.fileName) throw new Error("MDBX2 附件读取目标不一致。");
         while (offset < bytes.length || (offset === 0 && bytes.length === 0)) {
           const chunk = await this.nativeClient.readAttachmentChunk(read.readHandle, offset, Math.min(read.maxChunkBytes, MDBX2_MAX_BINARY_CHUNK_BYTES));
+          if (chunk.readHandle !== read.readHandle || chunk.attachmentId !== attachment.attachmentId
+            || chunk.sizeBytes !== attachment.sizeBytes || chunk.fileName !== attachment.fileName) throw new Error("MDBX2 附件读取目标不一致。");
           if (chunk.offset !== offset || chunk.nextOffset < offset || chunk.nextOffset > bytes.length) throw new Error("MDBX2 附件读取边界无效。");
           const data = base64ToBytes(chunk.dataBase64);
           if (data.length !== chunk.nextOffset - offset) throw new Error("MDBX2 附件分块长度无效。");
@@ -184,9 +217,11 @@ export class Mdbx2TransferAttachmentService implements Mdbx2BatchTransferAttachm
           || finished.attachment.fileName !== attachment.fileName
           || finished.attachment.sizeBytes !== bytes.byteLength
       ) throw new Error(`目标附件「${attachment.fileName}」校验失败。`);
-    } catch (error) {
+    } finally {
+      // finish is replayable until the session is released. Retaining successful
+      // uploads exhausts the Host's shared read/upload slots during a batch.
+      // Abort here releases only the session, not the committed attachment.
       await this.nativeClient.abortAttachmentUpload(transferId).catch(() => undefined);
-      throw error;
     }
   }
 }
@@ -199,7 +234,7 @@ function vaultHandleOf(account: ProviderAccount): string {
 
 function parseBitwardenAttachments(payload: string): Mdbx2TransferAttachmentDescriptor[] {
   try {
-    const raw = JSON.parse(payload) as Record<string, unknown>;
+    const raw = parseLosslessJson(payload) as Record<string, unknown>;
     const attachments = raw.Attachments ?? raw.attachments;
     if (!Array.isArray(attachments)) return [];
     return attachments.flatMap((value, index) => {

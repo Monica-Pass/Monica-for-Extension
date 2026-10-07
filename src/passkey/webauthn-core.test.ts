@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { createAssertion, createPasskey, fromBase64Url, validateRpId } from "./webauthn-core";
 
+it("keeps UUID storage and WebAuthn credential bytes identical for Bitwarden-compatible registration", async () => {
+  const created = await createPasskey({ origin: "https://example.com", challenge: Buffer.alloc(32, 71).toString("base64url"), rpName: "Synthetic",
+    userId: "AAECA_8", userName: "synthetic", userDisplayName: "Synthetic", algorithms: [-7], excludeCredentialIds: [], credentialIdFormat: "uuid" });
+  expect(created.credentialIdUuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const bytes = Buffer.from(created.credentialIdUuid!.replace(/-/g, ""), "hex");
+  expect(Buffer.from(fromBase64Url(created.credentialId))).toEqual(bytes);
+  expect(bytes).toHaveLength(16);
+  const auth = Buffer.from(fromBase64Url(created.response.authenticatorData));
+  expect(auth.readUInt16BE(53)).toBe(16);
+  expect(auth.subarray(55, 71)).toEqual(bytes);
+});
+
 const challenge = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
 describe("WebAuthn passkey core", () => {
@@ -34,8 +46,26 @@ describe("WebAuthn passkey core", () => {
   });
 
   it("rejects unsupported algorithms and short challenges", async () => {
-    await expect(createPasskey({ origin: "https://example.com", challenge, rpName: "Example", userId: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithms: [-257], excludeCredentialIds: [] })).rejects.toThrow("ES256");
+    await expect(createPasskey({ origin: "https://example.com", challenge, rpName: "Example", userId: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithms: [-37], excludeCredentialIds: [] })).rejects.toThrow("不支持");
     await expect(createPasskey({ origin: "https://example.com", challenge: "AQ", rpName: "Example", userId: "dXNlcg", userName: "joy", userDisplayName: "Joy", algorithms: [-7], excludeCredentialIds: [] })).rejects.toThrow("challenge");
+  });
+
+  it("registers RSA with a canonical COSE key matching SPKI and verifies an assertion with that COSE key", async () => {
+    const created = await createPasskey({ origin: "https://example.com", challenge, rpName: "Example", userId: "dXNlcg", userName: "synthetic", userDisplayName: "Synthetic", algorithms: [-257, -7], excludeCredentialIds: [], userVerified: true });
+    expect(created.response.publicKeyAlgorithm).toBe(-257);
+    const auth = Buffer.from(created.response.authenticatorData, "base64url");
+    expect(auth[32]).toBe(0x5d);
+    expect(auth.readUInt32BE(33)).toBe(0);
+    const cose = auth.subarray(55 + auth.readUInt16BE(53));
+    // RFC 9052 RSA: map(4), kty=3, alg=-257, n=256 bytes, e=010001.
+    expect(cose.subarray(0, 11)).toEqual(Buffer.from("a401030339010020590100", "hex"));
+    expect(cose.subarray(267)).toEqual(Buffer.from("2143010001", "hex"));
+    const publicKey = createPublicKey({ format: "jwk", key: { kty: "RSA", n: cose.subarray(11, 267).toString("base64url"), e: "AQAB" } });
+    expect(publicKey.export({ format: "der", type: "spki" }).toString("base64")).toBe(created.publicKeySpki);
+    const assertion = await createAssertion({ origin: "https://example.com", challenge, credentialId: created.credentialId, userHandle: "dXNlcg", privateKeyPkcs8: created.privateKeyPkcs8, algorithm: -257, signCount: 0, userVerified: true });
+    const client = Buffer.from(assertion.response.clientDataJSON, "base64url");
+    const signed = Buffer.concat([Buffer.from(assertion.response.authenticatorData, "base64url"), createHash("sha256").update(client).digest()]);
+    expect(verify("sha256", signed, publicKey, Buffer.from(assertion.response.signature, "base64url"))).toBe(true);
   });
 
   it("retains an imported credential's backup eligibility rather than changing its registration identity", async () => {
@@ -47,13 +77,13 @@ describe("WebAuthn passkey core", () => {
   it("verifies alternating signatures from independent synced copies without advancing the RP counter", async () => {
     const created = await createPasskey({ origin: "https://github.com", challenge, rpId: "github.com", rpName: "GitHub", userId: "dXNlcg", userName: "synthetic", userDisplayName: "Synthetic", algorithms: [-7], excludeCredentialIds: [] });
     const publicKey = createPublicKey({ key: Buffer.from(created.publicKeySpki, "base64"), format: "der", type: "spki" });
-    const copies = [0, 0, 73].map(signCount => ({ ...created, signCount }));
+    const copies = [0, 0, 0].map(signCount => ({ ...created, signCount }));
     let serverCounter = 0;
     for (const [attempt, device] of [0, 1, 0, 2, 1, 2].entries()) {
       const currentChallenge = Buffer.alloc(32, attempt + 1).toString("base64url");
       const copy = copies[device];
-      // The independent-copy policy explicitly supplies zero; the crypto primitive
-      // also supports counters already committed by the Bitwarden coordinator.
+      // All copies have a zero-counter registration. Positive history is tested
+      // through its durable counter policy, not reset by the signing primitive.
       const assertion = await createAssertion({ origin: "https://github.com", challenge: currentChallenge, rpId: "github.com", credentialId: copy.credentialId, userHandle: "dXNlcg", privateKeyPkcs8: copy.privateKeyPkcs8, signCount: 0, userVerified: true });
       const authData = Buffer.from(assertion.response.authenticatorData, "base64url");
       const clientData = Buffer.from(assertion.response.clientDataJSON, "base64url");

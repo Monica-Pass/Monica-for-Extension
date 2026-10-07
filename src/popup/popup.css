@@ -429,6 +429,18 @@ body.popup-body {
   overflow-wrap: anywhere;
 }
 
+.popup-item-account {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.popup-credential-identity {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--app-text);
+}
+
 .popup-totp-icon {
   --m3e-icon-size: 14px;
   flex: 0 0 14px;

@@ -1,8 +1,10 @@
-import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 import { decodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
 import { deriveBitwardenMasterKey, encryptBitwardenString, stretchBitwardenMasterKey, type BitwardenKdfConfig, type BitwardenSymmetricKey } from "../../src/providers/bitwarden/bitwarden-crypto";
+import { completeUserVerification } from "./fixtures/passkey-verification";
 
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 const IMPORTED_CREDENTIAL_ID = "AAECAwQFBgcICQoLDA0ODw";
@@ -28,10 +30,11 @@ async function confirmFirstPasskey(page: import("@playwright/test").Page): Promi
 test("passkey bridge creates an encrypted ES256 credential and signs a later assertion", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
-    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey e2e master password" }))).toMatchObject({ ok: true });
+    const masterPassword = "passkey e2e master password";
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
     await context.route("https://passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><title>Passkey Test</title><button id="register">Register passkey</button><button id="authenticate">Authenticate passkey</button><output id="result"></output><script>
       const challenge = () => new Uint8Array(32).fill(7); let credentialId;
       const decode = value => { const normalized=value.replace(/-/g,'+').replace(/_/g,'/'); const binary=atob(normalized+'='.repeat((4-normalized.length%4)%4)); return Uint8Array.from(binary,c=>c.charCodeAt(0)); };
@@ -41,12 +44,14 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
     const page = await context.newPage(); await page.goto("https://passkey.example.test/");
     await page.locator("#register").click();
     await confirmPasskeyCreate(page);
+    await completeUserVerification(context, masterPassword);
     await expect(page.locator("#result")).toContainText("registered:"); await expect(page.locator("#result")).not.toContainText("error:");
     const created = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(created.data).toEqual([expect.objectContaining({ kind: "passkey", sourceMode: "browser-local", privateKeyPkcs8: expect.any(String), signCount: 0 })]);
     const sessionSnapshot = await manager.evaluate(async () => chrome.storage.session.get(null));
     expect(JSON.stringify(sessionSnapshot)).not.toContain(String(created.data[0].privateKeyPkcs8));
     await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
+    await completeUserVerification(context, masterPassword);
     await expect(page.locator("#result")).toContainText("authenticated:"); await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(signed.data[0]).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
@@ -74,7 +79,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
     }] }
   };
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-import"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("pk-import"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     await context.route("https://import-bw.example.test/**", async (route) => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
@@ -94,7 +99,8 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
     </script>` }));
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
-    const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "imported provider vault password" })) as { ok: boolean; error?: string };
+    const vaultPassword = "imported provider vault password";
+    const setup = await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), vaultPassword) as { ok: boolean; error?: string };
     expect(setup.ok, setup.error).toBe(true);
     const login = await manager.evaluate(async ({ email, masterPassword }) => chrome.runtime.sendMessage({ type: "BITWARDEN_LOGIN", name: "Imported Bitwarden", vaultUrl: "https://import-bw.example.test", email, masterPassword }), { email, masterPassword }) as { ok: boolean; data: { providerId: string }; error?: string };
     expect(login.ok, login.error).toBe(true);
@@ -104,6 +110,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
 
     const page = await context.newPage(); await page.goto("https://imported-passkey.example.test/");
     await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
+    await completeUserVerification(context, vaultPassword);
     await expect(page.locator("#result")).toContainText(`authenticated:${IMPORTED_CREDENTIAL_ID}:`);
     await expect(page.locator("#result")).not.toContainText("error:");
     expect((await decodeBitwardenCipher(remoteCipher, login.data.providerId, vaultKey)).items.find(item => item.kind === "passkey")).toMatchObject({ signCount: 5 });
@@ -113,7 +120,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
 test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     const masterPassword = "pending passkey lock password";
@@ -135,7 +142,7 @@ test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, 
 test("locking immediately after confirmation keeps the page and vault consistent", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     const masterPassword = "passkey lock race password";
@@ -164,7 +171,7 @@ test("locking immediately after confirmation keeps the page and vault consistent
 test("aborting immediately after confirmation never leaves an orphaned Passkey", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
     expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "abort passkey password" }))).toMatchObject({ ok: true });
@@ -190,10 +197,11 @@ test("aborting immediately after confirmation never leaves an orphaned Passkey",
 test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
-    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "exclude recheck password" }))).toMatchObject({ ok: true });
+    const masterPassword = "exclude recheck password";
+    expect(await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), masterPassword)).toMatchObject({ ok: true });
     await context.route("https://exclude-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><button id="register">Register</button><output id="result"></output><script>
       register.onclick = async () => { try { await navigator.credentials.create({ publicKey: { challenge: new Uint8Array(32).fill(8), rp: { id: 'exclude-passkey.example.test', name: 'Exclude test' }, user: { id: new Uint8Array(16).fill(6), name: 'joy', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], excludeCredentials: [{ type: 'public-key', id: new Uint8Array([1,2,3,4]) }], timeout: 60000 } }); result.textContent='registered'; } catch(error) { result.textContent='error:'+error.name; } };
     </script>` }));
@@ -208,6 +216,7 @@ test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
     })).toMatchObject({ ok: true });
     await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
     await page.keyboard.press("Enter");
+    await completeUserVerification(context, masterPassword);
     await expect(page.locator("#result")).toHaveText("error:InvalidStateError");
     await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
     expect((await listVaultItems(manager)).map((item) => item.id)).toEqual(["late-excluded-passkey"]);
@@ -223,12 +232,13 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
   const protectedKey = await new BitwardenClient((() => Promise.reject(new Error("unused"))) as unknown as typeof fetch).protectVaultKey(vaultKey, stretched, Uint8Array.from({ length: 16 }, (_, index) => index));
   let remoteCipher: Record<string, unknown> | undefined; let postCount = 0; let putCount = 0; let deleteCount = 0;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("bitwarden-passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("bitwarden-passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     await context.route("https://bw.example.test/**", async (route) => {
       const request = route.request(); const pathname = new URL(request.url()).pathname;
       if (pathname === "/identity/accounts/prelogin/password") return jsonRoute(route, { Kdf: 0, KdfIterations: kdf.iterations });
       if (pathname === "/identity/connect/token") return jsonRoute(route, { access_token: "e2e-access-token", refresh_token: "e2e-refresh-token", expires_in: 3600, Key: protectedKey });
       if (pathname === "/api/sync") return jsonRoute(route, { Profile: { Id: "e2e-user" }, Ciphers: remoteCipher ? [remoteCipher] : [] });
+      if (pathname === "/api/accounts/revision-date") return jsonRoute(route, Date.parse(String(new URL(request.url()).searchParams.get("since") || "")) || 1767225600000);
       if (pathname === "/api/ciphers" && request.method() === "POST") {
         postCount += 1;
         remoteCipher = { ...(request.postDataJSON() as Record<string, unknown>), id: "e2e-passkey-cipher", revisionDate: "2026-07-15T05:30:00.000Z", creationDate: "2026-07-15T05:29:00.000Z" };
@@ -244,21 +254,23 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage(); await manager.goto(`chrome-extension://${extensionId}/index.html`);
-    const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "passkey provider e2e password" })) as { ok: boolean; error?: string };
+    const vaultPassword = "passkey provider e2e password";
+    const setup = await manager.evaluate(async (password) => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), vaultPassword) as { ok: boolean; error?: string };
     expect(setup.ok, setup.error).toBe(true);
     const login = await manager.evaluate(async ({ email, masterPassword }) => chrome.runtime.sendMessage({ type: "BITWARDEN_LOGIN", name: "Bitwarden E2E", vaultUrl: "https://bw.example.test", email, masterPassword, isDefaultSaveTarget: true }), { email, masterPassword }) as { ok: boolean; data: { providerId: string }; error?: string };
     expect(login.ok, login.error).toBe(true);
     expect(login.data.providerId).toEqual(expect.any(String));
     const providerId = login.data.providerId;
 
-    await context.route("https://bitwarden-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: passkeyPage("bitwarden-passkey.example.test") }));
+    await context.route("https://bitwarden-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: passkeyPage("bitwarden-passkey.example.test", [-257, -7]) }));
     const page = await context.newPage(); await page.goto("https://bitwarden-passkey.example.test/");
     await page.locator("#register").click();
     await confirmPasskeyCreate(page);
+    await completeUserVerification(context, vaultPassword);
     await expect(page.locator("#result")).toContainText("registered:");
     const createdLocally = await listVaultItems(manager);
     const localPasskey = createdLocally.find((item) => item.kind === "passkey")!;
-    expect(localPasskey).toMatchObject({ sourceMode: "bitwarden", providerRefs: [{ providerId }] });
+    expect(localPasskey).toMatchObject({ algorithm: -7, sourceMode: "bitwarden", providerRefs: [{ providerId }] });
 
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
     expect(postCount).toBe(1);
@@ -271,6 +283,7 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
 
     await page.locator("#authenticate").click();
     await confirmFirstPasskey(page);
+    await completeUserVerification(context, vaultPassword);
     await expect(page.locator("#result")).toContainText("authenticated:");
     expect((await listVaultItems(manager)).find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
@@ -286,14 +299,21 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
     expect(deleteCount).toBe(0);
     expect((await decodeBitwardenCipher(remoteCipher!, providerId, vaultKey)).items.map((item) => item.kind)).toEqual(["login"]);
     expect((await listVaultItems(manager)).map((item) => item.kind)).toEqual(["login"]);
+    // A RSA-only RP must not be offered the ES256-only default Bitwarden target.
+    await page.evaluate(() => { (window as any).algorithms = [-257]; });
+    await page.locator("#register").click();
+    await confirmPasskeyCreate(page); await completeUserVerification(context, vaultPassword);
+    await expect(page.locator("#result")).toContainText("registered:");
+    expect((await listVaultItems(manager)).find(item => item.kind === "passkey")).toMatchObject({ algorithm: -257, sourceMode: "browser-local", providerRefs: [] });
+    expect(postCount).toBe(1); expect(putCount).toBe(1);
   } finally { await context?.close(); }
 });
 
-function passkeyPage(rpId: string): string {
+function passkeyPage(rpId: string, algorithms = [-7]): string {
   return `<!doctype html><title>Bitwarden Passkey Test</title><button id="register">Register passkey</button><button id="authenticate">Authenticate passkey</button><output id="result"></output><script>
-    const challenge = () => new Uint8Array(32).fill(11); let credentialId;
+    const challenge = () => new Uint8Array(32).fill(11); let credentialId; window.algorithms = ${JSON.stringify(algorithms)};
     const decode = value => { const normalized=value.replace(/-/g,'+').replace(/_/g,'/'); const binary=atob(normalized+'='.repeat((4-normalized.length%4)%4)); return Uint8Array.from(binary,c=>c.charCodeAt(0)); };
-    register.onclick = async () => { try { const credential = await navigator.credentials.create({ publicKey: { challenge: challenge(), rp: { id: '${rpId}', name: 'Bitwarden Passkey Test' }, user: { id: new Uint8Array(16).fill(12), name: 'joy@example.com', displayName: 'Joy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000, attestation: 'none' } }); credentialId=credential.id; result.textContent='registered:'+credential.id; } catch(error) { result.textContent='error:'+error.name+':'+error.message; } };
+    register.onclick = async () => { try { const credential = await navigator.credentials.create({ publicKey: { challenge: challenge(), rp: { id: '${rpId}', name: 'Bitwarden Passkey Test' }, user: { id: new Uint8Array(16).fill(12), name: 'joy@example.com', displayName: 'Joy' }, pubKeyCredParams: window.algorithms.map(alg => ({ type: 'public-key', alg })), timeout: 60000, attestation: 'none' } }); credentialId=credential.id; result.textContent='registered:'+credential.id; } catch(error) { result.textContent='error:'+error.name+':'+error.message; } };
     authenticate.onclick = async () => { try { const credential = await navigator.credentials.get({ publicKey: { challenge: challenge(), rpId: '${rpId}', allowCredentials: [{ type:'public-key', id: decode(credentialId) }], timeout: 60000 } }); result.textContent='authenticated:'+credential.id+':'+credential.response.signature.byteLength; } catch(error) { result.textContent='error:'+error.name+':'+error.message; } };
   </script>`;
 }

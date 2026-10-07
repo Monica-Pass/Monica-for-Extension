@@ -1,5 +1,6 @@
 import * as kdbxweb from "kdbxweb";
 import { argon2d, argon2i, argon2id } from "hash-wasm";
+import { installKdbxXmlParser } from './keepass-xml';
 
 /**
  * kdbxweb has no Argon2 of its own — it requires the host to inject one (`CryptoEngine.setArgon2Impl`).
@@ -17,6 +18,7 @@ let installed = false;
 
 export function installKdbxCryptoEngine(): void {
   if (installed) return;
+  installKdbxXmlParser();
   installed = true;
   kdbxweb.CryptoEngine.setArgon2Impl(
     async (password, salt, memory, iterations, length, parallelism, type, version) => {

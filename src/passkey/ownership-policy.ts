@@ -26,17 +26,21 @@ export function assertPasskeyCounter(counter: number): void {
   }
 }
 
-/** Bitwarden leaves zero counters unchanged and increments historical positive counters. */
-export function nextBitwardenPasskeyCounter(counter: number): number {
+/** Zero-count credentials stay zero; observed positive history must advance. */
+export function nextPasskeyCounter(counter: number): number {
   assertPasskeyCounter(counter);
   if (counter === 0xffffffff) throw new Error("Passkey 签名计数已达上限，请在网站重新注册此凭据。");
   return counter === 0 ? 0 : counter + 1;
 }
 
+export const nextBitwardenPasskeyCounter = nextPasskeyCounter;
+
 export function passkeyCounterHighWaterMark(item: PasskeyItem): number {
   assertPasskeyCounter(item.signCount);
   const highest = item.signCountHighWaterMark ?? item.signCount;
   assertPasskeyCounter(highest);
+  // A queued increment has not yet been acknowledged by its provider. Its
+  // explicit watermark still describes the last confirmed remote count.
   return highest;
 }
 

@@ -7,6 +7,23 @@ const META = { headCommitId: "commit-1", updatedAt: "2026-08-02T00:00:00Z" };
 const P256_PKCS8 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsloK6aKNvj0CZMYdBdSZs+AUAsFy1t66q4tq5SvyeJahRANCAASlCTbHlIcaKQ2lzoEFhtjkLEO++f3cYq6FMYG7eH3BmuLQPz71FAtWq4z+tIb7oequwhUJL3xos1nA8jFqpkDs";
 
 describe("MDBX2 Android item codec", () => {
+  it("decodes stable note links and preserves or explicitly replaces them independently of Room IDs", () => {
+    const payload = { kind: "password", monica_entry_id: "password:42", bound_note_entry_id: "note:stable", bound_note_room_id: 17, future: { keep: true } };
+    const record: Mdbx2ObjectRecord = { objectId: "native-login", collectionId: "vault", objectTypeId: "login", title: "Linked", payloadSchemaVersion: 1, deleted: false, payloadJson: JSON.stringify(payload) };
+    const decoded = decodeMdbx2Object(record, META, "source");
+    expect(decoded.item).toMatchObject({ boundNoteEntryId: "note:stable", boundNoteId: 17 });
+    const original = decoded.item as LoginItem;
+    const write = (patch: Partial<LoginItem>) => JSON.parse(encodeMdbx2Object({ ...original, ...patch }, decoded.payload, original)!.payloadJson);
+    expect(write({ title: "Renamed" })).toEqual(payload);
+    expect(write({ boundNoteEntryId: "note:replacement", boundNoteId: undefined })).toMatchObject({ bound_note_entry_id: "note:replacement", bound_note_room_id: null, future: { keep: true } });
+    expect(write({ boundNoteEntryId: undefined, boundNoteId: undefined })).toMatchObject({ bound_note_entry_id: null, bound_note_room_id: null });
+    for (const source of [undefined, null, "", 123, { future: true }]) {
+      const raw = { ...payload, bound_note_entry_id: source };
+      const item = decodeMdbx2Object({ ...record, payloadJson: JSON.stringify(raw) }, META, "source");
+      expect(item.item?.boundNoteEntryId).toBeUndefined();
+      expect(JSON.parse(encodeMdbx2Object({ ...item.item!, title: "Changed" }, item.payload, item.item)!.payloadJson)).toEqual(JSON.parse(JSON.stringify(raw)));
+    }
+  });
   it("uses the current Android logical ID prefixes for every shared item kind", () => {
     const cases: Array<[VaultItem["kind"], string]> = [
       ["login", "password"],
@@ -168,7 +185,7 @@ describe("MDBX2 Android item codec", () => {
     const changed = { ...(decoded.item as TotpItem), accountName: "alice-new" };
     const encoded = encodeMdbx2Object(changed, decoded.payload, decoded.item)!;
     const payload = JSON.parse(encoded.payloadJson) as Record<string, unknown>;
-    expect(encoded).toMatchObject({ objectTypeId: "steam-mafile", logicalObjectId: "steam-mafile:76561198000000000" });
+    expect(encoded).toMatchObject({ objectTypeId: "steam-mafile", logicalObjectId: `native:${record.objectId}`, expectedHeadCommitId: META.headCommitId });
     expect(payload).toMatchObject({ account_name: "alice-new", future_payload_field: 9 });
     expect(JSON.parse(String(payload.mafile_json))).toMatchObject({ account_name: "alice-new", future_mafile_field: { keep: true } });
   });
@@ -218,7 +235,7 @@ describe("MDBX2 Android item codec", () => {
       payloadSchemaVersion: 9,
       deleted: false
     }, META, "mdbx-provider");
-    expect(decoded.item).toBeUndefined();
+    expect(decoded.item).toMatchObject({ kind: "opaque", nativeType: "future.secret/v9", payloadSchemaVersion: 9 });
     expect(decoded.payload).toEqual({ monica_entry_id: "future:1", opaque: true });
     expect(decoded.unsupportedReason).toContain("future.secret/v9");
   });

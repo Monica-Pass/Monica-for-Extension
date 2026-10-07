@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { connect as connectNet, createServer as createNetServer } from "node:net";
+import { connect as connectNet } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Mdbx2NativePort, Mdbx2NativeRuntime } from "../../src/providers/mdbx2/native-client";
@@ -145,6 +145,7 @@ export async function buildInjectedAndroidTest(extensionRoot: string, androidRep
   const gradlew = join(androidProject, process.platform === "win32" ? "gradlew.bat" : "gradlew");
   const initScript = join(extensionRoot, "tests", "interop", "android-mdbx2", "interop.init.gradle");
   const sourceDirectory = join(extensionRoot, "tests", "interop", "android-mdbx2", "src");
+  const fixtureBuildDirectory = join(extensionRoot, ".tmp", "android-mdbx2-build");
   if (!existsSync(gradlew) || !existsSync(initScript) || !existsSync(sourceDirectory)) {
     throw new Error("Android MDBX2 interoperability build inputs are missing.");
   }
@@ -153,18 +154,19 @@ export async function buildInjectedAndroidTest(extensionRoot: string, androidRep
     "-I",
     initScript,
     ":mdbx-engine:assembleDebugAndroidTest",
+    "-Pkotlin.compiler.execution.strategy=in-process",
     "--no-daemon",
     "--console=plain"
   ];
   await runCommand(process.platform === "win32" ? ".\\gradlew.bat" : gradlew, gradleArgs, {
     cwd: androidProject,
-    env: { ...process.env, MONICA_MDBX2_INTEROP_SOURCE_DIR: sourceDirectory },
+    env: { ...process.env, MONICA_MDBX2_INTEROP_SOURCE_DIR: sourceDirectory, MONICA_MDBX2_INTEROP_BUILD_DIR: fixtureBuildDirectory },
     timeoutMs: 10 * 60_000,
     shell: process.platform === "win32"
   });
   const after = await runText("git", ["status", "--porcelain=v1", "-uall"], { cwd: androidRepository });
   if (after !== before) throw new Error("Android repository state changed while compiling the injected MDBX2 fixture.");
-  const apk = join(androidProject, "mdbx-engine", "build", "outputs", "apk", "androidTest", "debug", "mdbx-engine-debug-androidTest.apk");
+  const apk = join(fixtureBuildDirectory, "outputs", "apk", "androidTest", "debug", "mdbx-engine-debug-androidTest.apk");
   if (!existsSync(apk)) throw new Error("Injected Android MDBX2 instrumentation APK was not produced.");
   return apk;
 }
@@ -183,21 +185,30 @@ export async function ensureAndroidEnvironment(androidRepository: string): Promi
   const configuredAdbServerPort = process.env.MONICA_MDBX2_INTEROP_ADB_SERVER_PORT?.trim();
   const adbServerPort = configuredAdbServerPort
     ? parseTcpPort(configuredAdbServerPort, "Android ADB server port")
-    : await allocateLoopbackPort();
-  const startedAdbServer = !await isLoopbackPortListening(adbServerPort);
+    : 5037;
+  // The shared AVD is registered on the ordinary ADB server. Never stop that
+  // server during cleanup, even if this invocation had to start it.
+  const startedAdbServer = adbServerPort !== 5037 && !await isLoopbackPortListening(adbServerPort);
   let serial: string | undefined;
   let startedEmulator = false;
   try {
     await runText(adb, ["start-server"], adbOptions(adbServerPort, { timeoutMs: 30_000 }));
     const existing = await connectedDevices(adb, adbServerPort);
     const requestedSerial = process.env.MONICA_MDBX2_INTEROP_SERIAL?.trim();
+    const avd = process.env.MONICA_MDBX2_INTEROP_AVD || "Monica_Issue136_API_32";
     if (requestedSerial) {
       if (!existing.includes(requestedSerial)) throw new Error(`Requested Android device is unavailable: ${requestedSerial}`);
       await waitForBoot(adb, adbServerPort, requestedSerial);
       return { adb, adbServerPort, emulator, serial: requestedSerial, startedAdbServer, startedEmulator: false };
     }
 
-    const avd = process.env.MONICA_MDBX2_INTEROP_AVD || "Pixel_Fold_API_35";
+    for (const candidate of existing.filter((device) => device.startsWith("emulator-"))) {
+      const name = await runText(adb, ["-s", candidate, "emu", "avd", "name"], adbOptions(adbServerPort, { timeoutMs: 30_000 }));
+      if (name.split(/\r?\n/).some((line) => line.trim() === avd)) {
+        await waitForBoot(adb, adbServerPort, candidate);
+        return { adb, adbServerPort, emulator, serial: candidate, startedAdbServer, startedEmulator: false };
+      }
+    }
     const availableAvds = (await runText(emulator, ["-list-avds"], { timeoutMs: 30_000 })).split(/\r?\n/).filter(Boolean);
     if (!availableAvds.includes(avd)) throw new Error(`Android AVD ${avd} is unavailable.`);
     const configuredPort = process.env.MONICA_MDBX2_INTEROP_EMULATOR_PORT?.trim();
@@ -212,7 +223,6 @@ export async function ensureAndroidEnvironment(androidRepository: string): Promi
     const child = spawn(emulator, [
       "-avd", avd,
       "-port", port,
-      "-read-only",
       "-no-window",
       "-no-audio",
       "-no-boot-anim",
@@ -274,7 +284,9 @@ export async function clearAndroidFixture(
     try {
       await commandRunner(
         environment,
-        ["-s", environment.serial, "shell", "pm", "clear", FIXTURE_PACKAGE],
+        // Only this runner's synthetic fixture tree; never clear app data or
+        // Keystore on the shared device.
+        ["-s", environment.serial, "shell", "run-as", FIXTURE_PACKAGE, "rm", "-rf", FIXTURE_ROOT],
         { timeoutMs: 30_000 }
       );
       return;
@@ -427,22 +439,6 @@ function parseTcpPort(value: string, label: string): number {
 
 function isTransientAndroidPackageManagerFailure(error: unknown): boolean {
   return error instanceof Error && /Broken pipe|device offline|device still authorizing|connection reset|closed/i.test(error.message);
-}
-
-async function allocateLoopbackPort(): Promise<number> {
-  const server = createNetServer();
-  await new Promise<void>((resolvePromise, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolvePromise());
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
-    throw new Error("Unable to allocate a dedicated Android ADB server port.");
-  }
-  const port = address.port;
-  await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
-  return port;
 }
 
 async function isLoopbackPortListening(port: number): Promise<boolean> {

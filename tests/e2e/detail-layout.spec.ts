@@ -130,7 +130,7 @@ test("protected duplicate fields reveal independently, copy exactly and reset on
   await expandFieldGroup(detail, "恢复密钥");
   await expect(recoveryRows.nth(0).locator("code")).toHaveText("••••••••");
   await detail.getByRole("button", { name: "编辑", exact: true }).click();
-  await expect(dialogContent(manager, { name: "编辑登录项", exact: true })).toBeVisible();
+  await expect(dialogContent(manager, { name: "编辑密码", exact: true })).toBeVisible();
   await expect(manager.getByLabel("名称 *", { exact: true })).toHaveValue(login.title);
 });
 

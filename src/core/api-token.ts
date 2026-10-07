@@ -1,3 +1,4 @@
+import { jsonNumber, jsonScalarText, parseLosslessJson } from "./lossless-json";
 import type { ApiTokenItem } from "./model";
 
 export const API_TOKEN_TYPE = "api-token";
@@ -11,10 +12,25 @@ type JsonObject = Record<string, unknown>;
 const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
 const control = /[\u0000-\u001f\u007f-\u009f]/;
 
+/** Android field IDs are signed Longs; strings are only a browser-model projection. */
+function fieldIdText(value: unknown, model = false): string | undefined {
+  if (typeof value === "string" && !model) return;
+  if (typeof value === "number" && !Number.isSafeInteger(value)) return;
+  const text = jsonScalarText(value);
+  if (!/^-?(?:0|[1-9]\d*)$/.test(text)) return;
+  const integer = BigInt(text);
+  if (integer < -9223372036854775808n || integer > 9223372036854775807n) return;
+  return integer.toString();
+}
+
+function originalFieldId(field: JsonObject, index: number): string {
+  return field.id === undefined ? String(-(index + 1)) : fieldIdText(field.id)!;
+}
+
 function object(value: string, maximum: number): JsonObject | undefined {
   if (bytes(value) > maximum) return;
   try {
-    const parsed: unknown = JSON.parse(value);
+    const parsed: unknown = parseLosslessJson(value);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as JsonObject : undefined;
   } catch { return; }
 }
@@ -33,13 +49,13 @@ export function decodeApiTokenMetadata(value: string): JsonObject | undefined {
   if ("notes" in fields && typeof fields.notes !== "string") return;
   if ("custom_fields" in fields) {
     if (!Array.isArray(fields.custom_fields) || fields.custom_fields.length > 128) return;
-    const ids = new Set<number>();
+    const ids = new Set<string>();
     for (const [index, entry] of fields.custom_fields.entries()) {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
       const field = entry as JsonObject;
-      const id = field.id ?? -(index + 1);
-      if (!Number.isSafeInteger(id) || ids.has(id as number) || typeof field.title !== "string" || typeof field.value !== "string" || typeof field.protected !== "boolean") return;
-      ids.add(id as number);
+      const id = field.id === undefined ? String(-(index + 1)) : fieldIdText(field.id);
+      if (id === undefined || ids.has(id) || typeof field.title !== "string" || typeof field.value !== "string" || typeof field.protected !== "boolean") return;
+      ids.add(id);
     }
   }
   return fields;
@@ -57,7 +73,10 @@ export function apiTokenFromPayload(payloadJson: string, metadataJson?: string):
     token: payload.token as string,
     notes: typeof metadata?.notes === "string" ? metadata.notes : String(payload.note || ""),
     archivedAt: typeof archived === "string" && Number.isFinite(Date.parse(archived)) ? archived : undefined,
-    customFields: custom.map((field, index) => ({ id: (field.id as number | undefined) ?? -(index + 1), name: field.title as string, value: field.value as string, protected: field.protected as boolean })),
+    customFields: custom.map((field, index) => {
+      const id = originalFieldId(field, index);
+      return { id: Number.isSafeInteger(Number(id)) ? Number(id) : id, name: field.title as string, value: field.value as string, protected: field.protected as boolean };
+    }),
     apiTokenPayload: payloadJson,
     apiTokenMetadata: metadataJson
   };
@@ -75,13 +94,20 @@ export function serializeApiTokenPayload(item: Pick<ApiTokenItem, "provider" | "
 export function serializeApiTokenMetadata(item: Pick<ApiTokenItem, "notes" | "customFields" | "apiTokenMetadata" | "archivedAt">): string {
   const original = item.apiTokenMetadata ? decodeApiTokenMetadata(item.apiTokenMetadata) : undefined;
   if (item.apiTokenMetadata && !original) throw new Error("API 密钥补充字段无法识别，请保留原件后重新导入。");
-  const previous = new Map(((original?.custom_fields || []) as JsonObject[]).map((field, index) => [(field.id as number | undefined) ?? -(index + 1), field]));
-  const occupied = new Set(item.customFields.flatMap(field => field.id === undefined ? [] : [field.id]));
+  const previous = new Map(((original?.custom_fields || []) as JsonObject[]).map((field, index) => [originalFieldId(field, index), field]));
+  const occupied = new Set<string>();
+  for (const field of item.customFields) {
+    if (field.id === undefined) continue;
+    const id = fieldIdText(field.id, true);
+    if (id === undefined || occupied.has(id)) throw new Error("API 密钥字段标识必须为不重复的 64 位整数。");
+    occupied.add(id);
+  }
   let nextId = -1;
   const fields = item.customFields.map(field => {
-    while (occupied.has(nextId)) nextId--;
-    const id = field.id ?? nextId--;
-    return { ...previous.get(id), id, title: field.name, value: field.value, protected: field.protected };
+    while (occupied.has(String(nextId))) nextId--;
+    const id = field.id === undefined ? String(nextId--) : fieldIdText(field.id, true)!;
+    occupied.add(id);
+    return { ...previous.get(id), id: jsonNumber(id), title: field.name, value: field.value, protected: field.protected };
   });
   // Android preserves unknown label fields. Keep extension-only archive state
   // here so Android edits and subsequent extension syncs cannot lose it.

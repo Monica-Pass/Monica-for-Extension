@@ -1,0 +1,114 @@
+import { expect, test, type Page } from "@playwright/test";
+import path from "node:path";
+import { writeFile } from "node:fs/promises";
+import * as kdbxweb from "kdbxweb";
+import { launchEdgeContext } from "./fixtures/edge";
+import { SyntheticOneDrive } from "./fixtures/onedrive";
+import { buildKeePassFixture, keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
+
+const password = "Synthetic OneDrive master password", dbPassword = "Synthetic cloud database password";
+const kdbx = (kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb;
+async function send(page: Page, request: Record<string, unknown>) {
+  const response = await page.evaluate(value => chrome.runtime.sendMessage(value), request);
+  expect(response.ok, response.error).toBe(true); return response.data;
+}
+
+test("OneDrive UI cancels login, selects a KDBX, automatically publishes and restores after restart", async ({}, info) => {
+  test.setTimeout(180_000);
+  const cloud = new SyntheticOneDrive(await buildKeePassFixture({ password: dbPassword, entries: [{ title: "Original cloud login", fields: { UserName: "synthetic-user", Password: "synthetic-password" } }] }));
+  const profile = info.outputPath("profile");
+  const options = { locale: "zh-CN", viewport: { width: 1280, height: 960 }, args: [`--disable-extensions-except=${path.resolve("dist")}`, `--load-extension=${path.resolve("dist")}`] };
+  let context = await launchEdgeContext(profile, options);
+  const errors: string[] = [];
+  try {
+    let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    await cloud.install(context, worker);
+    let manager = await context.newPage(); manager.on("pageerror", error => errors.push(error.message));
+    await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
+    await send(manager, { type: "VAULT_SETUP", masterPassword: password });
+    await manager.evaluate(() => chrome.storage.local.set({ "monica.locale": "zh-CN", "monica.sync.preferences.v1": { enabled: true } }));
+    await manager.reload();
+    await manager.locator(".sidebar .nav-item").filter({ hasText: "密码源" }).click();
+    const open = () => manager.locator(".connect-source").filter({ hasText: "连接 OneDrive" }).click();
+    await open();
+    let dialog = manager.getByRole("dialog", { name: "连接 OneDrive 数据库", exact: true });
+    await expect(dialog.getByRole("button", { name: "连接并解锁", exact: true })).toBeDisabled();
+    await manager.setViewportSize({ width: 320, height: 920 });
+    await dialog.screenshot({ path: info.outputPath("login-320.png") });
+    await worker.evaluate(() => { (globalThis as any).__oneDriveTest.hold = true; });
+    await dialog.getByRole("button", { name: "登录 Microsoft", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "正在登录…", exact: true })).toBeDisabled();
+    await manager.keyboard.press("Escape"); await expect(dialog).toHaveCount(0);
+    await worker.evaluate(() => { (globalThis as any).__oneDriveTest.hold = false; (globalThis as any).__oneDriveTest.held(); });
+    await manager.setViewportSize({ width: 1280, height: 960 });
+    await open();
+    dialog = manager.getByRole("dialog", { name: "连接 OneDrive 数据库", exact: true });
+    await dialog.getByRole("button", { name: "登录 Microsoft", exact: true }).click();
+    await dialog.getByRole("button", { name: "Monica 数据库", exact: true }).click();
+    await dialog.getByLabel("搜索当前文件夹", { exact: true }).fill("no match");
+    await expect(dialog).toContainText("没有匹配的文件。");
+    await dialog.getByLabel("搜索当前文件夹", { exact: true }).fill("");
+    await dialog.getByRole("button", { name: cloud.fileName, exact: true }).click();
+    await expect(dialog.getByRole("button", { name: cloud.fileName, exact: true })).toHaveAttribute("aria-pressed", "true");
+    await dialog.getByLabel("密码源名称", { exact: true }).fill("OneDrive interop");
+    await dialog.getByLabel("数据库密码（可留空）", { exact: true }).fill(dbPassword);
+    await manager.setViewportSize({ width: 320, height: 920 });
+    await expect.poll(() => dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await dialog.screenshot({ path: info.outputPath("selected-320.png") });
+    await dialog.getByRole("button", { name: "连接并解锁", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(async () => (await send(manager, { type: "VAULT_LIST_ITEMS" })).length).toBe(1);
+    const account = (await send(manager, { type: "PROVIDER_LIST" })).find((value: any) => value.name === "OneDrive interop");
+    expect(account.config.sourceMode).toBe("onedrive");
+    expect(JSON.stringify(account)).not.toMatch(/synthetic-access|synthetic-refresh|Synthetic cloud database password/);
+    const item = (await send(manager, { type: "VAULT_LIST_ITEMS" }))[0];
+    await send(manager, { type: "VAULT_UPSERT_ITEM", item: { ...item, notes: "Automatic OneDrive upload", updatedAt: new Date().toISOString() } });
+    await expect.poll(() => cloud.puts, { timeout: 30_000 }).toBeGreaterThan(0);
+    const reopened = await kdbx.Kdbx.load(Uint8Array.from(cloud.bytes).buffer, keePassCredentials(dbPassword));
+    expect(reopened.getDefaultGroup().entries[0].fields.get("Notes")).toBe("Automatic OneDrive upload");
+    const card = manager.locator(`[data-home-provider-id="${account.id}"]`);
+    await expect(card.getByLabel("KeePass OneDrive 状态摘要")).toBeVisible();
+    await card.screenshot({ path: info.outputPath("source-320.png") });
+    const popup = await context.newPage(); await popup.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    const denied = await popup.evaluate(() => chrome.runtime.sendMessage({ type: "ONEDRIVE_LOGIN", loginId: crypto.randomUUID() }));
+    expect(denied.ok).toBe(false); await popup.close();
+
+    await manager.evaluate(() => chrome.storage.local.set({ "monica.sync.preferences.v1": { enabled: false } }));
+    await send(manager, { type: "KEEPASS_GROUP_CREATE", providerId: account.id, operationId: "unsynced-reauth", name: "Unsynced group" });
+    expect((await send(manager, { type: "KEEPASS_REMOTE_STATUS", providerId: account.id })).publicationState).toBe("pending-confirmation");
+    cloud.rejectAuth = true;
+    const rejectedSync = await manager.evaluate(id => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId: id }), account.id);
+    expect(rejectedSync.ok).toBe(false);
+    await expect(card).toContainText("OneDrive 登录已过期");
+    await card.screenshot({ path: info.outputPath("reauth-recovery-320.png") });
+    cloud.rejectAuth = false;
+    const before = cloud.bytes.toString("base64");
+    const readsBefore = cloud.reads;
+    await manager.setViewportSize({ width: 1280, height: 960 });
+    await card.getByRole("button", { name: "重新登录", exact: true }).click();
+    dialog = manager.getByRole("dialog", { name: "管理 OneDrive 数据库", exact: true });
+    await dialog.getByRole("button", { name: "重新登录", exact: true }).click();
+    await expect(dialog).toContainText("已登录，选择数据库后保存连接。");
+    await dialog.getByRole("button", { name: "保存并继续同步", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(cloud.bytes.toString("base64")).toBe(before);
+    expect(cloud.reads).toBe(readsBefore); // Reauthorization only checks metadata.
+    expect((await send(manager, { type: "KEEPASS_GROUP_LIST", providerId: account.id })).items.some((group: any) => group.name === "Unsynced group")).toBe(true);
+    expect((await send(manager, { type: "KEEPASS_REMOTE_STATUS", providerId: account.id })).lastError).toBeUndefined();
+    await context.close(); context = await launchEdgeContext(profile, options);
+    worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    // Offline restoration is tested after restart; no simulated Microsoft calls.
+    manager = await context.newPage(); manager.on("pageerror", error => errors.push(error.message));
+    await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
+    await manager.getByLabel("主密码", { exact: true }).fill(password);
+    await manager.getByRole("button", { name: "解锁", exact: true }).click();
+    await manager.locator(".sidebar .nav-item").filter({ hasText: "密码源" }).click();
+    await send(manager, { type: "KEEPASS_REMOTE_RESTORE", providerId: account.id });
+    expect((await send(manager, { type: "KEEPASS_REMOTE_STATUS", providerId: account.id })).sessionState).toBe("unlocked");
+    expect((await send(manager, { type: "VAULT_LIST_ITEMS" }))[0].notes).toBe("Automatic OneDrive upload");
+    expect((await send(manager, { type: "KEEPASS_GROUP_LIST", providerId: account.id })).items.some((group: any) => group.name === "Unsynced group")).toBe(true);
+    expect(cloud.bytes.toString("base64")).toBe(before);
+    expect(errors).toEqual([]);
+    await writeFile(info.outputPath("evidence.json"), JSON.stringify({ status: "passed", browser: "Microsoft Edge", microsoftNetwork: "simulated", kdbx: "real encryption and independent readback", automaticPuts: cloud.puts, signIns: cloud.signIns, restart: true, errors }, null, 2));
+  } finally { await context.close(); }
+});

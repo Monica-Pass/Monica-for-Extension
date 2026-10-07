@@ -6,6 +6,27 @@ beforeEach(() => vi.stubGlobal("chrome", { runtime: { getURL: (path: string) => 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Passkey confirmation prompt", () => {
+  it("transitions from unlock to account selection without accepting a credential or cancelling the request", async () => {
+    const dom = new JSDOM("<html><body><button id='login'>Login</button></body></html>", { url: "https://passkey.example.test", pretendToBeVisual: true });
+    const context = { candidateId: "locked", operation: "get" as const, rpId: "passkey.example.test", rpName: "Example", origin: "https://passkey.example.test", userName: "", saveTargets: [], credentials: [], expiresAt: Date.now() + 10_000, unlockRequired: true };
+    const next = { ...context, unlockRequired: false, userVerified: true, credentials: [{ itemId: "selected", title: "Synthetic", userName: "synthetic", userDisplayName: "Synthetic", providerName: "Local", sourceMode: "browser-local" as const, credentialConflict: false, useCount: 0 }] };
+    const accept = vi.fn().mockResolvedValueOnce(next).mockResolvedValueOnce(undefined);
+    const dismiss = vi.fn().mockResolvedValue(undefined);
+    dom.window.document.getElementById('login')!.focus();
+    const first = renderPasskeyPrompt(context, accept, dismiss, dom.window.document, { allowUntrustedEvents: true });
+    expect(passkeyPromptRootForTest(first)!.querySelector('input, [role=radio], select')).toBeNull();
+    passkeyPromptRootForTest(first)!.querySelector<HTMLButtonElement>('.primary')!.click();
+    await vi.waitFor(() => expect(first.isConnected).toBe(false));
+    const current = dom.window.document.getElementById('monica-passkey-prompt-host')!;
+    expect(passkeyPromptRootForTest(current)!.textContent).toContain('已验证身份');
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(accept).toHaveBeenCalledTimes(1);
+    passkeyPromptRootForTest(current)!.querySelector<HTMLButtonElement>('.primary')!.click();
+    await vi.waitFor(() => expect(accept).toHaveBeenLastCalledWith('selected', undefined));
+    await vi.waitFor(() => expect(dom.window.document.activeElement?.id).toBe('login'));
+    dom.window.close();
+  });
+
   it("announces Windows Hello before a UV-required operation", () => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://passkey.example.test" });
     const host = renderPasskeyPrompt({

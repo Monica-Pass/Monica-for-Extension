@@ -5,6 +5,7 @@ import { parseSshKeyMetadata, parseWifiMetadata } from "../core/special-login";
 export type VaultManagerSection = "passwords" | "wallet" | "notes" | "totp" | "passkeys" | "api-tokens";
 
 const KIND_META: Record<VaultItemKind, { label: string; icon: string; section: VaultManagerSection }> = {
+  opaque: { get label() { return tr('只读项目'); }, icon: "encrypted", section: "passwords" },
   login: { get label() { return tr('登录项'); }, icon: "password", section: "passwords" },
   "api-token": { get label() { return tr('API 密钥'); }, icon: "key", section: "api-tokens" },
   card: { get label() { return tr('银行卡'); }, icon: "credit_card", section: "wallet" },
@@ -28,6 +29,7 @@ export function homeItemSummary(item: VaultItem): string {
 
 export function itemSafeSummary(item: VaultItem): string {
   switch (item.kind) {
+    case "opaque": return `${item.nativeType} · ${tr('只读')}`;
     case "login": return loginSafeSummary(item);
     case "api-token": return item.provider || tr('API 密钥');
     case "card": return [item.brand || tr('银行卡'), maskedSuffix(item.number)].filter(Boolean).join(" · ");
@@ -43,6 +45,7 @@ export function itemSafeSummary(item: VaultItem): string {
 export function itemSearchText(item: VaultItem): string {
   const common = `${item.title} ${item.notes} ${itemKindLabel(item.kind)} ${itemSafeSummary(item)}`;
   switch (item.kind) {
+    case "opaque": return `${item.title} ${item.nativeType} ${itemKindLabel(item.kind)}`;
     case "api-token": return `${item.title} ${item.provider} ${itemKindLabel(item.kind)}`;
     case "login": return `${common} ${item.username} ${item.uris.join(" ")} ${loginSearchMetadata(item)}`;
     case "card": return `${common} ${item.cardholderName} ${item.brand || ""}`;

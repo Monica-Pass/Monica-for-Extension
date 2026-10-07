@@ -1,0 +1,20 @@
+[package]
+name = "mdbx-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+zstd-compression = ["dep:zstd"]
+
+[dependencies]
+mdbx-core = { path = "../mdbx-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+bincode = { version = "2", features = ["serde"] }
+zstd = { version = "0.13", optional = true, default-features = false }

@@ -12,6 +12,8 @@ test-results/
 *.tsbuildinfo
 .DS_Store
 native/mdbx2-host/target/
+native/mdbx2-host/vendor/mdbx/target/
+.codex-tmp/
 
 # Local credentials, password databases and browser profiles are never source assets.
 .env

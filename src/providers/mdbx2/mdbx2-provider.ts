@@ -1,3 +1,7 @@
+import { parseLosslessJson } from "../../core/lossless-json";
+import { preserveLocalPasswordHistory } from '../../core/password-history';
+import { assertPasswordProjectRemovalSyncSafe } from "../../core/password-project-removal-sync";
+import { readMdbx2RestoreBatchJournal } from '../../core/mdbx2-restore-batch-journal';
 import { sha256 } from "hash-wasm";
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
@@ -34,7 +38,7 @@ export interface Mdbx2RuntimeClient {
   listObjects(vaultHandle: string, collectionId: string, input?: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string }): Promise<Mdbx2ObjectSummaryPage>;
   revealObject(vaultHandle: string, objectId: string): Promise<Mdbx2ObjectRecord>;
   upsertObject(vaultHandle: string, operationId: string, input: Mdbx2ObjectUpsertInput): Promise<Mdbx2ObjectWriteResult>;
-  deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string): Promise<Mdbx2ObjectDeleteResult>;
+  deleteObject(vaultHandle: string, operationId: string, logicalObjectId: string, expectedHeadCommitId?: string): Promise<Mdbx2ObjectDeleteResult>;
   mutateObjects(vaultHandle: string, operationScope: string, mutations: Mdbx2ObjectMutationInput[]): Promise<Mdbx2ObjectBatchResult>;
   resolveObjectOperation(vaultHandle: string, operationScope: string): Promise<Mdbx2ObjectOperationResolution>;
 }
@@ -97,7 +101,7 @@ interface PendingUpsertMutation extends PendingMutationBase {
 }
 
 interface PendingDeleteMutation extends PendingMutationBase {
-  mutation: { kind: "delete"; logicalObjectId: string };
+  mutation: { kind: "delete"; logicalObjectId: string; expectedHeadCommitId?: string };
   expectedRemoteId?: string;
 }
 
@@ -117,6 +121,9 @@ export class Mdbx2Provider implements ProviderAdapter {
   }
 
   async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
+    if (readMdbx2RestoreBatchJournal(context.mdbx2RestoreBatches).some(row => row.status === 'prepared' && row.members[0].provider.id === account.id))
+      throw new Error('此密码源还有待确认的整组恢复操作，请先重试恢复。');
+    assertPasswordProjectRemovalSyncSafe(account, context);
     const cloud = cloudSyncInput(account);
     const cloudReports: Mdbx2CloudSyncReport[] = [];
     if (cloud) {
@@ -161,6 +168,10 @@ export class Mdbx2Provider implements ProviderAdapter {
         if (local) items.push(local);
         continue;
       }
+      if (remoteObject.item.kind === "opaque") {
+        items.push(finalizeRemote(remoteObject.item, local, account.id, remoteObject.summary));
+        continue;
+      }
       if (!local) {
         items.push(finalizeRemote(remoteObject.item, undefined, account.id, remoteObject.summary));
         continue;
@@ -175,7 +186,7 @@ export class Mdbx2Provider implements ProviderAdapter {
         || remoteObject.item.kind === "api-token" && Boolean(reference.etag) && fingerprint(remoteObject.item) !== reference.etag;
       if (local.deletedAt) {
         const pending: PendingDeleteMutation = {
-          mutation: { kind: "delete", logicalObjectId: remoteObject.logicalObjectId },
+          mutation: { kind: "delete", logicalObjectId: `native:${remoteId}`, expectedHeadCommitId: remoteObject.summary.headCommitId },
           local,
           baseRevision: reference.revision || "",
           remoteHeadCommitId: remoteObject.summary.headCommitId,
@@ -230,7 +241,7 @@ export class Mdbx2Provider implements ProviderAdapter {
       const localChanged = Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
       if (local.deletedAt && reference.revision && reference.revision !== summary.headCommitId) {
         recoveryMutations.push({
-          mutation: { kind: "delete", logicalObjectId: mdbx2LogicalObjectId(local) },
+          mutation: { kind: "delete", logicalObjectId: `native:${remoteId}`, expectedHeadCommitId: reference.revision },
           local,
           baseRevision: reference.revision,
           remoteHeadCommitId: summary.headCommitId,
@@ -239,8 +250,8 @@ export class Mdbx2Provider implements ProviderAdapter {
       } else if (localChanged) {
         conflicts.push({ itemId: local.id, reason: "MDBX2 Object 已由其他设备删除，但浏览器仍有未同步修改。", local });
         items.push(local);
-      } else if (reference.revision && reference.revision === summary.headCommitId) {
-        items.push(local);
+      } else {
+        items.push(finalizeDeleted(local, account.id, summary.headCommitId, summary.updatedAt));
       }
     }
 
@@ -305,6 +316,7 @@ export class Mdbx2Provider implements ProviderAdapter {
               remote.payloads.delete(entry.expectedRemoteId);
               remote.originals.delete(entry.expectedRemoteId);
             }
+            items.push(finalizeDeleted(entry.local, account.id, status.commitId!));
             continue;
           }
           const remoteObject = (entry as PendingUpsertMutation).remoteObject;
@@ -360,6 +372,8 @@ export class Mdbx2Provider implements ProviderAdapter {
             remote.payloads.delete(entry.expectedRemoteId);
             remote.originals.delete(entry.expectedRemoteId);
           }
+          if (!result.commitId) throw new Error('MDBX2 删除结果缺少 Commit 元数据。');
+          items.push(finalizeDeleted(entry.local, account.id, result.commitId));
           continue;
         }
         if (!result.commitId || !written.collectionId || !written.objectTypeId) {
@@ -373,7 +387,7 @@ export class Mdbx2Provider implements ProviderAdapter {
           collectionId: written.collectionId,
           objectTypeId: written.objectTypeId
         };
-        const payload = JSON.parse(entry.mutation.payloadJson) as Record<string, unknown>;
+        const payload = parseLosslessJson(entry.mutation.payloadJson) as Record<string, unknown>;
         remote.payloads.set(written.objectId, payload);
         const finalized = finalizeWritten(entry.local, account.id, writeResult);
         remote.originals.set(written.objectId, finalized);
@@ -387,7 +401,7 @@ export class Mdbx2Provider implements ProviderAdapter {
     const encoded = encodeMdbx2Object(item);
     if (!encoded) throw new Error("此 Monica 项目类型暂时无法写入 MDBX2。");
     const result = await this.runtime.upsertObject(vaultHandleOf(account), crypto.randomUUID(), encoded);
-    this.session(account).payloads.set(result.objectId, JSON.parse(encoded.payloadJson) as Record<string, unknown>);
+    this.session(account).payloads.set(result.objectId, parseLosslessJson(encoded.payloadJson) as Record<string, unknown>);
     const finalized = finalizeWritten(item, account.id, result);
     this.session(account).originals.set(result.objectId, finalized);
     return finalized;
@@ -417,7 +431,7 @@ export class Mdbx2Provider implements ProviderAdapter {
       const encoded = encodeMdbx2Object(entry.item, entry.originalPayload, entry.originalItem);
       if (!encoded) throw new Error(`项目「${entry.item.title || entry.item.id}」无法写入 MDBX2。`);
       if (entry.payloadPatch) {
-        const payload = JSON.parse(encoded.payloadJson) as Record<string, unknown>;
+        const payload = parseLosslessJson(encoded.payloadJson) as Record<string, unknown>;
         encoded.payloadJson = JSON.stringify({ ...payload, ...entry.payloadPatch });
       }
       return { kind: "upsert" as const, ...encoded };
@@ -449,7 +463,7 @@ export class Mdbx2Provider implements ProviderAdapter {
         collectionId,
         objectTypeId
       };
-      const payload = JSON.parse(input.payloadJson) as Record<string, unknown>;
+      const payload = parseLosslessJson(input.payloadJson) as Record<string, unknown>;
       session.payloads.set(objectId, payload);
       const item = finalizeWritten(entries[index].item, account.id, writeResult);
       session.originals.set(objectId, item);
@@ -465,14 +479,22 @@ export class Mdbx2Provider implements ProviderAdapter {
 
   async update(account: ProviderAccount, item: VaultItem): Promise<VaultItem> {
     await this.testConnection(account);
-    const remoteId = referenceOf(item, account.id)?.remoteId;
+    const reference = referenceOf(item, account.id);
+    const remoteId = reference?.remoteId;
+    if (!remoteId) return this.create(account, item);
+    if (!reference.revision) throw new Error("MDBX2 项目缺少原始版本，请刷新后重试。");
     const session = this.session(account);
-    const original = remoteId ? session.payloads.get(remoteId) : undefined;
-    const originalItem = remoteId ? session.originals.get(remoteId) : undefined;
-    const encoded = encodeMdbx2Object(item, original, originalItem);
+    const record = await this.runtime.revealObject(vaultHandleOf(account), remoteId);
+    if (record.objectId !== remoteId || record.deleted || record.headCommitId && record.headCommitId !== reference.revision) throw new Error("MDBX2 项目已变化或删除，请刷新后重试。");
+    const original = decodeMdbx2Object(record, { headCommitId: record.headCommitId || reference.revision, updatedAt: item.updatedAt }, account.id);
+    if (!original.item || original.item.kind === "opaque") throw new Error("此原生类型或版本仅可安全查看。");
+    const encoded = encodeMdbx2Object(item, original.payload, original.item);
     if (!encoded) throw new Error("此 Monica 项目类型暂时无法写入 MDBX2。");
+    encoded.logicalObjectId = item.kind === "api-token" ? `api-token:${remoteId}` : `native:${remoteId}`;
+    encoded.expectedHeadCommitId = reference.revision;
     const result = await this.runtime.upsertObject(vaultHandleOf(account), crypto.randomUUID(), encoded);
-    session.payloads.set(result.objectId, JSON.parse(encoded.payloadJson) as Record<string, unknown>);
+    if (result.objectId !== remoteId) throw new Error("MDBX2 写入响应改变了原生 Object 身份。");
+    session.payloads.set(result.objectId, parseLosslessJson(encoded.payloadJson) as Record<string, unknown>);
     const finalized = finalizeWritten(item, account.id, result);
     session.originals.set(result.objectId, finalized);
     return finalized;
@@ -480,8 +502,12 @@ export class Mdbx2Provider implements ProviderAdapter {
 
   async remove(account: ProviderAccount, item: VaultItem): Promise<void> {
     await this.testConnection(account);
-    const remoteId = referenceOf(item, account.id)?.remoteId;
-    await this.runtime.deleteObject(vaultHandleOf(account), crypto.randomUUID(), mdbx2LogicalObjectId(item));
+    if (item.kind === "opaque") throw new Error("此原生类型或版本仅可安全查看。");
+    const reference = referenceOf(item, account.id);
+    const remoteId = reference?.remoteId;
+    if (!remoteId || !reference.revision) throw new Error("MDBX2 项目缺少原生身份或版本，请刷新后重试。");
+    const result = await this.runtime.deleteObject(vaultHandleOf(account), crypto.randomUUID(), `native:${remoteId}`, reference.revision);
+    if (result.objectId !== remoteId) throw new Error("MDBX2 删除响应改变了原生 Object 身份。");
     if (remoteId) {
       this.session(account).payloads.delete(remoteId);
       this.session(account).originals.delete(remoteId);
@@ -544,8 +570,12 @@ export class Mdbx2Provider implements ProviderAdapter {
           try {
             record = await this.runtime.revealObject(vaultHandle, summary.objectId);
           } catch (error) {
-            addWarning(`${summary.title || summary.objectId}: ${error instanceof Error ? error.message : "Tiga 披露失败"}`);
-            continue;
+            // An incomplete remote snapshot cannot establish absence. Abort
+            // before reconciling or writing anything, retaining the local vault.
+            throw new Error(`${summary.title || summary.objectId}: 项目读取失败，同步未修改本地数据。${error instanceof Error ? error.message : "Tiga 披露失败"}`);
+          }
+          if (record.objectId !== summary.objectId || record.collectionId !== summary.collectionId || record.objectTypeId !== summary.objectTypeId || record.payloadSchemaVersion !== summary.payloadSchemaVersion || record.deleted || record.headCommitId && record.headCommitId !== summary.headCommitId) {
+            throw new Error("MDBX2 项目在摘要与详情读取之间变化，同步已停止，请重试。");
           }
           totalPayloadBytes += new TextEncoder().encode(record.payloadJson).byteLength + new TextEncoder().encode(record.apiTokenMetadataJson || "").byteLength;
           if (totalPayloadBytes > MAX_SYNC_PAYLOAD_BYTES) throw new Error(`MDBX2 Object 载荷总量超过浏览器单次同步上限 ${MAX_SYNC_PAYLOAD_BYTES} 字节。`);
@@ -601,7 +631,7 @@ async function pendingOperationScope(vaultHandle: string, batch: PendingMutation
   return sha256(JSON.stringify({
     version: 1,
     vaultHandle,
-    mutations: batch.map((entry) => ({ baseRevision: entry.baseRevision, mutation: entry.mutation }))
+    mutations: batch.map((entry) => ({ baseRevision: entry.baseRevision, mutation: { ...entry.mutation, expectedHeadCommitId: entry.baseRevision || undefined } }))
   }));
 }
 
@@ -658,9 +688,24 @@ function referenceOf(item: VaultItem, providerId: string): ProviderReference | u
 
 function finalizeRemote(remote: VaultItem, local: VaultItem | undefined, providerId: string, summary: Mdbx2ObjectSummary): VaultItem {
   if (local?.kind === "passkey" && remote.kind === "passkey") remote = preserveLocalPasskeyUsage(local, remote);
+  if (local?.kind === 'login' && remote.kind === 'login') remote = preserveLocalPasswordHistory(local, remote);
   const merged = (local
     ? { ...remote, id: local.id, favorite: remote.kind === "api-token" ? remote.favorite : local.favorite, createdAt: local.createdAt }
     : remote) as VaultItem;
+  if (local) {
+    const previous = referenceOf(local, providerId);
+    // Native commit timestamps are not editor CAS tokens. A readback of the
+    // acknowledged head may materialize defaults but is not another edit.
+    // API labels can change independently of the object head, so also compare
+    // their lossless payload/metadata projection before treating it as an ACK.
+    const unchanged = previous?.remoteId === summary.objectId
+      && previous.revision === summary.headCommitId
+      && (remote.kind !== "api-token" || fingerprint(merged) === fingerprint(local));
+    merged.updatedAt = unchanged ? local.updatedAt : new Date(Math.max(
+      Date.parse(merged.updatedAt) || 0,
+      (Date.parse(local.updatedAt) || 0) + 1
+    )).toISOString();
+  }
   const reference: ProviderReference = {
     providerId,
     remoteId: summary.objectId,
@@ -672,7 +717,7 @@ function finalizeRemote(remote: VaultItem, local: VaultItem | undefined, provide
 }
 
 function finalizeWritten(item: VaultItem, providerId: string, result: Mdbx2ObjectWriteResult): VaultItem {
-  const updated = { ...item, ...(item.kind === "api-token" ? { apiTokenPayload: serializeApiTokenPayload(item), apiTokenMetadata: serializeApiTokenMetadata(item) } : {}), replicaGroupId: result.logicalObjectId, mdbxFolderId: result.collectionId } as VaultItem;
+  const updated = { ...item, ...(item.kind === "api-token" ? { apiTokenPayload: serializeApiTokenPayload(item), apiTokenMetadata: serializeApiTokenMetadata(item) } : {}), replicaGroupId: result.logicalObjectId.startsWith("native:") ? item.replicaGroupId : result.logicalObjectId, mdbxFolderId: result.collectionId } as VaultItem;
   const reference: ProviderReference = {
     providerId,
     remoteId: result.objectId,
@@ -683,15 +728,23 @@ function finalizeWritten(item: VaultItem, providerId: string, result: Mdbx2Objec
   return { ...updated, providerRefs: [...updated.providerRefs.filter((candidate) => candidate.providerId !== providerId), reference] } as VaultItem;
 }
 
+function finalizeDeleted(item: VaultItem, providerId: string, commitId: string, deletedAt = item.deletedAt): VaultItem {
+  if (!deletedAt) throw new Error('MDBX2 删除结果缺少回收站时间。');
+  return { ...item, deletedAt: item.deletedAt || deletedAt, updatedAt: item.deletedAt ? item.updatedAt : deletedAt,
+    providerRefs: item.providerRefs.map(ref => ref.providerId === providerId ? { ...ref, revision: commitId } : ref) } as VaultItem;
+}
+
+export { fingerprint as mdbx2ItemFingerprint };
 function fingerprint(item: VaultItem): string {
   const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, ...content } = item;
   if (content.kind === "passkey") { delete content.useCount; delete content.lastUsedAt; delete content.signCountHighWaterMark; }
   const portable = item.kind === "api-token" ? {
     kind: item.kind, title: item.title, favorite: item.favorite, mdbxFolderId: item.mdbxFolderId,
     replicaGroupId: item.replicaGroupId,
-    payload: JSON.parse(serializeApiTokenPayload(item)), metadata: JSON.parse(serializeApiTokenMetadata(item))
+    payload: parseLosslessJson(serializeApiTokenPayload(item)), metadata: parseLosslessJson(serializeApiTokenMetadata(item))
   } : content;
-  return JSON.stringify(portable, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+  const isRawJson = (JSON as typeof JSON & { isRawJSON?: (value: unknown) => boolean }).isRawJSON;
+  return JSON.stringify(portable, (_key, value) => value && typeof value === "object" && !Array.isArray(value) && !isRawJson?.(value)
     ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))
     : value);
 }

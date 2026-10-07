@@ -1,5 +1,8 @@
+import { parseLosslessJson, jsonScalarText } from "../core/lossless-json";
+import { normalizeOtpCounter, otpCounterJson } from "../core/otp-counter";
 import type {
   BillingAddressItem,
+  CardFaceConfig,
   CardItem,
   IdentityItem,
   PaymentAccountItem,
@@ -76,7 +79,7 @@ export function monicaItemDataToVaultItem(
       return {
         ...base,
         kind: "secure-note",
-        content: firstString(data, "content") || options.fallbackNotes || "",
+        content: Object.prototype.hasOwnProperty.call(data, "content") ? jsonScalarText(data.content) : options.fallbackNotes || "",
         tags: stringArray(data.tags),
         isMarkdown: Boolean(data.isMarkdown),
         customFields: parseSecureCustomFields(data.customFields)
@@ -116,7 +119,7 @@ function decodeTotp(data: Record<string, unknown>): Omit<TotpItem, keyof MonicaI
     issuer: firstString(data, "issuer") || undefined,
     accountName: firstString(data, "accountName") || undefined,
     otpType: otpType || (steamSharedSecret ? "STEAM" : undefined),
-    counter: optionalNumber(data.counter),
+    counter: data.counter == null ? undefined : normalizeOtpCounter(data.counter),
     pin: optionalString(firstString(data, "pin")),
     link: optionalString(firstString(data, "link")),
     associatedApp: optionalString(firstString(data, "associatedApp")),
@@ -165,7 +168,8 @@ function decodeBankCard(data: Record<string, unknown>): Omit<CardItem, keyof Mon
     branchCode: optionalString(firstString(data, "branchCode")),
     currency: optionalString(firstString(data, "currency")),
     customerServicePhone: optionalString(firstString(data, "customerServicePhone")),
-    customFields: parseSecureCustomFields(data.customFields)
+    customFields: parseSecureCustomFields(data.customFields),
+    cardFace: readCardFaceConfig(data.cardFace)
   };
 }
 
@@ -181,7 +185,8 @@ function decodeDocument(data: Record<string, unknown>): Omit<IdentityItem, keyof
     firstName,
     middleName,
     lastName,
-    fullName: nameFromParts || firstString(data, "fullName", "name"),
+    fullName: Object.prototype.hasOwnProperty.call(data, "fullName") ? jsonScalarText(data.fullName) : nameFromParts || firstString(data, "name"),
+    documentTitle: typeof data.title === "string" ? data.title : undefined,
     birthDate: optionalString(firstString(data, "birthDate")),
     issuedDate: optionalString(firstString(data, "issuedDate", "issueDate")),
     expiryDate: optionalString(firstString(data, "expiryDate")),
@@ -207,7 +212,8 @@ function decodeDocument(data: Record<string, unknown>): Omit<IdentityItem, keyof
       email: firstString(data, "email"),
       phone: firstString(data, "phone", "phoneNumber")
     },
-    customFields: parseSecureCustomFields(data.customFields)
+    customFields: parseSecureCustomFields(data.customFields),
+    cardFace: readCardFaceConfig(data.cardFace)
   };
 }
 
@@ -225,7 +231,8 @@ function decodeBillingAddress(data: Record<string, unknown>): Omit<BillingAddres
     phone: firstString(data, "phone", "phoneNumber"),
     email: firstString(data, "email"),
     isDefault: Boolean(data.isDefault),
-    customFields: parseSecureCustomFields(data.customFields)
+    customFields: parseSecureCustomFields(data.customFields),
+    cardFace: readCardFaceConfig(data.cardFace)
   };
 }
 
@@ -260,10 +267,16 @@ function decodePaymentAccount(data: Record<string, unknown>): Omit<PaymentAccoun
  * `encodeDefaults = true`, so every modelled key is emitted; `NoteContentCodec` uses a bare `Json`,
  * which omits defaults, and that difference is reproduced rather than smoothed over.
  */
-export function vaultItemToMonicaItemData(item: VaultItem, original?: string): string | undefined {
+export function vaultItemToMonicaItemData(item: VaultItem, original?: string, originalItem?: VaultItem): string | undefined {
   const built = buildMonicaItemData(item);
   if (!built) return undefined;
-  return JSON.stringify({ ...parseMonicaItemData(original), ...built });
+  if (!original) return JSON.stringify(built);
+  const raw = parseMonicaItemData(original);
+  const type = monicaItemTypeForKind(item.kind);
+  const baseline = originalItem || (type ? monicaItemDataToVaultItem(type, raw, item) : undefined);
+  const previous = baseline ? buildMonicaItemData(baseline) : undefined;
+  const changed = Object.fromEntries(Object.entries(built).filter(([key, value]) => !previous || JSON.stringify(value) !== JSON.stringify(previous[key])));
+  return JSON.stringify(mergeMonicaItemData(raw, changed));
 }
 
 function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefined {
@@ -271,9 +284,9 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
     case "secure-note":
       return {
         content: item.content,
-        ...(item.tags?.length ? { tags: item.tags } : {}),
-        ...(item.isMarkdown ? { isMarkdown: true } : {}),
-        ...((item.customFields?.length || 0) > 0 ? { customFields: serializeSecureCustomFields(item.customFields) } : {})
+        tags: item.tags || [],
+        isMarkdown: Boolean(item.isMarkdown),
+        customFields: serializeSecureCustomFields(item.customFields)
       };
     case "totp":
       return {
@@ -284,7 +297,7 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
         digits: item.digits,
         algorithm: item.algorithm,
         otpType: item.otpType || "TOTP",
-        counter: item.counter ?? 0,
+        counter: otpCounterJson(item.counter),
         pin: item.pin || "",
         link: item.link || "",
         associatedApp: item.associatedApp || "",
@@ -325,7 +338,8 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
         branchCode: item.branchCode || "",
         currency: item.currency || "",
         customerServicePhone: item.customerServicePhone || "",
-        customFields: serializeSecureCustomFields(item.customFields)
+        customFields: serializeSecureCustomFields(item.customFields),
+        ...(item.cardFace !== undefined ? { cardFace: item.cardFace } : {})
       };
     case "identity":
       return {
@@ -338,7 +352,7 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
         nationality: item.nationality || "",
         additionalInfo: item.additionalInfo || "",
         birthDate: item.birthDate || "",
-        title: item.title,
+        title: item.documentTitle || "",
         firstName: item.firstName,
         middleName: item.middleName,
         lastName: item.lastName,
@@ -356,7 +370,8 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
         username: item.username || "",
         passportNumber: item.passportNumber || "",
         licenseNumber: item.licenseNumber || "",
-        customFields: serializeSecureCustomFields(item.customFields)
+        customFields: serializeSecureCustomFields(item.customFields),
+        ...(item.cardFace !== undefined ? { cardFace: item.cardFace } : {})
       };
     case "billing-address":
       return {
@@ -371,7 +386,8 @@ function buildMonicaItemData(item: VaultItem): Record<string, unknown> | undefin
         phone: item.phone,
         email: item.email,
         isDefault: Boolean(item.isDefault),
-        customFields: serializeSecureCustomFields(item.customFields)
+        customFields: serializeSecureCustomFields(item.customFields),
+        ...(item.cardFace !== undefined ? { cardFace: item.cardFace } : {})
       };
     case "payment-account":
       return {
@@ -404,11 +420,81 @@ export function parseMonicaItemData(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== "string" || !value.trim()) return {};
   try {
-    const parsed = JSON.parse(value) as unknown;
+    const parsed = parseLosslessJson(value) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
+}
+
+export function readCardFaceConfig(value: unknown): CardFaceConfig | null | undefined {
+  if (value === null) return null;
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("卡面配置形状不受支持。");
+  const raw = value as Record<string, unknown>;
+  const mode = raw.displayMode ?? "ALL";
+  if (typeof raw.imageAttachmentName !== "string" || !["ALL", "CARD_NUMBER_ONLY", "HIDDEN"].includes(String(mode)) || (raw.showBrandIcon !== undefined && typeof raw.showBrandIcon !== "boolean")) throw new Error("卡面配置版本不受支持。");
+  return { imageAttachmentName: raw.imageAttachmentName, displayMode: mode as CardFaceConfig["displayMode"], showBrandIcon: raw.showBrandIcon !== false };
+}
+
+/** Patch owned fields recursively; opaque objects and extended array members survive. */
+export function mergeMonicaItemData(original: unknown, updates: Record<string, unknown>): Record<string, unknown> {
+  const source = parseMonicaItemData(original);
+  return Object.fromEntries([...new Set([...Object.keys(source), ...Object.keys(updates)])].map(key => {
+    if (!Object.prototype.hasOwnProperty.call(updates, key)) return [key, source[key]];
+    const value = updates[key];
+    if (key === "customFields" && Array.isArray(value) && Array.isArray(source[key])) {
+      return [key, mergeProjectedCustomFields(source[key] as unknown[], value)];
+    }
+    if (value && typeof value === "object" && !Array.isArray(value) && source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+      // Raw numeric nodes are scalar, despite being represented by native objects.
+      if ("rawJSON" in value && Object.getPrototypeOf(value) === null) return [key, value];
+      return [key, mergeMonicaItemData(source[key], value as Record<string, unknown>)];
+    }
+    return [key, value];
+  }));
+}
+
+/** The editable array is only a projection: an unchanged default is not a write. */
+function mergeProjectedCustomFields(source: unknown[], updates: unknown[]): unknown[] {
+  const baseline = source.map(field => serializeSecureCustomFields(parseSecureCustomFields([field]))[0]);
+  const matching = new Map<number, number>();
+  const used = new Set<number>();
+  const objectField = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+  const match = (predicate: (original: unknown, next: unknown, index: number) => boolean) => {
+    for (const [nextIndex, next] of updates.entries()) {
+      if (matching.has(nextIndex)) continue;
+      const index = source.findIndex((original, sourceIndex) => !used.has(sourceIndex) && predicate(original, next, sourceIndex));
+      if (index >= 0) { matching.set(nextIndex, index); used.add(index); }
+    }
+  };
+  // Exact matches first keep duplicate labels attached to their original metadata.
+  match((original, next) => same(original, next));
+  match((_original, next, index) => baseline[index] !== undefined && same(baseline[index], next));
+  match((original, next) => objectField(original) && objectField(next) && next.id !== undefined && same(original.id, next.id));
+  match((_original, next, index) => baseline[index] !== undefined && objectField(next) && baseline[index].label === next.label);
+  // A rename has no persisted model ID. Only infer its position when every unmatched
+  // visible member has a replacement; insertions/deletions never consume opaque rows.
+  const remaining = baseline.flatMap((field, index) => field && !used.has(index) ? [index] : []);
+  const replacements = updates.flatMap((field, index) => !matching.has(index) && objectField(field) && serializeSecureCustomFields(parseSecureCustomFields([field])).length ? [index] : []);
+  if (remaining.length === replacements.length) {
+    replacements.forEach((index, position) => { matching.set(index, remaining[position]); used.add(remaining[position]); });
+  }
+  const result = updates.map((next, nextIndex) => {
+    const index = matching.get(nextIndex);
+    if (index === undefined || !objectField(next) || !objectField(source[index])) return next;
+    if (same(source[index], next)) return source[index];
+    const previous = baseline[index] as Record<string, unknown> | undefined;
+    const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => !previous || !same(previous[key], value)));
+    return mergeMonicaItemData(source[index], changed);
+  });
+  // Empty labels, future field kinds, scalar entries and other unprojected values
+  // were never deletion controls. Keep their bytes and relative slot, including null.
+  source.forEach((field, index) => {
+    if (!baseline[index] && !used.has(index)) result.splice(Math.min(index, result.length), 0, field);
+  });
+  return result;
 }
 
 export function parseSecureCustomFields(value: unknown): SecureCustomField[] {
@@ -416,9 +502,10 @@ export function parseSecureCustomFields(value: unknown): SecureCustomField[] {
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const raw = entry as Record<string, unknown>;
-    const name = firstString(raw, "label", "title", "name").trim();
+    const name = firstString(raw, "label", "title", "name");
     if (!name) return [];
     const rawType = firstString(raw, "type").toUpperCase();
+    if (rawType && !["TEXT", "HIDDEN", "BOOLEAN"].includes(rawType)) return [];
     const fieldType: NonNullable<SecureCustomField["fieldType"]> = rawType === "HIDDEN" || rawType === "BOOLEAN" ? rawType : "TEXT";
     return [{ name, value: firstString(raw, "value"), protected: fieldType === "HIDDEN", fieldType }];
   });
@@ -428,7 +515,7 @@ export function parseSecureCustomFields(value: unknown): SecureCustomField[] {
 export function serializeSecureCustomFields(value: SecureCustomField[] | undefined): Array<{ label: string; value: string; type: string }> {
   return (value || [])
     .filter((field) => field.name.trim())
-    .map((field) => ({ label: field.name.trim(), value: field.value, type: field.fieldType || (field.protected ? "HIDDEN" : "TEXT") }));
+    .map((field) => ({ label: field.name, value: field.value, type: field.fieldType || (field.protected ? "HIDDEN" : "TEXT") }));
 }
 
 export function normalizeTotpAlgorithm(value: unknown): TotpItem["algorithm"] {
@@ -468,7 +555,7 @@ export function normalizePaymentAccountType(value: unknown): string {
 export function parseSteamSession(rawJson: string): { steamId?: string; accessToken?: string; refreshToken?: string; loginSecure?: string } {
   if (!rawJson.trim()) return {};
   try {
-    const root = JSON.parse(rawJson) as Record<string, unknown>;
+    const root = parseLosslessJson(rawJson) as Record<string, unknown>;
     const session = (root.Session || root.session) as Record<string, unknown> | undefined;
     const loginSecure = firstString(root, "steamLoginSecure", "steam_login_secure") || firstString(session || {}, "SteamLoginSecure", "steamLoginSecure");
     const accessToken =
@@ -505,7 +592,7 @@ function stringArray(value: unknown): string[] {
 }
 
 function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : value == null ? "" : String(value);
+  return jsonScalarText(value);
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -513,12 +600,14 @@ function optionalString(value: unknown): string | undefined {
 }
 
 function numberValue(value: unknown, fallback: number): number {
-  const parsed = typeof value === "number" ? value : Number(value);
+  const parsed = typeof value === "number" ? value : Number(jsonScalarText(value));
+  if (Number.isFinite(parsed) && !Number.isSafeInteger(parsed)) throw new Error("整数字段超出当前编辑器精度。");
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function optionalNumber(value: unknown): number | undefined {
   if (value == null || value === "") return undefined;
-  const parsed = typeof value === "number" ? value : Number(value);
+  const parsed = typeof value === "number" ? value : Number(jsonScalarText(value));
+  if (Number.isFinite(parsed) && !Number.isSafeInteger(parsed)) throw new Error("整数字段超出当前编辑器精度。");
   return Number.isFinite(parsed) ? parsed : undefined;
 }

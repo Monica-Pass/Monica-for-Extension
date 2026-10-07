@@ -1,9 +1,9 @@
 import type { PasskeyItem } from "../core/model";
-import { fromBase64Url, normalizeRpId, toBase64Url } from "./webauthn-core";
+import { fromBase64Url, normalizeRpId, supportsPasskeySigningAlgorithm, toBase64Url } from "./webauthn-core";
 
 /**
  * Describes why a stored Passkey may or may not be used by the browser.
- * Android exports contain public metadata only; treating those records as
+ * Some Android exports contain public metadata only; treating those records as
  * usable would make a WebAuthn request fail later and could encourage unsafe
  * fallback behaviour in callers.
  */
@@ -16,7 +16,7 @@ export type PasskeyAvailability =
 
 export function passkeyAvailability(item: PasskeyItem, rpId?: string): PasskeyAvailability {
   if (item.sourceMode === "android-metadata-only") return "android-metadata-only";
-  if (item.algorithm !== -7) return "unsupported-algorithm";
+  if (!supportsPasskeySigningAlgorithm(item.algorithm)) return "unsupported-algorithm";
   if (!item.privateKeyPkcs8) return "missing-private-key";
   if (rpId && !passkeyRpIdsEqual(item.rpId, rpId)) return "rp-mismatch";
   return "ready";
@@ -52,10 +52,18 @@ export function decodeBitwardenCredentialId(value: string): string {
   return canonical === unpadded ? canonical : encoded;
 }
 
-/** Bitwarden stores UUID credentials directly and prefixes every other byte ID with `b64.`. */
+/** Represent 16-byte credentials as UUIDs, preserving their exact bytes across Android and Bitwarden. */
 export function toBitwardenCredentialId(value: string): string {
   const trimmed = value.trim();
   if (isUuidCredentialId(trimmed)) return trimmed.toLowerCase();
+  if (!/^b64\./i.test(trimmed) && /^[A-Za-z0-9_-]{22}={0,2}$/.test(trimmed)) {
+    const unpadded = trimmed.replace(/=+$/, "");
+    const bytes = fromBase64Url(unpadded);
+    if (bytes.length === 16 && toBase64Url(bytes) === unpadded) {
+      const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+  }
   const encoded = /^b64\.(.+)$/i.exec(trimmed)?.[1] || trimmed;
   return `b64.${decodeBitwardenCredentialId(`b64.${encoded}`)}`;
 }
@@ -105,7 +113,7 @@ export function passkeyAvailabilityLabel(availability: PasskeyAvailability): str
   return ({
     ready: "可用于浏览器认证",
     "android-metadata-only": "Android 元数据，仅可查看",
-    "unsupported-algorithm": "算法不受支持（目前仅支持 ES256）",
+    "unsupported-algorithm": "算法不受支持",
     "missing-private-key": "缺少私钥，仅可查看",
     "rp-mismatch": "与当前网站不匹配"
   } as const)[availability];

@@ -1,5 +1,6 @@
 import { INLINE_AUTOFILL_ENABLED_KEY, inlineAutofillEnabled, readInlineAutofillEnabled } from "../autofill/inline-preferences";
 import type { InlineAutofillResult } from "../autofill/inline-contract";
+import { formatAutofillCredential } from "../autofill/credential-identity";
 import { getUiLocale, initializeUiLocale, tr } from "../i18n/runtime";
 import { createPromptI18n } from "./prompt-i18n";
 import { fillCredential, type FillCredentialInput } from "./dom";
@@ -170,6 +171,12 @@ export function installInlineAutofill(handlers: Handlers, rootDocument: Document
       const username = rootDocument.createElement("small");
       i18n.text(username, () => item.username || tr("无用户名"));
       text.append(title, username);
+      if (item.credentialIdentity) {
+        const identity = rootDocument.createElement('small');
+        identity.className = 'credential-identity';
+        i18n.text(identity, () => formatAutofillCredential(item.credentialIdentity, tr));
+        text.append(identity);
+      }
       const hint = rootDocument.createElement("span");
       hint.className = "hint";
       i18n.text(hint, () => result.status === "locked" && item.allowLockedAutofill ? tr("免解锁填写") : item.hasTotp ? tr("含验证码") : "↵");

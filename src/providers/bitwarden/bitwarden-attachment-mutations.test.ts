@@ -19,6 +19,15 @@ const ITEM_ID = "item-1";
 const OPERATION_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("Bitwarden durable attachment mutations", () => {
+  it("refuses attachment mutations on a future Cipher before any request or recovery record", async () => {
+    const server = new FakeBitwardenAttachmentServer(0);
+    const service = mutationService(server);
+    const future = { ...context(server), rawCipher: { ...server.cloneCipher(), Type: 99 } };
+    await expect(service.upload({ ...uploadInput(server, Uint8Array.of(1)), ...future })).rejects.toThrow(/未知/);
+    await expect(service.delete({ ...future, operationId: OPERATION_ID, attachmentId: "synthetic" })).rejects.toThrow(/未知/);
+    expect(server.fetcher).not.toHaveBeenCalled();
+    expect(await service.listRecoveryRecords(PROVIDER_ID)).toEqual([]);
+  });
   it.each([0, 1] as const)("uploads and authenticates official mode %s with an independent attachment key", async (mode) => {
     const server = new FakeBitwardenAttachmentServer(mode);
     const plaintext = new TextEncoder().encode(`mode-${mode}-中文`);

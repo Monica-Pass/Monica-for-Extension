@@ -8,6 +8,86 @@ const MULTISTATUS = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 </d:multistatus>`;
 
 describe("WebDAV client", () => {
+  it("reconciles a lost upload response under the default retry policy with exactly one PUT", async () => {
+    const bytes = Uint8Array.of(9, 7, 5);
+    const methods: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      methods.push(init?.method || "GET");
+      if (init?.method === "PROPFIND") return new Response(null, { status: 207 });
+      if (init?.method === "PUT") throw new TypeError("Synthetic lost response");
+      return new Response(bytes, { headers: { etag: '"confirmed"' } });
+    };
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "synthetic", password: "synthetic" }, fetcher);
+    await expect(client.upload(bytes, true)).resolves.toMatchObject({ etag: '"confirmed"', encrypted: true });
+    expect(methods).toEqual(["PROPFIND", "PUT", "GET"]);
+  });
+
+  it.each(["different-bytes", "missing-file"] as const)("does not acknowledge a lost upload when readback has %s", async mode => {
+    let puts = 0;
+    const fetcher: typeof fetch = async (_input, init) => {
+      if (init?.method === "PROPFIND") return new Response(null, { status: 207 });
+      if (init?.method === "PUT") { puts++; throw new TypeError("Synthetic lost response"); }
+      return mode === "missing-file" ? new Response(null, { status: 404 }) : new Response(Uint8Array.of(9, 7, 4));
+    };
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "synthetic", password: "synthetic" }, fetcher);
+    await expect(client.upload(Uint8Array.of(9, 7, 5), true)).rejects.toMatchObject({ code: "network", attempts: 1 });
+    expect(puts).toBe(1);
+  });
+
+  it("rejects mismatched bytes even after the server reports a successful upload", async () => {
+    const fetcher: typeof fetch = async (_input, init) => init?.method === "PROPFIND" ? new Response(null, { status: 207 })
+      : init?.method === "PUT" ? new Response(null, { status: 201 }) : new Response(Uint8Array.of(9, 7, 4));
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "synthetic", password: "synthetic" }, fetcher);
+    await expect(client.upload(Uint8Array.of(9, 7, 5), true)).rejects.toThrow("内容校验失败");
+  });
+
+  it("does not confirm a cancelled upload or reconcile using a new uncancelled request", async () => {
+    const controller = new AbortController(); const methods: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      methods.push(init?.method || "GET");
+      if (init?.method === "PROPFIND") return new Response(null, { status: 207 });
+      controller.abort(); throw new TypeError("Synthetic lost response");
+    };
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav", username: "synthetic", password: "synthetic" }, fetcher);
+    await expect(client.upload(Uint8Array.of(1), true, controller.signal)).rejects.toMatchObject({ code: "cancelled" });
+    expect(methods).toEqual(["PROPFIND", "PUT"]);
+  });
+
+  it("accepts Apache weak-to-strong read validation without ever using the weak tag in If-Match", async () => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("If-Match")).toBeNull();
+      return new Response(Uint8Array.of(1), { headers: { ETag: '"same"' } });
+    });
+    const client = new WebDavClient({ baseUrl: "https://example.test/dav", username: "test", password: "synthetic" }, fetcher as typeof fetch);
+    const file = { name: "monica_backup_20260715_020202.zip", url: "https://example.test/dav/Monica_Backups/monica_backup_20260715_020202.zip", etag: 'W/"same"', encrypted: false };
+    await expect(client.download(file)).resolves.toEqual(Uint8Array.of(1));
+    await expect(client.download({ ...file, etag: 'W/"changed"' })).rejects.toThrow("发生变化");
+  });
+  it("uses canonical collection paths without permitting credentialed redirects", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method || "GET";
+      requests.push({ url: String(url), method });
+      expect(init?.redirect).toBe("error");
+      if (method === "PROPFIND") {
+        expect(new URL(String(url)).pathname.endsWith("/")).toBe(true);
+        return new Response(MULTISTATUS, { status: 207 });
+      }
+      expect(new URL(String(url)).pathname.endsWith("/")).toBe(false);
+      if (method === "GET") return new Response(Uint8Array.of(1));
+      return new Response(null, { status: 201 });
+    });
+    const client = new WebDavClient({ baseUrl: "https://cloud.example.com/dav/", username: "joy", password: "secret" }, fetcher as typeof fetch, { maxAttempts: 1 });
+    await client.testConnection();
+    await client.listBackups();
+    await client.upload(Uint8Array.of(1), false);
+    expect(requests.slice(0, 3)).toEqual([
+      { url: "https://cloud.example.com/dav/", method: "PROPFIND" },
+      { url: "https://cloud.example.com/dav/Monica_Backups/", method: "PROPFIND" },
+      { url: "https://cloud.example.com/dav/Monica_Backups/", method: "PROPFIND" }
+    ]);
+  });
+
   it("normalizes the Android backup folder and parses namespace-prefixed multistatus", () => {
     expect(backupFolderUrl("cloud.example.com/dav/")).toBe("https://cloud.example.com/dav/Monica_Backups");
     const files = parseMultiStatus(MULTISTATUS, "https://cloud.example.com/dav/Monica_Backups");

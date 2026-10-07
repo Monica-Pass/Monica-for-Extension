@@ -1,0 +1,692 @@
+{
+  "title": "Monica · OneDrive 数据库",
+  "brief": "插件内登录 Microsoft，选择已有 KDBX，连接后自动同步。沿用 Android 数据库管理的 12px 留白、24px 外侧与 4px 相邻圆角；实际表单、列表、按钮。没有密码或令牌明文。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "onedrivelogin317",
+      "name": "连接 OneDrive · 登录与凭据",
+      "x": 0,
+      "y": 0,
+      "w": 420,
+      "h": 960
+    },
+    {
+      "id": "onedrivefiles317",
+      "name": "选择 OneDrive 数据库 · 浏览与搜索",
+      "x": 500,
+      "y": 0,
+      "w": 420,
+      "h": 860
+    },
+    {
+      "id": "onedrivestatus317",
+      "name": "OneDrive 密码源 · 320px",
+      "x": 1000,
+      "y": 0,
+      "w": 320,
+      "h": 760
+    },
+    {
+      "id": "onedriveexpired317",
+      "name": "登录失效 · 保留本机修改",
+      "x": 1400,
+      "y": 0,
+      "w": 420,
+      "h": 670
+    }
+  ],
+  "groups": [
+    {
+      "id": "onedrivelogin317-0",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-0-control",
+          "icon": "close",
+          "variant": "filled",
+          "size": 396,
+          "kind": "topAppBar",
+          "label": "连接 KeePass"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-1",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 94,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-1-control",
+          "icon": null,
+          "variant": "filled",
+          "size": 396,
+          "kind": "select",
+          "label": "数据库来源",
+          "tabs": [
+            {
+              "label": "本地文件",
+              "icon": null
+            },
+            {
+              "label": "WebDAV",
+              "icon": null
+            },
+            {
+              "label": "OneDrive",
+              "icon": null
+            }
+          ],
+          "selected": 2
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-2",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 180,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-2-control",
+          "icon": "database",
+          "variant": "filled",
+          "size": 396,
+          "kind": "textField",
+          "label": "显示名称"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-3",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 274,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-3-control",
+          "icon": "account_circle",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "Microsoft 账号",
+          "supporting": "登录后选择云端数据库",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-4",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 358,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-4-control",
+          "icon": "login",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "登录 Microsoft 账号"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-5",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 452,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-5-control",
+          "icon": "folder_open",
+          "variant": "tonal",
+          "size": 396,
+          "kind": "button",
+          "label": "选择数据库",
+          "note": "登录前禁用，登录后可浏览文件。"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-6",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 548,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-6-control",
+          "icon": "password",
+          "variant": "filled",
+          "size": 396,
+          "kind": "textField",
+          "label": "数据库密码（可留空）"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-7",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 644,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-7-control",
+          "icon": "key",
+          "variant": "tonal",
+          "size": 396,
+          "kind": "button",
+          "label": "选择密钥文件（可选）"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-8",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 732,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-8-control",
+          "icon": null,
+          "variant": "filled",
+          "size": 396,
+          "kind": "checkbox",
+          "label": "设为默认保存目标"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-9",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 800,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-9-control",
+          "icon": "lock_open",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "连接并解锁",
+          "note": "尚未选择数据库时禁用。"
+        }
+      ]
+    },
+    {
+      "id": "onedrivelogin317-10",
+      "frameId": "onedrivelogin317",
+      "x": 12,
+      "y": 872,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivelogin317-10-control",
+          "icon": null,
+          "variant": "text",
+          "size": 396,
+          "kind": "button",
+          "label": "取消"
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-0",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-0-control",
+          "icon": "arrow_back",
+          "variant": "filled",
+          "size": 396,
+          "kind": "topAppBar",
+          "label": "选择数据库",
+          "icon2": "close"
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-1",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 94,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-1-control",
+          "icon": "cloud",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "test@example.invalid",
+          "supporting": "OneDrive / 密码库",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-2",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 180,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-2-control",
+          "icon": "search",
+          "variant": "filled",
+          "size": 396,
+          "kind": "searchBar",
+          "label": "搜索当前文件夹"
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-3",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 270,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-3-control",
+          "icon": "drive_folder_upload",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "上一级",
+          "radiusTop": 24,
+          "radiusBottom": 4
+        },
+        {
+          "id": "onedrivefiles317-4-control",
+          "icon": "folder",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "家庭",
+          "supporting": "文件夹",
+          "icon2": "chevron_right",
+          "radiusTop": 4,
+          "radiusBottom": 4
+        },
+        {
+          "id": "onedrivefiles317-5-control",
+          "icon": "database",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "个人密码库.kdbx",
+          "supporting": "192 KB",
+          "icon2": "radio_button_checked",
+          "radiusTop": 4,
+          "radiusBottom": 4
+        },
+        {
+          "id": "onedrivefiles317-6-control",
+          "icon": "database",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "工作账号.kdbx",
+          "supporting": "640 KB",
+          "icon2": "radio_button_unchecked",
+          "radiusTop": 4,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-7",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 616,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-7-control",
+          "icon": "check",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "使用这个数据库"
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-8",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 700,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-8-control",
+          "icon": "refresh",
+          "variant": "tonal",
+          "size": 396,
+          "kind": "button",
+          "label": "刷新"
+        }
+      ]
+    },
+    {
+      "id": "onedrivefiles317-9",
+      "frameId": "onedrivefiles317",
+      "x": 512,
+      "y": 776,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivefiles317-9-control",
+          "icon": null,
+          "variant": "text",
+          "size": 396,
+          "kind": "button",
+          "label": "取消"
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-0",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-0-control",
+          "icon": "arrow_back",
+          "variant": "filled",
+          "size": 296,
+          "kind": "topAppBar",
+          "label": "密码源"
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-1",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 96,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-1-control",
+          "icon": "database",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "个人密码库",
+          "supporting": "OneDrive · 个人密码库.kdbx",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-2",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 188,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-2-control",
+          "icon": "lock_open",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "连接状态",
+          "supporting": "已解锁",
+          "radiusTop": 24,
+          "radiusBottom": 4
+        },
+        {
+          "id": "onedrivestatus317-3-control",
+          "icon": "offline_pin",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "离线访问",
+          "supporting": "可用",
+          "radiusTop": 4,
+          "radiusBottom": 4
+        },
+        {
+          "id": "onedrivestatus317-4-control",
+          "icon": "cloud_done",
+          "variant": "filled",
+          "size": 296,
+          "kind": "listItem",
+          "label": "云端保存",
+          "supporting": "已同步",
+          "radiusTop": 4,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-5",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 450,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-5-control",
+          "icon": "sync",
+          "variant": "filled",
+          "size": 296,
+          "kind": "button",
+          "label": "立即同步"
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-6",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 538,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-6-control",
+          "icon": "folder_managed",
+          "variant": "tonal",
+          "size": 296,
+          "kind": "button",
+          "label": "管理分组"
+        }
+      ]
+    },
+    {
+      "id": "onedrivestatus317-7",
+      "frameId": "onedrivestatus317",
+      "x": 1012,
+      "y": 626,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedrivestatus317-7-control",
+          "icon": "settings",
+          "variant": "text",
+          "size": 296,
+          "kind": "button",
+          "label": "管理 KeePass"
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-0",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-0-control",
+          "icon": "close",
+          "variant": "filled",
+          "size": 396,
+          "kind": "topAppBar",
+          "label": "管理 KeePass"
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-1",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 96,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-1-control",
+          "icon": "database",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "个人密码库.kdbx",
+          "supporting": "test@example.invalid",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-2",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 190,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-2-control",
+          "icon": "cloud_off",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "需要重新登录 OneDrive",
+          "supporting": "本机修改已保留，登录后继续同步",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-3",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 292,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-3-control",
+          "icon": "login",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "重新登录"
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-4",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 396,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-4-control",
+          "icon": "offline_pin",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "离线访问",
+          "supporting": "仍可查看和编辑本机数据库",
+          "radiusTop": 24,
+          "radiusBottom": 24
+        }
+      ]
+    },
+    {
+      "id": "onedriveexpired317-5",
+      "frameId": "onedriveexpired317",
+      "x": 1412,
+      "y": 510,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "onedriveexpired317-5-control",
+          "icon": null,
+          "variant": "text",
+          "size": 396,
+          "kind": "button",
+          "label": "关闭"
+        }
+      ]
+    }
+  ],
+  "dynamicColor": false
+}

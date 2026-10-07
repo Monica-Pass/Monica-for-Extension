@@ -140,7 +140,7 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
 
     const card = page.locator(".bitwarden-provider-card").filter({ has: page.getByRole("heading", { name: "Bitwarden 工作库" }) });
     await expect(card).toBeVisible();
-    await expect(card).toHaveCSS("border-radius", "8px");
+    await expect(card).toHaveCSS("border-radius", "24px");
     await expect(card.getByText("vault.example.test", { exact: true })).toBeVisible();
     await expect(card).not.toContainText("never-render-url-token");
     await expect(card.getByText("4 个冲突", { exact: true })).toBeVisible();

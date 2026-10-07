@@ -20,6 +20,11 @@ const ITEM: VaultItem = {
 } as VaultItem;
 
 class AttachmentNativeFake implements Mdbx2BatchTransferNativeClient {
+  corruptTarget = false;
+  hideTarget = false;
+  extraTarget = false;
+  private readingId = "source-attachment";
+  async mutateObjects(): Promise<never> { throw new Error("Unexpected object batch in attachment-only test"); }
   readonly uploadChunks: Uint8Array[] = [];
   readonly begins: Array<Record<string, unknown>> = [];
   readonly released: string[] = [];
@@ -36,17 +41,22 @@ class AttachmentNativeFake implements Mdbx2BatchTransferNativeClient {
   async deleteObject(..._args: unknown[]): Promise<any> { throw new Error("not used"); }
   async resolveObjectOperation(..._args: unknown[]): Promise<any> { return { known: false, committed: false }; }
   async listAttachments(vaultHandle: string, collectionId: string, objectId: string) {
+    if (vaultHandle === TARGET.config.vaultHandle && this.uploadInput && !this.hideTarget) {
+      const item = { attachmentId: this.uploadInput.attachmentId, fileName: "evidence.bin", sizeBytes: 3, mediaType: "application/octet-stream", protected: true };
+      return { items: this.extraTarget ? [item, { ...item, attachmentId: "unexpected" }] : [item] };
+    }
     if (vaultHandle === SOURCE_MDBX.config.vaultHandle && collectionId === "source-folder" && objectId === "source-object") {
       return { items: [{ attachmentId: "source-attachment", fileName: "evidence.bin", sizeBytes: 3, mediaType: "application/octet-stream", protected: true }] };
     }
     return { items: [] };
   }
   async beginAttachmentRead(_vaultHandle: string, attachmentId: string) {
+    this.readingId = attachmentId;
     return { readHandle: "read-handle", attachmentId, fileName: "evidence.bin", sizeBytes: 3, maxChunkBytes: 2 };
   }
   async readAttachmentChunk(_readHandle: string, offset: number) {
-    const bytes = offset === 0 ? new Uint8Array([1, 2]) : new Uint8Array([3]);
-    return { readHandle: "read-handle", attachmentId: "source-attachment", fileName: "evidence.bin", sizeBytes: 3, offset, nextOffset: offset + bytes.length, dataBase64: bytesToBase64(bytes), eof: offset + bytes.length === 3 };
+    const bytes = offset === 0 ? new Uint8Array([1, 2]) : new Uint8Array([this.corruptTarget && this.readingId !== "source-attachment" ? 4 : 3]);
+    return { readHandle: "read-handle", attachmentId: this.readingId, fileName: "evidence.bin", sizeBytes: 3, offset, nextOffset: offset + bytes.length, dataBase64: bytesToBase64(bytes), eof: offset + bytes.length === 3 };
   }
   async releaseAttachmentRead(readHandle: string) { this.released.push(readHandle); return true; }
   async beginAttachmentUpload(_vaultHandle: string, input: { operationId: string; attachmentId: string; collectionId: string; objectId: string; fileName: string; mediaType?: string; mode: "create" | "replace"; sizeBytes: number; sha256?: string }) {
@@ -84,6 +94,24 @@ class KeePassFake {
 }
 
 describe("MDBX2 transfer attachments", () => {
+  it("captures verified content proofs and detects same-size replacement, missing and extra targets", async () => {
+    const native = new AttachmentNativeFake();
+    const service = new Mdbx2TransferAttachmentService(native, new KeePassFake() as never);
+    const targetItem = { ...ITEM, providerRefs: [{ providerId: TARGET.id, remoteId: "target-object", remoteFolderId: "target-folder" }] } as VaultItem;
+    const operationId = "44444444-4444-4444-8444-444444444444";
+    await service.transferAttachments(SOURCE_MDBX, ITEM, TARGET, targetItem, operationId);
+    const proofs = await service.captureMoveAttachmentProofs(SOURCE_MDBX, ITEM, TARGET, targetItem, operationId);
+    expect(proofs).toEqual([expect.objectContaining({ itemId: targetItem.id, sizeBytes: 3, sha256: "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81" })]);
+    const restarted = new Mdbx2TransferAttachmentService(native, new KeePassFake() as never);
+    await restarted.verifyMoveAttachmentProofs(TARGET, targetItem, proofs);
+    native.corruptTarget = true;
+    await expect(restarted.verifyMoveAttachmentProofs(TARGET, targetItem, proofs)).rejects.toThrow("附件校验");
+    await expect(service.captureMoveAttachmentProofs(SOURCE_MDBX, ITEM, TARGET, targetItem, operationId)).rejects.toThrow("附件校验");
+    native.corruptTarget = false; native.hideTarget = true;
+    await expect(restarted.verifyMoveAttachmentProofs(TARGET, targetItem, proofs)).rejects.toThrow("附件校验");
+    native.hideTarget = false; native.extraTarget = true;
+    await expect(restarted.verifyMoveAttachmentProofs(TARGET, targetItem, proofs)).rejects.toThrow("附件校验");
+  });
   it("copies KeePass bytes with a verified digest and retries a lost chunk response", async () => {
     const native = new AttachmentNativeFake();
     native.loseNextChunk = true;
@@ -95,7 +123,7 @@ describe("MDBX2 transfer attachments", () => {
     expect(native.begins[0].sha256).toBe("039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81");
     // The exact digest assertion below is generated from the bytes rather than trusting metadata.
     expect(native.uploadChunks.reduce<number[]>((all, chunk) => [...all, ...chunk], [])).toEqual([1, 2, 3]);
-    expect(native.aborted).toEqual([]);
+    expect(native.aborted).toHaveLength(1);
   });
 
   it("reads MDBX2 source chunks and releases the read handle", async () => {

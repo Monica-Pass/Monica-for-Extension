@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PasskeyItem, ProviderAccount } from "../core/model";
 import { independentImportedPasskey, normalizeImportedVaultItem } from "../manager/import-items";
 import { nextBitwardenPasskeyCounter, resolvePasskeyOwnership } from "../passkey/ownership-policy";
@@ -14,6 +14,61 @@ const item: PasskeyItem = {
 };
 
 describe("Passkey ownership and local statistics", () => {
+  it("commits local positive history before returning, survives restart, and rejects duplicate reservation", async () => {
+    const storage = new MemoryVaultStorage(), sessions = new MemoryVaultSessionStore();
+    const vault = new SecureVaultService(storage, sessions);
+    await vault.setup("counter synthetic password");
+    const selected = await vault.upsertItem(item) as PasskeyItem;
+    const results = await Promise.allSettled([vault.advanceLocalPasskeyCounter(selected), vault.advanceLocalPasskeyCounter(selected)]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    await vault.lock();
+    const restarted = new SecureVaultService(storage, sessions);
+    await restarted.unlock("counter synthetic password");
+    const current = await restarted.getItem(item.id) as PasskeyItem;
+    expect(current).toMatchObject({ signCount: 38, signCountHighWaterMark: 38 });
+    expect(await restarted.advanceLocalPasskeyCounter(current)).toMatchObject({ signCount: 39, signCountHighWaterMark: 39 });
+    expect((await restarted.readState()).mutationQueue).toEqual([]);
+  });
+
+  it("does not make a zero-counter local credential a write on each login", async () => {
+    const storage = new MemoryVaultStorage(), vault = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await vault.setup("");
+    const selected = await vault.upsertItem({ ...item, signCount: 0 }) as PasskeyItem;
+    const write = vi.spyOn(storage, "write");
+    expect(await vault.advanceLocalPasskeyCounter(selected)).toEqual(selected);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("does not authorize a local counter when encrypted persistence fails", async () => {
+    const storage = new MemoryVaultStorage(), vault = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await vault.setup("");
+    const selected = await vault.upsertItem(item) as PasskeyItem;
+    vi.spyOn(storage, "write").mockRejectedValueOnce(new Error("synthetic disk full"));
+    await expect(vault.advanceLocalPasskeyCounter(selected)).rejects.toThrow("disk full");
+    expect(await vault.getItem(item.id)).toMatchObject({ signCount: 37 });
+    expect(await vault.advanceLocalPasskeyCounter(selected)).toMatchObject({ signCount: 38 });
+  });
+
+  it.each(["keepass", "mdbx2", "monica-webdav", "bitwarden"] as const)("cannot bypass %s ownership with a local reservation", async kind => {
+    const vault = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await vault.setup("");
+    const account: ProviderAccount = { id: "counter-source", kind, name: kind, enabled: true, isDefaultSaveTarget: false, config: {} };
+    await vault.upsertProvider(account);
+    const selected = { ...item, providerRefs: [{ providerId: account.id, remoteId: "remote", revision: REVISION }] };
+    await vault.applyProviderSync(account.id, [selected]);
+    await expect(vault.advanceLocalPasskeyCounter(selected)).rejects.toThrow("密码源");
+    expect(await vault.getItem(item.id)).toMatchObject({ signCount: 37 });
+  });
+
+  it.each([{ signCount: 0, signCountHighWaterMark: 37 }, { signCount: 0xffffffff }])("rejects regressed or exhausted local history %j", async counters => {
+    const vault = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
+    await vault.setup("");
+    const selected = await vault.upsertItem({ ...item, ...counters }) as PasskeyItem;
+    await expect(vault.advanceLocalPasskeyCounter(selected)).rejects.toThrow();
+    expect(await vault.getItem(item.id)).toMatchObject(counters);
+  });
+
   it.each(["local", "monica-webdav", "keepass", "mdbx2", "bitwarden"] as const)("does not dirty a %s source when only usage changes", async kind => {
     const vault = new SecureVaultService(new MemoryVaultStorage(), new MemoryVaultSessionStore());
     await vault.setup("");

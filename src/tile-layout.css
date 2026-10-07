@@ -109,3 +109,14 @@
 @media (prefers-reduced-motion: reduce) {
   #root .vault-tile { transition: none; }
 }
+
+/* Card artwork follows Android's physical card proportion. Keep controls outside
+   the image so image-only mode and light artwork remain usable. */
+#root .vault-tile--card-face{--m3e-card-shape:28px;border-radius:28px}
+.vault-tile--card-face .vault-tile-content{padding:8px;gap:8px;min-height:0}
+.vault-tile--card-face .vault-tile-header{padding:0 8px}
+.vault-tile--card-face .vault-tile-footer{padding:0 12px 10px}
+.vault-tile--card-face .wallet-card-face{width:100%}
+.detail-card-face .wallet-card-face,.editor-section>.wallet-card-face{width:min(100%,480px);align-self:start}
+.wallet-kind-filter{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.wallet-kind-filter m3e-button{min-height:40px}

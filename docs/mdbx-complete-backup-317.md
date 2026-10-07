@@ -1,0 +1,24 @@
+# Complete MDBX backup and restore (1.0.317 work)
+
+The extension exports a single encrypted MDBX when all content is embedded. Vaults with external ciphertext export as a standard, uncompressed ZIP containing `vault.mdbx` and `vault.mdbx.blobs/<first-two>/<next-two>/<sha256>`. Passwords, Passkeys and item payloads remain in the original encrypted database. No plaintext credential export is introduced.
+
+The browser extension can open its complete ZIP directly through the existing source dialog. **Android complete-archive acceptance remains pending.** Current Android `MdbxLocalOpenScreen` selects one document; `MdbxViewModel.importLocalVault` calls `copyExternalDocumentToOwnedFile(sourceUri)` without the optional parent-tree URI, and registers `externalTreeUri = null`. `Mdbx2ExternalStorage` copies the `.blobs` sidecar only when a tree URI is supplied. Extracting the ZIP beside its sidecar is therefore not a supported complete-attachment restore procedure through that screen. This is a source-traced gap, not a runtime test of the current dirty Android build. Keep the complete archive. This ZIP is distinct from Monica's Android JSON backup ZIP.
+
+Implementation:
+
+- An explicitly recorded extension-only FFI overlay holds one SQLite read transaction while collecting current, deleted and retained-snapshot Blob references, backing up the database and copying all required ciphertext. Immutable Blob IDs are verified against complete SHA-256. Missing, corrupted or oversized ciphertext aborts the operation.
+- Native export sessions use separate temporary directories and never create/commit a cloud sync state. Four sessions, five-minute lifetime, 256 KiB download chunks and a 512 MiB total limit. Sessions hold weak vault references and are removed on vault lock; they cannot keep decrypted keys alive. Manager ownership, provider binding, expiry, cancellation and full download digest remain enforced.
+- ZIP restore accepts only the exact database/Blob file layout, stored entries, regular files, unique paths, bounded counts and sizes, valid CRCs and matching ciphertext digests. A staging directory is renamed into the imports area only after validation. Password verification and referenced-Blob completeness occur before registering the working vault. Wrong-password or incomplete restores retain the imported source for retry and remove their newly created working copies. Releasing the source removes the database and sidecar together.
+- The component capability `supportsCompleteBackup` gates new exports and ZIP imports. Older helpers receive an update message. Standalone MDBX import and cloud synchronization contracts remain compatible.
+
+Validation in this implementation batch:
+
+- Rust compilation passed. Three native tests passed: chunked active/deleted attachment ZIP export→bounded native transfer→restore→wrong-password retry→independent working-copy reads; source mutation after export does not alter the snapshot; corrupt/missing Blobs and unsafe archive layouts fail without published output. Source revision is unchanged by backup.
+- Three TypeScript files / 62 tests passed, including export/download ownership, binding, lock, cancellation, size, TTL, queue limits, format identity, SHA-256 and old-helper capability rejection. Both TypeScript configurations, production build, source provenance verification and the security audit (190 runtime commands) passed. Final logs are recorded in the current task checkpoint; the full suite remains deferred.
+- Editable local M3E design and both rendered pages: [design](design/complete-backup-317.md), `raw/complete-backup-canvas/` under the task directory. First invalid import attempts were caused by omitted required `icon: null` fields and are retained as diagnostics, not successful render evidence.
+
+Subsequent [real Edge acceptance](mdbx-complete-backup-edge-317.md) verifies download, cancellation, direct ZIP import, wrong-password retry, browser/Host restart, exact project/key/attachment readback and authentication with the original RSA Passkey. A narrow form compression bug was corrected. That report preserves the exact current executable and fixture provenance; the implementation-only evidence above remains historical.
+
+Subsequent crash recovery uses OS file leases for new temporary export directories. A Host startup reclaims abandoned leased directories while preserving another process's active download. Original imports, vaults, backups, unleased legacy directories and linked directories are excluded. Normal shutdown closes download handles before removing their temporary files. See [crash acceptance](mdbx-backup-crash-317.md) for validation and limitations.
+
+Still pending: Android SAF consumption and history restoration, remote backend interactions and release packaging. Restore staging and pre-lease legacy export leftovers are outside the new export scavenger's scope. No broader task row is marked complete from these checks.

@@ -1,0 +1,19 @@
+{
+  "format": "MDBX-1",
+  "schema_version": 1,
+  "source_tag": "MDBX1.0",
+  "source_commit": "1a43fa9e8e87eebf6d0e1b84543c3291d0b25142",
+  "fixture_sha256": "FDC0E75C286CD75CF6DF4A4F9A0902F71B2E2FF9AB56E00CCBDBF77B61D1FC2A",
+  "fixture_bytes": 241664,
+  "test_unlock_password": "mdbx1-golden-password",
+  "project_id": "6f90d37f-b17f-4086-a3a3-9db6c4bbb5c5",
+  "project_title": "MDBX1 Golden Project",
+  "project_group": "golden",
+  "entry_id": "ccc83e77-743e-4e04-8fd7-75c5f4ea1b5b",
+  "entry_title": "MDBX1 Golden Login",
+  "attachment_id": "c45f5f57-d562-4059-b73a-520d965e7c45",
+  "attachment_file_name": "mdbx1-golden.txt",
+  "attachment_bytes": "MDBX1 golden attachment bytes\n",
+  "snapshot_id": "7b913021-cb0d-4f08-b1b7-68dfcf819035",
+  "old_reader_observation": "MDBX1.0 reader project list and entry list both succeeded after current reader upgraded a copy; old writers remain unsupported for future MDBX2 semantics."
+}

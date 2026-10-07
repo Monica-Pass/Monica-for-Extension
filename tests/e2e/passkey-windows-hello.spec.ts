@@ -1,19 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { chromium, expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
 
 const HOST_NAME = "com.monica_pass.windows_hello";
 const REGISTRY_KEYS = [
-  `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`,
-  `HKCU\\Software\\Chromium\\NativeMessagingHosts\\${HOST_NAME}`
+  `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${HOST_NAME}`
 ];
 
 test.describe.configure({ mode: "serial" });
 test.skip(process.platform !== "win32", "Windows Native Messaging registry E2E requires Windows.");
 
 async function extensionId(extensionPath: string, profilePath: string): Promise<string> {
-  const context = await chromium.launchPersistentContext(profilePath, { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+  const context = await launchEdgeContext(profilePath, { locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     return new URL(worker.url()).host;
@@ -73,7 +73,7 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
   process.env.MONICA_FAKE_HELLO_CONTROL = control;
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("uv-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("uv-profile"), { locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
@@ -92,7 +92,17 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
     const items = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(items.data).toEqual([expect.objectContaining({ kind: "passkey", userVerificationRequired: true, useCount: 0 })]);
 
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
     await page.locator("#authenticate").click();
+    const opened = context.waitForEvent('page');
+    await confirmCreate(page);
+    const security = await opened;
+    await expect(security.getByRole('heading', { name: '解锁 Monica 以继续' })).toBeVisible();
+    await expect(security.locator('#password')).toBeHidden();
+    await security.getByRole('button', { name: '解锁并继续', exact: true }).click();
+    await expect.poll(() => security.isClosed()).toBe(true);
+    // This ceremony reuses its verified unlock; a new ceremony must verify again.
+    writeFileSync(control, "cancel", "utf8");
     await confirmFirstCredential(page);
     await expect(page.locator("#result")).toContainText("authenticated:");
     await expect(page.locator("#result")).toContainText("uv=true");
@@ -103,6 +113,22 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
     await expect(page.locator("#result")).toHaveText("error:NotAllowedError");
     let current = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(current.data[0]).toMatchObject({ useCount: 1 });
+
+    // Cancellation during a locked Hello attempt must not unlock later when its host responds.
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
+    writeFileSync(control, "delay:800", "utf8");
+    await page.locator('#authenticate').click();
+    const delayedOpened = context.waitForEvent('page');
+    await confirmCreate(page);
+    const delayedSecurity = await delayedOpened;
+    await delayedSecurity.getByRole('button', { name: '解锁并继续', exact: true }).click();
+    await page.waitForTimeout(100);
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }))).toMatchObject({ ok: true });
+    await expect.poll(() => delayedSecurity.isClosed()).toBe(true);
+    await expect(page.locator('#result')).toHaveText('error:NotAllowedError');
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_STATUS" }))).toMatchObject({ ok: true, data: 'locked' });
+    writeFileSync(control, "success", "utf8");
+    expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_UNLOCK_HELLO" }))).toMatchObject({ ok: true });
 
     writeFileSync(control, "delay:800", "utf8");
     await page.locator("#authenticate").click();
@@ -125,15 +151,15 @@ test("device-key vault without Windows Hello falls back to the browser platform 
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("native-fallback-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    context = await launchEdgeContext(testInfo.outputPath("native-fallback-profile"), { locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
     expect(await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "" }))).toMatchObject({ ok: true });
-    const host = "native-fallback.example.test";
-    await context.route(`https://${host}/**`, (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: relyingPartyHtml(host) }));
+    const host = "localhost";
+    await context.route(`http://${host}/**`, (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: relyingPartyHtml(host) }));
     const page = await context.newPage();
-    await page.goto(`https://${host}/`);
+    await page.goto(`http://${host}/`);
     await expect.poll(() => page.evaluate(() => Boolean((navigator.credentials as CredentialsContainer & { __monicaPasskey?: boolean }).__monicaPasskey))).toBe(true);
     const cdp = await context.newCDPSession(page);
     await cdp.send("WebAuthn.enable");

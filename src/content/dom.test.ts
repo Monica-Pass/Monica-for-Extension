@@ -17,6 +17,45 @@ function showLightInputs(dom: JSDOM): void {
 }
 
 describe("content autofill DOM engine", () => {
+  it("does not fill a detached password or report success after synchronous field replacement", () => {
+    const dom = page('<form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password"></form>');
+    showLightInputs(dom);
+    const oldPassword = dom.window.document.querySelector<HTMLInputElement>('#password')!;
+    dom.window.document.querySelector('#username')!.addEventListener('input', () => {
+      const replacement = show(oldPassword.cloneNode() as HTMLInputElement);
+      oldPassword.replaceWith(replacement);
+    }, { once: true });
+    const result = fillCredential({ username: 'synthetic', password: 'synthetic-secret' }, dom.window.document);
+    expect(result).toMatchObject({ ok: false, filledPassword: false });
+    expect(oldPassword.value).toBe('');
+    expect(dom.window.document.querySelector<HTMLInputElement>('#password')!.value).toBe('');
+    expect(fillCredential({ username: 'synthetic', password: 'synthetic-secret' }, dom.window.document)).toMatchObject({ ok: true, filledPassword: true });
+  });
+
+  it("does not treat protected internal content carriers as website custom fields", () => {
+    const internal = 'monica.content.block.11111111-1111-4111-8111-111111111111.0000';
+    const dom = page(`<form><input autocomplete="username"><input type="password"><input name="tenant"><input name="${internal}"><input name="monica_gpg_private"></form>`);
+    showLightInputs(dom);
+    const result = fillCredential({ username: 'synthetic', password: 'synthetic-secret', customFields: [{name:'tenant', value:'team'}, {name:internal,value:'SYNTHETIC INTERNAL KEY'}, {name:'monica_gpg_private',value:'SYNTHETIC PRIVATE KEY'}] }, dom.window.document);
+    expect(result).toMatchObject({ ok: true, filledCustomFields: 1 });
+    expect(dom.window.document.querySelector<HTMLInputElement>('[name="tenant"]')!.value).toBe('team');
+    expect(dom.window.document.querySelector<HTMLInputElement>(`[name="${internal}"]`)!.value).toBe('');
+    expect(dom.window.document.querySelector<HTMLInputElement>('[name="monica_gpg_private"]')!.value).toBe('');
+  });
+
+  it.each(['readOnly', 'action', 'type'] as const)("stops when a username handler changes the remaining field's %s", mutation => {
+    const dom = page('<form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="current-password"></form>');
+    showLightInputs(dom);
+    const target = dom.window.document.querySelector<HTMLInputElement>('#password')!;
+    dom.window.document.querySelector('#username')!.addEventListener('input', () => {
+      if (mutation === 'readOnly') target.readOnly = true;
+      if (mutation === 'action') target.form!.action = '/changed-submit';
+      if (mutation === 'type') target.type = 'text';
+    });
+    expect(fillCredential({ username: 'synthetic', password: 'synthetic-secret' }, dom.window.document)).toMatchObject({ ok: false, filledPassword: false });
+    expect(target.value).toBe('');
+  });
+
   it("scans a login form", () => {
     const dom = page('<form><input type="email"><input type="password"></form>');
     showLightInputs(dom);

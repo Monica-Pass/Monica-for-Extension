@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as kdbxweb from "kdbxweb";
 import { ProviderTransportError } from "../provider-transport";
 import { buildKeePassFixture, keePassCredentials } from "./keepass-fixture";
@@ -10,10 +10,68 @@ import {
 import { MemoryKeePassWorkingCopyStorage } from "./keepass-working-copy-store";
 import { KeePassProvider } from "./keepass-provider";
 import type { ProviderAccount } from "../../core/model";
+import { PROJECT_CREDENTIAL_FIELD } from '../../core/project-credentials';
 
 const PASSWORD = "publish fixture password";
 
 describe("KeePass remote conditional publication", () => {
+  it.each(['remote-hash', 'local-hash', 'missing-etag', 'cancelled'] as const)('rejects a conflict review with %s and preserves all stored bytes', async mode => {
+    const bytes = await buildKeePassFixture({ password: PASSWORD, entries: [{ title: 'Synthetic' }] });
+    const state = createRemoteState(bytes, '"etag-1"'), provider = new KeePassProvider();
+    const storage = new MemoryKeePassWorkingCopyStorage();
+    const sessions = new KeePassRemoteSessionService(provider, storage, () => state.client);
+    const account = await openRemote(sessions), before = await storage.read(account.id);
+    if (mode === 'remote-hash') {
+      const read = state.client.read.bind(state.client);
+      vi.spyOn(state.client, 'read').mockImplementation(async () => ({ ...await read(), sha256: '0'.repeat(64) }));
+    }
+    if (mode === 'local-hash') {
+      const read = storage.read.bind(storage);
+      vi.spyOn(storage, 'read').mockImplementationOnce(async id => ({ ...(await read(id))!, workingSha256: '0'.repeat(64) }));
+    }
+    if (mode === 'missing-etag') state.etag = '';
+    const controller = new AbortController(); if (mode === 'cancelled') controller.abort();
+    await expect(sessions.reviewProjectConflicts(account, controller.signal)).rejects.toThrow();
+    expect(await storage.read(account.id)).toEqual(before); expect(state.bytes).toEqual(bytes); expect(state.expectedEtags).toEqual([]);
+    expect(provider.isUnlocked(account.id)).toBe(true);
+  });
+
+  it('returns only project identities and member changes when publication meets a concurrent project edit', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000099';
+    const initialBytes = await buildKeePassFixture({ password: PASSWORD, entries: [0, 1].map(n => ({ title: 'Private title',
+      protectedFields: { Password: 'Private password', [PROJECT_CREDENTIAL_FIELD]: JSON.stringify({ version: 1, projectId,
+        groupId: '00000000-0000-4000-8000-000000000001', passwordId: `00000000-0000-4000-8000-00000000001${n}`,
+        label: 'Main', primary: true, groupOrder: 0, passwordOrder: n }) } })) });
+    const state = createRemoteState(initialBytes, '"etag-1"'), provider = new KeePassProvider();
+    const storage = new MemoryKeePassWorkingCopyStorage();
+    const sessions = new KeePassRemoteSessionService(provider, storage, () => state.client);
+    const account = await openRemote(sessions);
+    const localBytes = await rewrite(initialBytes, database => { database.remove(database.getDefaultGroup().entries[0]); });
+    await provider.unlock(account, localBytes, { password: PASSWORD, sourceMode: 'webdav', sourceName: 'vault.kdbx', dirty: true });
+    await sessions.persistWorkingCopy(account);
+    const before = await storage.read(account.id);
+    const peerBytes = await rewrite(initialBytes, database => { database.getDefaultGroup().entries[1].fields.set('Notes', 'Private peer note'); });
+    state.bytes = peerBytes; state.etag = '"etag-2"';
+    const liveBefore = provider.summarize(account.id);
+    const review = await sessions.reviewProjectConflicts(account);
+    expect(review).toMatchObject({ providerId: account.id, revision: before!.revision, baseSha256: before!.baseSha256,
+      workingSha256: before!.workingSha256, remoteSha256: await digest(peerBytes), remoteEtag: '"etag-2"',
+      projects: [expect.objectContaining({ projectId })] });
+    expect(review.reviewToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(await sessions.reviewProjectConflicts(account)).toEqual(review);
+    expect(provider.summarize(account.id)).toEqual(liveBefore);
+    expect(await storage.read(account.id)).toEqual(before); expect(state.expectedEtags).toEqual([]);
+    state.etag = '"etag-3"';
+    expect((await sessions.reviewProjectConflicts(account)).reviewToken).not.toBe(review.reviewToken);
+    state.etag = '"etag-2"';
+    await expect(sessions.publishWorkingCopy(account)).rejects.toMatchObject({ code: 'remote-rebase-conflict',
+      conflicts: [expect.objectContaining({ kind: 'password-project', projectId })],
+      projects: [expect.objectContaining({ projectId, local: expect.objectContaining({ activeCount: 1, trashCount: 1 }),
+        remote: expect.objectContaining({ activeCount: 2, trashCount: 0 }) })] });
+    expect(await storage.read(account.id)).toEqual(before); expect(state.bytes).toEqual(peerBytes);
+    expect(state.expectedEtags).toEqual([]);
+  });
+
   it("uploads the working copy with the stored ETag and reloads the provider", async () => {
     const initialBytes = await buildKeePassFixture({ password: PASSWORD, entries: [{ title: "Before" }] });
     const state = createRemoteState(initialBytes, '"etag-1"');

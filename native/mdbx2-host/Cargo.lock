@@ -40,6 +40,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,6 +298,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -300,6 +324,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -308,6 +343,17 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "displaydoc"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -357,6 +403,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88a41f105fe1d5b6b34b2055e3dc59bb79b46b48b2040b9e6c7b4b5de097aa41"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -584,7 +640,6 @@ dependencies = [
 [[package]]
 name = "mdbx-core"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "chrono",
  "serde",
@@ -597,7 +652,6 @@ dependencies = [
 [[package]]
 name = "mdbx-crypto"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -614,7 +668,6 @@ dependencies = [
 [[package]]
 name = "mdbx-ffi"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "mdbx-core",
  "mdbx-storage",
@@ -632,7 +685,6 @@ dependencies = [
 [[package]]
 name = "mdbx-storage"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "base64",
  "chrono",
@@ -653,7 +705,6 @@ dependencies = [
 [[package]]
 name = "mdbx-sync"
 version = "0.2.0"
-source = "git+https://github.com/Monica-Pass/Mdbx.git?rev=974c517465e7b6cac0947d2d59875aa4211fa16b#974c517465e7b6cac0947d2d59875aa4211fa16b"
 dependencies = [
  "bincode",
  "chrono",
@@ -679,10 +730,12 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "monica-mdbx2-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
+ "fs2",
  "md-5",
+ "mdbx-core",
  "mdbx-ffi",
  "mdbx-storage",
  "rusqlite",
@@ -694,6 +747,7 @@ dependencies = [
  "uuid",
  "windows-sys",
  "zeroize",
+ "zip",
 ]
 
 [[package]]
@@ -1375,6 +1429,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1482,6 +1558,21 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+
+[[package]]
+name = "zip"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "displaydoc",
+ "indexmap",
+ "memchr",
+ "thiserror",
+]
 
 [[package]]
 name = "zmij"

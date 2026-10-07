@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 
 mod cloud_sync;
+mod backup_scratch;
+mod local_export;
 mod runtime;
 mod windows_hello;
 
@@ -21,8 +23,16 @@ struct HostRequest {
     protocol: u32,
     request_id: String,
     method: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_lossless_params")]
     params: Value,
+}
+
+fn deserialize_lossless_params<'de, D>(deserializer: D) -> Result<Value, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+    mdbx_core::json::from_str(raw.get()).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Serialize)]
@@ -208,7 +218,7 @@ fn write_frame(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
     if frame.is_empty() || frame.len() > MAX_OUTPUT_FRAME_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "native output frame exceeds the Chrome limit",
+            "native output frame exceeds the Native Messaging limit",
         ));
     }
     let length = u32::try_from(frame.len())
@@ -379,5 +389,26 @@ mod tests {
         let bounded = bounded_message(message, 512);
         assert!(bounded.len() <= 512);
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn native_frame_params_preserve_precise_numbers_and_literal_marker_keys() {
+        let request: HostRequest = serde_json::from_str(r#"{"protocol":2,"requestId":"synthetic","method":"host.hello","params":{"counter":18446744073709551615,"fraction":0.12345678901234567890123456789,"future":{"$serde_json::private::Number":"literal","$serde_json::private::RawValue":"raw"}}}"#).unwrap();
+        assert_eq!(
+            request.params["counter"].to_string(),
+            "18446744073709551615"
+        );
+        assert_eq!(
+            request.params["fraction"].to_string(),
+            "0.12345678901234567890123456789"
+        );
+        assert_eq!(
+            request.params["future"]["$serde_json::private::Number"],
+            "literal"
+        );
+        assert_eq!(
+            request.params["future"]["$serde_json::private::RawValue"],
+            "raw"
+        );
     }
 }

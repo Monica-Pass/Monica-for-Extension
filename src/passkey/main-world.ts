@@ -1,5 +1,5 @@
 import { OPEN_SHADOW_ROOT_EVENT } from "../content/shadow-bridge";
-import { shouldInterceptPasskeyCreate, shouldInterceptPasskeyGet } from "./interception-policy";
+import { requestedPasskeyExtensionNames, shouldInterceptPasskeyCreate, shouldInterceptPasskeyGet } from "./interception-policy";
 
 const PAGE_SOURCE = "monica-passkey-page";
 const EXTENSION_SOURCE = "monica-passkey-extension";
@@ -25,7 +25,7 @@ if (navigator.credentials && !(navigator.credentials as CredentialsContainer & {
     if (!options?.publicKey) return nativeCreate(options);
     const pk = options.publicKey;
     const selection = pk.authenticatorSelection;
-    const extensionNames = Object.keys(pk.extensions || {});
+    const extensionNames = requestedPasskeyExtensionNames(pk.extensions);
     if (!shouldInterceptPasskeyCreate({
       topLevel: window.top === window,
       authenticatorAttachment: selection?.authenticatorAttachment,
@@ -39,7 +39,7 @@ if (navigator.credentials && !(navigator.credentials as CredentialsContainer & {
         userId: encode(pk.user.id), userName: pk.user.name, userDisplayName: pk.user.displayName,
         algorithms: pk.pubKeyCredParams.map((param) => param.alg), excludeCredentialIds: (pk.excludeCredentials || []).map((item) => encode(item.id)),
         discoverable: selection?.residentKey === "required" || selection?.residentKey === "preferred" || selection?.requireResidentKey === true,
-        userVerificationRequired: selection?.userVerification === "required", credProps: Boolean(pk.extensions?.credProps), timeoutMs: normalizeTimeout(pk.timeout)
+        userVerificationRequired: selection?.userVerification !== "discouraged", credProps: Boolean(pk.extensions?.credProps), timeoutMs: normalizeTimeout(pk.timeout)
       }, normalizeTimeout(pk.timeout), (options as CredentialCreationOptions & { signal?: AbortSignal }).signal);
       return publicKeyCredential(result);
     } catch (error) {
@@ -57,7 +57,7 @@ if (navigator.credentials && !(navigator.credentials as CredentialsContainer & {
       topLevel: window.top === window,
       mediation,
       userVerification: pk.userVerification,
-      extensionNames: Object.keys(pk.extensions || {}),
+      extensionNames: requestedPasskeyExtensionNames(pk.extensions),
       externalOnly
     })) return nativeGet(options);
     try {

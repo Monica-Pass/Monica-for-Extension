@@ -752,6 +752,7 @@ main {
 
 .content-grid {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -1290,7 +1291,7 @@ tr.row-clickable:focus-within td {
   .source-grid,
   .settings-grid,
   .content-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

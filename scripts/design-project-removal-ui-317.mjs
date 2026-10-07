@@ -1,0 +1,51 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { deflateRawSync } from 'node:zlib';
+const source = new URL('../docs/design/android-interop-315.m3e.json', import.meta.url);
+const doc = JSON.parse(await readFile(source, 'utf8'));
+const ids = ['credentialremove317', 'credentialremoveconfirm317', 'credentialremovepending317'];
+const start = doc.frames.find(frame => frame.id === ids[0])?.x ?? Math.max(...doc.frames.map(frame => frame.x + frame.w)) + 120;
+doc.frames = doc.frames.filter(frame => !ids.includes(frame.id));
+doc.groups = doc.groups.filter(group => !ids.includes(group.frameId));
+function frame(id, name, x, h) {
+  doc.frames.push({ id, name, x, y: 0, w: 320, h });
+  let serial = 0;
+  return (y, item) => {
+    const groupId = `${id}-${serial++}`;
+    doc.groups.push({ id: groupId, frameId: id, x: x + 12, y, axis: 'y', gap: 4,
+      items: [{ id: `${groupId}-control`, icon: null, variant: 'filled', size: 296, ...item }] });
+  };
+}
+const draft = frame(ids[0], '密码项目 · 草稿移除与撤销 · 320px', start, 890);
+draft(12, { kind: 'topAppBar', label: '编辑密码项目', icon: 'close' });
+draft(100, { kind: 'textField', label: '项目名称', radius: 24 });
+draft(176, { kind: 'listItem', label: '工作账号', supporting: '保留 1 个密码', icon: 'person', radius: 24 });
+draft(250, { kind: 'textField', label: '用户名', radius: 24 });
+draft(310, { kind: 'textField', label: '密码 1', trailingIcon: 'visibility', radius: 4 });
+draft(374, { kind: 'listItem', label: '密码 2 · 待移除', supporting: '保存项目后生效', icon: 'remove_circle_outline', icon2: 'undo', radius: 4 });
+draft(452, { kind: 'textField', label: '内嵌验证码密钥', radius: 24 });
+draft(522, { kind: 'button', label: '添加密码', icon: 'add', variant: 'tonal', radius: 24 });
+draft(592, { kind: 'listItem', label: '恢复账号', supporting: '整组待移除 · 可以撤销', icon: 'person_remove', icon2: 'undo', radius: 24 });
+draft(680, { kind: 'listItem', label: '已选择移除 2 个密码', supporting: '备注、共享内容与附件会保留', icon: 'info', radius: 24 });
+draft(764, { kind: 'button', label: '查看移除并保存', icon: 'check', radius: 24 });
+draft(826, { kind: 'button', label: '取消', variant: 'text', radius: 24 });
+const confirm = frame(ids[1], '密码项目 · 保存确认 · 320px', Math.max(...doc.frames.map(frame => frame.x + frame.w)) + 120, 650);
+confirm(12, { kind: 'topAppBar', label: '确认移除密码', icon: 'arrow_back' });
+confirm(108, { kind: 'listItem', label: '工作账号 · 密码 2', supporting: '1 个密码', icon: 'key', radius: 24 });
+confirm(182, { kind: 'listItem', label: '恢复账号 · 密码 1', supporting: '1 个密码', icon: 'key', radius: 24 });
+confirm(274, { kind: 'listItem', label: '保留 1 个密码', supporting: '备注、共享内容与附件会保留', icon: 'info', radius: 24 });
+confirm(382, { kind: 'text', label: '保存后会同步到此项目的密码库。', size: 14 });
+confirm(470, { kind: 'button', label: '确认移除并保存', icon: 'check', radius: 24 });
+confirm(540, { kind: 'button', label: '返回编辑', variant: 'text', radius: 24 });
+const pending = frame(ids[2], '密码项目 · 未完成的移除 · 320px', Math.max(...doc.frames.map(frame => frame.x + frame.w)) + 120, 830);
+pending(12, { kind: 'topAppBar', label: '未完成的密码移除', icon: 'arrow_back', icon2: 'refresh' });
+pending(110, { kind: 'listItem', label: '工作邮箱', supporting: '个人密码库 · 移除 2 个密码', icon: 'key', radius: 24 });
+pending(188, { kind: 'listItem', label: '正在保留共享内容与附件', supporting: '请先解锁密码库以继续', icon: 'lock', radius: 24 });
+pending(286, { kind: 'button', label: '解锁并设置', icon: 'lock_open', variant: 'tonal', radius: 24 });
+pending(350, { kind: 'button', label: '取消这次移除', icon: 'undo', variant: 'text', radius: 24 });
+pending(454, { kind: 'listItem', label: '家庭账号', supporting: '家庭密码库 · 移除 1 个密码', icon: 'key', radius: 24 });
+pending(532, { kind: 'listItem', label: '正在完成移除', supporting: '共享内容与附件已保留', icon: 'pending_actions', radius: 24 });
+pending(628, { kind: 'button', label: '核对并继续', icon: 'restore', variant: 'tonal', radius: 24 });
+pending(702, { kind: 'text', label: '中断后可以在这里继续。', size: 14 });
+await writeFile(source, JSON.stringify(doc, null, 2) + '\n');
+const link = 'http://127.0.0.1:5186/#docz=' + deflateRawSync(JSON.stringify(doc)).toString('base64url');
+await writeFile(new URL('../docs/design/project-removal-ui-317.md', import.meta.url), `# Password member removal UI\n\nKeep Monica teal surfaces, existing Segoe UI/Microsoft YaHei typography, 12px outer spacing, 24px group corners and 4px joined corners. Removal marks stable password identities in the full draft; undo retains raw fields and snapshots. Require one surviving password. Review uses the existing editor dialog, with Back returning to the same draft. Pending operations expose only names/counts/status and retain retry or preparation-cancellation controls after failure.\n\n[Editable local Canvas](${link})\n\nFrames: ${ids.join(', ')}.\n`);

@@ -1,0 +1,5 @@
+FROM httpd:2.4.65-bookworm@sha256:fbc12199ccad031d8047e9c789d65aceee2d14f99ba90664cd3a3996867a5582
+RUN mkdir -p /var/lib/monica315/data /var/lib/monica315/locks && chown -R 2:2 /var/lib/monica315
+COPY httpd.conf /usr/local/apache2/conf/httpd.conf
+USER 2:2
+CMD ["httpd", "-DFOREGROUND"]

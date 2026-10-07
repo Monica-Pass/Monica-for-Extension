@@ -6,6 +6,11 @@ export interface PortablePasskeyPrivateKey {
   algorithm: -7 | -257 | -8;
 }
 
+/** RSA PKCS#8 identifies the key family; COSE selects PKCS#1 v1.5 or PSS. */
+export function portablePasskeyKeyMatchesAlgorithm(key: PortablePasskeyPrivateKey | undefined, algorithm: number): key is PortablePasskeyPrivateKey {
+  return Boolean(key && (key.algorithm === algorithm || key.algorithm === -257 && algorithm === -37));
+}
+
 /** Normalizes Android/KeePass portable material and rejects aliases or malformed DER. */
 export function parsePortablePasskeyPrivateKey(value: unknown): PortablePasskeyPrivateKey | undefined {
   if (typeof value !== "string") return undefined;

@@ -21,8 +21,11 @@ describe("commercial installability and least privilege", () => {
   });
 
   it("uses only required named permissions and explicit HTTP/HTTPS host scopes", async () => {
-    const manifest = await readJson<{ permissions: string[]; host_permissions: string[]; content_scripts: Array<{ matches: string[]; world?: string }> }>("public/manifest.json");
-    expect([...manifest.permissions].sort()).toEqual(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "storage", "webNavigation"]);
+    const manifest = await readJson<{ permissions: string[]; host_permissions: string[]; content_scripts: Array<{ matches: string[]; world?: string }>; minimum_chrome_version: string; side_panel: { default_path: string }; action: { default_popup: string } }>("public/manifest.json");
+    expect([...manifest.permissions].sort()).toEqual(["alarms", "cookies", "favicon", "identity", "nativeMessaging", "sidePanel", "storage", "webNavigation"]);
+    expect(Number(manifest.minimum_chrome_version)).toBeGreaterThanOrEqual(128);
+    expect(manifest.side_panel.default_path).toBe("index.html?surface=sidepanel");
+    expect(manifest.action.default_popup).toBe("popup.html");
     expect(manifest.permissions).not.toContain("activeTab");
     expect(manifest.permissions).not.toContain("tabs");
     expect([...manifest.host_permissions].sort()).toEqual(["http://*/*", "https://*/*"]);

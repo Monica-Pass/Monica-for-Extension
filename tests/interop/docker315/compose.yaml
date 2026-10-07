@@ -1,0 +1,41 @@
+services:
+  webdav:
+    build:
+      context: .
+      dockerfile: Dockerfile.webdav
+    ports:
+      - "127.0.0.1:18315:8080"
+    volumes:
+      - webdav-data:/var/lib/monica315
+      - type: bind
+        source: ${MONICA_315_HTPASSWD}
+        target: /usr/local/apache2/conf/test.htpasswd
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+  vaultwarden:
+    image: vaultwarden/server@sha256:1587c45feaa479f1f5e8af3b00eded36bff77bcf1880cf8dbf0541706dd470e0
+    ports:
+      - "127.0.0.1:18316:8080"
+    environment:
+      DOMAIN: http://127.0.0.1:18316
+      ROCKET_PORT: "8080"
+      SIGNUPS_ALLOWED: "true"
+      SIGNUPS_VERIFY: "false"
+      WEB_VAULT_ENABLED: "false"
+      LOG_LEVEL: warn
+    volumes:
+      - vaultwarden-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+volumes:
+  webdav-data:
+  vaultwarden-data:

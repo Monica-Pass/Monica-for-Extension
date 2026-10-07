@@ -1,3 +1,4 @@
+import { normalizeOtpCounter, type OtpCounter } from "./otp-counter";
 import { md5 } from "hash-wasm";
 import { generateSteamCode } from "./steam-totp";
 
@@ -10,7 +11,7 @@ export interface TotpParameters {
   digits: number;
   period: number;
   otpType?: OtpType;
-  counter?: number;
+  counter?: OtpCounter;
   pin?: string;
   pinLength?: number;
   issuer?: string;
@@ -91,13 +92,13 @@ export function parseOtpUris(input: string): OtpParseResult[] {
   }];
 }
 
-export function generateOtpUri(parameters: TotpParameters, label?: string): string {
-  const value = normalizeParameters(parameters);
+export function generateOtpUri(parameters: TotpParameters, label?: string, options: { includePin?: boolean } = {}): string {
+  const value = storageParameters(parameters);
   const resolvedLabel = label || value.label || [value.issuer, value.accountName].filter(Boolean).join(":") || "OTP";
   if (value.otpType === "MOTP") {
     const issuer = value.issuer || resolvedLabel.split(":", 1)[0] || "mOTP";
     const accountName = value.accountName || (resolvedLabel.includes(":") ? resolvedLabel.slice(resolvedLabel.indexOf(":") + 1) : "");
-    return `motp://${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${encodeURIComponent(value.secret)}`;
+    return `motp://${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}?secret=${encodeURIComponent(value.secret)}${options.includePin && value.pin ? `&pin=${encodeURIComponent(value.pin)}` : ""}`;
   }
   const authority = value.otpType === "HOTP" ? "hotp" : value.otpType === "YANDEX" ? "yaotp" : "totp";
   const query = new URLSearchParams();
@@ -108,8 +109,8 @@ export function generateOtpUri(parameters: TotpParameters, label?: string): stri
   if (value.issuer) query.set("issuer", value.issuer);
   if (value.otpType === "HOTP") query.set("counter", String(value.counter || 0));
   if (value.otpType === "YANDEX") {
-    query.set("pin", value.pin);
-    query.set("pin_length", String(value.pinLength));
+    if (options.includePin && value.pin) query.set("pin", value.pin);
+    if (value.pinLength !== undefined) query.set("pin_length", String(value.pinLength));
   }
   if (value.otpType !== "HOTP" && value.period !== 30) query.set("period", String(value.period));
   if (value.digits !== 6) query.set("digits", String(value.digits));
@@ -145,7 +146,7 @@ async function generateYaOtp(parameters: RequiredOtpParameters, now: number): Pr
   return code;
 }
 
-async function generateHmacCode(secret: string, counter: number, algorithm: OtpAlgorithm, digits: number): Promise<string> {
+async function generateHmacCode(secret: string, counter: OtpCounter, algorithm: OtpAlgorithm, digits: number): Promise<string> {
   const message = counterBytes(counter);
   const key = await crypto.subtle.importKey("raw", byteBuffer(decodeBase32(secret)), { name: "HMAC", hash: `SHA-${algorithm.slice(3)}` }, false, ["sign"]);
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, byteBuffer(message)));
@@ -154,7 +155,7 @@ async function generateHmacCode(secret: string, counter: number, algorithm: OtpA
   return String(binary % 10 ** digits).padStart(digits, "0");
 }
 
-type RequiredOtpParameters = TotpParameters & { otpType: OtpType; algorithm: OtpAlgorithm; digits: number; period: number; counter: number; pin: string; pinLength?: number };
+type RequiredOtpParameters = TotpParameters & { otpType: OtpType; algorithm: OtpAlgorithm; digits: number; period: number; counter: OtpCounter; pin: string; pinLength?: number };
 
 function normalizeParameters(parameters: TotpParameters): RequiredOtpParameters {
   const otpType = parameters.otpType || "TOTP";
@@ -163,7 +164,7 @@ function normalizeParameters(parameters: TotpParameters): RequiredOtpParameters 
   const algorithm = otpType === "YANDEX" ? "SHA256" : normalizeAlgorithm(parameters.algorithm);
   const digits = otpType === "STEAM" ? 5 : otpType === "YANDEX" ? 8 : integerInRange(parameters.digits, 6, 1, 10, "OTP 位数无效。");
   const period = otpType === "MOTP" ? 10 : otpType === "STEAM" || otpType === "YANDEX" ? 30 : integerInRange(parameters.period, 30, 5, 300, "OTP 周期无效。");
-  const counter = integerInRange(parameters.counter, 0, 0, Number.MAX_SAFE_INTEGER, "HOTP 计数器无效。");
+  const counter = normalizeOtpCounter(parameters.counter);
   const pin = parameters.pin ?? "";
   if (otpType === "YANDEX") {
     if (!/^\d{4,16}$/.test(pin)) throw new Error("YAOTP PIN 必须为 4 到 16 位数字。");
@@ -172,6 +173,17 @@ function normalizeParameters(parameters: TotpParameters): RequiredOtpParameters 
     return { ...parameters, secret, otpType, algorithm, digits, period, counter, pin, pinLength };
   }
   return { ...parameters, secret, otpType, algorithm, digits, period, counter, pin };
+}
+
+/** Storage parsing must not require a vendor PIN or change declared parameters. */
+function storageParameters(parameters: TotpParameters): RequiredOtpParameters {
+  const otpType = parameters.otpType || "TOTP";
+  const secret = parameters.secret;
+  if (!secret) throw new Error("OTP 密钥为空。");
+  return { ...parameters, secret, otpType, algorithm: parameters.algorithm || "SHA1",
+    digits: integerInRange(parameters.digits, otpType === "STEAM" ? 5 : 6, 1, 10, "OTP 位数无效。"),
+    period: integerInRange(parameters.period, otpType === "MOTP" ? 10 : 30, 1, 3600, "OTP 周期无效。"),
+    counter: normalizeOtpCounter(parameters.counter), pin: parameters.pin ?? "" };
 }
 
 function parseOtpAuthUri(input: string): OtpParseResult {
@@ -183,13 +195,13 @@ function parseOtpAuthUri(input: string): OtpParseResult {
   const accountName = label.includes(":") ? label.slice(label.indexOf(":") + 1) : label;
   const issuer = url.searchParams.get("issuer")?.trim() || (label.includes(":") ? label.slice(0, label.indexOf(":")).trim() : "");
   const encoder = url.searchParams.get("encoder")?.toLowerCase();
-  const otpType: OtpType = authority === "hotp" ? "HOTP" : authority === "yaotp" || issuer.toLowerCase().includes("yandex") ? "YANDEX" : encoder === "steam" || issuer.toLowerCase().includes("steam") ? "STEAM" : "TOTP";
-  const parameters = normalizeParameters({
+  const otpType: OtpType = authority === "hotp" ? "HOTP" : authority === "yaotp" ? "YANDEX" : encoder === "steam" ? "STEAM" : "TOTP";
+  const parameters = storageParameters({
     secret,
     algorithm: normalizeAlgorithm(url.searchParams.get("algorithm")),
     digits: numberParameter(url.searchParams.get("digits"), otpType === "STEAM" ? 5 : 6),
     period: numberParameter(url.searchParams.get("period"), 30),
-    counter: numberParameter(url.searchParams.get("counter"), 0),
+    counter: normalizeOtpCounter(url.searchParams.get("counter")),
     pin: url.searchParams.get("pin") || "",
     pinLength: numberParameter(url.searchParams.get("pin_length"), undefined),
     otpType,
@@ -283,13 +295,14 @@ function parseMigrationUri(input: string): OtpParseResult[] {
 
 function parseMigrationItem(bytes: Uint8Array): OtpParseResult | null {
   const reader = new ProtoReader(bytes);
-  let secret: Uint8Array<ArrayBufferLike> = new Uint8Array(); let accountName = ""; let issuer = ""; let algorithm = 1; let digits = 1; let type = 2; let counter = 0;
+  let secret: Uint8Array<ArrayBufferLike> = new Uint8Array(); let accountName = ""; let issuer = ""; let algorithm = 1; let digits = 1; let type = 2; let counter: OtpCounter = 0;
   while (!reader.done) {
     const tag = reader.varint(); if (tag == null) break;
     const field = tag >>> 3; const wire = tag & 7;
     if (field === 1 && wire === 2) secret = reader.bytes() || new Uint8Array();
     else if ((field === 2 || field === 3) && wire === 2) { const value = reader.bytes(); const text = value ? new TextDecoder().decode(value) : ""; if (field === 2) accountName = text; else issuer = text; }
-    else if ((field >= 4 && field <= 7) && wire === 0) { const value = reader.varint() || 0; if (field === 4) algorithm = value; else if (field === 5) digits = value; else if (field === 6) type = value; else counter = value; }
+    else if (field === 7 && wire === 0) { const value = reader.bigVarint(); if (value === null) return null; counter = normalizeOtpCounter(value.toString()); }
+    else if ((field >= 4 && field <= 6) && wire === 0) { const value = reader.varint(); if (value === null) return null; if (field === 4) algorithm = value; else if (field === 5) digits = value; else type = value; }
     else if (!reader.skip(wire)) return null;
   }
   if (!secret.length || (type !== 1 && type !== 2) || ![1, 2, 3].includes(algorithm)) return null;
@@ -305,9 +318,10 @@ class ProtoReader {
   private position = 0;
   constructor(private readonly data: Uint8Array) {}
   get done() { return this.position >= this.data.length; }
-  varint(): number | null { let result = 0; let shift = 0; while (shift < 53 && this.position < this.data.length) { const byte = this.data[this.position++]; result += (byte & 0x7f) * 2 ** shift; if ((byte & 0x80) === 0) return result; shift += 7; } return null; }
+  bigVarint(): bigint | null { let result = 0n; for (let shift = 0n; shift < 70n && this.position < this.data.length; shift += 7n) { const byte = this.data[this.position++]; if (shift === 63n && (byte & 0x7f) > 1) return null; result |= BigInt(byte & 0x7f) << shift; if ((byte & 0x80) === 0) return result; } return null; }
+  varint(): number | null { const result = this.bigVarint(); return result !== null && result <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(result) : null; }
   bytes(): Uint8Array | null { const length = this.varint(); if (length == null || length < 0 || this.position + length > this.data.length) return null; const result = this.data.slice(this.position, this.position + length); this.position += length; return result; }
-  skip(wire: number): boolean { if (wire === 0) return this.varint() != null; if (wire === 1) return this.advance(8); if (wire === 2) { const length = this.varint(); return length != null && this.advance(length); } if (wire === 5) return this.advance(4); return false; }
+  skip(wire: number): boolean { if (wire === 0) return this.bigVarint() != null; if (wire === 1) return this.advance(8); if (wire === 2) { const length = this.varint(); return length != null && this.advance(length); } if (wire === 5) return this.advance(4); return false; }
   private advance(length: number): boolean { if (length < 0 || this.position + length > this.data.length) return false; this.position += length; return true; }
 }
 
@@ -326,12 +340,12 @@ function numberParameter(value: string | null, fallback: number): number;
 function numberParameter(value: string | null, fallback: undefined): number | undefined;
 function numberParameter(value: string | null, fallback: number | undefined): number | undefined { return value == null || value === "" ? fallback : Number(value); }
 
-function counterBytes(counter: number): Uint8Array {
+function counterBytes(counter: OtpCounter): Uint8Array {
   const message = new Uint8Array(8);
-  let remaining = Math.max(0, Math.floor(counter));
+  let remaining = BigInt(normalizeOtpCounter(counter));
   for (let index = 7; index >= 0; index -= 1) {
-    message[index] = remaining & 0xff;
-    remaining = Math.floor(remaining / 256);
+    message[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
   }
   return message;
 }

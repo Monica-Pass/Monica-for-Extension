@@ -27,12 +27,16 @@ use zeroize::Zeroizing;
 #[path = "api_token.rs"]
 mod api_token;
 
+#[cfg(test)]
+#[path = "interop315_tests.rs"]
+mod interop315_tests;
+
 use crate::cloud_sync;
 use crate::windows_hello::WindowsHelloStore;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const HOST_NAME: &str = "com.monica_pass.mdbx2";
-pub const MDBX_CORE_REVISION: &str = "974c517465e7b6cac0947d2d59875aa4211fa16b";
+pub const MDBX_CORE_REVISION: &str = "90005c8c608c952093a4522ffa507a562e2e39a4";
 pub const MDBX_FORMAT_VERSION: &str = "MDBX-2";
 pub const MAX_BINARY_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_INBOUND_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -463,9 +467,18 @@ enum ObjectMutation {
         title: String,
         payload_json: String,
         api_token: Option<api_token::WriteFields>,
+        expected_head_commit_id: Option<String>,
+        payload_schema_version: u32,
     },
     Delete {
         logical_object_id: String,
+        expected_head_commit_id: Option<String>,
+    },
+    Restore {
+        logical_object_id: String,
+        expected_head_commit_id: Option<String>,
+        collection_id: String,
+        object_type_id: String,
     },
 }
 
@@ -560,6 +573,7 @@ pub struct HostRuntime {
     attachment_reads: HashMap<String, AttachmentReadSession>,
     attachment_uploads: HashMap<String, AttachmentUploadSession>,
     windows_hello: WindowsHelloStore,
+    pub(crate) local_exports: crate::local_export::LocalExports,
 }
 
 impl HostRuntime {
@@ -579,6 +593,7 @@ impl HostRuntime {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(root)?;
+        crate::backup_scratch::scavenge(&root)?;
         for directory in [
             "transfers",
             "imports",
@@ -611,6 +626,7 @@ impl HostRuntime {
             attachment_reads: HashMap::new(),
             attachment_uploads: HashMap::new(),
             windows_hello: WindowsHelloStore::new(hello_root),
+            local_exports: crate::local_export::LocalExports::default(),
         })
     }
 
@@ -624,7 +640,11 @@ impl HostRuntime {
             "vault.inspect" => self.vault_inspect(params),
             "vault.open" => self.vault_open(params),
             "vault.status" => self.vault_status(params),
+            "vault.writeRevision" => self.vault_write_revision(params),
             "vault.diagnostics" => self.vault_diagnostics(params),
+            "vault.export.begin" | "vault.export.read" | "vault.export.release" => {
+                crate::local_export::handle(self, method, params)
+            }
             "vault.tiga" => self.vault_tiga(params),
             "health.repair.plan" => self.health_repair_plan(params),
             "health.repair.apply" => self.health_repair_apply(params),
@@ -638,6 +658,8 @@ impl HostRuntime {
             "object.list" => self.object_list(params),
             "object.reveal" => self.object_reveal(params),
             "object.upsert" => self.object_upsert(params),
+            "object.restore" => self.object_restore(params),
+            "object.restoreBatch" => self.object_restore_batch(params),
             "object.delete" => self.object_delete(params),
             "object.batch" => self.object_batch(params),
             "object.operation.status" => self.object_operation_status(params),
@@ -699,6 +721,15 @@ impl HostRuntime {
             "mdbxFormatVersion": MDBX_FORMAT_VERSION,
             "supportsMdbx1": false,
             "supportsApiTokenMetadata": true,
+            "supportsNativeObjectIdentity": true,
+            "supportsObjectRevisionPreconditions": true,
+            "supportsVaultWriteRevision": true,
+            "supportsObjectRestore": true,
+            "supportsObjectBatchRestore": true,
+            "supportsAtomicObjectAttachmentMove": true,
+            "supportsLosslessJson": true,
+            "supportsCompleteBackup": true,
+            "mdbxRuntimeProfile": "android-1.0.315-90005c8-four-overlays",
             "maxBinaryChunkBytes": MAX_BINARY_CHUNK_BYTES,
             "maxInboundFileBytes": MAX_INBOUND_FILE_BYTES,
             "maxActiveTransfers": MAX_ACTIVE_TRANSFERS,
@@ -1033,8 +1064,14 @@ impl HostRuntime {
                 break (handle, destination);
             }
         };
-        fs::rename(&part_path, &destination)
-            .map_err(|_| RpcFailure::storage("Native transfer could not be published."))?;
+        let restored = metadata.purpose == TransferPurpose::VaultBootstrap
+            && crate::local_export::restore_archive(&part_path, &self.root.join("imports"), &file_handle)?;
+        if restored {
+            let _ = fs::remove_file(&part_path);
+        } else {
+            fs::rename(&part_path, &destination)
+                .map_err(|_| RpcFailure::storage("Native transfer could not be published."))?;
+        }
         self.transfers.remove(&transfer_id);
         self.delete_transfer_states(&transfer_id);
         Ok(json!({
@@ -1095,6 +1132,10 @@ impl HostRuntime {
                 let _ = fs::remove_dir(&vault_directory);
                 return Err(error);
             }
+            if let Err(error) = crate::local_export::copy_import_blobs(&source.path, &working_path) {
+                let _ = fs::remove_dir_all(&vault_directory);
+                return Err(error);
+            }
             true
         } else {
             false
@@ -1105,8 +1146,7 @@ impl HostRuntime {
                 Ok(()) => true,
                 Err(error) => {
                     if created_working_copy {
-                        let _ = fs::remove_file(&working_path);
-                        let _ = fs::remove_dir(&vault_directory);
+                        let _ = fs::remove_dir_all(&vault_directory);
                     }
                     return Err(error);
                 }
@@ -1138,10 +1178,7 @@ impl HostRuntime {
             Ok(vault) => vault,
             Err(_) => {
                 if created_working_copy {
-                    let _ = fs::remove_file(&working_path);
-                    let _ = fs::remove_file(format!("{}-wal", working_path.display()));
-                    let _ = fs::remove_file(format!("{}-shm", working_path.display()));
-                    let _ = fs::remove_dir(&vault_directory);
+                    let _ = fs::remove_dir_all(&vault_directory);
                 }
                 return Err(RpcFailure::new(
                     "vault-unlock-failed",
@@ -1150,6 +1187,15 @@ impl HostRuntime {
                 ));
             }
         };
+        if is_import && source.path.file_name().and_then(|v| v.to_str()) == Some("vault.mdbx") {
+            // The archive claims completeness. Refuse missing/deleted/history
+            // ciphertext before registering a usable vault or releasing input.
+            if let Err(error) = crate::local_export::verify_import_blobs(&vault) {
+                drop(vault);
+                let _ = fs::remove_dir_all(&vault_directory);
+                return Err(error);
+            }
+        }
         let after = inspect_exact_mdbx2(&working_path)?;
         let info = vault.info();
         let schema_version = after.schema_version.ok_or_else(|| {
@@ -1179,7 +1225,10 @@ impl HostRuntime {
         let mut params = take_object(params, "vault.lock params must be an object.")?;
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         reject_unknown(params)?;
-        let locked = self.vaults.remove(&vault_handle).is_some();
+        let locked = if let Some(vault) = self.vaults.remove(&vault_handle) {
+            self.local_exports.clear_vault(&vault);
+            true
+        } else { false };
         self.attachment_reads
             .retain(|_, session| session.vault_handle != vault_handle);
         self.attachment_uploads
@@ -1200,7 +1249,8 @@ impl HostRuntime {
         Ok(json!({
             "vaultHandle": vault_handle,
             "open": self.vaults.contains_key(&vault_handle),
-            "available": available
+            "available": available,
+            "vaultId": self.vaults.get(&vault_handle).map(|vault| vault.info().vault_id)
         }))
     }
 
@@ -1223,6 +1273,23 @@ impl HostRuntime {
             )
         })?;
         vault_diagnostics_report(&vault, &working_path, schema_version)
+    }
+
+    fn vault_write_revision(&self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "vault.writeRevision params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        reject_unknown(params)?;
+        let revision = self
+            .require_open_vault(&vault_handle)?
+            .read_write_revision()
+            .map_err(|_| {
+                RpcFailure::new(
+                    "vault-revision-read-failed",
+                    "MDBX2 write revision could not be read.",
+                    false,
+                )
+            })?;
+        Ok(json!({ "vaultId": revision.vault_id, "revisionSha256": revision.revision_sha256 }))
     }
 
     fn vault_tiga(&self, params: Value) -> Result<Value, RpcFailure> {
@@ -1620,6 +1687,18 @@ impl HostRuntime {
         let object_id = take_uuid(&mut params, "objectId")?;
         reject_unknown(params)?;
         let vault = self.require_open_vault(&vault_handle)?;
+        let summary = vault
+            .get_object_summary(object_id.clone())
+            .map_err(|_| {
+                RpcFailure::new(
+                    "object-read-failed",
+                    "MDBX2 Object summary could not be read.",
+                    false,
+                )
+            })?
+            .ok_or_else(|| {
+                RpcFailure::new("object-not-found", "MDBX2 Object no longer exists.", false)
+            })?;
         let disclosure = vault
             .reveal_object_with_limits(
                 object_id,
@@ -1666,6 +1745,7 @@ impl HostRuntime {
             "title": object.title,
             "payloadJson": object.payload_json,
             "payloadSchemaVersion": object.payload_schema_version,
+            "headCommitId": summary.head_commit_id,
             "deleted": object.deleted
         }))
     }
@@ -2833,7 +2913,7 @@ impl HostRuntime {
         let cursor = take_optional_string(&mut params, "cursor", MAX_CURSOR_BYTES)?;
         reject_unknown(params)?;
         let vault = self.require_open_vault(&vault_handle)?;
-        require_attachment_object_target(&vault, &collection_id, &object_id)?;
+        require_attachment_object_target(&vault, &collection_id, &object_id, false)?;
         let page = vault
             .list_attachment_summaries(collection_id, Some(object_id), page_size, cursor)
             .map_err(|_| {
@@ -3091,7 +3171,7 @@ impl HostRuntime {
             ));
         }
         let vault = self.require_open_vault(&vault_handle)?;
-        require_attachment_object_target(&vault, &collection_id, &object_id)?;
+        require_attachment_object_target(&vault, &collection_id, &object_id, true)?;
         if mode == AttachmentUploadMode::Replace {
             let summary = require_active_attachment_summary(&vault, &attachment_id)?;
             if summary.collection_id != collection_id
@@ -3286,9 +3366,12 @@ impl HostRuntime {
                 return Err(error);
             }
         };
-        if let Err(error) =
-            require_attachment_object_target(&vault, &session.collection_id, &session.object_id)
-        {
+        if let Err(error) = require_attachment_object_target(
+            &vault,
+            &session.collection_id,
+            &session.object_id,
+            true,
+        ) {
             self.attachment_uploads.insert(transfer_id, session);
             return Err(error);
         }
@@ -3349,7 +3432,7 @@ impl HostRuntime {
         let attachment_id = take_uuid(&mut params, "attachmentId")?;
         reject_unknown(params)?;
         let vault = self.require_open_vault(&vault_handle)?;
-        if vault
+        let summary = vault
             .get_attachment_summary(attachment_id.clone())
             .map_err(|_| {
                 RpcFailure::new(
@@ -3358,13 +3441,15 @@ impl HostRuntime {
                     false,
                 )
             })?
-            .is_none()
-        {
-            return Err(RpcFailure::new(
-                "attachment-not-found",
-                "MDBX2 attachment does not exist.",
-                false,
-            ));
+            .ok_or_else(|| {
+                RpcFailure::new(
+                    "attachment-not-found",
+                    "MDBX2 attachment does not exist.",
+                    false,
+                )
+            })?;
+        if let Some(object_id) = &summary.object_id {
+            require_attachment_object_target(&vault, &summary.collection_id, object_id, true)?;
         }
         let result = vault
             .execute_attachment_batch(
@@ -3442,6 +3527,8 @@ impl HostRuntime {
         let title = take_string(&mut params, "title", MAX_TITLE_BYTES, true)?;
         let payload_json =
             take_string(&mut params, "payloadJson", MAX_OBJECT_PAYLOAD_BYTES, false)?;
+        let expected_head_commit_id = take_optional_uuid(&mut params, "expectedHeadCommitId")?;
+        let payload_schema_version = take_payload_schema_version(&mut params)?;
         let api_token = parse_api_token_fields(
             &mut params,
             &object_type_id,
@@ -3465,7 +3552,10 @@ impl HostRuntime {
                 title,
                 payload_json,
                 api_token,
+                expected_head_commit_id,
+                payload_schema_version,
             }],
+            None,
         )?;
         let item = result.items.into_iter().next().ok_or_else(|| {
             RpcFailure::new(
@@ -3484,6 +3574,129 @@ impl HostRuntime {
         }))
     }
 
+    fn object_restore(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.restore params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_scope = take_string(&mut params, "operationScope", 64, false)?;
+        if !valid_sha256(&operation_scope) {
+            return Err(RpcFailure::invalid(
+                "object.restore requires a SHA-256 scope.",
+            ));
+        }
+        let object_id = take_uuid(&mut params, "objectId")?;
+        let collection_id = take_uuid(&mut params, "collectionId")?;
+        let object_type_id =
+            take_string(&mut params, "objectTypeId", MAX_OBJECT_TYPE_ID_BYTES, false)?;
+        let expected_head_commit_id = Some(take_uuid(&mut params, "expectedHeadCommitId")?);
+        let mut revision = take_object(
+            params
+                .remove("writeRevision")
+                .ok_or_else(|| RpcFailure::invalid("writeRevision is required."))?,
+            "writeRevision must be an object.",
+        )?;
+        let vault_id = take_uuid(&mut revision, "vaultId")?;
+        let revision_sha256 = take_string(&mut revision, "revisionSha256", 64, false)?;
+        if !valid_sha256(&revision_sha256) {
+            return Err(RpcFailure::invalid("writeRevision SHA-256 is invalid."));
+        }
+        reject_unknown(revision)?;
+        reject_unknown(params)?;
+        let result = self.execute_object_mutations(
+            vault_handle,
+            None,
+            Some(operation_scope),
+            "monica-extension-restore-object",
+            vec![ObjectMutation::Restore {
+                logical_object_id: format!("native:{object_id}"),
+                expected_head_commit_id,
+                collection_id,
+                object_type_id,
+            }],
+            Some(mdbx_ffi::MdbxWriteRevision {
+                vault_id,
+                revision_sha256,
+            }),
+        )?;
+        let item = result
+            .items
+            .into_iter()
+            .next()
+            .ok_or_else(|| RpcFailure::storage("Object restore result is empty."))?;
+        Ok(
+            json!({ "operationId": result.operation_id, "commitId": result.commit_id, "alreadyCommitted": result.already_committed,
+            "logicalObjectId": item.logical_object_id, "objectId": item.object_id, "collectionId": item.collection_id, "objectTypeId": item.object_type_id }),
+        )
+    }
+
+    fn object_restore_batch(&mut self, params: Value) -> Result<Value, RpcFailure> {
+        let mut params = take_object(params, "object.restoreBatch params must be an object.")?;
+        let vault_handle = take_uuid(&mut params, "vaultHandle")?;
+        let operation_scope = take_string(&mut params, "operationScope", 64, false)?;
+        if !valid_sha256(&operation_scope) {
+            return Err(RpcFailure::invalid(
+                "Object restore requires a SHA-256 scope.",
+            ));
+        }
+        let mut revision = take_object(
+            params
+                .remove("writeRevision")
+                .ok_or_else(|| RpcFailure::invalid("writeRevision is required."))?,
+            "writeRevision must be an object.",
+        )?;
+        let vault_id = take_uuid(&mut revision, "vaultId")?;
+        let revision_sha256 = take_string(&mut revision, "revisionSha256", 64, false)?;
+        if !valid_sha256(&revision_sha256) {
+            return Err(RpcFailure::invalid("writeRevision SHA-256 is invalid."));
+        }
+        reject_unknown(revision)?;
+        let objects = params
+            .remove("objects")
+            .ok_or_else(|| RpcFailure::invalid("objects is required."))?;
+        let Value::Array(objects) = objects else {
+            return Err(RpcFailure::invalid("objects must be an array."));
+        };
+        if objects.is_empty() || objects.len() > MAX_OBJECT_BATCH_MUTATIONS {
+            return Err(RpcFailure::invalid(
+                "Object restore exceeds the reviewed batch limit.",
+            ));
+        }
+        reject_unknown(params)?;
+        let mut mutations = Vec::with_capacity(objects.len());
+        for object in objects {
+            let mut object = take_object(object, "Object restore target must be an object.")?;
+            let object_id = take_uuid(&mut object, "objectId")?;
+            let collection_id = take_uuid(&mut object, "collectionId")?;
+            let object_type_id =
+                take_string(&mut object, "objectTypeId", MAX_OBJECT_TYPE_ID_BYTES, false)?;
+            let expected_head_commit_id = Some(take_uuid(&mut object, "expectedHeadCommitId")?);
+            reject_unknown(object)?;
+            mutations.push(ObjectMutation::Restore {
+                logical_object_id: format!("native:{object_id}"),
+                expected_head_commit_id,
+                collection_id,
+                object_type_id,
+            });
+        }
+        // One stable command plan, one engine transaction and one durable receipt.
+        // No payload reconstruction, sequential single restores or implicit parent revival.
+        let result = self.execute_object_mutations(
+            vault_handle,
+            None,
+            Some(operation_scope),
+            "monica-extension-restore-objects",
+            mutations,
+            Some(mdbx_ffi::MdbxWriteRevision {
+                vault_id,
+                revision_sha256,
+            }),
+        )?;
+        Ok(
+            json!({ "changed": result.commit_id.is_some(), "operationId": result.operation_id,
+            "commitId": result.commit_id, "alreadyCommitted": result.already_committed,
+            "items": result.items.into_iter().map(object_mutation_result_json).collect::<Vec<_>>() }),
+        )
+    }
+
     fn object_delete(&mut self, params: Value) -> Result<Value, RpcFailure> {
         let mut params = take_object(params, "object.delete params must be an object.")?;
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
@@ -3494,13 +3707,18 @@ impl HostRuntime {
             MAX_LOGICAL_OBJECT_ID_BYTES,
             false,
         )?;
+        let expected_head_commit_id = take_optional_uuid(&mut params, "expectedHeadCommitId")?;
         reject_unknown(params)?;
         let result = self.execute_object_mutations(
             vault_handle,
             Some(operation_id),
             None,
             "monica-extension-delete-object",
-            vec![ObjectMutation::Delete { logical_object_id }],
+            vec![ObjectMutation::Delete {
+                logical_object_id,
+                expected_head_commit_id,
+            }],
+            None,
         )?;
         let item = result.items.into_iter().next().ok_or_else(|| {
             RpcFailure::new(
@@ -3523,6 +3741,22 @@ impl HostRuntime {
         let vault_handle = take_uuid(&mut params, "vaultHandle")?;
         let operation_id = take_optional_uuid(&mut params, "operationId")?;
         let operation_scope = take_optional_string(&mut params, "operationScope", 128)?;
+        let write_revision = match params.remove("writeRevision") {
+            None | Some(Value::Null) => None,
+            Some(value) => {
+                let mut value = take_object(value, "writeRevision must be an object.")?;
+                let vault_id = take_uuid(&mut value, "vaultId")?;
+                let revision_sha256 = take_string(&mut value, "revisionSha256", 64, false)?;
+                if !valid_sha256(&revision_sha256) {
+                    return Err(RpcFailure::invalid("writeRevision SHA-256 is invalid."));
+                }
+                reject_unknown(value)?;
+                Some(mdbx_ffi::MdbxWriteRevision {
+                    vault_id,
+                    revision_sha256,
+                })
+            }
+        };
         if operation_id.is_some() == operation_scope.is_some() {
             return Err(RpcFailure::invalid(
                 "object.batch requires exactly one operationId or operationScope.",
@@ -3575,6 +3809,9 @@ impl HostRuntime {
                         MAX_OBJECT_PAYLOAD_BYTES,
                         false,
                     )?;
+                    let expected_head_commit_id =
+                        take_optional_uuid(&mut mutation, "expectedHeadCommitId")?;
+                    let payload_schema_version = take_payload_schema_version(&mut mutation)?;
                     let api_token = parse_api_token_fields(
                         &mut mutation,
                         &object_type_id,
@@ -3593,11 +3830,18 @@ impl HostRuntime {
                         title,
                         payload_json,
                         api_token,
+                        expected_head_commit_id,
+                        payload_schema_version,
                     });
                 }
                 "delete" => {
+                    let expected_head_commit_id =
+                        take_optional_uuid(&mut mutation, "expectedHeadCommitId")?;
                     reject_unknown(mutation)?;
-                    parsed.push(ObjectMutation::Delete { logical_object_id });
+                    parsed.push(ObjectMutation::Delete {
+                        logical_object_id,
+                        expected_head_commit_id,
+                    });
                 }
                 _ => {
                     return Err(RpcFailure::invalid(
@@ -3607,6 +3851,15 @@ impl HostRuntime {
             }
         }
         let semantic_bytes = object_mutation_semantic_bytes(&parsed)?;
+        if write_revision.is_some()
+            && parsed
+                .iter()
+                .any(|item| !matches!(item, ObjectMutation::Delete { .. }))
+        {
+            return Err(RpcFailure::invalid(
+                "Guarded Object batches currently support deletion only.",
+            ));
+        }
         if parsed.len() > 1 && semantic_bytes.len() > MAX_OBJECT_BATCH_INTENT_BYTES {
             return Err(RpcFailure::new(
                 "object-batch-too-large",
@@ -3620,6 +3873,7 @@ impl HostRuntime {
             operation_scope,
             "monica-extension-batch-objects",
             parsed,
+            write_revision,
         )?;
         Ok(json!({
             "changed": result.commit_id.is_some(),
@@ -3719,9 +3973,26 @@ impl HostRuntime {
         operation_scope: Option<String>,
         operation_kind: &'static str,
         mutations: Vec<ObjectMutation>,
+        write_revision: Option<mdbx_ffi::MdbxWriteRevision>,
     ) -> Result<ObjectMutationExecution, RpcFailure> {
         let vault = self.require_open_vault(&vault_handle)?;
-        let semantic_sha256 = object_mutation_semantic_sha256(&mutations)?;
+        if write_revision
+            .as_ref()
+            .is_some_and(|expected| expected.vault_id != vault.info().vault_id)
+        {
+            return Err(RpcFailure::new(
+                "vault-revision-conflict",
+                "MDBX2 vault identity changed.",
+                false,
+            ));
+        }
+        let semantic_sha256 = match &write_revision {
+            None => object_mutation_semantic_sha256(&mutations)?,
+            Some(expected) => sha256_hex(&serde_json::to_vec(&json!({
+                "mutations": object_mutation_semantic_values(&mutations),
+                "writeRevision": { "vaultId": expected.vault_id, "revisionSha256": expected.revision_sha256 }
+            })).map_err(|_| RpcFailure::invalid("Guarded Object intent could not be encoded."))?),
+        };
         let plan = build_object_mutation_plan(&vault, &mutations)?;
         let identity = match (operation_id, operation_scope) {
             (Some(operation_id), None) => ObjectOperationIdentity::Id(operation_id),
@@ -3761,6 +4032,7 @@ impl HostRuntime {
                 false,
             ));
         }
+        validate_object_mutation_preconditions(&vault, &mutations)?;
         if plan.commands.is_empty() {
             return Ok(ObjectMutationExecution {
                 operation_id: receipt.operation_id,
@@ -3769,15 +4041,31 @@ impl HostRuntime {
                 items: plan.items,
             });
         }
-        let result = vault
-            .execute_write_operation(
+        let execution = if let Some(expected) = write_revision {
+            vault.execute_write_operation_at_revision(
+                receipt.operation_id.clone(),
+                operation_kind.to_string(),
+                plan.commands,
+                expected,
+            )
+        } else {
+            vault.execute_write_operation(
                 receipt.operation_id.clone(),
                 operation_kind.to_string(),
                 plan.commands,
             )
-            .map_err(|_| {
+        };
+        let result = execution.map_err(|error| {
+            if error.to_string().contains("write revision changed") {
+                RpcFailure::new(
+                    "vault-revision-conflict",
+                    "MDBX2 changed after verification. Verify again before writing.",
+                    false,
+                )
+            } else {
                 RpcFailure::new("object-write-failed", "MDBX2 Object write failed.", false)
-            })?;
+            }
+        })?;
         self.record_object_operation_commit(
             &vault_handle,
             &receipt.operation_id,
@@ -4193,6 +4481,8 @@ impl HostRuntime {
     }
 
     fn import_file_path(&self, file_handle: &str) -> PathBuf {
+        let complete = self.root.join("imports").join(file_handle).join("vault.mdbx");
+        if complete.is_file() { return complete; }
         self.root
             .join("imports")
             .join(format!("{file_handle}.mdbx"))
@@ -4206,6 +4496,246 @@ impl HostRuntime {
     }
 }
 
+fn native_object_id(logical_id: &str) -> Result<Option<String>, RpcFailure> {
+    let candidate = match logical_id.strip_prefix("native:") {
+        Some(id) => id,
+        None if Uuid::parse_str(logical_id).is_ok() => logical_id,
+        None => return Ok(None),
+    };
+    let id = Uuid::parse_str(candidate)
+        .map_err(|_| RpcFailure::invalid("Native Object identity must contain a UUID."))?;
+    if id.to_string() != candidate {
+        return Err(RpcFailure::invalid(
+            "Native Object identity must be a canonical UUID.",
+        ));
+    }
+    Ok(Some(candidate.to_string()))
+}
+
+fn resolve_object_id(vault_id: &str, logical_id: &str) -> Result<String, RpcFailure> {
+    Ok(native_object_id(logical_id)?
+        .or(api_token::object_id(logical_id)?)
+        .unwrap_or_else(|| {
+            java_name_uuid(format!("monica-entry:{vault_id}:{logical_id}").as_bytes())
+        }))
+}
+
+fn take_payload_schema_version(params: &mut Map<String, Value>) -> Result<u32, RpcFailure> {
+    match params.remove("payloadSchemaVersion") {
+        None | Some(Value::Null) => Ok(1),
+        Some(value) if value.as_u64() == Some(1) => Ok(1),
+        _ => Err(RpcFailure::new(
+            "object-schema-read-only",
+            "This Object payload version is read-only in this extension.",
+            false,
+        )),
+    }
+}
+
+fn writable_object_type(value: &str) -> bool {
+    matches!(
+        value,
+        "login"
+            | "note"
+            | "totp"
+            | "card"
+            | "document-ref"
+            | "billing-address"
+            | "payment-account"
+            | "passkey"
+            | "api-token"
+            | "steam-mafile"
+    )
+}
+
+// Host requests are serialized and every open vault is a private working copy.
+// Check immediately before the one engine transaction; recovered operations are
+// returned first so replaying an acknowledged intent remains idempotent.
+fn validate_object_mutation_preconditions(
+    vault: &Arc<MdbxVault>,
+    mutations: &[ObjectMutation],
+) -> Result<(), RpcFailure> {
+    let vault_id = vault.info().vault_id;
+    for mutation in mutations {
+        let (logical_id, expected_head) = match mutation {
+            ObjectMutation::Upsert {
+                logical_object_id,
+                expected_head_commit_id,
+                ..
+            }
+            | ObjectMutation::Delete {
+                logical_object_id,
+                expected_head_commit_id,
+            }
+            | ObjectMutation::Restore {
+                logical_object_id,
+                expected_head_commit_id,
+                ..
+            } => (logical_object_id, expected_head_commit_id),
+        };
+        let native_id = native_object_id(logical_id)?;
+        let id = resolve_object_id(&vault_id, logical_id)?;
+        let current = vault.get_object_summary(id.clone()).map_err(|_| {
+            RpcFailure::new(
+                "object-read-failed",
+                "MDBX2 Object summary could not be read.",
+                false,
+            )
+        })?;
+        if native_id.is_some() && expected_head.is_none() {
+            return Err(RpcFailure::new(
+                "object-revision-required",
+                "Reload the Object before editing its native identity.",
+                false,
+            ));
+        }
+        if let Some(expected) = expected_head {
+            if current.as_ref().map(|value| value.head_commit_id.as_str())
+                != Some(expected.as_str())
+            {
+                return Err(RpcFailure::new(
+                    "object-revision-conflict",
+                    "The Object changed since it was read. Reload it before saving.",
+                    false,
+                ));
+            }
+        }
+        if let ObjectMutation::Restore {
+            collection_id,
+            object_type_id,
+            ..
+        } = mutation
+        {
+            if current.as_ref().is_none_or(|value| {
+                !value.deleted
+                    || value.collection_id != *collection_id
+                    || value.object_type_id != *object_type_id
+            }) {
+                return Err(RpcFailure::new(
+                    "object-restore-state-changed",
+                    "Only the expected deleted Object can be restored.",
+                    false,
+                ));
+            }
+            let collection = vault
+                .get_collection_summary(collection_id.clone())
+                .map_err(|_| RpcFailure::storage("Restore Collection could not be read."))?;
+            if collection.is_none_or(|value| value.deleted) {
+                return Err(RpcFailure::new(
+                    "object-restore-collection-deleted",
+                    "Restore the containing Collection before restoring this Object.",
+                    false,
+                ));
+            }
+        } else if native_id.is_some() && current.as_ref().is_none_or(|value| value.deleted) {
+            return Err(RpcFailure::new(
+                "object-not-found",
+                "The native Object was deleted or no longer exists.",
+                false,
+            ));
+        }
+        if current
+            .as_ref()
+            .is_some_and(|value| value.payload_schema_version != 1)
+        {
+            return Err(RpcFailure::new(
+                "object-schema-read-only",
+                "This Object payload version is read-only in this extension.",
+                false,
+            ));
+        }
+        if current
+            .as_ref()
+            .is_some_and(|value| !writable_object_type(&value.object_type_id))
+        {
+            return Err(RpcFailure::new(
+                "object-type-read-only",
+                "This Object type is available for secure viewing only.",
+                false,
+            ));
+        }
+        if let ObjectMutation::Upsert {
+            object_type_id,
+            payload_json,
+            requested_collection_id,
+            ..
+        } = mutation
+        {
+            if !writable_object_type(object_type_id) {
+                return Err(RpcFailure::new(
+                    "object-type-read-only",
+                    "This Object type is available for secure viewing only.",
+                    false,
+                ));
+            }
+            if current
+                .as_ref()
+                .is_some_and(|value| value.object_type_id != *object_type_id)
+            {
+                return Err(RpcFailure::new(
+                    "object-type-mismatch",
+                    "Editing cannot change the native Object type.",
+                    false,
+                ));
+            }
+            if native_id.is_some() {
+                if let Some(collection_id) = requested_collection_id {
+                    let collection = vault
+                        .get_collection_summary(collection_id.clone())
+                        .map_err(|_| {
+                            RpcFailure::new(
+                                "collection-read-failed",
+                                "Target Collection could not be verified.",
+                                false,
+                            )
+                        })?;
+                    if collection.is_none_or(|value| value.deleted) {
+                        return Err(RpcFailure::new(
+                            "collection-not-found",
+                            "The selected native Collection no longer exists.",
+                            false,
+                        ));
+                    }
+                }
+                let original = vault
+                    .reveal_object_with_limits(
+                        id,
+                        MdbxObjectDisclosureLimits {
+                            max_payload_bytes: MAX_OBJECT_PAYLOAD_BYTES as u64,
+                        },
+                    )
+                    .map_err(|_| {
+                        RpcFailure::new(
+                            "object-reveal-failed",
+                            "Original Object could not be verified before saving.",
+                            false,
+                        )
+                    })?
+                    .object
+                    .ok_or_else(|| {
+                        RpcFailure::new(
+                            "object-disclosure-denied",
+                            "Object disclosure was denied before saving.",
+                            false,
+                        )
+                    })?;
+                let original = mdbx_core::json::from_str(&original.payload_json)
+                    .map_err(|_| RpcFailure::invalid("Original Object JSON is invalid."))?;
+                let edited = mdbx_core::json::from_str(payload_json)
+                    .map_err(|_| RpcFailure::invalid("Edited Object JSON is invalid."))?;
+                if original.get("monica_entry_id") != edited.get("monica_entry_id") {
+                    return Err(RpcFailure::new(
+                        "object-identity-mismatch",
+                        "Editing must preserve the original Monica identity field.",
+                        false,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_object_mutation_plan(
     vault: &Arc<MdbxVault>,
     mutations: &[ObjectMutation],
@@ -4217,6 +4747,7 @@ fn build_object_mutation_plan(
     let mut items = Vec::with_capacity(mutations.len());
     let mut changed_indices = Vec::new();
     let mut logical_ids = HashSet::new();
+    let mut object_ids = HashSet::new();
     let mut planned_labels = HashSet::new();
     if mutations
         .iter()
@@ -4262,7 +4793,12 @@ fn build_object_mutation_plan(
             ObjectMutation::Upsert {
                 logical_object_id, ..
             }
-            | ObjectMutation::Delete { logical_object_id } => logical_object_id,
+            | ObjectMutation::Delete {
+                logical_object_id, ..
+            }
+            | ObjectMutation::Restore {
+                logical_object_id, ..
+            } => logical_object_id,
         };
         if !logical_ids.insert(logical_object_id.clone()) {
             return Err(RpcFailure::invalid(
@@ -4270,11 +4806,12 @@ fn build_object_mutation_plan(
             ));
         }
         let native_token_id = api_token::object_id(logical_object_id)?;
-        let object_id = native_token_id.clone().unwrap_or_else(|| {
-            java_name_uuid(
-                format!("monica-entry:{}:{}", info.vault_id, logical_object_id).as_bytes(),
-            )
-        });
+        let object_id = resolve_object_id(&info.vault_id, logical_object_id)?;
+        if !object_ids.insert(object_id.clone()) {
+            return Err(RpcFailure::invalid(
+                "MDBX2 Object batch contains duplicate native Object identities.",
+            ));
+        }
         match mutation {
             ObjectMutation::Upsert {
                 requested_collection_id,
@@ -4413,6 +4950,28 @@ fn build_object_mutation_plan(
                     object_type_id: Some(object_type_id.clone()),
                 });
             }
+            ObjectMutation::Restore {
+                collection_id,
+                object_type_id,
+                ..
+            } => {
+                // Keep the plan stable for core-committed/Host-receipt-loss replay.
+                // Preconditions run only for uncommitted requests. No payload is rewritten.
+                commands.push(MdbxWriteCommand::RestoreEntry {
+                    entry_id: object_id.clone(),
+                    project_id: collection_id.clone(),
+                });
+                plan_actions.push(json!({ "kind": "restore-entry", "entryId": object_id, "projectId": collection_id }));
+                changed_indices.push(index as u32);
+                items.push(ObjectMutationResult {
+                    kind: "restore",
+                    changed: true,
+                    logical_object_id: logical_object_id.clone(),
+                    object_id,
+                    collection_id: Some(collection_id.clone()),
+                    object_type_id: Some(object_type_id.clone()),
+                });
+            }
             ObjectMutation::Delete { .. } => {
                 let current = vault.get_object_summary(object_id.clone()).map_err(|_| {
                     RpcFailure::new(
@@ -4482,6 +5041,8 @@ fn object_mutation_semantic_values(mutations: &[ObjectMutation]) -> Vec<Value> {
                 title,
                 payload_json,
                 api_token,
+                expected_head_commit_id,
+                payload_schema_version,
             } => {
                 let mut value = json!({
                 "kind": "upsert",
@@ -4491,16 +5052,32 @@ fn object_mutation_semantic_values(mutations: &[ObjectMutation]) -> Vec<Value> {
                 "title": title,
                 "payloadJson": payload_json
                 });
+                if let Some(head) = expected_head_commit_id {
+                    value["expectedHeadCommitId"] = json!(head);
+                }
+                if *payload_schema_version != 1 {
+                    value["payloadSchemaVersion"] = json!(payload_schema_version);
+                }
                 if let Some(fields) = api_token {
                     value["apiTokenMetadataJson"] = json!(fields.metadata_json);
                     value["apiTokenFavorite"] = json!(fields.favorite);
                 }
                 value
             }
-            ObjectMutation::Delete { logical_object_id } => json!({
-                "kind": "delete",
-                "logicalObjectId": logical_object_id
+            ObjectMutation::Restore { logical_object_id, expected_head_commit_id, collection_id, object_type_id } => json!({
+                "kind": "restore", "logicalObjectId": logical_object_id, "expectedHeadCommitId": expected_head_commit_id,
+                "collectionId": collection_id, "objectTypeId": object_type_id
             }),
+            ObjectMutation::Delete {
+                logical_object_id,
+                expected_head_commit_id,
+            } => {
+                let mut value = json!({ "kind": "delete", "logicalObjectId": logical_object_id });
+                if let Some(head) = expected_head_commit_id {
+                    value["expectedHeadCommitId"] = json!(head);
+                }
+                value
+            }
         })
         .collect()
 }
@@ -5961,6 +6538,7 @@ fn require_attachment_object_target(
     vault: &Arc<MdbxVault>,
     collection_id: &str,
     object_id: &str,
+    require_writable: bool,
 ) -> Result<(), RpcFailure> {
     let summary = vault
         .get_object_summary(object_id.to_string())
@@ -5982,6 +6560,20 @@ fn require_attachment_object_target(
         return Err(RpcFailure::new(
             "attachment-target-mismatch",
             "MDBX2 attachment target does not belong to the selected Collection.",
+            false,
+        ));
+    }
+    if require_writable && summary.payload_schema_version != 1 {
+        return Err(RpcFailure::new(
+            "object-schema-read-only",
+            "Attachments of this Object payload version are read-only.",
+            false,
+        ));
+    }
+    if require_writable && !writable_object_type(&summary.object_type_id) {
+        return Err(RpcFailure::new(
+            "object-type-read-only",
+            "Attachments of this Object type are available for secure viewing only.",
             false,
         ));
     }
@@ -6102,12 +6694,14 @@ fn parse_api_token_fields(
 }
 
 fn validate_monica_payload(payload_json: &str, logical_object_id: &str) -> Result<(), RpcFailure> {
-    let payload: Value = serde_json::from_str(payload_json)
+    let payload: Value = mdbx_core::json::from_str(payload_json)
         .map_err(|_| RpcFailure::invalid("MDBX2 Object payload is not valid JSON."))?;
     let payload = payload
         .as_object()
         .ok_or_else(|| RpcFailure::invalid("MDBX2 Object payload must be a JSON object."))?;
-    if payload.get("monica_entry_id").and_then(Value::as_str) != Some(logical_object_id) {
+    if native_object_id(logical_object_id)?.is_none()
+        && payload.get("monica_entry_id").and_then(Value::as_str) != Some(logical_object_id)
+    {
         return Err(RpcFailure::invalid(
             "MDBX2 Object payload monica_entry_id does not match the logical Object ID.",
         ));
@@ -7909,6 +8503,13 @@ mod tests {
         );
         let collection_id = object["collectionId"].as_str().unwrap().to_string();
         let object_id = object["objectId"].as_str().unwrap().to_string();
+        let parent_head = runtime
+            .require_open_vault(&vault_handle)
+            .unwrap()
+            .get_object_summary(object_id.clone())
+            .unwrap()
+            .unwrap()
+            .head_commit_id;
         let attachment_id = fresh_uuid();
         let operation_id = fresh_uuid();
         let content = (0..(MAX_BINARY_CHUNK_BYTES + 19_337))
@@ -7949,6 +8550,16 @@ mod tests {
         assert_eq!(created["attachment"]["storageMode"], "external-hash-ref");
         assert_eq!(created["attachment"]["sizeBytes"], content.len());
         assert_eq!(created["alreadyCommitted"], false);
+        assert_eq!(
+            runtime
+                .require_open_vault(&vault_handle)
+                .unwrap()
+                .get_object_summary(object_id.clone())
+                .unwrap()
+                .unwrap()
+                .head_commit_id,
+            parent_head
+        );
         let cached = call(
             &mut runtime,
             "attachment.upload.finish",
@@ -8323,6 +8934,17 @@ mod tests {
         assert_eq!(opened["formatVersion"], "MDBX-2");
         assert_eq!(opened["health"]["healthy"], true);
         let vault_handle = opened["vaultHandle"].as_str().unwrap().to_string();
+        let identity = opened["vaultId"].clone();
+        assert!(identity.as_str().is_some_and(|value| !value.is_empty()));
+        assert_ne!(identity, opened["vaultHandle"]);
+        assert_eq!(
+            call(
+                &mut runtime,
+                "vault.status",
+                json!({ "vaultHandle": vault_handle.clone() })
+            )["vaultId"],
+            identity
+        );
         assert!(runtime
             .root
             .join("vaults")
@@ -8501,6 +9123,14 @@ mod tests {
             }),
         );
         let retried_batch = call(&mut runtime, "object.batch", batch_params);
+        assert_eq!(
+            call(
+                &mut runtime,
+                "vault.status",
+                json!({ "vaultHandle": vault_handle.clone() })
+            )["vaultId"],
+            identity
+        );
         assert_eq!(retried_batch["commitId"], batch_commit_id);
         assert_eq!(retried_batch["alreadyCommitted"], true);
         let resolved = call(
@@ -8538,6 +9168,15 @@ mod tests {
             }),
         );
         assert_eq!(deleted["items"].as_array().unwrap().len(), 1);
+        let second_handle = open_test_vault(&mut runtime, "second-test-password");
+        assert_ne!(
+            call(
+                &mut runtime,
+                "vault.status",
+                json!({ "vaultHandle": second_handle })
+            )["vaultId"],
+            identity
+        );
         assert_eq!(
             call(
                 &mut runtime,
@@ -8550,10 +9189,16 @@ mod tests {
             call(
                 &mut runtime,
                 "vault.status",
-                json!({ "vaultHandle": vault_handle })
+                json!({ "vaultHandle": vault_handle.clone() })
             )["open"],
             false
         );
+        assert!(call(
+            &mut runtime,
+            "vault.status",
+            json!({ "vaultHandle": vault_handle })
+        )["vaultId"]
+            .is_null());
     }
 
     #[test]

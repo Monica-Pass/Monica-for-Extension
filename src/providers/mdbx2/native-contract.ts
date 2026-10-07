@@ -1,6 +1,6 @@
 export const MDBX2_NATIVE_HOST_NAME = "com.monica_pass.mdbx2";
 export const MDBX2_NATIVE_PROTOCOL_VERSION = 2;
-export const MDBX2_CORE_REVISION = "974c517465e7b6cac0947d2d59875aa4211fa16b";
+export const MDBX2_CORE_REVISION = "90005c8c608c952093a4522ffa507a562e2e39a4";
 export const MDBX2_ENGINE_VERSION = "0.2.0";
 export const MDBX2_FORMAT_VERSION = "MDBX-2";
 export const MDBX2_SYNC_PROTOCOL_VERSION = 2;
@@ -106,7 +106,11 @@ export type Mdbx2NativeMethod =
   | "vault.inspect"
   | "vault.open"
   | "vault.status"
+  | "vault.writeRevision"
   | "vault.diagnostics"
+  | "vault.export.begin"
+  | "vault.export.read"
+  | "vault.export.release"
   | "vault.tiga"
   | "health.repair.plan"
   | "health.repair.apply"
@@ -120,6 +124,8 @@ export type Mdbx2NativeMethod =
   | "object.list"
   | "object.reveal"
   | "object.upsert"
+  | "object.restore"
+  | "object.restoreBatch"
   | "object.delete"
   | "object.batch"
   | "object.operation.status"
@@ -208,6 +214,22 @@ export interface Mdbx2OutputFileDescriptor {
   purpose: Mdbx2OutputFilePurpose;
   sizeBytes: number;
   sha256: string;
+}
+
+export interface Mdbx2CompleteBackupDescriptor {
+  fileHandle: string;
+  purpose: "vault-backup";
+  format: "mdbx" | "zip";
+  blobCount: number;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface Mdbx2CompleteBackupChunk extends Mdbx2CompleteBackupDescriptor {
+  offset: number;
+  nextOffset: number;
+  eof: boolean;
+  dataBase64: string;
 }
 
 export interface Mdbx2TransferReadResult extends Mdbx2OutputFileDescriptor {
@@ -504,9 +526,16 @@ export interface Mdbx2VaultSessionSummary extends Mdbx2VaultDiagnosticsReport {
 }
 
 export interface Mdbx2VaultRuntimeStatus {
+  /** Authenticated native identity; absent while locked or on an older Host. */
+  vaultId?: string;
   vaultHandle: string;
   open: boolean;
   available: boolean;
+}
+
+export interface Mdbx2WriteRevision {
+  vaultId: string;
+  revisionSha256: string;
 }
 
 export interface Mdbx2CollectionSummary {
@@ -560,6 +589,7 @@ export interface Mdbx2ObjectRecord {
   payloadJson: string;
   payloadSchemaVersion: number;
   deleted: boolean;
+  headCommitId?: string;
   /** Android native API token labels, disclosed under the same Tiga policy. */
   apiTokenMetadataJson?: string;
   apiTokenFavorite?: boolean;
@@ -644,6 +674,8 @@ export interface Mdbx2ObjectUpsertInput {
   objectTypeId: string;
   title: string;
   payloadJson: string;
+  expectedHeadCommitId?: string;
+  payloadSchemaVersion?: number;
   apiTokenMetadataJson?: string;
   apiTokenFavorite?: boolean;
 }
@@ -657,6 +689,31 @@ export interface Mdbx2ObjectWriteResult {
   objectTypeId: string;
 }
 
+export interface Mdbx2ObjectRestoreInput {
+  objectId: string;
+  collectionId: string;
+  objectTypeId: string;
+  expectedHeadCommitId: string;
+  writeRevision: Mdbx2WriteRevision;
+}
+
+export interface Mdbx2ObjectRestoreResult extends Mdbx2ObjectWriteResult {
+  operationId: string;
+}
+
+export interface Mdbx2ObjectsRestoreInput {
+  objects: Omit<Mdbx2ObjectRestoreInput, 'writeRevision'>[];
+  writeRevision: Mdbx2WriteRevision;
+}
+
+export interface Mdbx2ObjectsRestoreResult {
+  changed: true;
+  operationId: string;
+  commitId: string;
+  alreadyCommitted: boolean;
+  items: (Omit<Mdbx2ObjectWriteResult, 'commitId' | 'alreadyCommitted'> & { kind: 'restore'; changed: true })[];
+}
+
 export interface Mdbx2ObjectDeleteResult {
   changed: boolean;
   commitId?: string;
@@ -667,7 +724,7 @@ export interface Mdbx2ObjectDeleteResult {
 
 export type Mdbx2ObjectMutationInput =
   | ({ kind: "upsert" } & Mdbx2ObjectUpsertInput)
-  | { kind: "delete"; logicalObjectId: string };
+  | { kind: "delete"; logicalObjectId: string; expectedHeadCommitId?: string };
 
 export interface Mdbx2ObjectMutationResult {
   kind: "upsert" | "delete";
@@ -874,6 +931,14 @@ export type Mdbx2NativeResponse<T = unknown> =
 
 export interface Mdbx2HostCapabilities {
   supportsApiTokenMetadata?: boolean;
+  supportsNativeObjectIdentity?: boolean;
+  supportsObjectRevisionPreconditions?: boolean;
+  supportsVaultWriteRevision?: boolean;
+  supportsCompleteBackup?: boolean;
+  supportsObjectRestore?: boolean;
+  supportsObjectBatchRestore?: boolean;
+  supportsAtomicObjectAttachmentMove?: boolean;
+  supportsLosslessJson?: boolean;
   hostName: typeof MDBX2_NATIVE_HOST_NAME;
   hostVersion: string;
   protocolVersion: typeof MDBX2_NATIVE_PROTOCOL_VERSION;
@@ -1087,6 +1152,14 @@ export function validateMdbx2HostCapabilities(input: unknown): Mdbx2HostCapabili
     mdbxFormatVersion: MDBX2_FORMAT_VERSION,
     supportsMdbx1: false,
     ...(value.supportsApiTokenMetadata === true ? { supportsApiTokenMetadata: true } : {}),
+    ...(value.supportsNativeObjectIdentity === true ? { supportsNativeObjectIdentity: true } : {}),
+    ...(value.supportsObjectRevisionPreconditions === true ? { supportsObjectRevisionPreconditions: true } : {}),
+    ...(value.supportsVaultWriteRevision === true ? { supportsVaultWriteRevision: true } : {}),
+    ...(value.supportsCompleteBackup === true ? { supportsCompleteBackup: true } : {}),
+    ...(value.supportsObjectRestore === true ? { supportsObjectRestore: true } : {}),
+    ...(value.supportsObjectBatchRestore === true ? { supportsObjectBatchRestore: true } : {}),
+    ...(value.supportsAtomicObjectAttachmentMove === true ? { supportsAtomicObjectAttachmentMove: true } : {}),
+    ...(value.supportsLosslessJson === true ? { supportsLosslessJson: true } : {}),
     maxBinaryChunkBytes: MDBX2_MAX_BINARY_CHUNK_BYTES,
     maxInboundFileBytes: MDBX2_MAX_INBOUND_FILE_BYTES,
     maxActiveTransfers: MDBX2_MAX_ACTIVE_TRANSFERS,

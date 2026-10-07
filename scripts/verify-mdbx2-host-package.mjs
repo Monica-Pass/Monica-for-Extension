@@ -46,14 +46,16 @@ async function verifyArchive(path, checksumPath) {
   assert(checksum === `${sha256(bytes)}  ${archiveName}\n`, "MDBX2 Host checksum does not match the ZIP bytes.");
   verifyZipTimestamps(bytes);
   const entries = unzipSync(bytes);
-  for (const required of ["monica-mdbx2-host.exe", "install-host.ps1", "uninstall-host.ps1", "host-manifest.template.json", "README.md", "Cargo.lock", "LICENSE", "HOST-METADATA.json"]) {
+  for (const required of ["monica-mdbx2-host.exe", "install-host.ps1", "uninstall-host.ps1", "host-manifest.template.json", "README.md", "Cargo.lock", "ENGINE-PROVENANCE.json", "LICENSE", "HOST-METADATA.json"]) {
     assert(entries[required], `MDBX2 Host package is missing ${required}.`);
   }
   const builtExecutable = await readFile(resolve(hostRoot, "target", "release", "monica-mdbx2-host.exe"));
   assert(equalBytes(builtExecutable, entries["monica-mdbx2-host.exe"]), "Packaged MDBX2 Host differs from the verified release build.");
   const metadata = JSON.parse(new TextDecoder().decode(entries["HOST-METADATA.json"]));
   assert(metadata.hostName === "com.monica_pass.mdbx2" && metadata.protocolVersion === 2, "MDBX2 Host metadata identity mismatch.");
-  assert(metadata.coreRevision === "974c517465e7b6cac0947d2d59875aa4211fa16b", "MDBX2 Host metadata core revision mismatch.");
+  assert(metadata.coreRevision === "90005c8c608c952093a4522ffa507a562e2e39a4", "MDBX2 Host metadata core revision mismatch.");
+  assert(metadata.runtimeProfile === "android-1.0.315-90005c8-four-overlays", "MDBX2 Host runtime profile mismatch.");
+  assert(metadata.runtimeProvenanceSha256 === sha256(entries["ENGINE-PROVENANCE.json"]), "MDBX2 Host runtime provenance hash mismatch.");
   assert(metadata.source?.trackedWorktreeClean === sourceTreeClean && metadata.source?.commit === git("rev-parse", "HEAD"), "MDBX2 Host source evidence mismatch.");
   assert(metadata.executable?.size === builtExecutable.length && metadata.executable?.sha256 === sha256(builtExecutable), "MDBX2 Host executable metadata mismatch.");
   const installer = new TextDecoder().decode(entries["install-host.ps1"]);

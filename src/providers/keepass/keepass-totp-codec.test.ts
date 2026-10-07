@@ -110,20 +110,25 @@ describe("keePassTotpFieldsFor", () => {
     expect(fields).toEqual({
       otp: "otpauth://totp/GitHub%3Auser%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA256&digits=8&period=45",
       "TOTP Seed": "JBSWY3DPEHPK3PXP",
-      "TOTP Settings": "period=45;digits=8;algorithm=SHA256",
+      "TOTP Settings": "45;8",
       "TOTP Period": "45",
       "TOTP Digits": "8",
       "TOTP Algorithm": "SHA256",
-      "OTP Type": "TOTP"
+      "OTP Type": "TOTP",
+      "TimeOtp-Secret-Base32": "JBSWY3DPEHPK3PXP",
+      "TimeOtp-Length": "8",
+      "TimeOtp-Period": "45",
+      "TimeOtp-Algorithm": "HMAC-SHA-256"
     });
   });
 
-  it("emits the HOTP counter in both the settings string and its own field", () => {
+  it("emits the HOTP counter in native HmacOtp and the Android legacy field", () => {
     const fields = keePassTotpFieldsFor(totp({ issuer: "Example", accountName: "alice", otpType: "HOTP", counter: 12 }), "Example");
 
     expect(fields[KEEPASS_TOTP_FIELDS.otpType]).toBe("HOTP");
     expect(fields[KEEPASS_TOTP_FIELDS.hotpCounter]).toBe("12");
-    expect(fields[KEEPASS_TOTP_FIELDS.settings]).toBe("period=30;digits=6;algorithm=SHA1;type=hotp;counter=12");
+    expect(fields[KEEPASS_TOTP_FIELDS.settings]).toBeUndefined();
+    expect(fields["HmacOtp-Counter"]).toBe("12");
     expect(fields[KEEPASS_TOTP_FIELDS.otp]).toBe("otpauth://hotp/Example%3Aalice?secret=JBSWY3DPEHPK3PXP&issuer=Example&counter=12");
   });
 

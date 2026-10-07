@@ -1,3 +1,12 @@
+import { selectPasskeyRegistrationAlgorithm } from "./registration-policy";
+
+/** Edge's JSON parser materializes this optional boolean even when it was omitted. */
+export function requestedPasskeyExtensionNames(extensions?: AuthenticationExtensionsClientInputs): string[] {
+  return Object.entries(extensions || {})
+    .filter(([name, value]) => !(name === "enforceCredentialProtectionPolicy" && value === false))
+    .map(([name]) => name);
+}
+
 export interface PasskeyCreateInterceptionInput {
   topLevel: boolean;
   authenticatorAttachment?: string | null;
@@ -22,7 +31,7 @@ export function shouldInterceptPasskeyCreate(input: PasskeyCreateInterceptionInp
   return input.topLevel
     && input.authenticatorAttachment !== "cross-platform"
     && input.extensionNames.every((name) => name === "credProps")
-    && input.algorithms.includes(-7);
+    && selectPasskeyRegistrationAlgorithm(input.algorithms) !== undefined;
 }
 
 export function shouldInterceptPasskeyGet(input: PasskeyGetInterceptionInput): boolean {

@@ -9,6 +9,7 @@ export type VaultItemKind =
   | "billing-address"
   | "payment-account"
   | "api-token"
+  | "opaque"
   | "passkey";
 
 export type ProviderKind = "local" | "monica-webdav" | "bitwarden" | "mdbx2" | "mdbx-legacy" | "keepass";
@@ -69,6 +70,8 @@ export interface VaultItemBase {
   sortOrder?: number;
   imagePaths?: string[];
   boundNoteId?: number;
+  /** Android native note logical ID; Room IDs must never be used across vaults. */
+  boundNoteEntryId?: string;
   replicaGroupId?: string;
   keepassDatabaseId?: number;
   keepassGroupPath?: string;
@@ -91,11 +94,19 @@ export interface LoginItem extends VaultItemBase {
   customFields: SecureCustomField[];
   /** Encrypted local marker: this Bitwarden Cipher completed the Android-compatible field adapter. */
   bitwardenCustomFieldsVersion?: 1;
+  /** Derived from an acknowledged Bitwarden response; local item IDs may stay unchanged. */
+  bitwardenCipherId?: string;
   /** Derived encrypted marker for truthful SSH UI and format-preserving writes. */
   bitwardenSshKeyMode?: "native" | "fallback";
-  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "BARCODE" | "STEAM_MAFILE";
+  loginType?: "PASSWORD" | "SSO" | "WIFI" | "SSH_KEY" | "GPG_KEY" | "API_KEY" | "BARCODE" | "STEAM_MAFILE";
+  /** Explicit Android membership, scoped to the source vault; never inferred from content. */
+  passwordGroupId?: string;
+  /** Android display-stack cover; never establishes password-project membership. */
+  isGroupCover?: boolean;
   ssoProvider?: string;
   ssoRefEntryId?: number;
+  /** Stable password logical identity; numeric ssoRefEntryId is only a Room projection. */
+  ssoRefLogicalId?: string;
   appPackageName?: string;
   appName?: string;
   email?: string;
@@ -105,6 +116,10 @@ export interface LoginItem extends VaultItemBase {
   state?: string;
   zipCode?: string;
   country?: string;
+  creditCardNumber?: string;
+  creditCardHolder?: string;
+  creditCardExpiry?: string;
+  creditCardCVV?: string;
   passkeyBindings?: string;
   sshKeyData?: string;
   wifiMetadata?: string;
@@ -127,6 +142,8 @@ export interface LoginItem extends VaultItemBase {
   steamRawJson?: string;
   /** Android password_history.json entries, encrypted with the containing Monica vault. */
   passwordHistory?: PasswordHistoryRecord[];
+  /** The source retains history rows this client cannot project or decrypt. */
+  passwordHistoryIncomplete?: boolean;
 }
 
 export interface PasswordHistoryRecord {
@@ -148,7 +165,7 @@ export interface ApiTokenItem extends VaultItemBase {
   provider: string;
   apiBase: string;
   token: string;
-  customFields: Array<SecureCustomField & { id?: number }>;
+  customFields: Array<SecureCustomField & { id?: number | string }>;
   apiTokenPayload?: string;
   apiTokenMetadata?: string;
 }
@@ -160,7 +177,7 @@ export interface TotpItem extends VaultItemBase {
   accountName?: string;
   /** Monica Android's OTP discriminator. STEAM uses the Steam Guard alphabet. */
   otpType?: "TOTP" | "HOTP" | "STEAM" | "YANDEX" | "MOTP";
-  counter?: number;
+  counter?: number | string;
   pin?: string;
   pinLength?: number;
   link?: string;
@@ -212,6 +229,14 @@ export interface CardItem extends VaultItemBase {
   currency?: string;
   customerServicePhone?: string;
   customFields?: SecureCustomField[];
+  cardFace?: CardFaceConfig | null;
+}
+
+export interface CardFaceConfig {
+  imageAttachmentName: string;
+  displayMode: "ALL" | "CARD_NUMBER_ONLY" | "HIDDEN";
+  showBrandIcon: boolean;
+  [key: string]: unknown;
 }
 
 export interface IdentityItem extends VaultItemBase {
@@ -222,6 +247,8 @@ export interface IdentityItem extends VaultItemBase {
   middleName: string;
   lastName: string;
   fullName: string;
+  /** DocumentData.title is the person's prefix, independent of the record title. */
+  documentTitle?: string;
   birthDate?: string;
   issuedDate?: string;
   expiryDate?: string;
@@ -238,6 +265,7 @@ export interface IdentityItem extends VaultItemBase {
   phone?: string;
   address?: Partial<AddressFields>;
   customFields?: SecureCustomField[];
+  cardFace?: CardFaceConfig | null;
 }
 
 export interface AddressFields {
@@ -257,6 +285,7 @@ export interface BillingAddressItem extends VaultItemBase, AddressFields {
   kind: "billing-address";
   isDefault?: boolean;
   customFields?: SecureCustomField[];
+  cardFace?: CardFaceConfig | null;
 }
 
 export interface PaymentAccountItem extends VaultItemBase {
@@ -316,7 +345,16 @@ export interface PasskeyItem extends VaultItemBase {
   sourceMode: "browser-local" | "bitwarden" | "android-metadata-only";
 }
 
-export type VaultItem = LoginItem | SecureNoteItem | TotpItem | CardItem | IdentityItem | BillingAddressItem | PaymentAccountItem | ApiTokenItem | PasskeyItem;
+/** Protected generic disclosure. It never enters credential or editor adapters. */
+export interface OpaqueItem extends VaultItemBase {
+  kind: "opaque";
+  nativeType: string;
+  payloadSchemaVersion: number;
+  originalPayload?: string;
+  readOnlyReason: string;
+}
+
+export type VaultItem = LoginItem | SecureNoteItem | TotpItem | CardItem | IdentityItem | BillingAddressItem | PaymentAccountItem | ApiTokenItem | PasskeyItem | OpaqueItem;
 
 export interface ProviderAccount {
   id: string;
@@ -344,6 +382,8 @@ export interface PendingMutation {
   createdAt: string;
   attempts: number;
   lastError?: string;
+  /** Explicit user restore of an existing KDBX entry; never inferred from an edit. */
+  keepassRestore?: true;
 }
 
 export type ProviderMutationReceiptStage = "prepared" | "attempted" | "committed";
@@ -432,6 +472,16 @@ export interface ProviderDiagnosticExport {
 import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
 
 export interface VaultState {
+  /** Local encrypted two-phase password removal, never synchronized as item metadata. */
+  passwordProjectRemovals?: import("./password-project-removal-journal").PasswordProjectRemovalRecord[];
+  mdbx2Restores?: import('./mdbx2-restore-journal').Mdbx2RestoreRecord[];
+  mdbx2RestoreBatches?: import('./mdbx2-restore-batch-journal').Mdbx2RestoreBatchRecord[];
+  keepassProjectRestores?: import('./keepass-project-restore').KeePassProjectRestoreReceipt[];
+  keepassProjectRemovalIntents?: import('./keepass-project-removal-journal').KeePassProjectRemovalIntent[];
+  keepassProjectResolutionIntents?: import('./keepass-project-resolution-journal').KeePassProjectResolutionIntent[];
+  mdbx2DeletionCancellations?: import('./mdbx2-deletion-cancellation').Mdbx2DeletionCancellation[];
+  /** Local encrypted recovery records, never a provider-synchronized field. */
+  mdbx2MoveFinalizations?: import("./mdbx2-move-journal").Mdbx2MoveFinalizationRecord[];
   magic: "MONICA_EXTENSION_VAULT";
   schemaVersion: 2;
   createdAt: string;

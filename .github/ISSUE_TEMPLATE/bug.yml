@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: 插件版本或 commit
-      placeholder: 例如 0.1.0 或完整 commit SHA
+      placeholder: 例如 0.1.37，若使用本机助手请同时填写助手版本
     validations:
       required: true
   - type: input
@@ -22,6 +22,11 @@ body:
       placeholder: 例如 Chrome 140 / Windows 11
     validations:
       required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: 密码源与跨端环境
+      description: 请填写本地库 / MDBX / KDBX / WebDAV / OneDrive / Bitwarden，以及涉及的 Android 版本；不要填写服务器凭据。
   - type: textarea
     id: steps
     attributes:

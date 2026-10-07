@@ -43,7 +43,7 @@ async function toggle() {
   <section class="inline-autofill-setting" aria-labelledby="inline-autofill-label">
     <div class="inline-autofill-setting-row">
       <div><strong id="inline-autofill-label">{{ tr('表单旁自动填充') }}</strong><p id="inline-autofill-description">{{ tr('聚焦登录表单时，在输入框旁显示匹配的登录项。') }}</p></div>
-      <m3e-switch :checked.prop="enabled" @beforeinput.prevent="toggle" aria-labelledby="inline-autofill-label" aria-describedby="inline-autofill-description" :disabled="!ready || saving"></m3e-switch>
+      <m3e-switch :checked.prop="enabled" @beforeinput.prevent="toggle" aria-labelledby="inline-autofill-label" aria-describedby="inline-autofill-description" :disabled="!ready" :aria-busy="saving"></m3e-switch>
     </div>
     <small>{{ tr('关闭后仍可从工具栏插件填写。') }}</small>
     <p v-if="error" class="form-error" role="alert">{{ tr('未能保存自动填充设置，请重试。') }}</p>

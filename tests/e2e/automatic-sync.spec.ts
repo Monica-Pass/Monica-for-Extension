@@ -175,7 +175,7 @@ test("remote edits preserve an open draft and a normal local save uploads automa
   try {
     await f.manager.getByRole("button", { name: "查看Phone account详情", exact: true }).click();
     await dialogContent(f.manager).getByRole("button", { name: "编辑", exact: true }).click();
-    const editor = dialogContent(f.manager, { name: "编辑登录项", exact: true });
+    const editor = dialogContent(f.manager, { name: "编辑密码", exact: true });
     await editor.getByLabel("用户名", { exact: true }).fill("unfinished-browser-draft");
     await f.mock.edit("cipher-0", { title: "New phone title", username: "phone-edit" });
     await expect.poll(async () => (await send(f.manager, { type: "VAULT_LIST_ITEMS" })).find((item: LoginItem) => item.title === "New phone title")?.username).toBe("phone-edit");
@@ -268,7 +268,7 @@ test("an open popup receives a phone edit and fills the new credentials", async 
     await popup.bringToFront();
     await f.mock.edit("cipher-0", { title: "Phone popup update", username: "phone-popup-user", password: "synthetic-new-password" });
     const match = popup.locator("#popup-matches").getByRole("button", { name: /Phone popup update/ });
-    await expect(match).toContainText("phone-popup-user");
+    await expect(match).toHaveAccessibleName(/phone-popup-user/);
     // This harness renders the popup in a tab. The actual toolbar popup keeps
     // the website active, which the fill authorization requires.
     await website.bringToFront();

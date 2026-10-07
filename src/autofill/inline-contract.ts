@@ -1,4 +1,7 @@
+import type { AutofillCredentialIdentity } from './credential-identity';
+
 export interface InlineLoginSuggestion {
+  credentialIdentity?: AutofillCredentialIdentity;
   id: string;
   title: string;
   username: string;

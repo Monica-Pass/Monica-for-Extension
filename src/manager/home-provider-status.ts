@@ -1,4 +1,5 @@
 import type { ProviderAccount } from "../core/model";
+import { isRemoteKeePassSource } from "../providers/keepass/keepass-source";
 
 export interface HomeProviderQueue { providerId: string; pending: number; failed: number; recovering?: number }
 export interface HomeProviderStatus {
@@ -18,6 +19,6 @@ export function homeProviderStatus(provider: ProviderAccount | undefined, queue?
   if (provider.lastError || (queue?.failed || 0) > 0) return status("error", true);
   if (!provider.enabled) return status("paused");
   if ((queue?.pending || 0) > 0) return status("pending", false, queue!.pending);
-  if (provider.kind === "keepass" && provider.config.sourceMode !== "webdav") return status("file");
+  if (provider.kind === "keepass" && !isRemoteKeePassSource(provider.config.sourceMode)) return status("file");
   return status(provider.lastSyncAt ? "synced" : "never");
 }

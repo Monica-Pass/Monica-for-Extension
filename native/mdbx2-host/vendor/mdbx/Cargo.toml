@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mdbx-core",
+    "crates/mdbx-adapter-steam",
+    "crates/mdbx-adapter-steam-storage",
+    "crates/mdbx-crypto",
+    "crates/mdbx-storage",
+    "crates/mdbx-sync",
+    "crates/mdbx-cli",
+    "crates/mdbx-ffi",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+hmac = "0.12"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+rand = "0.8"
+unicode-normalization = "0.1"
+zeroize = "1.8"
+
+[profile.mdbx3-release]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+incremental = false
+panic = "unwind"

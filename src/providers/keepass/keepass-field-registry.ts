@@ -38,7 +38,7 @@ const passwordEntryOverlayFields = [
   "Email", "Phone",
   "Address", "City", "State", "Postal Code", "Country",
   "Card Number", "Card Holder", "Card Expiry", "Card CVV",
-  "SSO Provider", "MonicaSsoRefEntryId",
+  "SSO Provider", "MonicaSsoRefEntryId", "MonicaSsoRefLogicalId",
   "MonicaLoginType", "SSID", "MonicaWifiData",
   "MonicaSshAlgorithm", "MonicaSshKeySize", "MonicaSshPublicKey",
   "MonicaSshPrivateKey", "MonicaSshFingerprint", "MonicaSshComment", "MonicaSshFormat"
@@ -105,7 +105,7 @@ const monicaPasswordFields = [
   "Card Expiry", "CardExpiry", "Expiration Date", "Expiry Date",
   "Card CVV", "CardCVV", "CVV", "CVC",
   "Expiry Month", "Expiry Year",
-  "SSO Provider", "SsoProvider", "MonicaSsoProvider", "MonicaSsoRefEntryId",
+  "SSO Provider", "SsoProvider", "MonicaSsoProvider", "MonicaSsoRefEntryId", "MonicaSsoRefLogicalId",
   "SSID", "MonicaWifiData", "MonicaLoginType",
   "MonicaSshAlgorithm", "MonicaSshKeySize", "MonicaSshPublicKey",
   "MonicaSshPrivateKey", "MonicaSshFingerprint", "MonicaSshComment", "MonicaSshFormat"
@@ -153,8 +153,11 @@ const keepassTotpFields = [
   "TOTP Algorithm",
   "OTP Type",
   "TOTP Type",
-  "HOTP Counter"
+  "HOTP Counter", "HOTPCounter", "OTPType", "TOTPType", "TOTPPeriod", "TOTPDigits", "TOTPAlgorithm",
+  ...["TimeOtp", "HmacOtp"].flatMap((prefix) => ["Secret", "Secret-Hex", "Secret-Base32", "Secret-Base64"].map((suffix) => `${prefix}-${suffix}`)),
+  "TimeOtp-Length", "TimeOtp-Period", "TimeOtp-Algorithm", "HmacOtp-Counter"
 ];
+export const KEEPASS_OTP_FIELD_NAMES: readonly string[] = keepassTotpFields;
 
 /** `name.trim().lowercase(Locale.ROOT)`. `toLowerCase` is already locale-invariant in JS. */
 export function normalizeKeePassFieldName(name: string): string {
@@ -227,5 +230,5 @@ export function isKeePassTotpField(name: string): boolean {
 
 /** Only a field nobody claims may be promoted to the login secret when `Password` is empty. */
 export function isPasswordSecretFallbackCandidateField(name: string): boolean {
-  return keePassFieldRoleOf(name) === "unknown";
+  return keePassFieldRoleOf(name) === "unknown" && !name.startsWith("monica.content.") && !name.startsWith("monica_gpg_") && !name.startsWith("monica_api_key_");
 }

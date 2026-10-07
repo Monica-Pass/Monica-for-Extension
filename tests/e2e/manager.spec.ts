@@ -34,14 +34,16 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByLabel("到期年").fill("2030");
     await manager.getByLabel("安全码").fill("123");
     await manager.getByRole("button", { name: "加密保存" }).click();
-    await expect(manager.getByText("Daily Visa", { exact: true })).toBeVisible();
+    await expect(dialogContent(manager)).toHaveCount(0);
+    await expect(manager.locator(".vault-tile-open").getByText("Daily Visa", { exact: true })).toBeVisible();
     await expect(manager.getByText(/•••• 1111/)).toBeVisible();
     await expect(manager.getByText("4111111111111111", { exact: true })).toHaveCount(0);
 
     await manager.getByRole("button", { name: "编辑银行卡" }).click();
     await manager.getByLabel("名称 *").fill("Daily Visa Updated");
     await manager.getByRole("button", { name: "加密保存" }).click();
-    await expect(manager.getByText("Daily Visa Updated", { exact: true })).toBeVisible();
+    await expect(dialogContent(manager)).toHaveCount(0);
+    await expect(manager.locator(".vault-tile-open").getByText("Daily Visa Updated", { exact: true })).toBeVisible();
 
     await manager.getByRole("button", { name: /安全笔记/ }).click();
     await manager.getByRole("button", { name: "添加安全笔记" }).click();
@@ -53,6 +55,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByLabel("自定义字段 1 值").fill("ABCD");
     await chooseOption(manager.getByLabel("自定义字段 1 类型"), "HIDDEN");
     await manager.getByRole("button", { name: "加密保存" }).click();
+    await expect(dialogContent(manager)).toHaveCount(0);
     await expect(manager.getByText("Private Note", { exact: true })).toBeVisible();
     await manager.getByRole("button", { name: "编辑安全笔记" }).click();
     await expect(manager.getByLabel("自定义字段 1 名称")).toHaveValue("Recovery code");
@@ -67,6 +70,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     await manager.getByLabel("签发方").fill("Example");
     await manager.getByLabel("账户").fill("joy@example.com");
     await manager.getByRole("button", { name: "加密保存" }).click();
+    await expect(dialogContent(manager)).toHaveCount(0);
     await expect(manager.getByText("Example OTP", { exact: true })).toBeVisible();
 
     await manager.getByRole("button", { name: /安全笔记/ }).click();

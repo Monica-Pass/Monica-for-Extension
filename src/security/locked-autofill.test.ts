@@ -25,6 +25,28 @@ async function fixture() {
 }
 
 describe("device-local selective autofill", () => {
+  it('retains the granted member number across lock/restart and removes all revoked identity data', async () => {
+    const { service, storage, sessions, device, cache, item, other } = await fixture();
+    const first = {...item, passwordGroupId: 'explicit-project', customFields: []};
+    const second = {...other, passwordGroupId: 'explicit-project', username: item.username,
+      createdAt: '2999-01-01T00:00:00Z', customFields: []};
+    await service.importItems([first, second]);
+    await service.setLockedAutofill(second.id, true);
+    const full = await service.readAutofillContext();
+    expect(full.credentialIdentities[second.id]).toEqual({passwordNumber: 2});
+    await service.lock();
+    const restarted = new SecureVaultService(storage, sessions, () => Date.now(), device, cache);
+    const locked = await restarted.readAutofillContext();
+    expect(locked.credentialIdentities).toEqual({[second.id]: {passwordNumber: 2}});
+    expect(locked.items).toHaveLength(1);
+    expect(locked.items[0]).not.toHaveProperty('passwordGroupId');
+    expect(locked.items[0]).toMatchObject({customFields: []});
+    await restarted.unlock('selective autofill master password');
+    await restarted.setLockedAutofill(second.id, false);
+    await restarted.lock();
+    expect((await restarted.readAutofillContext()).credentialIdentities).toEqual({});
+  });
+
   it("rejects a prepared fill after the vault locks or a grant is revoked", async () => {
     const { service, item } = await fixture();
     const unlocked = await service.readAutofillContext();

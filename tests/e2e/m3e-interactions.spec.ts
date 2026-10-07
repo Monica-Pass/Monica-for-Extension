@@ -26,8 +26,8 @@ test("split primary action follows each page and the menu can create another typ
   const { page, context } = await start(testInfo);
   try {
     for (const [section, button, dialog] of [
-      [/^全部项目/, "新建", "添加登录项"],
-      [/^登录项/, "新建", "添加登录项"],
+      [/^全部项目/, "新建", "添加密码"],
+      [/^登录项/, "新建", "添加密码"],
       [/^API 密钥/, "新建", "添加 API 密钥"],
       [/^钱包与身份/, "添加钱包项目", "添加银行卡"],
       [/^安全笔记/, "添加安全笔记", "添加安全笔记"],
@@ -49,9 +49,9 @@ test("split primary action follows each page and the menu can create another typ
     await navigate(page, /^登录项/);
     await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
     const menu = page.getByRole("menu", { name: "选择新建类型" });
-    await expect(menu.getByRole("menuitem")).toHaveCount(11);
+    await expect(menu.getByRole("menuitem")).toHaveCount(13);
     await expect(menu.getByRole("menuitem", { name: /Passkey/ })).toHaveCount(0);
-    await menu.getByRole("menuitem", { name: "API 密钥", exact: true }).click();
+    await menu.getByRole("menuitem", { name: "API Token", exact: true }).click();
     const editor = dialogContent(page, { name: "添加 API 密钥" });
     await expect(editor.getByLabel("名称 *", { exact: true })).toBeFocused();
     await editor.getByLabel("名称 *", { exact: true }).fill("Split-menu API");
@@ -77,7 +77,7 @@ test("split menu supports keyboard, Escape, outside dismissal and navigation", a
     await expect(menu.getByRole("menuitem", { name: "条码", exact: true })).toBeFocused();
     await page.keyboard.press("Home");
     await page.keyboard.press("ArrowDown");
-    await expect(menu.getByRole("menuitem", { name: "API 密钥", exact: true })).toBeFocused();
+    await expect(menu.getByRole("menuitem", { name: "API Key", exact: true })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await expect(trigger).toBeFocused();
@@ -95,7 +95,7 @@ test("split menu supports keyboard, Escape, outside dismissal and navigation", a
 test("collapsing optional fields retains API and wallet editor drafts", async ({}, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
-    for (const kind of ["API 密钥", "银行卡"]) {
+    for (const kind of ["API Token", "银行卡"]) {
       await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
       await page.getByRole("menuitem", { name: kind, exact: true }).click();
       const editor = dialogContent(page);
@@ -139,7 +139,7 @@ test("a narrow enlarged menu stays reachable and transfers focus to the selected
     await page.setViewportSize({ width: 320, height: 520 });
     await expect(menu).toBeInViewport({ ratio: 1 });
     await menu.getByRole("menuitem", { name: "条码", exact: true }).click();
-    const editor = dialogContent(page, { name: "添加登录项" });
+    const editor = dialogContent(page, { name: "添加条码" });
     await expect(editor.getByLabel("名称 *", { exact: true })).toBeFocused();
     await expect(editor.getByRole("combobox", { name: "项目类型", exact: true })).toHaveJSProperty("value", "BARCODE");
     await expect(editor.getByLabel("条码内容", { exact: true })).toBeVisible();
@@ -162,7 +162,7 @@ test("browsers without popovers can choose another type from the full picker", a
     await page.keyboard.press("Escape");
     await expect(picker).toHaveCount(0);
     await trigger.click();
-    await picker.getByRole("button", { name: /API 密钥/ }).click();
+    await picker.getByRole("button", { name: /API Token/ }).click();
     const editor = dialogContent(page, { name: "添加 API 密钥", exact: true });
     await expect(editor.getByLabel("名称 *", { exact: true })).toBeFocused();
   } finally { await context.close(); }
@@ -175,7 +175,7 @@ test(`dismissing an open form picker retains the editor draft (${reducedMotion})
     await page.emulateMedia({ reducedMotion });
     await navigate(page, /^登录项/);
     await page.getByRole("button", { name: "新建", exact: true }).click();
-    const editor = dialogContent(page, { name: "添加登录项" });
+    const editor = dialogContent(page, { name: "添加密码" });
     await editor.getByLabel("名称 *", { exact: true }).fill("Keep this draft");
     const picker = editor.getByRole("combobox", { name: "项目类型", exact: true });
     await picker.click();
@@ -188,9 +188,10 @@ test(`dismissing an open form picker retains the editor draft (${reducedMotion})
     await expect(page.getByRole("listbox")).toBeVisible();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(picker).toHaveJSProperty("value", "WIFI");
-    await expect(editor.getByLabel("SSID", { exact: true })).toBeVisible();
-    await expect(editor.getByLabel("名称 *", { exact: true })).toHaveValue("Keep this draft");
+    const wifiEditor = dialogContent(page, { name: "添加Wi-Fi" });
+    await expect(wifiEditor.getByRole("combobox", { name: "项目类型", exact: true })).toHaveJSProperty("value", "WIFI");
+    await expect(wifiEditor.getByLabel("SSID", { exact: true })).toBeVisible();
+    await expect(wifiEditor.getByLabel("名称 *", { exact: true })).toHaveValue("Keep this draft");
   } finally { await context.close(); }
 });
 }

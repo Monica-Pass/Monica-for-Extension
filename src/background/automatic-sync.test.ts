@@ -1,9 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AutomaticSyncScheduler } from "./automatic-sync";
+import { AutomaticSyncScheduler, mdbx2AutomaticSyncEligible } from "./automatic-sync";
 import type { BitwardenSyncHint } from "../providers/bitwarden/bitwarden-sync-cache";
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(100_000); });
 afterEach(() => vi.useRealTimers());
+
+describe("MDBX local and cloud automatic-sync connection eligibility", () => {
+  it("admits an already-open local vault without requiring WebDAV state", () => {
+    expect(mdbx2AutomaticSyncEligible({ vaultHandle: "open-local" })).toBe(true);
+    expect(mdbx2AutomaticSyncEligible({ vaultHandle: "open-local", webDavBaseUrl: "" })).toBe(true);
+  });
+  it("admits a fully registered cloud vault but not partially configured cloud connections", () => {
+    const full = { vaultHandle: "open-cloud", webDavBaseUrl: "https://example.invalid/dav", syncStateHandle: "registered", remotePath: "isolated" };
+    expect(mdbx2AutomaticSyncEligible(full)).toBe(true);
+    expect(mdbx2AutomaticSyncEligible({ ...full, syncStateHandle: undefined })).toBe(false);
+    expect(mdbx2AutomaticSyncEligible({ ...full, remotePath: "" })).toBe(false);
+  });
+  it("never treats a missing handle as permission to reopen or unlock", () => {
+    expect(mdbx2AutomaticSyncEligible({})).toBe(false);
+    expect(mdbx2AutomaticSyncEligible({ vaultHandle: "", webDavBaseUrl: "https://example.invalid/dav", syncStateHandle: "registered", remotePath: "isolated" })).toBe(false);
+  });
+});
 
 describe("automatic source synchronization", () => {
   it("coalesces a burst into one bounded Cipher delta", async () => {

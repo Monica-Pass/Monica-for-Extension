@@ -1,13 +1,14 @@
 import { bytesToBase64 } from "../../security/encoding";
 import { readBoundedResponseBytes, readBoundedResponseText } from "../bounded-body";
 import {
+  abortableSleep,
   ProviderTransportError,
   providerHttpError,
   resilientFetch,
   type ProviderResponseConsumer,
   type ProviderTransportPolicy
 } from "../provider-transport";
-import { normalizeServerUrl } from "../webdav/webdav-client";
+import { collectionUrl, normalizeServerUrl } from "../webdav/webdav-client";
 
 export const KEEPASS_REMOTE_MAX_DATABASE_BYTES = 128 * 1024 * 1024;
 
@@ -80,7 +81,7 @@ export class KeePassWebDavClient {
   }
 
   async testConnection(signal?: AbortSignal): Promise<void> {
-    await this.request(this.baseUrl, {
+    await this.request(collectionUrl(this.baseUrl), {
       method: "PROPFIND",
       headers: { Depth: "0" },
       signal
@@ -108,18 +109,38 @@ export class KeePassWebDavClient {
   }
 
   async read(signal?: AbortSignal): Promise<KeePassWebDavSnapshot> {
+    // Apache can publish a weak validator during the first second after PUT.
+    // Re-read both metadata and bytes; never strip W/ to manufacture a CAS token.
+    for (let attempt = 0; ; attempt++) {
+      const snapshot = await this.readSnapshot(signal);
+      if (!snapshot.etag?.startsWith("W/") || attempt >= 2) return snapshot;
+      try {
+        await (this.transportPolicy.sleep || abortableSleep)(1000, signal || new AbortController().signal);
+      } catch (error) {
+        if (!signal?.aborted) throw error;
+      }
+      if (signal?.aborted) throw new ProviderTransportError("cancelled", "KeePass WebDAV 下载已取消。", { retryable: false, operation: "KeePass WebDAV 下载", attempts: attempt + 1 });
+    }
+  }
+
+  private async readSnapshot(signal?: AbortSignal): Promise<KeePassWebDavSnapshot> {
     const stat = await this.stat(signal);
     if (!stat) throw new KeePassWebDavError("remote-file-missing", "远端 KeePass 文件不存在。");
     const maximum = this.limits().maxDownloadBytes;
     if (stat.sizeBytes !== undefined && (!Number.isSafeInteger(stat.sizeBytes) || stat.sizeBytes < 0 || stat.sizeBytes > maximum)) {
       throw new KeePassWebDavError("remote-download-too-large", "远端 KeePass 文件超过浏览器安全上限。");
     }
-    return this.request(this.remoteUrl, { method: "GET", signal }, "KeePass WebDAV 下载", async (response, requestSignal) => {
+    const headers: Record<string, string> = stat.etag && !stat.etag.startsWith("W/") ? { "If-Match": stat.etag } : {};
+    return this.request(this.remoteUrl, { method: "GET", headers, signal }, "KeePass WebDAV 下载", async (response, requestSignal) => {
       if (!response.ok) throw providerHttpError("下载远端 KeePass 文件失败", response);
+      const receivedEtag = normalizedEtag(response.headers.get("etag"));
+      if (stat.etag && receivedEtag && stat.etag.replace(/^W\//, "") !== receivedEtag.replace(/^W\//, "")) {
+        throw new KeePassWebDavError("remote-metadata-invalid", "远端 KeePass 文件在读取期间发生变化，请重新同步。");
+      }
       const bytes = await readBoundedResponseBytes(response, maximum, "KeePass WebDAV 下载", requestSignal);
       return {
         ...stat,
-        etag: normalizedEtag(response.headers.get("etag")) || stat.etag,
+        etag: receivedEtag || stat.etag,
         bytes,
         sha256: await sha256Hex(bytes)
       };
@@ -189,7 +210,9 @@ export class KeePassWebDavClient {
       ...this.transportPolicy,
       operation,
       fetcher: this.fetcher,
-      idempotent: true
+      // A failed PUT can already have committed. Let write() reconcile its exact
+      // bytes before any caller retry instead of blindly resending the request.
+      idempotent: init.method !== "PUT"
     }, consume);
   }
 
@@ -273,8 +296,8 @@ function assertKeePassWebDavRequest(target: string, configuredBaseUrl: string, e
 function requireExactEtag(value: string): string {
   if (typeof value !== "string") throw new KeePassWebDavError("remote-etag-required", "替换远端 KeePass 文件需要有效的 ETag。");
   const etag = value.trim();
-  if (!etag || etag.length > 1024 || /[\r\n]/.test(etag)) {
-    throw new KeePassWebDavError("remote-etag-required", "替换远端 KeePass 文件需要有效的 ETag。");
+  if (!etag || etag.startsWith("W/") || etag.length > 1024 || /[\r\n]/.test(etag)) {
+    throw new KeePassWebDavError("remote-etag-required", "替换远端 KeePass 文件需要有效的强 ETag；请稍后重新同步，不能使用弱校验值覆盖文件。");
   }
   return etag;
 }

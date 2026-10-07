@@ -1,0 +1,30 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+const root = resolve(import.meta.dirname, '..');
+const host = resolve(root, 'native/mdbx2-host');
+const relative = 'crates/mdbx-ffi/src/sync_facade.rs';
+const baseline = resolve(root, '.codex-tasks/android-interop-315/raw/complete-backup-baseline/sync_facade.rs');
+const current = resolve(host, 'vendor/mdbx', relative);
+const normalize = value => value.replace(/\r\n/g, '\n');
+const hash = value => createHash('sha256').update(value).digest('hex');
+const before = normalize(await readFile(baseline, 'utf8'));
+const after = normalize(await readFile(current, 'utf8'));
+const provenancePath = resolve(host, 'ENGINE-PROVENANCE.json');
+const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
+if (provenance.files[relative] !== hash(before)) throw new Error('Unrecognized baseline; do not rewrite original Android provenance.');
+const difference = spawnSync('git', ['diff', '--no-index', '--text', '--', baseline, current], { encoding: 'utf8' });
+if (difference.status !== 1) throw new Error(difference.stderr || 'Expected an actual source overlay.');
+const lines = normalize(difference.stdout).split('\n');
+const hunk = lines.findIndex(line => line.startsWith('@@'));
+if (hunk < 0) throw new Error('No source diff hunks.');
+const patch = `diff --git a/${relative} b/${relative}\n--- a/${relative}\n+++ b/${relative}\n` + lines.slice(hunk).join('\n');
+const patchPath = 'runtime-patches/extension-complete-backup.patch';
+await writeFile(resolve(host, patchPath), patch);
+provenance.extension_overlays = provenance.extension_overlays.filter(row => row.id !== 'complete-backup-snapshot');
+provenance.extension_overlays.push({ id: 'complete-backup-snapshot', patch: patchPath, patch_sha256: hash(patch),
+  description: 'Extension-only complete backup under one SQLite read transaction. Copies current, deleted and retained-snapshot ciphertext references with bounded chunks, total size and exact SHA-256. No database schema change or Android product change.',
+  base_files: { [relative]: hash(before) }, files: { [relative]: hash(after) } });
+await writeFile(provenancePath, JSON.stringify(provenance, null, 2) + '\n');
+console.log('Recorded explicit extension overlay; original Android source hashes preserved.');

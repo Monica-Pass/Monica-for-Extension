@@ -43,6 +43,12 @@ describe("runtime sender policy", () => {
     }), runtimeId, extensionRoot)).toThrow("插件页面");
   });
 
+  it("treats the real side panel as the same trusted manager without granting popup or web pages its privileges", () => {
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}index.html?surface=sidepanel` }), runtimeId, extensionRoot)).not.toThrow();
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: `${extensionRoot}popup.html?surface=sidepanel` }), runtimeId, extensionRoot)).toThrow();
+    expect(() => assertTrustedManagerPage(sender({ id: runtimeId, url: "https://synthetic.invalid/index.html?surface=sidepanel" }), runtimeId, extensionRoot)).toThrow();
+  });
+
   it("allows sensitive operations only on HTTPS or exact loopback HTTP", () => {
     expect(isSecureSensitivePageUrl("https://login.example")).toBe(true);
     expect(isSecureSensitivePageUrl("http://localhost:3000")).toBe(true);

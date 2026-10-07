@@ -201,7 +201,7 @@ test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text 
     await panel.locator(".mdbx2-health-guidance-row").first().scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("mdbx2-health-guidance-dark-375-200.png") });
 
-    const details = panel.locator(".mdbx2-diagnostics-m3e-expansion-panel");
+    const details = panel.locator(".mdbx2-diagnostics-details");
     await expect(details).not.toHaveAttribute("open", "");
     await details.getByText("查看聚合统计", { exact: true }).click();
     await expect(details).toHaveAttribute("open", "");

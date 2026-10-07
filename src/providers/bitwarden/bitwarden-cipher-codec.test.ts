@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applySsoAccountChoice, resolveSsoAccount, ssoLogicalId } from "../../core/sso-links";
 import type { CardItem, IdentityItem, LoginItem, PasskeyItem, SecureNoteItem, TotpItem } from "../../core/model";
 import { resolveLoginOtp } from "../../core/login-otp";
 import { createAssertion } from "../../passkey/webauthn-core";
@@ -267,12 +268,12 @@ describe("Bitwarden Cipher codec", () => {
     const note = decoded.items[0] as SecureNoteItem;
     expect(note).toMatchObject({
       kind: "secure-note",
-      customFields: [{ name: "Recovery code", value: "ABCD", protected: true }]
+      customFields: [{ name: "Recovery code", value: "ABCD", protected: true }, { name: "Future boolean", value: "true", protected: false, fieldType: "BOOLEAN" }]
     });
 
     const encoded = await encodeBitwardenCipher({
       ...note,
-      customFields: [{ name: "Recovery code", value: "WXYZ", protected: true }]
+      customFields: note.customFields!.map((field) => field.name === "Recovery code" ? { ...field, value: "WXYZ" } : field)
     }, KEY, raw);
     const fields = encoded.fields as Array<Record<string, unknown>>;
     expect(fields.some((field) => field.Future === "preserve")).toBe(true);
@@ -620,6 +621,60 @@ describe("Bitwarden Cipher codec", () => {
     const ssoRoundTrip = await decodeBitwardenCipher({ ...ssoEncoded, Id: "sso-roundtrip", RevisionDate: REVISION, CreationDate: REVISION }, "provider-1", KEY);
     expect(barcodeRoundTrip.items[0]).toMatchObject({ loginType: "BARCODE", password: "MONICA-123" });
     expect(ssoRoundTrip.items[0]).toMatchObject({ loginType: "SSO", ssoProvider: "OKTA", ssoRefEntryId: 42 });
+  });
+
+  it("resolves an encrypted SSO pair after reconnecting the same Bitwarden source", async () => {
+    const account: LoginItem = {
+      id: "bitwarden:old:account", kind: "login", title: "Account", favorite: false, notes: "", createdAt: REVISION, updatedAt: REVISION,
+      providerRefs: [{ providerId: "old", remoteId: "account" }], username: "user@example.test", password: "synthetic", uris: [], customFields: []
+    };
+    const site: LoginItem = { ...account, id: "bitwarden:old:site", title: "Site", password: "", loginType: "SSO", providerRefs: [{ providerId: "old", remoteId: "site" }] };
+    const linked = applySsoAccountChoice(site, ssoLogicalId(account), [site, account]);
+    const raws = await Promise.all([account, linked].map(async item => ({ ...await encodeBitwardenCipher(item, KEY), Id: item.providerRefs[0].remoteId, RevisionDate: REVISION, CreationDate: REVISION })));
+    const reopened = (await Promise.all(raws.map(raw => decodeBitwardenCipher(raw, "reconnected", KEY)))).flatMap(result => result.items);
+    const owner = reopened.find(item => item.title === "Site") as LoginItem;
+    const target = resolveSsoAccount(owner, reopened);
+    expect(target?.title).toBe("Account");
+    expect(target?.id).not.toBe(account.id);
+    expect(target?.providerRefs[0].remoteId).toBe("account");
+    expect(owner.ssoRefEntryId).toBeUndefined();
+    expect(resolveSsoAccount(owner, [account])).toBeUndefined();
+  });
+
+  it.each([undefined, "password:bitwarden:account"])("clears the old Room reference when selecting SSO relation %s", async logicalId => {
+    const item: LoginItem = {
+      id: "legacy-sso", kind: "login", title: "SSO site", favorite: false, notes: "", createdAt: REVISION, updatedAt: REVISION,
+      providerRefs: [{ providerId: "provider-1" }], username: "", password: "", uris: [], customFields: [],
+      loginType: "SSO", ssoProvider: "OKTA", ssoRefEntryId: 42
+    };
+    const raw = { ...await encodeBitwardenCipher(item, KEY), Id: "legacy-sso", RevisionDate: REVISION, CreationDate: REVISION };
+    const original = (await decodeBitwardenCipher(raw, "provider-1", KEY)).items[0] as LoginItem;
+    const renamedRaw = await encodeBitwardenCipher({ ...original, title: "Renamed" }, KEY, raw);
+    const renamed = (await decodeBitwardenCipher(renamedRaw, "provider-1", KEY)).items[0] as LoginItem;
+    expect(renamed.ssoRefEntryId).toBe(42);
+    const changed = await encodeBitwardenCipher({ ...renamed, ssoRefEntryId: undefined, ssoRefLogicalId: logicalId }, KEY, renamedRaw);
+    const reread = (await decodeBitwardenCipher(changed, "provider-1", KEY)).items[0] as LoginItem;
+    expect(reread.ssoRefEntryId).toBeUndefined();
+    expect(reread.ssoRefLogicalId).toBe(logicalId);
+  });
+
+  it("preserves encrypted stable SSO references across edits and explicitly clears them", async () => {
+    const item: LoginItem = {
+      id: "stable-sso", kind: "login", title: "SSO site", favorite: false, notes: "", createdAt: REVISION, updatedAt: REVISION,
+      providerRefs: [{ providerId: "provider-1" }], username: "", password: "", uris: [], customFields: [],
+      loginType: "SSO", ssoProvider: "OKTA", ssoRefLogicalId: "password:stable-account"
+    };
+    const raw = { ...await encodeBitwardenCipher(item, KEY), Id: "remote-sso", RevisionDate: REVISION, CreationDate: REVISION };
+    expect(JSON.stringify(raw)).not.toContain("password:stable-account");
+    const decoded = (await decodeBitwardenCipher(raw, "provider-2", KEY)).items[0] as LoginItem;
+    expect(decoded.ssoRefLogicalId).toBe(item.ssoRefLogicalId);
+    expect(decoded.customFields.some(field => field.name === "monica_sso_ref_logical_id")).toBe(false);
+    const renamed = await encodeBitwardenCipher({ ...decoded, title: "Renamed" }, KEY, raw);
+    const afterEdit = (await decodeBitwardenCipher(renamed, "provider-2", KEY)).items[0] as LoginItem;
+    expect(afterEdit.ssoRefLogicalId).toBe(item.ssoRefLogicalId);
+    expect(afterEdit.ssoRefEntryId).toBeUndefined();
+    const cleared = await encodeBitwardenCipher({ ...afterEdit, ssoRefLogicalId: undefined }, KEY, renamed);
+    expect(((await decodeBitwardenCipher(cleared, "provider-2", KEY)).items[0] as LoginItem).ssoRefLogicalId).toBeUndefined();
   });
 
   it("preserves reprompt, attachments, history, and unknown Cipher keys when only the title changes", async () => {

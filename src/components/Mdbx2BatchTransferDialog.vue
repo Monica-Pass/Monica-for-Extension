@@ -101,7 +101,7 @@ watch(targetProviderId, () => {
 
 watch(() => props.initialTargetProviderId, (value) => {
   if (value && targetProviders.value.some((provider) => provider.id === value)) targetProviderId.value = value;
-});
+}, { immediate: true });
 
 watch(targetProviders, (providers) => {
   if (!providers.some((provider) => provider.id === targetProviderId.value)) {
@@ -338,7 +338,7 @@ function errorMessage(cause: unknown): string {
         <div>
           <span class="dialog-eyebrow"><m3e-icon name="database"></m3e-icon>{{ tr('MDBX2 批量传输') }}</span>
           <h2 id="mdbx2-batch-title">{{ tr('复制或移动项目') }}</h2>
-          <p>{{ tr('只显示标题、类型和安全摘要。原始字段、附件字节和密码源凭据留在后台。') }}</p>
+
         </div>
         <m3e-icon-button data-dialog-close :aria-label="tr('关闭批量传输')" :disabled="executing" @click="closeDialog"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
       </header>
@@ -367,14 +367,14 @@ function errorMessage(cause: unknown): string {
         </section>
 
         <section class="batch-panel batch-target-panel" aria-labelledby="batch-target-title">
-          <div class="batch-panel-heading"><div><h3 id="batch-target-title">{{ tr('传输到') }}</h3><p>{{ tr('目标必须是已解锁的 MDBX2 本机工作副本。') }}</p></div></div>
+          <div class="batch-panel-heading"><div><h3 id="batch-target-title">{{ tr('传输到') }}</h3></div></div>
           <m3e-form-field v-field-label variant="filled" hide-required-marker class="batch-field"><label slot="label">{{ tr('目标密码源') }}</label><component :is="materialSelectTag" @input="targetProviderId = ($event.target as HTMLElement &amp; { value: string }).value"  :disabled="planning || executing"><component :is="materialOptionTag" :selected.prop="String(targetProviderId ?? '') === String('')" value="" disabled>{{ tr('选择 MDBX2 密码源') }}</component><component :is="materialOptionTag" :selected.prop="String(targetProviderId ?? '') === String(provider.id)" v-for="provider in targetProviders" :key="provider.id" :value="provider.id">{{ provider.name }}{{ readyFor(provider.id) ? '' : tr('（已锁定）') }}</component></component></m3e-form-field>
           <p v-if="targetProvider && !targetReady" class="batch-warning" role="status"><m3e-icon name="lock"></m3e-icon><span>{{ tr('请先在密码源页面解锁 {0}。', { 0: targetProvider.name }) }}</span></p>
 
           <fieldset class="batch-action-picker"><legend>{{ tr('操作') }}</legend><m3e-radio-group class="batch-action-segments" :aria-label="tr('操作')"><label v-choice-label><m3e-radio :checked.prop="action === 'copy'" @input="action = 'copy'"   value="copy" :disabled="planning || executing" /><span><m3e-icon name="content_copy"></m3e-icon><strong>{{ tr('复制') }}</strong><small>{{ tr('创建独立项目') }}</small></span></label><label v-choice-label><m3e-radio :checked.prop="action === 'move'" @input="action = 'move'"   value="move" :disabled="planning || executing" /><span><m3e-icon name="drive_file_move"></m3e-icon><strong>{{ tr('移动') }}</strong><small>{{ tr('完成后移除来源绑定') }}</small></span></label></m3e-radio-group></fieldset>
 
           <div class="batch-folder-section">
-            <div class="batch-subheading"><div><strong>{{ tr('目标文件夹') }}</strong><small>{{ tr('选择根目录或 Android 兼容的 Collection。') }}</small></div><m3e-button variant="text" type="button" :disabled="collectionsLoading || planning || executing || !targetReady" @click="loadCollections"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('刷新') }}</m3e-button></div>
+            <div class="batch-subheading"><div><strong>{{ tr('目标文件夹') }}</strong></div><m3e-button variant="text" type="button" :disabled="collectionsLoading || planning || executing || !targetReady" @click="loadCollections"><m3e-icon slot="icon" name="refresh"></m3e-icon>{{ tr('刷新') }}</m3e-button></div>
             <div v-if="collectionsLoading" class="batch-folder-state" role="status"><m3e-icon name="progress_activity"></m3e-icon><span>{{ tr('正在读取文件夹…') }}</span></div>
             <p v-else-if="collectionsError" class="batch-error" role="alert">{{ collectionsError }}</p>
             <m3e-radio-group v-else class="batch-folder-tree" :aria-label="tr('目标 MDBX2 文件夹')">
@@ -384,16 +384,16 @@ function errorMessage(cause: unknown): string {
             </m3e-radio-group>
           </div>
 
-          <label v-choice-label class="batch-check batch-preserve"><m3e-checkbox :checked.prop="preserveCategories" @input="preserveCategories = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   :disabled="planning || executing" /><span><strong>{{ tr('保留原分类层级') }}</strong><small>{{ tr('按 Android 的文件夹路径创建或复用目标 Collection。') }}</small></span></label>
+          <label v-choice-label class="batch-check batch-preserve"><m3e-checkbox :checked.prop="preserveCategories" @input="preserveCategories = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   :disabled="planning || executing" /><span><strong>{{ tr('保留原分类层级') }}</strong></span></label>
           <p v-if="action === 'move'" class="batch-warning"><m3e-icon name="warning"></m3e-icon><span>{{ tr('移动只会在目标项目与附件验证成功后删除来源；失败时来源保留。') }}</span></p>
         </section>
         </div>
 
         <section v-if="planResult" class="batch-panel batch-plan-panel" aria-labelledby="batch-plan-title">
-        <div class="batch-panel-heading"><div><h3 id="batch-plan-title">{{ tr('兼容性计划') }}</h3><p>{{ tr('{0} 个可传输，{1} 个被阻断', { 0: planResult.transferableCount, 1: planResult.blockedCount }) }}</p></div><span class="operation-chip">{{ tr('操作 {0}', { 0: planResult.operationId.slice(0, 8) }) }}</span></div>
+        <div class="batch-panel-heading"><div><h3 id="batch-plan-title">{{ tr('传输预览') }}</h3><p>{{ tr('{0} 个可传输，{1} 个被阻断', { 0: planResult.transferableCount, 1: planResult.blockedCount }) }}</p></div></div>
         <div v-if="planResult.warnings.length" class="batch-warning-list" role="status"><p v-for="warning in planResult.warnings" :key="warning"><m3e-icon name="info"></m3e-icon><span>{{ warning }}</span></p></div>
         <div class="batch-plan-list" role="list" :aria-label="tr('传输计划项目')">
-          <div v-for="item in planResult.items" :key="item.sourceItemId" class="batch-plan-row" :class="{ blocked: item.blockedReason }" role="listitem"><m3e-icon :name="item.blockedReason ? 'block' : item.effectiveAction === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ pathLabel(item.sourcePath) }} <m3e-icon name="arrow_forward"></m3e-icon> {{ pathLabel(item.targetPath) }}</small><small v-if="item.blockedReason" class="batch-error">{{ item.blockedReason }}</small><small v-else-if="item.pathIncomplete" class="batch-inline-note">{{ tr('原分类路径不完整，已保留可解析部分。') }}</small></span></div>
+          <div v-for="item in planResult.items" :key="item.sourceItemId" class="batch-plan-row" :class="{ blocked: item.blockedReason }" role="listitem"><m3e-icon :name="item.blockedReason ? 'block' : item.effectiveAction === 'move' ? 'drive_file_move' : 'content_copy'"></m3e-icon><span><strong>{{ item.title }}</strong><small>{{ itemKindLabel(item.kind) }} · {{ pathLabel(item.sourcePath) }} <m3e-icon name="arrow_forward"></m3e-icon> {{ pathLabel(item.targetPath) }}</small><small v-if="!selectedIds.has(item.sourceItemId)" class="batch-dependency">{{ tr('关联项目 · 自动包含') }}</small><small v-if="item.blockedReason" class="batch-error">{{ item.blockedReason }}</small><small v-else-if="item.pathIncomplete" class="batch-inline-note">{{ tr('原分类路径不完整，已保留可解析部分。') }}</small></span></div>
         </div>
         <label v-choice-label v-if="planResult.requiresMoveConfirmation" class="batch-move-confirm"><m3e-checkbox :checked.prop="moveConfirmed" @input="moveConfirmed = ($event.target as HTMLElement &amp; { checked: boolean }).checked"   /><span><strong>{{ tr('我确认执行移动') }}</strong><small>{{ tr('目标写入、附件校验和来源删除会按顺序执行；已完成操作可安全重试。') }}</small></span></label>
         </section>
@@ -435,7 +435,7 @@ function errorMessage(cause: unknown): string {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 28px;
   background: var(--md-sys-color-surface-container, var(--app-surface));
 }
 
@@ -519,13 +519,13 @@ function errorMessage(cause: unknown): string {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
   gap: 12px;
-  padding: 16px 24px;
+  padding: 12px;
 }
 
 .batch-panel {
   min-width: 0;
-  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
-  border-radius: 8px;
+  border: 0;
+  border-radius: 24px;
   padding: 16px;
   background: var(--md-sys-color-surface-container-lowest, var(--app-surface));
 }
@@ -631,8 +631,8 @@ function errorMessage(cause: unknown): string {
 
 .batch-item-row {
   min-width: 0;
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: 16px;
+  padding: 12px;
 }
 
 .batch-item-row:hover,
@@ -797,10 +797,15 @@ function errorMessage(cause: unknown): string {
 }
 
 .batch-folder-tree {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 8px;
-  border: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
-  border-radius: 8px;
-  padding: 4px;
+  border: 0;
+  border-radius: 24px;
+  padding: 0;
 }
 
 .batch-folder-row {
@@ -830,7 +835,7 @@ function errorMessage(cause: unknown): string {
 .batch-plan-panel,
 .batch-progress-panel,
 .batch-result-panel {
-  margin: 0 24px 12px;
+  margin: 0 12px 12px;
 }
 
 .batch-warning-list {
@@ -855,7 +860,8 @@ function errorMessage(cause: unknown): string {
 .batch-plan-list,
 .batch-result-list {
   margin-top: 12px;
-  border-top: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
+  display: grid;
+  gap: 4px;
 }
 
 .batch-plan-row,
@@ -865,8 +871,9 @@ function errorMessage(cause: unknown): string {
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 8px;
   align-items: start;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant, var(--app-outline));
-  padding: 10px 0;
+  border-radius: 4px;
+  background: var(--app-surface-low, var(--app-surface-high));
+  padding: 12px 16px;
 }
 
 .batch-plan-row > m3e-icon,
@@ -943,7 +950,7 @@ function errorMessage(cause: unknown): string {
 }
 
 .batch-dialog-error {
-  margin: 0 24px 12px;
+  margin: 0 12px 12px;
 }
 
 @media (max-width: 900px) {
@@ -999,4 +1006,13 @@ function errorMessage(cause: unknown): string {
     animation: none;
   }
 }
+.batch-plan-row:first-child,.batch-result-row:first-child,.batch-folder-row:first-child{border-start-start-radius:24px;border-start-end-radius:24px}
+.batch-plan-row:last-child,.batch-result-row:last-child,.batch-folder-row:last-of-type{border-end-start-radius:24px;border-end-end-radius:24px}
+.batch-folder-row{border-radius:4px;min-height:64px;box-sizing:border-box}
+.batch-folder-state{min-height:64px;font-size:.875rem;padding:12px;box-sizing:border-box}
+.batch-folder-state p{margin:0}
+.batch-plan-row .batch-dependency{color:var(--app-primary)}
+.batch-action-segments label{border-radius:20px;background:var(--app-surface-high)}
+.batch-action-segments label:has(m3e-radio[checked]){background:var(--app-selected)}
+.batch-action-segments label:focus-within,.batch-folder-row:focus-within{outline:2px solid var(--app-primary);outline-offset:2px}
 </style>

@@ -1,7 +1,13 @@
+import { parseLosslessJson, jsonScalarText } from "../../core/lossless-json";
+import { capturePasswordHistory, assertPortablePasswordHistory } from '../../core/password-history';
+import { normalizeOtpCounter, otpCounterJson } from "../../core/otp-counter";
+import { boundNoteLogicalId, boundNoteScope, resolveBoundNote } from "../../core/bound-notes";
 import { strFromU8, strToU8, zipSync } from "fflate";
 import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import {
   firstString,
+  readCardFaceConfig,
+  mergeMonicaItemData,
   normalizeCardType,
   normalizeDocumentType,
   normalizeOtpType,
@@ -12,11 +18,13 @@ import {
   serializeSecureCustomFields
 } from "../monica-item-data";
 import { inspectZipArchive, safeUnzipSync, validateUncompressedZipEntries } from "./zip-safety";
-import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
+import { parsePortablePasskeyPrivateKey, portablePasskeyKeyMatchesAlgorithm } from "../../passkey/private-key-portability";
 
 export interface AndroidBackupCodecOptions {
   allowPortablePasskeys?: boolean;
   allowPortableAttachments?: boolean;
+  /** Only for an explicitly requested metadata-only export, never a complete migration. */
+  allowMetadataOnlyPasskeys?: boolean;
 }
 
 export interface AndroidBackupRecord {
@@ -54,8 +62,8 @@ export interface AndroidGeneratorHistoryEntry {
 
 export interface AndroidPortableAttachment {
   attachmentId: string;
-  parentPasswordId?: number;
-  parentSecureItemId?: number;
+  parentPasswordId?: number | string;
+  parentSecureItemId?: number | string;
   fileName: string;
   mimeType?: string;
   sizeBytes: number;
@@ -97,12 +105,13 @@ const GENERATOR_HISTORY_MAX_ENTRIES = 1_000;
 
 // Current Android exports use folders/<category>/<kind>. Older exports kept
 // passkeys at the archive root; Android restore still accepts that layout.
-const JSON_PATH = /^(?:folders\/([^/]+)\/)?(passwords|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
+const JSON_PATH = /^(?:folders\/([^/]+)\/)?(passwords|totp|authenticators|bank_cards|documents|billing_addresses|payment_accounts|notes|passkeys)\/[^/]+\.json$/i;
+const FUTURE_JSON_PATH = /^folders\/[^/]+\/[^/]+\/[^/]+\.json$/i;
 
 export function listAndroidTimeline(document: AndroidBackupDocument): AndroidTimelineEntrySummary[] {
   const bytes = document.entries[TIMELINE_PATH];
   if (!bytes) return [];
-  const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+  const parsed = parseLosslessJson(strFromU8(bytes)) as unknown;
   if (!Array.isArray(parsed)) throw new Error("Android 时间线不是 JSON 数组");
   return parsed.flatMap((value, index): AndroidTimelineEntrySummary[] => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
@@ -110,7 +119,7 @@ export function listAndroidTimeline(document: AndroidBackupDocument): AndroidTim
     const timestamp = optionalNumber(raw.timestamp);
     if (timestamp === undefined) return [];
     return [{
-      id: String(raw.id ?? `${timestamp}:${index}`).slice(0, 128),
+      id: jsonScalarText(raw.id ?? `${timestamp}:${index}`).slice(0, 128),
       itemType: (stringValue(raw.itemType) || "UNKNOWN").slice(0, 64),
       itemId: optionalNumber(raw.itemId) ?? 0,
       itemTitle: (stringValue(raw.itemTitle) || "未命名操作").slice(0, 512),
@@ -164,7 +173,7 @@ function generatorHistoryId(path: string, index: number, timestamp: number): str
 function timelineChangedFields(value: unknown): string[] {
   if (typeof value !== "string" || !value) return [];
   try {
-    const parsed = JSON.parse(value) as unknown;
+    const parsed = parseLosslessJson(value) as unknown;
     if (!Array.isArray(parsed)) return [];
     return [...new Set(parsed.flatMap((change) => {
       if (!change || typeof change !== "object" || Array.isArray(change)) return [];
@@ -187,15 +196,19 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
   }
 
   for (const [path, bytes] of Object.entries(entries)) {
-    if (!JSON_PATH.test(path)) continue;
+    if (!JSON_PATH.test(path) && !FUTURE_JSON_PATH.test(path)) continue;
     try {
-      const raw = JSON.parse(strFromU8(bytes)) as Record<string, unknown>;
+      const raw = parseLosslessJson(strFromU8(bytes)) as Record<string, unknown>;
       const item = androidRecordToItem(path, raw, providerId, options);
       if (!item) continue;
+      if (item.kind === "opaque") { item.originalPayload = strFromU8(bytes); warnings.push(`${path}: ${item.readOnlyReason}`); }
       items.push(item);
       records.set(item.id, { path, raw, itemId: item.id, item: cloneVaultItem(item) });
-    } catch (error) {
-      warnings.push(`${path}: ${error instanceof Error ? error.message : "无法解析"}`);
+    } catch {
+      const item = opaqueAndroidRecord(path, {}, providerId, "此记录无法安全解析，仅可读取原始数据。", strFromU8(bytes));
+      items.push(item);
+      records.set(item.id, { path, raw: {}, itemId: item.id, item: cloneVaultItem(item) });
+      warnings.push(`${path}: ${item.readOnlyReason}`);
     }
   }
   readAndroidTrash(entries, providerId, options, items, records, warnings);
@@ -203,11 +216,45 @@ export function readAndroidBackup(zipBytes: Uint8Array, providerId: string, opti
   const passwordHistoryRaw = readAndroidPasswordHistory(entries, items, records, warnings);
   const generatorHistoryRecords = readAndroidGeneratorHistory(entries, warnings);
   restoreAndroidOtpBindings(items);
+  restoreAndroidNoteBindings(items, records);
   for (const item of items) {
     const record = records.get(item.id);
     if (record) record.item = cloneVaultItem(item);
   }
   return { entries, items, records, warnings, passwordHistoryRaw, generatorHistoryRecords, portableAttachmentsAllowed: options.allowPortableAttachments !== false };
+}
+
+function restoreAndroidNoteBindings(items: VaultItem[], records: Map<string, AndroidBackupRecord>): void {
+  for (const owner of items) {
+    if (owner.kind !== "login" || owner.deletedAt || records.get(owner.id)?.raw.boundNoteEntryId !== undefined || !Number.isSafeInteger(owner.boundNoteId)) continue;
+    const matches = items.filter(item => {
+      const id = records.get(item.id)?.raw.id;
+      return !item.deletedAt && item.kind !== "login" && (typeof id === "number" || typeof id === "string")
+        && Number(id) === owner.boundNoteId;
+    });
+    if (matches.length === 1 && matches[0].kind === "secure-note" && boundNoteScope(matches[0]) === boundNoteScope(owner)) owner.boundNoteEntryId = boundNoteLogicalId(matches[0]);
+  }
+}
+
+function synchronizeAndroidNoteBindings(document: AndroidBackupDocument, items: VaultItem[]): void {
+  for (const owner of items) {
+    if (owner.kind !== "login" || owner.deletedAt) continue;
+    const previous = document.records.get(owner.id)?.item;
+    if (!owner.boundNoteEntryId || (owner.boundNoteEntryId === previous?.boundNoteEntryId && owner.boundNoteId === previous?.boundNoteId)) continue;
+    const note = resolveBoundNote(owner, items);
+    if (!note) throw new Error("关联笔记不在此备份中、已删除或标识重复，无法同步关联。");
+    const exportId = (item: VaultItem) => {
+      const rawId = document.records.get(item.id)?.raw.id;
+      return rawId === undefined ? numericId(item) : typeof rawId === "number" || typeof rawId === "string" ? Number(rawId) : NaN;
+    };
+    const id = exportId(note);
+    if (!Number.isSafeInteger(id) || items.filter(item => !item.deletedAt && item.kind !== "login" && exportId(item) === id).length !== 1) {
+      throw new Error("笔记的 Android 备份标识不唯一或无效，无法同步关联。");
+    }
+    owner.boundNoteId = id;
+    // A provider-local fallback becomes durable when explicitly selected and exported.
+    if (!note.replicaGroupId?.startsWith("note:")) note.replicaGroupId = boundNoteLogicalId(note);
+  }
 }
 
 function restoreAndroidOtpBindings(items: VaultItem[]): void {
@@ -290,11 +337,19 @@ function synchronizeAndroidOtpBindings(document: AndroidBackupDocument, items: V
 }
 
 export function writeAndroidBackup(document: AndroidBackupDocument, items: VaultItem[], providerId: string, options: AndroidBackupCodecOptions = {}): Uint8Array {
+  // Serialization can reject a later item; edits to bindings/references commit only after the ZIP validates.
+  const originalItems = items;
+  items = items.map(cloneVaultItem);
   const entries = { ...document.entries };
   synchronizeAndroidOtpBindings(document, items);
+  synchronizeAndroidNoteBindings(document, items);
   synchronizeAndroidCategories(document, items, entries);
   for (const item of items) {
     const existing = document.records.get(item.id);
+    if (item.kind === "opaque" || existing?.item.kind === "opaque") {
+      if (!existing || !sameWritableItem(item, existing.item)) throw new Error("未知类型或损坏的 Android 记录仅可原样保留，不能编辑或跨库新建。");
+      continue;
+    }
     if (item.deletedAt) {
       if (!existing) continue;
       if (sameWritableItem(item, existing.item)) continue;
@@ -329,6 +384,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
   validateUncompressedZipEntries(entries);
   const output = zipSync(entries, { level: 6 });
   inspectZipArchive(output);
+  for (let index = 0; index < items.length; index += 1) Object.assign(originalItems[index], items[index]);
   return output;
 }
 
@@ -341,7 +397,7 @@ interface AndroidCategoryRecord {
 
 function parseAndroidCategories(bytes: Uint8Array | undefined): { values: unknown[]; records: AndroidCategoryRecord[] } | undefined {
   if (!bytes) return { values: [], records: [] };
-  const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+  const parsed = parseLosslessJson(strFromU8(bytes)) as unknown;
   if (!Array.isArray(parsed)) throw new Error("分类清单不是 JSON 数组");
   const records: AndroidCategoryRecord[] = [];
   for (const value of parsed) {
@@ -437,6 +493,7 @@ function synchronizeAndroidCategories(
 export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId: string): void {
   const record = document.records.get(itemId);
   if (!record) return;
+  if (record.item.kind === "opaque") throw new Error("未知类型或损坏记录仅可只读查看，不能删除原始数据。");
   for (const attachment of listAndroidPortableAttachments(document, record.item)) {
     deleteAndroidPortableAttachment(document, record.item, attachment.attachmentId);
   }
@@ -448,11 +505,21 @@ export function deleteAndroidBackupItem(document: AndroidBackupDocument, itemId:
 
 export function androidRecordToItem(path: string, raw: Record<string, unknown>, providerId: string, options: AndroidBackupCodecOptions = {}): VaultItem | null {
   const match = path.match(JSON_PATH);
-  if (!match) return null;
-  const kindFolder = match[2].toLowerCase();
+  if ((match || FUTURE_JSON_PATH.test(path)) && !isJsonObject(raw)) return opaqueAndroidRecord(path, {}, providerId, "Android 项目不是对象，仅可读取原始数据。", JSON.stringify(raw));
+  if (!match) return FUTURE_JSON_PATH.test(path) ? opaqueAndroidRecord(path, raw, providerId, "未知 Android 项目类型，仅可读取原始数据。") : null;
+  // Current Android uses totp/item_<id>.json; retain the legacy extension
+  // authenticators alias and keep the original source path on writeback.
+  const kindFolder = match[2].toLowerCase() === "totp" ? "authenticators" : match[2].toLowerCase();
+  const expectedTypes: Record<string, string> = { passwords: "PASSWORD", notes: "NOTE", authenticators: "TOTP", bank_cards: "BANK_CARD", documents: "DOCUMENT", billing_addresses: "BILLING_ADDRESS", payment_accounts: "PAYMENT_ACCOUNT" };
+  if (raw.itemType != null && raw.itemType !== expectedTypes[kindFolder]) return opaqueAndroidRecord(path, raw, providerId, "项目原生类型与目录不匹配，仅可读取原始数据。");
+  if (kindFolder !== "passwords" && kindFolder !== "passkeys") {
+    try { parseNestedJson(raw.itemData); } catch { return opaqueAndroidRecord(path, raw, providerId, "项目 itemData 已损坏或版本未知，仅可读取原始数据。"); }
+  }
   const base = baseFields(path, raw, providerId);
 
   if (kindFolder === "passwords") {
+    const rawLoginType = stringValue(raw.loginType).trim().toUpperCase();
+    if (rawLoginType && !["PASSWORD", "SSO", "WIFI", "SSH", "SSH_KEY", "GPG_KEY", "API_KEY", "BARCODE"].includes(rawLoginType)) return opaqueAndroidRecord(path, raw, providerId, "未知登录类型，仅可读取原始数据。");
     return {
       ...base,
       kind: "login",
@@ -462,23 +529,30 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       uriRules: splitUris(stringValue(raw.website)).map((uri) => ({ uri, matchType: "base-domain" })),
       totpSecret: stringValue(raw.authenticatorKey) || undefined,
       customFields: Array.isArray(raw.customFields)
-        ? raw.customFields.map((field) => {
+        ? raw.customFields.filter((field) => field && typeof field === "object" && !Array.isArray(field) && typeof field.title === "string" && typeof field.value === "string").map((field) => {
             const value = field as Record<string, unknown>;
             return { name: stringValue(value.title), value: stringValue(value.value), protected: Boolean(value.isProtected) };
           })
         : [],
       loginType: normalizeLoginType(raw.loginType),
+      passwordGroupId: optionalString(raw.passwordGroupId),
+      isGroupCover: typeof raw.isGroupCover === "boolean" ? raw.isGroupCover : undefined,
       ssoProvider: optionalString(raw.ssoProvider),
       ssoRefEntryId: optionalNumber(raw.ssoRefEntryId),
+      ssoRefLogicalId: optionalString(raw.ssoRefLogicalId),
       appPackageName: optionalString(raw.appPackageName),
       appName: optionalString(raw.appName),
-      email: optionalString(raw.email),
-      phone: optionalString(raw.phone),
-      addressLine: optionalString(raw.addressLine),
-      city: optionalString(raw.city),
-      state: optionalString(raw.state),
-      zipCode: optionalString(raw.zipCode),
-      country: optionalString(raw.country),
+      email: optionalText(raw.email),
+      phone: optionalText(raw.phone),
+      addressLine: optionalText(raw.addressLine),
+      city: optionalText(raw.city),
+      state: optionalText(raw.state),
+      zipCode: optionalText(raw.zipCode),
+      country: optionalText(raw.country),
+      creditCardNumber: optionalText(raw.creditCardNumber),
+      creditCardHolder: optionalText(raw.creditCardHolder),
+      creditCardExpiry: optionalText(raw.creditCardExpiry),
+      creditCardCVV: optionalText(raw.creditCardCVV),
       passkeyBindings: optionalString(raw.passkeyBindings),
       sshKeyData: optionalString(raw.sshKeyData),
       wifiMetadata: optionalString(raw.wifiMetadata),
@@ -494,7 +568,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
     return {
       ...base,
       kind: "secure-note",
-      content: firstString(data, "content") || stringValue(raw.itemData) || stringValue(raw.notes),
+      content: Object.prototype.hasOwnProperty.call(data, "content") ? jsonScalarText(data.content) : stringValue(raw.notes),
       tags: parseStringArray(data.tags) || [],
       isMarkdown: Boolean(data.isMarkdown),
       customFields: parseSecureCustomFields(data.customFields)
@@ -504,6 +578,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
   if (kindFolder === "authenticators") {
     const data = parseNestedJson(raw.itemData);
     const rawOtpType = stringValue(data.otpType);
+    if (rawOtpType && !["TOTP", "HOTP", "STEAM", "YANDEX", "MOTP"].includes(rawOtpType)) return opaqueAndroidRecord(path, raw, providerId, "未知 OTP 类型，仅可读取原始数据。");
     const otpType = rawOtpType ? normalizeOtpType(rawOtpType) : undefined;
     const steamSharedSecret = firstString(data, "steamSharedSecretBase64");
     const steamSession = parseSteamSession(firstString(data, "steamRawJson"));
@@ -514,7 +589,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       issuer: firstString(data, "issuer") || undefined,
       accountName: firstString(data, "accountName") || undefined,
       otpType: otpType || (steamSharedSecret ? "STEAM" : undefined),
-      counter: optionalNumber(data.counter),
+      counter: data.counter == null ? undefined : normalizeOtpCounter(data.counter),
       pin: optionalString(firstString(data, "pin")),
       link: optionalString(firstString(data, "link")),
       associatedApp: optionalString(firstString(data, "associatedApp")),
@@ -543,6 +618,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
   }
 
   if (kindFolder === "passkeys") {
+    if (raw.signCount != null && optionalNumber(raw.signCount) === undefined) return opaqueAndroidRecord(path, raw, providerId, "Passkey 签名计数超出当前客户端范围，仅可读取原始数据。");
     const portableKey = options.allowPortablePasskeys ? parsePortablePasskeyPrivateKey(raw.privateKeyAlias) : undefined;
     return {
       ...base,
@@ -567,7 +643,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       iconUrl: optionalString(raw.iconUrl),
       boundPasswordId: optionalNumber(raw.boundPasswordId),
       passkeyMode: normalizePasskeyMode(raw.passkeyMode),
-      ...(portableKey?.algorithm === -7 && portableKey.algorithm === numberValue(raw.publicKeyAlgorithm, -7)
+      ...(portablePasskeyKeyMatchesAlgorithm(portableKey, numberValue(raw.publicKeyAlgorithm, -7))
         ? { privateKeyPkcs8: portableKey.pkcs8Base64, sourceMode: "browser-local" as const }
         : { sourceMode: "android-metadata-only" as const })
     } satisfies PasskeyItem;
@@ -598,6 +674,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       branchCode: optionalString(firstString(data, "branchCode")),
       currency: optionalString(firstString(data, "currency")),
       customerServicePhone: optionalString(firstString(data, "customerServicePhone")),
+      cardFace: readCardFaceConfig(data.cardFace),
       customFields: parseSecureCustomFields(data.customFields)
     } satisfies CardItem;
   }
@@ -614,7 +691,9 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
       firstName,
       middleName,
       lastName,
-      fullName: nameFromParts || firstString(data, "fullName", "name"),
+      fullName: Object.prototype.hasOwnProperty.call(data, "fullName") ? jsonScalarText(data.fullName) : nameFromParts || firstString(data, "name"),
+      documentTitle: typeof data.title === "string" ? data.title : undefined,
+      cardFace: readCardFaceConfig(data.cardFace),
       birthDate: optionalString(firstString(data, "birthDate")),
       issuedDate: optionalString(firstString(data, "issuedDate", "issueDate")),
       expiryDate: optionalString(firstString(data, "expiryDate")),
@@ -647,6 +726,7 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
     return {
       ...base,
       kind: "billing-address",
+      cardFace: readCardFaceConfig(data.cardFace),
       fullName: firstString(data, "fullName", "name"),
       company: firstString(data, "company", "organization"),
       streetAddress: firstString(data, "streetAddress", "address1", "addressLine1"),
@@ -689,6 +769,11 @@ export function androidRecordToItem(path: string, raw: Record<string, unknown>, 
   return null;
 }
 
+function opaqueAndroidRecord(path: string, raw: Record<string, unknown>, providerId: string, reason: string, originalPayload = JSON.stringify(raw)): Extract<VaultItem, { kind: "opaque" }> {
+  const parts = path.split("/");
+  return { ...baseFields(path, raw, providerId), kind: "opaque", nativeType: typeof raw.itemType === "string" ? raw.itemType : parts[parts.length - 2] || "unknown", payloadSchemaVersion: optionalNumber(raw.version) ?? 1, originalPayload, readOnlyReason: reason };
+}
+
 function readAndroidTrash(
   entries: Record<string, Uint8Array>,
   providerId: string,
@@ -701,18 +786,17 @@ function readAndroidTrash(
     const bytes = entries[path];
     if (!bytes) continue;
     try {
-      const values = JSON.parse(strFromU8(bytes)) as unknown;
+      const values = parseLosslessJson(strFromU8(bytes)) as unknown;
       if (!Array.isArray(values)) throw new Error("回收站清单不是 JSON 数组");
       for (const value of values) {
         if (!value || typeof value !== "object" || Array.isArray(value)) continue;
         const raw = value as Record<string, unknown>;
-        const id = optionalNumber(raw.id);
-        if (id === undefined) continue;
+        const id = jsonScalarText(raw.id);
+        if (!/^-?\d+$/.test(id)) continue;
         const syntheticPath = path.endsWith("trash_passwords.json")
           ? `folders/_trash/passwords/password_${id}_0.json`
           : trashSecureSyntheticPath(id, stringValue(raw.itemType));
-        if (!syntheticPath) continue;
-        const decoded = androidRecordToItem(syntheticPath, raw, providerId, options);
+        const decoded = syntheticPath ? androidRecordToItem(syntheticPath, raw, providerId, options) : opaqueAndroidRecord(path, raw, providerId, "未知回收站项目类型，仅可读取原始数据。");
         if (!decoded) continue;
         const itemId = `android:${providerId}:${path}#${id}`;
         const item = {
@@ -730,7 +814,7 @@ function readAndroidTrash(
   }
 }
 
-function trashSecureSyntheticPath(id: number, itemType: string): string | undefined {
+function trashSecureSyntheticPath(id: number | string, itemType: string): string | undefined {
   const mapping: Record<string, [string, string]> = {
     NOTE: ["notes", "note"],
     TOTP: ["authenticators", "totp"],
@@ -747,16 +831,22 @@ export function listAndroidPortableAttachments(document: AndroidBackupDocument, 
   if (document.portableAttachmentsAllowed === false) return [];
   const manifest = parsePortableAttachmentManifest(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
   if (!manifest.length) return [];
-  const ids = new Set<number>();
-  const secureItemId = optionalNumber(document.records.get(item.id)?.raw.id);
-  for (const reference of item.providerRefs) {
-    const match = reference.remoteId?.match(/password_(-?\d+)_\d+\.json$/i);
-    if (match) ids.add(Number(match[1]));
+  const record = document.records.get(item.id);
+  const passwordOwner = item.kind === "login" || item.kind === "opaque" && Boolean(record?.path.match(/(?:^|\/)passwords\//i));
+  const ids = new Set<string>();
+  const rawId = portableParentId(record?.raw.id);
+  if (rawId !== undefined) ids.add(String(rawId));
+  // Raw record identity is authoritative. Filename fallback is only for legacy
+  // callers without a bound record and never crosses the password/secure tables.
+  else if (passwordOwner) for (const reference of item.providerRefs) {
+    const match = reference.remoteId?.match(/(?:^|\/)passwords\/password_(-?\d+)(?:_\d+)?\.json$/i);
+    const id = match ? portableParentId(match[1]) : undefined;
+    if (id !== undefined) ids.add(String(id));
   }
-  return manifest.filter((attachment) =>
-    (attachment.parentSecureItemId !== undefined && attachment.parentSecureItemId === secureItemId)
-    || (attachment.parentPasswordId !== undefined && ids.has(attachment.parentPasswordId))
-  );
+  return manifest.filter(attachment => {
+    const parent = passwordOwner ? attachment.parentPasswordId : attachment.parentSecureItemId;
+    return parent !== undefined && ids.has(String(parent));
+  });
 }
 
 export async function readAndroidPortableAttachment(document: AndroidBackupDocument, attachment: AndroidPortableAttachment): Promise<Uint8Array> {
@@ -770,6 +860,7 @@ export async function readAndroidPortableAttachment(document: AndroidBackupDocum
 }
 
 export function upsertAndroidPortableAttachment(document: AndroidBackupDocument, item: VaultItem, input: AndroidPortableAttachmentInput, bytes: Uint8Array): AndroidPortableAttachment {
+  assertAndroidAttachmentWritable(document, item);
   if (bytes.byteLength !== input.sizeBytes) throw new Error("Android portable 附件大小与上传内容不一致。");
   if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0 || input.sizeBytes > PORTABLE_ATTACHMENT_MAX_BYTES) throw new Error("Android portable 附件大小无效。");
   if (!/^[0-9a-f]{64}$/i.test(input.sha256Hex)) throw new Error("Android portable 附件 SHA-256 无效。");
@@ -795,13 +886,17 @@ export function upsertAndroidPortableAttachment(document: AndroidBackupDocument,
     const payload = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).payloadPath : undefined;
     return payload !== payloadPath;
   });
-  nextEntries.push(entry);
+  nextEntries.push({ ...entry,
+    ...(entry.parentPasswordId === undefined ? {} : { parentPasswordId: parseLosslessJson(String(entry.parentPasswordId)) }),
+    ...(entry.parentSecureItemId === undefined ? {} : { parentSecureItemId: parseLosslessJson(String(entry.parentSecureItemId)) })
+  });
   document.entries[payloadPath] = bytes.slice();
   document.entries[PORTABLE_ATTACHMENT_MANIFEST] = strToU8(JSON.stringify({ ...manifest.root, version: 2, entries: nextEntries }));
   return entry;
 }
 
 export function deleteAndroidPortableAttachment(document: AndroidBackupDocument, item: VaultItem, attachmentId: string): boolean {
+  assertAndroidAttachmentWritable(document, item);
   const manifest = readPortableManifestForWrite(document.entries[PORTABLE_ATTACHMENT_MANIFEST]);
   const target = manifest.entries.find((entry) => `android-portable:${entry.payloadPath}` === attachmentId);
   if (!target || !listAndroidPortableAttachments(document, item).some((entry) => entry.attachmentId === attachmentId)) return false;
@@ -814,10 +909,14 @@ export function deleteAndroidPortableAttachment(document: AndroidBackupDocument,
   return true;
 }
 
+function assertAndroidAttachmentWritable(document: AndroidBackupDocument, item: VaultItem): void {
+  if (item.kind === "opaque" || document.records.get(item.id)?.item.kind === "opaque") throw new Error("未知类型或损坏记录的附件仅可只读查看，不能上传或删除。");
+}
+
 function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAttachment[] {
   if (!bytes) return [];
   let raw: unknown;
-  try { raw = JSON.parse(strFromU8(bytes)); } catch { return []; }
+  try { raw = parseLosslessJson(strFromU8(bytes)); } catch { return []; }
   const result: AndroidPortableAttachment[] = [];
   const entries: unknown[] = Array.isArray(raw) ? raw : raw && typeof raw === "object" && Array.isArray((raw as Record<string, unknown>).entries)
     ? (raw as Record<string, unknown>).entries as unknown[]
@@ -831,8 +930,9 @@ function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAtt
     const sizeBytes = typeof record.sizeBytes === "number" ? record.sizeBytes : NaN;
     if (!PORTABLE_ATTACHMENT_PATH.test(payloadPath) || !fileName || !/^[0-9a-f]{64}$/.test(sha256Hex)) continue;
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > PORTABLE_ATTACHMENT_MAX_BYTES) continue;
-    const parentPasswordId = typeof record.parentPasswordId === "number" && Number.isSafeInteger(record.parentPasswordId) ? record.parentPasswordId : undefined;
-    const parentSecureItemId = typeof record.parentSecureItemId === "number" && Number.isSafeInteger(record.parentSecureItemId) && record.parentSecureItemId > 0 ? record.parentSecureItemId : undefined;
+    const parentPasswordId = portableParentId(record.parentPasswordId);
+    const secureId = portableParentId(record.parentSecureItemId);
+    const parentSecureItemId = secureId !== undefined && BigInt(secureId) > 0n ? secureId : undefined;
     if ((parentPasswordId === undefined) === (parentSecureItemId === undefined)) continue;
     result.push({
       attachmentId: `android-portable:${payloadPath}`,
@@ -853,20 +953,31 @@ function parsePortableAttachmentManifest(bytes?: Uint8Array): AndroidPortableAtt
 function readPortableManifestForWrite(bytes?: Uint8Array): { root: Record<string, unknown>; entries: AndroidPortableAttachment[]; rawEntries: unknown[] } {
   if (!bytes) return { root: {}, entries: [], rawEntries: [] };
   try {
-    const parsed = JSON.parse(strFromU8(bytes)) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { root: {}, entries: [], rawEntries: [] };
+    const parsed = parseLosslessJson(strFromU8(bytes)) as unknown;
+    if (!isJsonObject(parsed)) throw new Error("Android portable 附件清单不是对象。");
     const root = parsed as Record<string, unknown>;
-    const rawEntries = Array.isArray(root.entries) ? root.entries : [];
+    if (![1, 2].includes(root.version as number) || !Array.isArray(root.entries)) throw new Error("Android portable 附件清单版本或条目无效。");
+    const rawEntries = root.entries;
     return { root, entries: parsePortableAttachmentManifest(bytes), rawEntries };
   } catch {
-    return { root: {}, entries: [], rawEntries: [] };
+    throw new Error("Android portable 附件清单损坏或版本不受支持，原始数据未修改。");
   }
 }
 
 function portableOwner(item: VaultItem, rawId: unknown): Pick<AndroidPortableAttachment, "parentPasswordId" | "parentSecureItemId"> {
-  const id = optionalNumber(rawId);
-  if (!id || !Number.isSafeInteger(id) || id <= 0) throw new Error("Android 项目缺少可关联的数字 ID，无法写入 portable 附件。");
+  const id = portableParentId(rawId);
+  if (id === undefined || BigInt(id) <= 0n) throw new Error("Android 项目缺少可关联的数字 ID，无法写入 portable 附件。");
   return item.kind === "login" ? { parentPasswordId: id } : { parentSecureItemId: id };
+}
+
+function portableParentId(value: unknown): number | string | undefined {
+  if (value === undefined || value === null || typeof value === "number" && !Number.isSafeInteger(value)) return undefined;
+  const text = jsonScalarText(value);
+  if (!/^-?(?:0|[1-9]\d*)$/.test(text)) return undefined;
+  const integer = BigInt(text);
+  if (integer < -9223372036854775808n || integer > 9223372036854775807n) return undefined;
+  const number = Number(integer);
+  return Number.isSafeInteger(number) ? number : text;
 }
 
 function portablePayloadName(): string {
@@ -882,32 +993,36 @@ function readAndroidPasswordHistory(
   const path = Object.keys(entries).find((entry) => entry.toLowerCase() === "password_history.json");
   if (!path) return [];
   let raw: unknown;
-  try { raw = JSON.parse(strFromU8(entries[path])); }
+  try { raw = parseLosslessJson(strFromU8(entries[path])); }
   catch {
     warnings.push("password_history.json: 无法解析，原始条目已保留。");
+    for (const item of items) if (item.kind === 'login') item.passwordHistoryIncomplete = true;
     return [];
   }
   if (!Array.isArray(raw) || raw.length > 100_000) {
     warnings.push("password_history.json: 历史列表格式无效或过大，原始条目已保留。");
+    for (const item of items) if (item.kind === 'login') item.passwordHistoryIncomplete = true;
     return [];
   }
-  const loginsByEntryId = new Map<number, LoginItem>();
+  const loginsByEntryId = new Map<string, LoginItem>();
   for (const item of items) {
     if (item.kind !== "login") continue;
     const record = records.get(item.id);
-    const entryId = record ? optionalNumber(record.raw.id) : undefined;
+    const entryId = record ? passwordHistoryOwner(record.raw.id) : undefined;
     if (entryId !== undefined) loginsByEntryId.set(entryId, item);
   }
   for (const entry of raw) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const value = entry as Record<string, unknown>;
-    const entryId = optionalNumber(value.entryId);
+    const entryId = passwordHistoryOwner(value.entryId);
     const password = typeof value.password === "string" ? value.password : undefined;
     const lastUsedAt = dateValue(value.lastUsedAt, "");
     const login = entryId === undefined ? undefined : loginsByEntryId.get(entryId);
-    if (!login || password === undefined || !lastUsedAt) continue;
+    if (!login) continue;
+    if (password === undefined || !lastUsedAt) { login.passwordHistoryIncomplete = true; continue; }
     const history = login.passwordHistory || [];
     if (history.length < 1_000) login.passwordHistory = [...history, { password, lastUsedAt }];
+    else login.passwordHistoryIncomplete = true;
   }
   return raw;
 }
@@ -917,7 +1032,7 @@ function readAndroidGeneratorHistory(entries: Record<string, Uint8Array>, warnin
   for (const [path, bytes] of Object.entries(entries)) {
     if (!path.toLowerCase().endsWith(GENERATOR_HISTORY_SUFFIX)) continue;
     try {
-      const parsed = JSON.parse(strFromU8(bytes)) as unknown;
+      const parsed = parseLosslessJson(strFromU8(bytes)) as unknown;
       if (!Array.isArray(parsed) || parsed.length > GENERATOR_HISTORY_MAX_ENTRIES) {
         throw new Error("历史列表格式无效或过大");
       }
@@ -931,33 +1046,65 @@ function readAndroidGeneratorHistory(entries: Record<string, Uint8Array>, warnin
 
 function writeAndroidPasswordHistory(document: AndroidBackupDocument, items: VaultItem[], entries: Record<string, Uint8Array>): void {
   const original = document.passwordHistoryRaw || [];
-  const replacements = new Map<number, LoginItem["passwordHistory"]>();
+  const replacements = new Map<string, { entryId: unknown; previous: NonNullable<LoginItem['passwordHistory']>; next: NonNullable<LoginItem['passwordHistory']> }>();
   for (const item of items) {
     if (item.kind !== "login") continue;
     const record = document.records.get(item.id);
-    const entryId = record ? optionalNumber(record.raw.id) : numericId(item);
-    if (entryId === undefined) continue;
+    const entryId = record ? record.raw.id : numericId(item);
+    if (!record) assertPortablePasswordHistory(item);
+    const owner = passwordHistoryOwner(entryId);
+    if (owner === undefined) continue;
     const previous = record?.item.kind === "login" ? record.item : undefined;
-    let history = [...(item.passwordHistory || [])].slice(-1_000);
-    if (previous && item.password !== previous.password && previous.password && !history.some((entry) => entry.password === previous.password)) {
-      history.push({ password: previous.password, lastUsedAt: previous.updatedAt });
-    }
-    if (JSON.stringify(history) !== JSON.stringify(previous?.passwordHistory || [])) replacements.set(entryId, history);
+    let history = item.passwordHistory || [];
+    // Direct codec callers may edit a password without going through the vault
+    // service. Already captured/explicitly edited histories must not be captured twice.
+    if (previous && JSON.stringify(history) === JSON.stringify(previous.passwordHistory || []))
+      history = capturePasswordHistory(previous, item, item.updatedAt).passwordHistory || [];
+    if (JSON.stringify(history) !== JSON.stringify(previous?.passwordHistory || []))
+      replacements.set(owner, { entryId, previous: previous?.passwordHistory || [], next: history });
   }
   if (!replacements.size) return;
-  const retained = original.filter((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return true;
-    const entryId = optionalNumber((entry as Record<string, unknown>).entryId);
-    return entryId === undefined || !replacements.has(entryId);
-  });
-  for (const [entryId, history] of replacements) {
-    const matchingRaw = original.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry) && optionalNumber((entry as Record<string, unknown>).entryId) === entryId);
-    for (const value of history || []) {
-      const previousRaw = matchingRaw.find((entry) => entry.password === value.password && dateValue(entry.lastUsedAt, "") === value.lastUsedAt);
-      retained.push({ ...(previousRaw || {}), entryId, password: value.password, lastUsedAt: Date.parse(value.lastUsedAt) || Date.now() });
+  const paths = Object.keys(entries).filter(path => path.toLowerCase() === 'password_history.json');
+  const path = paths[0] || 'password_history.json';
+  if (paths.length > 1) throw new Error('密码历史文件重复，原始备份已保留。');
+  if (paths.length) {
+    let raw: unknown;
+    try { raw = parseLosslessJson(strFromU8(entries[path])); } catch { /* fail below without rewriting */ }
+    if (!Array.isArray(raw) || raw.length > 100_000) throw new Error('密码历史无法安全读取，原始备份已保留。');
+  }
+  const retained = [...original];
+  for (const [owner, { entryId, previous, next }] of replacements) {
+    // Only replace rows that were actually projected. Unknown/malformed rows
+    // and rows beyond the projection limit stay in the original archive.
+    const pool: Record<string, unknown>[] = [];
+    for (const value of previous) {
+      const index = retained.findIndex(entry => historyRowMatches(entry, owner, value));
+      if (index >= 0) pool.push(retained.splice(index, 1)[0] as Record<string, unknown>);
+    }
+    const rebuilt = next.map(value => {
+      const index = pool.findIndex(entry => historyRowMatches(entry, owner, value));
+      if (index >= 0) return pool.splice(index, 1)[0];
+      const lastUsedAt = Date.parse(value.lastUsedAt);
+      if (!Number.isFinite(lastUsedAt)) throw new Error('密码历史时间无效，原始备份已保留。');
+      return { entryId, password: value.password, lastUsedAt };
+    });
+    retained.unshift(...rebuilt);
+    if (retained.length > 100_000) {
+      throw new Error('密码历史超出备份支持的数量，原始备份已保留。');
     }
   }
-  entries["password_history.json"] = strToU8(JSON.stringify(retained));
+  entries[path] = strToU8(JSON.stringify(retained));
+}
+
+function passwordHistoryOwner(value: unknown): string | undefined {
+  const text = jsonScalarText(value);
+  return /^-?\d+$/.test(text) ? BigInt(text).toString() : undefined;
+}
+
+function historyRowMatches(entry: unknown, owner: string, value: { password: string; lastUsedAt: string }): boolean {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  const raw = entry as Record<string, unknown>;
+  return passwordHistoryOwner(raw.entryId) === owner && raw.password === value.password && dateValue(raw.lastUsedAt, '') === value.lastUsedAt;
 }
 
 export function vaultItemToAndroidRecord(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem): Record<string, unknown> | null {
@@ -981,6 +1128,7 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
     sortOrder: optionalNumber(raw.sortOrder),
     imagePaths: parseStringArray(raw.imagePaths),
     boundNoteId: optionalNumber(raw.boundNoteId),
+    boundNoteEntryId: optionalString(raw.boundNoteEntryId),
     replicaGroupId: optionalString(raw.replicaGroupId ?? raw.replica_group_id),
     keepassDatabaseId: optionalNumber(raw.keepassDatabaseId),
     keepassGroupPath: optionalString(raw.keepassGroupPath),
@@ -994,9 +1142,9 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
 
 function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem, options: AndroidBackupCodecOptions = {}): { id: number | string; raw: Record<string, unknown> } | null {
   // Android API tokens are native MDBX2 objects, not Room password backup rows.
-  if (item.kind === "api-token") return null;
+  if (item.kind === "api-token" || item.kind === "opaque") throw new Error(`Android JSON 备份没有 ${item.kind} 的无损写入格式，请保留原数据库或使用 MDBX 同步。`);
   const originalId = original?.id;
-  const id: number | string = typeof originalId === "number" || typeof originalId === "string" ? originalId : numericId(item);
+  const id: number | string = originalId === undefined ? numericId(item) : typeof originalId === "number" ? originalId : jsonScalarText(originalId);
   const raw: Record<string, unknown> = { ...(original || {}) };
   const isNew = !original || !originalItem;
   const setChanged = (key: string, value: unknown, current: unknown, previous: unknown) => {
@@ -1023,6 +1171,7 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     setChanged("isArchived", Boolean(item.archivedAt), item.archivedAt, previous?.archivedAt);
     setChanged("archivedAt", item.archivedAt ? Date.parse(item.archivedAt) : null, item.archivedAt, previous?.archivedAt);
     setChanged("boundNoteId", item.boundNoteId ?? null, item.boundNoteId, previous?.boundNoteId);
+    setChanged("boundNoteEntryId", item.boundNoteEntryId ?? null, item.boundNoteEntryId, previous?.boundNoteEntryId);
     setChanged("replicaGroupId", item.replicaGroupId ?? null, item.replicaGroupId, previous?.replicaGroupId);
     setChanged("keepassDatabaseId", item.keepassDatabaseId ?? null, item.keepassDatabaseId, previous?.keepassDatabaseId);
     setChanged("keepassGroupPath", item.keepassGroupPath ?? null, item.keepassGroupPath, previous?.keepassGroupPath);
@@ -1035,6 +1184,8 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
     return previous;
   };
   const applyNested = (updates: Record<string, unknown>) => {
+    if ((item.kind === "card" || item.kind === "identity" || item.kind === "billing-address") && (!originalItem || JSON.stringify(item.cardFace) !== JSON.stringify((originalItem as CardItem).cardFace))) updates.cardFace = item.cardFace ?? null;
+    if (item.kind === "identity" && (!originalItem || item.documentTitle !== (originalItem as IdentityItem).documentTitle)) updates.title = item.documentTitle || "";
     if (Object.keys(updates).length > 0) raw.itemData = mergeNestedItemData(original?.itemData, updates);
   };
 
@@ -1046,14 +1197,23 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("website", item.uris.join("\n"), item.uris, previous?.uris);
       setChanged("authenticatorKey", item.totpSecret || "", item.totpSecret || "", previous?.totpSecret || "");
       setChanged("loginType", item.loginType || "PASSWORD", item.loginType || "PASSWORD", previous?.loginType || "PASSWORD");
+      setChanged("passwordGroupId", item.passwordGroupId ?? null, item.passwordGroupId, previous?.passwordGroupId);
+      // Absent and unfamiliar values survive unrelated edits; false is an explicit unpin.
+      if (item.isGroupCover !== undefined || previous?.isGroupCover !== undefined) {
+        if (original?.isGroupCover != null && typeof original.isGroupCover !== "boolean" && item.isGroupCover !== previous?.isGroupCover) {
+          throw new Error("封面字段版本未知，无法安全修改。请保留原始数据。");
+        }
+        setChanged("isGroupCover", item.isGroupCover ?? false, item.isGroupCover, previous?.isGroupCover);
+      }
       setChanged("ssoProvider", item.ssoProvider || "", item.ssoProvider || "", previous?.ssoProvider || "");
       setChanged("ssoRefEntryId", item.ssoRefEntryId ?? null, item.ssoRefEntryId, previous?.ssoRefEntryId);
-      for (const key of ["appPackageName", "appName", "email", "phone", "addressLine", "city", "state", "zipCode", "country", "passkeyBindings", "sshKeyData", "wifiMetadata", "barcodeData", "customIconType", "customIconValue"] as const) {
+      setChanged("ssoRefLogicalId", item.ssoRefLogicalId ?? null, item.ssoRefLogicalId, previous?.ssoRefLogicalId);
+      for (const key of ["appPackageName", "appName", "email", "phone", "addressLine", "city", "state", "zipCode", "country", "creditCardNumber", "creditCardHolder", "creditCardExpiry", "creditCardCVV", "passkeyBindings", "sshKeyData", "wifiMetadata", "barcodeData", "customIconType", "customIconValue"] as const) {
         setChanged(key, item[key] || "", item[key] || "", previous?.[key] || "");
       }
       setChanged("customIconUpdatedAt", item.customIconUpdatedAt || 0, item.customIconUpdatedAt, previous?.customIconUpdatedAt);
       const customFields = item.customFields.map((field) => ({ title: field.name, value: field.value, isProtected: field.protected }));
-      setChanged("customFields", customFields, item.customFields, previous?.customFields);
+      if (isNew || !sameValue(item.customFields, previous?.customFields)) raw.customFields = mergePasswordCustomFields(original?.customFields, customFields);
       return { id, raw };
     }
     case "secure-note": {
@@ -1076,7 +1236,7 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setNested(updates, "issuer", item.issuer || "", item.issuer || "", previous?.issuer || "");
       setNested(updates, "accountName", item.accountName || "", item.accountName || "", previous?.accountName || "");
       setOptionalNested("otpType", item.otpType, item.otpType, previous?.otpType);
-      setOptionalNested("counter", item.counter, item.counter, previous?.counter);
+      setOptionalNested("counter", item.counter === undefined ? undefined : otpCounterJson(item.counter), item.counter, previous?.counter);
       setOptionalNested("pin", item.pin, item.pin, previous?.pin);
       setOptionalNested("link", item.link, item.link, previous?.link);
       setOptionalNested("associatedApp", item.associatedApp, item.associatedApp, previous?.associatedApp);
@@ -1195,8 +1355,11 @@ function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown
       setChanged("passkeyMode", item.passkeyMode || "BW_COMPAT", item.passkeyMode, previous?.passkeyMode);
       setChanged("notes", item.notes, item.notes, previous?.notes);
       const portableKey = options.allowPortablePasskeys ? parsePortablePasskeyPrivateKey(item.privateKeyPkcs8) : undefined;
-      const portableValue = portableKey?.algorithm === -7 && item.algorithm === -7 ? portableKey.pkcs8Base64 : "";
-      raw.privateKeyAlias = portableValue;
+      const portableValue = portablePasskeyKeyMatchesAlgorithm(portableKey, item.algorithm) ? portableKey.pkcs8Base64 : "";
+      if (portableValue) raw.privateKeyAlias = portableValue;
+      else if (original && sameValue(item.privateKeyPkcs8, previous?.privateKeyPkcs8)) { /* Existing metadata is retained byte-for-byte; it does not acquire signing capability. */ }
+      else if (options.allowMetadataOnlyPasskeys) raw.privateKeyAlias = "";
+      else throw new Error("此 Passkey 没有可导出的私钥，不能创建完整 Android 备份。请使用明确的仅元数据导出流程。");
       if (isNew) {
         raw.categoryName = item.categoryName ?? null;
       }
@@ -1211,13 +1374,13 @@ function normalizePasskeyMode(value: unknown): PasskeyItem["passkeyMode"] {
 }
 
 function sameWritableItem(left: VaultItem, right: VaultItem): boolean {
-  const { providerRefs: _leftProviderRefs, deletedAt: _leftDeletedAt, ...leftPayload } = left;
-  const { providerRefs: _rightProviderRefs, deletedAt: _rightDeletedAt, ...rightPayload } = right;
+  const { providerRefs: _leftProviderRefs, ...leftPayload } = left;
+  const { providerRefs: _rightProviderRefs, ...rightPayload } = right;
   return sameValue(leftPayload, rightPayload);
 }
 
 function cloneVaultItem(item: VaultItem): VaultItem {
-  return JSON.parse(JSON.stringify(item)) as VaultItem;
+  return parseLosslessJson(JSON.stringify(item)) as VaultItem;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -1259,14 +1422,15 @@ function updateAndroidArrayEntry(
   const bytes = entries[path];
   if (bytes) {
     try {
-      const parsed = JSON.parse(strFromU8(bytes)) as unknown;
-      if (Array.isArray(parsed)) values = parsed;
+      const parsed = parseLosslessJson(strFromU8(bytes)) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("回收站清单不是 JSON 数组。");
+      values = parsed;
     } catch {
       throw new Error(`${path} 无法安全更新，因为现有 JSON 已损坏。`);
     }
   }
-  const key = String(id);
-  const index = values.findIndex((value) => value && typeof value === "object" && !Array.isArray(value) && String((value as Record<string, unknown>).id) === key);
+  const key = jsonScalarText(id);
+  const index = values.findIndex((value) => value && typeof value === "object" && !Array.isArray(value) && jsonScalarText((value as Record<string, unknown>).id) === key);
   if (replacement) {
     if (index >= 0) values[index] = replacement;
     else values.push(replacement);
@@ -1308,55 +1472,74 @@ function numericId(item: VaultItem): number {
 }
 
 function splitUris(value: string): string[] {
-  return [...new Set(value.split(/[\r\n,;]+/).map((part) => part.trim()).filter(Boolean))];
+  return [...new Set(value.split(/[\r\n]+/).map((part) => part.trim()).filter(Boolean))];
 }
 
 function parseStringArray(value: unknown): string[] | undefined {
-  const parsed = typeof value === "string" ? (() => { try { return JSON.parse(value) as unknown; } catch { return []; } })() : value;
+  const parsed = typeof value === "string" ? (() => { try { return parseLosslessJson(value) as unknown; } catch { return []; } })() : value;
   if (!Array.isArray(parsed)) return undefined;
   const values = parsed.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()));
   return values.length ? values : undefined;
 }
 
 function parseNestedJson(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object") return value as Record<string, unknown>;
-  if (typeof value !== "string" || !value.trim()) return {};
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+  if (isJsonObject(value)) return value;
+  if (value == null || (typeof value === "string" && !value.trim())) return {};
+  if (typeof value !== "string") throw new Error("itemData 不是 JSON 对象。");
+  const parsed = parseLosslessJson(value);
+  if (!isJsonObject(parsed)) throw new Error("itemData 不是 JSON 对象。");
+  return parsed;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    && !(JSON as typeof JSON & { isRawJSON?: (candidate: unknown) => boolean }).isRawJSON?.(value);
+}
+
+function mergePasswordCustomFields(original: unknown, updates: Array<{ title: string; value: string; isProtected: boolean }>): unknown[] {
+  const remaining: unknown[] = Array.isArray(original) ? [...original] : [];
+  const fields = updates.map((update) => {
+    const index = remaining.findIndex((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate) && (candidate as Record<string, unknown>).title === update.title);
+    const source = index < 0 ? undefined : remaining.splice(index, 1)[0] as Record<string, unknown>;
+    return { ...source, ...update };
+  });
+  return [...fields, ...remaining.filter((candidate) => !candidate || typeof candidate !== "object" || Array.isArray(candidate) || typeof (candidate as Record<string, unknown>).title !== "string" || typeof (candidate as Record<string, unknown>).value !== "string")];
 }
 
 function mergeNestedItemData(original: unknown, updates: Record<string, unknown>): string {
-  return JSON.stringify({ ...parseNestedJson(original), ...updates });
+  return JSON.stringify(mergeMonicaItemData(parseNestedJson(original), updates));
 }
 
 function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : value == null ? "" : String(value);
+  return jsonScalarText(value);
 }
 function optionalString(value: unknown): string | undefined {
   return stringValue(value) || undefined;
 }
+// Supplemental text is content, not an optional identifier. An explicit clear
+// must stay empty after native/ZIP reload instead of becoming an absent field.
+function optionalText(value: unknown): string | undefined {
+  return value == null ? undefined : stringValue(value);
+}
 function numberValue(value: unknown, fallback: number): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  const parsed = typeof value === "number" ? value : Number(jsonScalarText(value));
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 function optionalNumber(value: unknown): number | undefined {
   if (value == null || value === "") return undefined;
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const parsed = typeof value === "number" ? value : Number(jsonScalarText(value));
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 function dateValue(value: unknown, fallback = new Date().toISOString()): string {
   const millis = numberValue(value, Number.NaN);
-  if (Number.isFinite(millis) && millis > 0) return new Date(millis).toISOString();
+  if (Number.isFinite(millis) && millis >= 0 && millis <= 8640000000000000) return new Date(millis).toISOString();
   if (typeof value === "string" && !Number.isNaN(Date.parse(value))) return new Date(value).toISOString();
   return fallback;
 }
 function normalizeLoginType(value: unknown): NonNullable<LoginItem["loginType"]> {
   const normalized = stringValue(value).trim().toUpperCase();
   if (normalized === "SSH") return "SSH_KEY";
-  return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
+  return normalized === "SSO" || normalized === "WIFI" || normalized === "SSH_KEY" || normalized === "GPG_KEY" || normalized === "API_KEY" || normalized === "BARCODE" ? normalized : "PASSWORD";
 }
 
 function normalizePasskeyAlgorithm(value: unknown): PasskeyItem["algorithm"] {

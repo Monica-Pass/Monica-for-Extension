@@ -1,31 +1,39 @@
-# Monica for Extension 0.1.37
+# Monica for Extension 0.1.37 Preview
 
-本版接续 GitHub 已发布的 0.1.36，汇总此前 0.1.37–0.1.45 本地开发阶段的改动。插件、清单与依赖锁文件统一使用正式版本号 0.1.37。
+## 中文
 
-## 界面与日常使用
+本版是供公开试用和反馈问题的预览版，接续 0.1.36。包含此前本地开发的界面、密码项目、自动填充与同步改进；跨端对齐仍在进行，不代表全部后端、网站和 Android 流程已经验证。
 
-- 统一为 Material 3 Expressive 风格，使用 M3E Web Components；Nothing 保留为可选配色。菜单、输入框、弹窗、详情与编辑页面采用统一层级和轻量动效，并支持减少动态效果。
-- 管理页直接进入全部项目；筛选按类型、密码源、分类和收藏组合。拆分新建按钮可创建当前类型，也可展开选择其他类型。主要凭据与绑定验证码优先展示，补充字段按需展开。
-- 工具栏账号列表采用横向布局：网站图标、标题与用户名、独立复制操作。匹配账号、全部账号与免解锁账号保持一致；长文字不挤压图标，不可填充页面仍可复制。
-- 登录列表、详情与工具栏支持网站图标，优先使用浏览器缓存，必要时匿名请求网站自己的 favicon，失败后显示默认图标。不使用第三方图标服务。
-- 保留 Monica 官方应用图标、八种离线语言、明暗主题、大字体及窄屏布局。语言切换仅位于设置页，创建页、解锁页与工具栏弹窗自动沿用同一偏好。
-- 新增 API 密钥类型，支持本地库及 Android 原生 MDBX2 对象；SSO 作为登录方式收进密码记录。
+- 管理页、工具栏与窄屏布局统一为 Material 3 Expressive，支持八种离线语言。
+- 密码项目支持多个凭据组、共享账号与 OTP、排序、更多 Android 扩展字段、附件和项目操作。新增密码历史界面与可用后端的历史映射。
+- 改进密码、OTP、自定义字段自动填充，以及 Passkey 注册、选择、用户验证、密钥格式兼容和同步后的使用流程。
+- 改进 MDBX、KDBX、WebDAV 和 Bitwarden 的字段保留、同步队列、删除恢复及冲突处理。远端 KDBX 项目冲突可以逐项目选择版本，并导出独立密码加密的恢复文件。
+- Windows 本机助手更新到 0.1.2。管理页不再等待 Windows Hello 能力查询完成才显示密码库。
+- 更新 Vue 与 source-map-js，修复发布前依赖审计发现的问题。
 
-## 自动同步与 Passkey
+**已知边界**：部分新增界面与自动化回归尚未收尾；极窄屏 200% 字号的部分 OTP 内容可能显示不完整，新增字段的翻译也仍在补全。直接 OneDrive 登录界面已接入，但真实 Microsoft 账号登录、刷新和完整 Android 往返尚未验收，可能还需要注册对应扩展 ID 的回调。MDBX / KDBX 的本机密码历史尚不能完整同步到新客户端；需要保留该历史时使用 Monica ZIP 备份。Android 导入凭据的备份标志、外部正计数 Passkey、部分项目生命周期与自动填充网站组合仍待扩大验证。不要把本预览版的可用路径理解为全部跨端能力均已完成。
 
-- Bitwarden 使用官方 SignalR 通知与单条 Cipher 增量读取，并在重连、上下文变化及定期核对时补偿完整同步。
-- WebDAV 在页面可见时每 15 秒检查远端：MDBX2 使用增量分段，KDBX 与 Android 快照通过 ETag 跳过未变化文件。打开的列表和详情自动更新，编辑草稿保留并在保存前检查冲突。
-- 修复 Passkey 用户验证流程，需要验证时可在独立 Monica 窗口输入主密码。按实际密码源处理计数，并保留历史高水位，阻止已知计数回退。
-- 本地／文件库使用零签名计数；Bitwarden 原生零计数保持零，历史非零计数按官方流程同步、递增并确认服务器写入后签名。使用统计单独保存于本机。
+下载 `monica-extension-0.1.37.zip`，解压后在 Edge / Chrome 的扩展管理页启用开发者模式并加载解压目录。MDBX 与 Windows Hello 相关能力另需 `monica-mdbx2-host-windows-x64-0.1.2.zip`，按包内 README 安装。每个 ZIP 均附 SHA-256。
 
-手机端必须先上传到同一服务器，插件才能收到修改；15 秒检查不代表端到端同步延迟保证。KDBX 变化后仍传输整文件，Android ZIP 仍是整包快照。历史非零 Passkey 改为零不能重置网站记录，真实多端并发也不能仅靠计数策略完全消除。详细范围见[同步兼容说明](SYNC_COMPATIBILITY.md)与[Passkey 兼容说明](PASSKEY_COMPATIBILITY.md)。
+升级前保留可用备份。已有开发者模式安装请更新原加载目录并点击“重新加载”，不要为升级移除原扩展；不同扩展身份不会自动共享浏览器中的本地密码库。本次发布为 GitHub 下载包，不代表 Chrome / Edge 商店已更新。
 
-## 下载与更新
+[反馈 Bug](https://github.com/Monica-Pass/Monica-for-Extension/issues/new?template=bug.yml)：请提供插件/助手版本、浏览器与系统、密码源、涉及的 Android 版本、复现步骤及预期/实际结果。使用虚构数据复现，勿上传真实密码、私钥或密码库。安全问题按 [SECURITY.md](https://github.com/Monica-Pass/Monica-for-Extension/blob/main/SECURITY.md) 私下报告。
 
-- `monica-extension-0.1.37.zip`：Chrome／Edge 插件，解压后在扩展管理页使用“加载已解压的扩展程序”。
-- `monica-mdbx2-host-windows-x64-0.1.1.zip`：可选 Windows 本机助手。MDBX2、Android API 密钥互通和 Windows Hello 相关能力需要助手，按包内 README 安装或更新。
-- 每个 ZIP 附带 `.sha256` 校验文件；源码由 GitHub 的 Source code 链接提供。SBOM、许可证及构建证据已内嵌于安装包。
+## English
 
-更新现有开发者模式安装时，用新包替换原来加载目录的程序文件，然后在扩展管理页对原 Monica 点击“重新加载”。保持原目录和扩展身份可保留浏览器密码库，更新无需移除扩展。安装包仅包含程序与资源，不包含用户密码库、备份、浏览器配置或本地测试产物。
+This public preview follows 0.1.36 and makes the accumulated UI, password-project, autofill, and synchronization work available for testing. Android parity is still in progress; this release does not claim verification of every backend, site, or Android workflow.
 
-发布检查与验证边界见 [0.1.37 发布验证记录](VALIDATION-0.1.37.md)。
+- Material 3 Expressive manager, toolbar, and narrow layouts with eight offline languages.
+- Multi-credential password projects, shared account and OTP fields, ordering, richer Android fields, attachments, project operations, and password-history support on compatible backends.
+- Improvements to password, OTP, and custom-field autofill, plus Passkey registration, selection, user verification, key compatibility, and use after synchronization.
+- Better field preservation, queued synchronization, deletion recovery, and conflicts for MDBX, KDBX, WebDAV, and Bitwarden. Remote KDBX project conflicts support explicit version choices and separately password-encrypted recovery exports.
+- Windows native helper 0.1.2. Native Windows Hello status discovery no longer blocks the vault interface.
+- Updated Vue and source-map-js to address dependency audit findings.
+
+**Known limits:** some new UI flows and automated regressions remain unfinished. At very narrow widths with 200% text, some OTP content may not fit; translations for new fields are also incomplete. direct OneDrive sign-in is implemented but real Microsoft sign-in, refresh, and complete Android roundtrips are not accepted yet; the extension-specific redirect may require registration. Local MDBX/KDBX password-history overlays do not fully synchronize to fresh clients; use Monica ZIP backup when this history must be retained. Imported Android Passkey backup flags, external positive-counter credentials, some project lifecycles, and broader site autofill coverage remain under verification.
+
+Extract `monica-extension-0.1.37.zip` and load it from the Edge/Chrome extensions page in developer mode. MDBX and Windows Hello features require the separately supplied `monica-mdbx2-host-windows-x64-0.1.2.zip`; follow its README. SHA-256 files accompany both archives.
+
+Keep a usable backup before upgrading. For an existing unpacked installation, update its original directory and reload the same extension rather than removing it. Different extension identities do not share browser-local vault data automatically. This is a GitHub download release, not a Chrome/Edge store update.
+
+[Report a bug](https://github.com/Monica-Pass/Monica-for-Extension/issues/new?template=bug.yml) with extension/helper versions, browser/OS, backend, Android version when relevant, and reproduction steps. Use synthetic data; never attach real passwords, keys, or vaults. Report security issues privately as described in [SECURITY.md](https://github.com/Monica-Pass/Monica-for-Extension/blob/main/SECURITY.md).

@@ -12,6 +12,9 @@ import { openKeePassVault, readKeePassEntries } from "./keepass-vault";
 import { KEEPASS_PASSKEY_FIELDS } from "./keepass-passkey-codec";
 import { KEEPASSDX_PASSKEY_FIELDS } from "./keepass-field-registry";
 import { installKdbxCryptoEngine } from "./keepass-crypto";
+import { applySsoAccountChoice, resolveSsoAccount } from "../../core/sso-links";
+import { buildKeePassLoginPatch } from "./keepass-login-codec";
+import { applyKeePassFieldPatch } from "./keepass-field-patch";
 import type { CardItem, LoginItem, PasskeyItem, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 
 /**
@@ -327,12 +330,14 @@ describe("entry dispatch precedence", () => {
     expect(snapshot.skipped[0]).toMatchObject({ reason: "empty" });
   });
 
-  it("skips an entry whose MonicaItemType this build does not know, rather than guessing", async () => {
+  it("exposes an unknown MonicaItemType as readonly opaque data while retaining its source record", async () => {
     const snapshot = await openFixture([
       { title: "未来", fields: { MonicaItemType: "CRYPTO_SEED" }, protectedFields: { MonicaItemData: "{}" } }
     ]);
 
-    expect(snapshot.items).toHaveLength(0);
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]).toMatchObject({ kind: "opaque", nativeType: "CRYPTO_SEED", title: "未来" });
+    expect(JSON.parse((snapshot.items[0] as Extract<VaultItem, { kind: "opaque" }>).originalPayload!).fields).toContainEqual({ name: "MonicaItemData", value: "{}", protected: true });
     expect(snapshot.skipped[0]).toMatchObject({ reason: "unknown-item-type" });
   });
 });
@@ -359,6 +364,35 @@ describe("field references", () => {
 });
 
 describe("readKeePassEntries", () => {
+  it("resolves an SSO pair after saving KDBX and reopening under a new connection", async () => {
+    const snapshot = await openFixture([
+      { title: "Account", fields: { UserName: "user@example.test", Password: "synthetic" } },
+      { title: "Site", fields: { MonicaLoginType: "SSO", "SSO Provider": "OKTA" } }
+    ]);
+    const owner = snapshot.items.find(item => item.title === "Site") as LoginItem;
+    const account = snapshot.items.find(item => item.title === "Account") as LoginItem;
+    const choice = applySsoAccountChoice(owner, `password:keepass:${account.keepassEntryUuid}`, snapshot.items);
+    const entry = snapshot.entriesByUuid.get(owner.keepassEntryUuid!)!;
+    entry.fields = applyKeePassFieldPatch(entry.fields, buildKeePassLoginPatch({ item: choice, existingFields: entry.fields }));
+    const reopened = await openKeePassVault(new Uint8Array(await snapshot.database.save()), { password: PASSWORD, databaseId: 99, providerId: "new-connection" });
+    const site = reopened.items.find(item => item.title === "Site") as LoginItem;
+    const resolved = resolveSsoAccount(site, reopened.items);
+    expect(resolved?.title).toBe("Account");
+    expect(resolved?.id).not.toBe(account.id);
+    expect(resolved?.keepassEntryUuid).toBe(account.keepassEntryUuid);
+    expect(site.ssoRefEntryId).toBeUndefined();
+  });
+
+  it("projects the stable SSO reference from an encrypted KDBX without exposing it as a user field", async () => {
+    const snapshot = await openFixture([{ title: "SSO site", fields: {
+      MonicaLoginType: "SSO", "SSO Provider": "OKTA", MonicaSsoRefLogicalId: "password:stable-account"
+    } }]);
+    const login = itemOfKind(snapshot.items, "login");
+    expect(login).toMatchObject({ loginType: "SSO", ssoRefLogicalId: "password:stable-account" });
+    expect(login.customFields.some(field => field.name === "MonicaSsoRefLogicalId")).toBe(false);
+    expect(login.ssoRefEntryId).toBeUndefined();
+  });
+
   it("hands back a live entry handle per uuid, so a write can patch the original in place", async () => {
     const snapshot = await openFixture([{ title: "GitHub", fields: { UserName: "alice" } }]);
 

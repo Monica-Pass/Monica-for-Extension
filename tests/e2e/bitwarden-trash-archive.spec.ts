@@ -45,7 +45,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
     await openMobileSection(manager, /^归档/);
     await expect(manager.locator(".item-card").filter({ hasText: "Archived account" })).toBeVisible();
     await expect(manager.getByRole("button", { name: "取消归档 Archived account" })).toBeVisible();
-    await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "12px");
+    await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "20px");
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     await expectNoHorizontalOverflow(manager);
     await expectNoGradients(manager.locator(".lifecycle-page"));

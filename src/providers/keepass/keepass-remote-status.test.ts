@@ -22,4 +22,8 @@ describe("KeePass remote status presentation", () => {
     expect(presentKeePassRemoteError({ code: "authentication", retryable: false, at: "2026-08-07T10:00:00.000Z" }))
       .toMatchObject({ action: "reconnect", actionLabel: "重新配置" });
   });
+  it("routes expired OneDrive authorization to sign-in while keeping local changes", () => {
+    expect(presentKeePassRemoteError({ code: "authentication", retryable: false, at: "2026-10-05T00:00:00Z" }, "onedrive"))
+      .toMatchObject({ title: "OneDrive 登录已过期", action: "reconnect", actionLabel: "重新登录", message: "请使用原 Microsoft 账号重新登录，本机未同步修改会保留。" });
+  });
 });

@@ -1,5 +1,7 @@
-import { chromium, expect, test as base, type BrowserContext, type Page, type Worker } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
+import { expect, test as base, type BrowserContext, type Page, type Worker } from "@playwright/test";
 import path from "node:path";
+import { projectLogins } from './fixtures/project-logins';
 
 const hostSelector = "#monica-inline-autofill-host";
 const secret = "inline-secret-alpha";
@@ -17,7 +19,7 @@ interface App { context: BrowserContext; manager: Page; worker: Worker; extensio
 const test = base.extend<{ app: App }>({
   app: async ({}, use, info) => {
     const extension = path.resolve("dist");
-    const context = await chromium.launchPersistentContext(info.outputPath("p"), {
+    const context = await launchEdgeContext(info.outputPath("p"), {
       channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 1100, height: 1000 },
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
     });
@@ -42,6 +44,38 @@ const test = base.extend<{ app: App }>({
       await use({ context, manager, worker, extensionId });
     } finally { await context.close(); }
   }
+});
+
+test('distinguishes project passwords before site filtering and fills the chosen member by keyboard', async ({ app }, info) => {
+  expect(await app.manager.evaluate(items => chrome.runtime.sendMessage({type: 'VAULT_IMPORT_ITEMS', items}), projectLogins('https://inline.example.test'))).toMatchObject({ok: true});
+  const page = await target(app);
+  await page.setViewportSize({width: 320, height: 880});
+  await page.emulateMedia({colorScheme: 'dark'});
+  await open(page);
+  const state = await menu(page);
+  expect(state.text).toContain('密码 2 · 工作账户');
+  expect(state.text).toContain('密码 3 · 备用账户');
+  expect(state.text).not.toContain('密码 1');
+  for (const privateValue of ['project-secret-', 'private-project-note', 'monica.content.', '00000000-']) expect(state.text).not.toContain(privateValue);
+  await page.screenshot({path: info.outputPath('project-inline-320.png'), animations: 'disabled'});
+  const selectedIndex = state.buttons.slice(1, -1).findIndex(button => button.text.includes('密码 2'));
+  expect(selectedIndex).toBeGreaterThanOrEqual(0);
+  for (let index = 0; index <= selectedIndex; index++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#password')).toHaveValue('project-secret-2');
+  await expect(page.locator('#username')).toHaveValue('same-account@example.test');
+  expect(await app.manager.evaluate(() => chrome.runtime.sendMessage({type: 'VAULT_SET_LOCKED_AUTOFILL', itemId: 'project-password-2', enabled: true}))).toMatchObject({ok: true});
+  expect(await app.manager.evaluate(() => chrome.runtime.sendMessage({type: 'VAULT_LOCK'}))).toMatchObject({ok: true});
+  await open(page);
+  const locked = await menu(page);
+  expect(locked.suggestions).toBe(1);
+  expect(locked.text).toContain('密码 2 · 工作账户');
+  expect(locked.text).not.toContain('备用账户');
+  await page.locator('#password').fill('');
+  await open(page);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#password')).toHaveValue('project-secret-2');
 });
 
 async function target(app: App) {
@@ -77,6 +111,90 @@ async function clickMenu(page: Page, text: string) {
   expect(entry).toBeDefined();
   await page.mouse.click(entry!.x, entry!.y);
 }
+
+test('HOTP autofill preserves intervening edits and advances only the used Android credential group', async ({ app }, info) => {
+  const otp = 'otpauth://hotp/Test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=0';
+  const rows = projectLogins('https://inline.example.test').map(item => ({ ...item, totpSecret: otp }));
+  expect(await app.manager.evaluate(items => chrome.runtime.sendMessage({ type: 'VAULT_IMPORT_ITEMS', items }), rows)).toMatchObject({ ok: true });
+  await app.worker.evaluate(() => {
+    const gate = globalThis as unknown as { hotpFillGate: { pending: boolean; release?: () => void; restore: () => void } };
+    const send = chrome.tabs.sendMessage;
+    gate.hotpFillGate = { pending: false, restore: () => { chrome.tabs.sendMessage = send; } };
+    chrome.tabs.sendMessage = (async (...args: unknown[]) => {
+      const response = await Reflect.apply(send, chrome.tabs, args);
+      if ((args[1] as { type?: string })?.type === 'MONICA_FILL_INLINE_CREDENTIAL') {
+        gate.hotpFillGate.pending = true;
+        await new Promise<void>(resolve => { gate.hotpFillGate.release = resolve; });
+      }
+      return response;
+    }) as typeof chrome.tabs.sendMessage;
+  });
+  const page = await target(app);
+  try {
+    await open(page, '#otp');
+    await clickMenu(page, '密码 2');
+    await expect(page.locator('#otp')).toHaveValue('755224'); // RFC 4226 vector, actual content-script write.
+    await expect(page.locator('#password')).toHaveValue('');
+    await expect.poll(() => app.worker.evaluate(() => (globalThis as unknown as { hotpFillGate: { pending: boolean } }).hotpFillGate.pending)).toBe(true);
+    expect(await app.manager.evaluate(async () => {
+      const current = (await chrome.runtime.sendMessage({ type: 'VAULT_GET_ITEM', itemId: 'project-password-2' })).data;
+      return chrome.runtime.sendMessage({ type: 'VAULT_UPSERT_ITEM', item: { ...current, password: 'edited-during-fill', notes: 'later notes retained' } });
+    })).toMatchObject({ ok: true });
+    await app.worker.evaluate(() => {
+      const gate = (globalThis as unknown as { hotpFillGate: { release?: () => void; restore: () => void } }).hotpFillGate;
+      gate.restore(); gate.release!();
+    });
+    const read = () => app.manager.evaluate(async () => (await chrome.runtime.sendMessage({ type: 'VAULT_LIST_ITEMS' })).data);
+    await expect.poll(async () => {
+      const current = await read();
+      return ['project-password-1', 'project-password-2'].map(id => new URL(current.find((row: { id: string }) => row.id === id).totpSecret).searchParams.get('counter'));
+    }).toEqual(['1', '1']);
+    const current = await read();
+    expect(current.find((row: { id: string }) => row.id === 'project-password-2')).toMatchObject({ password: 'edited-during-fill', notes: 'later notes retained' });
+    for (const id of ['project-password-3', 'independent-project']) {
+      expect(new URL(current.find((row: { id: string }) => row.id === id).totpSecret).searchParams.get('counter')).toBe('0');
+    }
+    await open(page, '#otp');
+    await clickMenu(page, '密码 2');
+    await expect(page.locator('#otp')).toHaveValue('287082');
+    await expect.poll(async () => new URL((await read()).find((row: { id: string }) => row.id === 'project-password-2').totpSecret).searchParams.get('counter')).toBe('2');
+    // A successful password fill that has no OTP field must not consume HOTP.
+    await page.locator('#otp').evaluate(input => input.remove());
+    await open(page);
+    await clickMenu(page, '密码 2');
+    await expect(page.locator('#password')).toHaveValue('edited-during-fill');
+    await expect(page.locator(hostSelector)).toHaveCount(0);
+    expect(new URL((await read()).find((row: { id: string }) => row.id === 'project-password-2').totpSecret).searchParams.get('counter')).toBe('2');
+    const popup = await app.context.newPage();
+    await popup.goto(`chrome-extension://${app.extensionId}/popup.html`);
+    expect(await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_CONSUME_HOTP', usage: {} }))).toMatchObject({ ok: false });
+    await popup.close();
+    await page.screenshot({ path: info.outputPath('hotp-real-fill.png') });
+    await info.attach('hotp-current-synthetic-state', { body: JSON.stringify(await read(), null, 2), contentType: 'application/json' });
+  } finally {
+    await app.worker.evaluate(() => {
+      const gate = (globalThis as unknown as { hotpFillGate?: { release?: () => void; restore: () => void } }).hotpFillGate;
+      gate?.restore(); gate?.release?.();
+    });
+  }
+  await app.context.close();
+  const extension = path.resolve('dist');
+  const restarted = await launchEdgeContext(info.outputPath('p'), {
+    locale: 'zh-CN', args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
+  });
+  try {
+    const worker = restarted.serviceWorkers()[0] || await restarted.waitForEvent('serviceworker');
+    const manager = await restarted.newPage();
+    await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
+    expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_UNLOCK', masterPassword: 'Inline autofill synthetic password' }))).toMatchObject({ ok: true });
+    for (const itemId of ['project-password-1', 'project-password-2']) {
+      const result = await manager.evaluate(itemId => chrome.runtime.sendMessage({ type: 'VAULT_GET_ITEM', itemId }), itemId);
+      expect(result.ok).toBe(true);
+      expect(new URL(result.data.totpSecret).searchParams.get('counter')).toBe('2');
+      if (itemId === 'project-password-2') expect(result.data).toMatchObject({ password: 'edited-during-fill', notes: 'later notes retained' });
+    }
+  } finally { await restarted.close(); }
+});
 
 test("anchors to the selected form, supports keyboard filling and sends no secrets in menu markup", async ({ app }, info) => {
   const page = await target(app);
@@ -248,6 +366,13 @@ test("untrusted clicks and manager impersonation cannot fill, and locking clears
 });
 
 test("eight languages fit a narrow menu in both themes without changing account names", async ({ app }, info) => {
+  const items = projectLogins('https://inline.example.test').map(item => ({...item, customFields: item.customFields.map(field => {
+    const metadata = JSON.parse(field.value);
+    return {...field, value: JSON.stringify({...metadata, label: metadata.primary ? 'Work team account' : 'Backup team account'})};
+  })}));
+  expect(await app.manager.evaluate(items => chrome.runtime.sendMessage({type: 'VAULT_IMPORT_ITEMS', items}), items)).toMatchObject({ok: true});
+  const numbered: Record<string, string> = {'zh-CN': '密码 2', en: 'Password 2', ja: 'パスワード 2', ko: '비밀번호 2',
+    de: 'Passwort 2', es: 'Contraseña 2', ru: 'Пароль 2', vi: 'Mật khẩu 2'};
   const page = await target(app);
   await page.setViewportSize({ width: 320, height: 568 });
   await open(page, "#first-user");
@@ -258,12 +383,17 @@ test("eight languages fit a narrow menu in both themes without changing account 
       await expect.poll(async () => (await menu(page)).language).toBe(locale);
       const content = await menu(page);
       expect(content.text).toContain("alpha@example.test");
+      expect(content.text).toContain(`${numbered[locale]} · Work team account`);
       if (["en", "de", "es", "ru", "vi"].includes(locale)) expect(content.text).not.toMatch(/[\u3400-\u9fff]/);
       const bounds = await page.locator(hostSelector).boundingBox();
       expect(bounds!.x).toBeGreaterThanOrEqual(8);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(312);
       expect(bounds!.y).toBeGreaterThanOrEqual(8);
       expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(560);
+      const {cdp, objectId} = await closedRoot(page);
+      try {
+        await cdp.send('Runtime.callFunctionOn', {objectId, functionDeclaration: "function(){this.querySelector('.credential-identity').scrollIntoView({block:'center'});}"});
+      } finally { await cdp.detach(); }
       await page.screenshot({ path: info.outputPath(`inline-${theme}-${locale}.png`), animations: "disabled" });
     }
   }

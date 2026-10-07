@@ -30,13 +30,17 @@ export type KeePassDurableMutationKind =
   | "history-restore"
   | "attachment-upload"
   | "attachment-delete"
-  | "item-sync";
+  | "item-sync"
+  | "project-remove"
+  | "project-resolve";
 
 export type KeePassDurableMutationResult =
+  | { type: 'project-resolve'; reviewToken: string; recoveryIntentTag: string; baseSha256: string; resolvedSha256: string }
   | { type: "group"; changed: boolean; groupUuid: string }
   | { type: "history"; changed: boolean; historyCount: number; modifiedAt: string }
   | { type: "attachment"; changed: boolean; entryUuid: string; fileName: string }
   | { type: "attachment-delete"; changed: boolean }
+  | { type: "project-remove"; inputSha256: string; outputSha256: string; snapshotItems: VaultItem[] }
   | {
       type: "item-sync";
       mutations: Array<{
@@ -46,6 +50,7 @@ export type KeePassDurableMutationResult =
         createdAt: string;
         attempts: number;
         lastError?: string;
+        keepassRestore?: true;
         committed: boolean;
         remoteId?: string;
       }>;
@@ -520,7 +525,8 @@ function assertDurableReceipt(receipt: KeePassDurableMutationReceipt): void {
       if (!mutation || typeof mutation !== "object") throw invalidRecord();
       assertOperationId(mutation.mutationId);
       assertOpaqueId(mutation.itemId);
-      if (mutation.operation !== "create" && mutation.operation !== "update" && mutation.operation !== "delete") throw invalidRecord();
+        if (mutation.operation !== "create" && mutation.operation !== "update" && mutation.operation !== "delete") throw invalidRecord();
+        if (mutation.keepassRestore !== undefined && (mutation.keepassRestore !== true || mutation.operation !== 'update')) throw invalidRecord();
       if (typeof mutation.createdAt !== "string" || !Number.isFinite(Date.parse(mutation.createdAt))) throw invalidRecord();
       if (!Number.isSafeInteger(mutation.attempts) || mutation.attempts < 0 || mutation.attempts > 5) throw invalidRecord();
       if (mutation.lastError !== undefined && (typeof mutation.lastError !== "string" || mutation.lastError.length > 4096)) throw invalidRecord();
@@ -545,6 +551,28 @@ function assertDurableReceipt(receipt: KeePassDurableMutationReceipt): void {
       if (conflict.local !== undefined && (!conflict.local || typeof conflict.local !== "object" || Array.isArray(conflict.local))) throw invalidRecord();
       if (conflict.remote !== undefined && (!conflict.remote || typeof conflict.remote !== "object" || Array.isArray(conflict.remote))) throw invalidRecord();
     }
+    return;
+  }
+  if (receipt.kind === 'project-resolve') {
+    if (receipt.result?.type !== 'project-resolve') throw invalidRecord();
+    for (const value of [receipt.result.reviewToken, receipt.result.recoveryIntentTag, receipt.result.baseSha256, receipt.result.resolvedSha256]) assertSha256(value);
+    return;
+  }
+  if (receipt.kind === 'project-remove') {
+    if (receipt.result?.type !== 'project-remove') throw invalidRecord();
+    assertSha256(receipt.result.inputSha256);
+    assertSha256(receipt.result.outputSha256);
+    const items = receipt.result.snapshotItems;
+    if (!Array.isArray(items) || !items.length || items.length > 100) throw invalidRecord();
+    const ids = new Set<string>(), nativeIds = new Set<string>();
+    for (const item of items) {
+      if (!item || item.kind !== 'login' || item.providerRefs?.length !== 1
+        || item.providerRefs[0].providerId !== receipt.providerId || item.keepassEntryUuid !== item.providerRefs[0].remoteId) throw invalidRecord();
+      assertOpaqueId(item.id); assertOpaqueId(item.keepassEntryUuid!);
+      if (ids.has(item.id) || nativeIds.has(item.keepassEntryUuid!)) throw invalidRecord();
+      ids.add(item.id); nativeIds.add(item.keepassEntryUuid!);
+    }
+    if (!items.some(item => !item.deletedAt) || !items.some(item => item.deletedAt)) throw invalidRecord();
     return;
   }
   throw invalidRecord();

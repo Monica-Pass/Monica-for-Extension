@@ -1,4 +1,5 @@
 import { translateRuntimeError } from "../i18n/runtime";
+import type { Mdbx2FileExportBegin, Mdbx2FileExportChunk } from "./messages";
 import { runtimeInfo, type RuntimeInfo } from "./version";
 import type { ProviderAccount, ProviderConflictResolution, ProviderConflictSummary, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
@@ -57,6 +58,10 @@ async function send<T>(request: ExtensionRequest): Promise<T> {
 }
 
 export const vaultClient = {
+  loginOneDrive: (loginId: string, clientId?: string) => send<OneDriveLoginSummary>({ type: "ONEDRIVE_LOGIN", loginId, clientId }),
+  cancelOneDriveLogin: (loginId: string) => send<void>({ type: "ONEDRIVE_LOGIN_CANCEL", loginId }),
+  browseOneDrive: (input: OneDriveBrowserInput) => send<OneDriveBrowserPage>({ type: "ONEDRIVE_BROWSE", input }),
+  openKeePassOneDrive: (input: KeePassOneDriveConnectInput) => send<KeePassOneDriveConnectResult>({ type: "KEEPASS_ONEDRIVE_OPEN", input }),
   status: () => send<VaultStatusResponse>({ type: "VAULT_STATUS" }),
   setup: (masterPassword: string) => send<VaultItem[]>({ type: "VAULT_SETUP", masterPassword }),
   unlock: (masterPassword: string) => send<VaultItem[]>({ type: "VAULT_UNLOCK", masterPassword }),
@@ -78,10 +83,49 @@ export const vaultClient = {
   listDeletedItems: () => send<VaultItem[]>({ type: "VAULT_LIST_DELETED_ITEMS" }),
   getItem: (itemId: string) => send<VaultItem | undefined>({ type: "VAULT_GET_ITEM", itemId }),
   upsertItem: (item: VaultItem, allowLockedAutofill?: boolean, expectedUpdatedAt?: string) => send<VaultItem>({ type: "VAULT_UPSERT_ITEM", item, allowLockedAutofill, expectedUpdatedAt }),
+  consumeHotp: (usage: import('../core/login-otp').HotpUsage) => send<boolean>({ type: 'VAULT_CONSUME_HOTP', usage }),
+  unarchiveItem: (itemId: string, expectedUpdatedAt: string) => send<VaultItem>({ type: 'VAULT_UNARCHIVE_ITEM', itemId, expectedUpdatedAt }),
+  deletePasswordHistory: (itemId: string, index: number, expectedUpdatedAt: string) => send<LoginItem>({ type: 'VAULT_DELETE_PASSWORD_HISTORY', itemId, index, expectedUpdatedAt }),
+  savePasswordGroup: (items: LoginItem[], expected: Record<string, string>, allowLockedAutofill?: boolean) => send<LoginItem[]>({ type: "VAULT_SAVE_PASSWORD_GROUP", items, expected, allowLockedAutofill }),
+  setPasswordCover: (anchorItemId: string, enabled: boolean, expected: Record<string, string>) => send<LoginItem[]>({ type: "VAULT_SET_PASSWORD_COVER", anchorItemId, enabled, expected }),
+  setPasswordStack: (anchorItemIds: string[], action: import("../core/password-manual-stacks").PasswordStackAction, expected: Record<string, string>) => send<LoginItem[]>({ type: "VAULT_SET_PASSWORD_STACK", anchorItemIds, action, expected }),
+  removePasswordProjectMembers: (input: import('../background/password-project-removal').PasswordProjectRemovalRequest, confirmed: true) =>
+    send<import('../background/password-project-removal').PasswordProjectRemovalStatus>({ type: 'VAULT_PASSWORD_PROJECT_REMOVE', input, confirmed }),
+  listPasswordProjectRemovals: (operationId?: string) => send<import('../background/password-project-removal').PasswordProjectRemovalStatus[]>({ type: 'VAULT_PASSWORD_PROJECT_REMOVALS', ...(operationId ? { operationId } : {}) }),
+  resumePasswordProjectRemoval: (operationId: string) => send<import('../background/password-project-removal').PasswordProjectRemovalStatus>({ type: 'VAULT_PASSWORD_PROJECT_REMOVAL_RESUME', operationId }),
+  cancelPasswordProjectRemoval: (operationId: string) => send<import('../background/password-project-removal').PasswordProjectRemovalStatus>({ type: 'VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL', operationId }),
+  keePassProjectSourceToken: (providerId: string) => send<string>({ type: 'VAULT_KEEPASS_PROJECT_SOURCE_TOKEN', providerId }),
+  removeKeePassProjectMembers: (input: import('../background/keepass-project-removal').KeePassProjectRemovalRequest, confirmed: true) =>
+    send<import('../background/keepass-project-removal').KeePassProjectRemovalStatus>({ type: 'VAULT_KEEPASS_PROJECT_REMOVE', input, confirmed }),
+  listKeePassProjectRemovals: (operationId?: string) => send<import('../background/keepass-project-removal').KeePassProjectRemovalStatus[]>({ type: 'VAULT_KEEPASS_PROJECT_REMOVALS', operationId }),
+  resumeKeePassProjectRemoval: (operationId: string) => send<import('../background/keepass-project-removal').KeePassProjectRemovalStatus>({ type: 'VAULT_KEEPASS_PROJECT_REMOVAL_RESUME', operationId }),
+  cancelKeePassProjectRemoval: (operationId: string) => send<import('../background/keepass-project-removal').KeePassProjectRemovalStatus>({ type: 'VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL', operationId }),
+  reviewKeePassProjectConflicts: (providerId: string) => send<import('../providers/keepass/keepass-remote-session').KeePassProjectConflictReview>({ type: 'VAULT_KEEPASS_PROJECT_CONFLICT_REVIEW', providerId }),
+  resolveKeePassProjectConflicts: (providerId: string, input: import('../providers/keepass/keepass-project-resolution').KeePassProjectResolutionRequest, confirmed: true) =>
+    send<import('../background/keepass-project-resolution').KeePassProjectResolutionStatus>({ type: 'VAULT_KEEPASS_PROJECT_RESOLVE', providerId, input, confirmed }),
+  listKeePassProjectResolutions: (operationId?: string) => send<import('../background/keepass-project-resolution').KeePassProjectResolutionStatus[]>({ type: 'VAULT_KEEPASS_PROJECT_RESOLUTIONS', operationId }),
+  resumeKeePassProjectResolution: (operationId: string) => send<import('../background/keepass-project-resolution').KeePassProjectResolutionStatus>({ type: 'VAULT_KEEPASS_PROJECT_RESOLUTION_RESUME', operationId }),
+  cancelKeePassProjectResolution: (operationId: string) => send<import('../background/keepass-project-resolution').KeePassProjectResolutionStatus>({ type: 'VAULT_KEEPASS_PROJECT_RESOLUTION_CANCEL', operationId }),
+  listKeePassProjectRecoveryCopies: (providerId: string) => send<Awaited<ReturnType<import('../background/keepass-project-resolution').KeePassProjectResolutionWorkflow['recoveryCopies']>>>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_LIST', providerId }),
+  deleteKeePassProjectRecoveryCopy: (providerId: string, operationId: string, expectedIntentTag: string, confirmed: true) =>
+    send<{ deleted: boolean }>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_DELETE', providerId, operationId, expectedIntentTag, confirmed }),
+  beginKeePassRecoveryExport: (providerId: string, operationId: string, expectedIntentTag: string, exportPassword: string, requestId: string) =>
+    send<import('../background/keepass-recovery-download').RecoveryDownloadDescriptor>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_BEGIN', providerId, operationId, expectedIntentTag, exportPassword, requestId }),
+  statusKeePassRecoveryExport: (providerId: string, requestId: string) =>
+    send<import('../background/keepass-recovery-download').RecoveryDownloadStatus>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_STATUS', providerId, requestId }),
+  cancelKeePassRecoveryExport: (providerId: string, requestId: string) => send<void>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_CANCEL', providerId, requestId }),
+  readKeePassRecoveryExport: (providerId: string, downloadHandle: string, offset: number) =>
+    send<import('../background/keepass-recovery-download').RecoveryDownloadChunk>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_READ', providerId, downloadHandle, offset }),
+  releaseKeePassRecoveryExport: (providerId: string, downloadHandle: string) =>
+    send<boolean>({ type: 'VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_RELEASE', providerId, downloadHandle }),
   lockedAutofillIds: () => send<string[]>({ type: "VAULT_LOCKED_AUTOFILL_IDS" }),
   setLockedAutofill: (itemId: string, enabled: boolean) => send<void>({ type: "VAULT_SET_LOCKED_AUTOFILL", itemId, enabled }),
   deleteItem: (itemId: string) => send<void>({ type: "VAULT_DELETE_ITEM", itemId }),
+  deletePasswordGroup: (anchorItemId: string, expected: Record<string, string>) => send<void>({ type: "VAULT_DELETE_PASSWORD_GROUP", anchorItemId, expected }),
   restoreItem: (itemId: string) => send<VaultItem>({ type: "VAULT_RESTORE_ITEM", itemId }),
+  restorePasswordProject: (input: import('../background/password-project-restore').PasswordProjectRestoreRequest, confirmed: true) => send<import('../background/password-project-restore').PasswordProjectRestoreStatus>({ type: 'VAULT_PASSWORD_PROJECT_RESTORE', input, confirmed }),
+  listPasswordProjectRestores: (operationId?: string) => send<import('../background/password-project-restore').PasswordProjectRestoreStatus[]>({ type: 'VAULT_PASSWORD_PROJECT_RESTORES', ...(operationId ? { operationId } : {}) }),
+  resumePasswordProjectRestore: (operationId: string) => send<import('../background/password-project-restore').PasswordProjectRestoreStatus>({ type: 'VAULT_PASSWORD_PROJECT_RESTORE_RESUME', operationId }),
   matchLogins: (pageUrl: string, fieldSignature?: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl, fieldSignature }),
   listLoginSummaries: () => send<LoginMatchSummary[]>({ type: "VAULT_LIST_LOGIN_SUMMARIES" }),
   loginSecret: (itemId: string, field: "username" | "password") => send<{ value: string }>({ type: "VAULT_LOGIN_SECRET", itemId, field }),
@@ -152,6 +196,9 @@ export const vaultClient = {
   finishBitwardenSendFileUpload: (providerId: string, transferId: string) => send<BitwardenSendDetail>({ type: "BITWARDEN_SEND_FILE_UPLOAD_FINISH", providerId, transferId }),
   abortBitwardenSendFileUpload: (providerId: string, transferId: string) => send<boolean>({ type: "BITWARDEN_SEND_FILE_UPLOAD_ABORT", providerId, transferId }),
   mdbx2HostStatus: () => send<Mdbx2HostStatus>({ type: "MDBX2_HOST_STATUS" }),
+  beginMdbx2FileExport: (providerId: string) => send<Mdbx2FileExportBegin>({ type: "MDBX2_FILE_EXPORT_BEGIN", providerId }),
+  readMdbx2FileExport: (providerId: string, downloadHandle: string, offset: number) => send<Mdbx2FileExportChunk>({ type: "MDBX2_FILE_EXPORT_READ", providerId, downloadHandle, offset }),
+  releaseMdbx2FileExport: (providerId: string, downloadHandle: string) => send<boolean>({ type: "MDBX2_FILE_EXPORT_RELEASE", providerId, downloadHandle }),
   beginMdbx2Transfer: (sizeBytes: number, sha256?: string) => send<Mdbx2TransferBeginResult>({ type: "MDBX2_TRANSFER_BEGIN", sizeBytes, sha256 }),
   sendMdbx2Chunk: (transferId: string, offset: number, bytes: Uint8Array) => send<Mdbx2TransferChunkResult>({ type: "MDBX2_TRANSFER_CHUNK", transferId, offset, dataBase64: bytesToBase64(bytes) }),
   finishMdbx2Transfer: (transferId: string) => send<Mdbx2TransferFinishResult>({ type: "MDBX2_TRANSFER_FINISH", transferId }),
@@ -188,7 +235,8 @@ export const vaultClient = {
   listMdbx2Objects: (providerId: string, collectionId: string, input: { objectTypeId?: string; deleted?: boolean; pageSize?: number; cursor?: string } = {}) => send<Mdbx2ObjectSummaryPage>({ type: "MDBX2_OBJECT_LIST", providerId, collectionId, ...input }),
   revealMdbx2Object: (providerId: string, objectId: string) => send<Mdbx2ObjectRecord>({ type: "MDBX2_OBJECT_REVEAL", providerId, objectId }),
   upsertMdbx2Object: (providerId: string, operationId: string, input: Mdbx2ObjectUpsertInput) => send<Mdbx2ObjectWriteResult>({ type: "MDBX2_OBJECT_UPSERT", providerId, operationId, input }),
-  deleteMdbx2Object: (providerId: string, operationId: string, logicalObjectId: string) => send<Mdbx2ObjectDeleteResult>({ type: "MDBX2_OBJECT_DELETE", providerId, operationId, logicalObjectId }),
+  deleteMdbx2Object: (providerId: string, operationId: string, logicalObjectId: string, expectedHeadCommitId?: string) => send<Mdbx2ObjectDeleteResult>({ type: "MDBX2_OBJECT_DELETE", providerId, operationId, logicalObjectId, expectedHeadCommitId }),
+  listMdbx2PendingMoves: () => send<import("./messages").Mdbx2PendingMove[]>({ type: "MDBX2_PENDING_MOVES" }),
   planMdbx2BatchTransfer: (input: Mdbx2BatchTransferRequest) => send<Mdbx2BatchTransferPlanResult>({ type: "MDBX2_BATCH_TRANSFER_PLAN", input }),
   executeMdbx2BatchTransfer: (input: Mdbx2BatchTransferRequest, confirmed = false) => send<Mdbx2BatchTransferExecuteResult>({ type: "MDBX2_BATCH_TRANSFER_EXECUTE", input, ...(confirmed ? { confirmed: true as const } : {}) }),
   mdbx2BatchTransferStatus: (operationId: string) => send<Mdbx2BatchTransferStatus | undefined>({ type: "MDBX2_BATCH_TRANSFER_STATUS", operationId }),
@@ -245,3 +293,6 @@ export const vaultClient = {
   cancelProviderSync: (providerId: string) => send<{ cancelled: boolean }>({ type: "PROVIDER_SYNC_CANCEL", providerId }),
   removeProvider: (providerId: string) => send<void>({ type: "PROVIDER_REMOVE", providerId })
 };
+import type { LoginItem } from "../core/model";
+import type { KeePassOneDriveConnectInput, KeePassOneDriveConnectResult } from "../background/onedrive-keepass-connection";
+import type { OneDriveBrowserInput, OneDriveBrowserPage, OneDriveLoginSummary } from "../providers/onedrive/onedrive-session";

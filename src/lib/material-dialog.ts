@@ -24,6 +24,15 @@ M3eDialogElement.elementStyles = [...M3eDialogElement.elementStyles, css`
     .content { padding-inline: 16px; }
     .actions { padding: 12px 16px 16px; }
   }
+  @media (max-width: 580px) {
+    :host(.material-editor-dialog) .base {
+      inset: 0; margin: 0; width: 100%; min-width: 0; max-width: 100%;
+      height: 100dvh; max-height: 100dvh; border-radius: 0;
+    }
+    :host(.material-editor-dialog) .header { padding: 12px; align-items: center; }
+    :host(.material-editor-dialog) .content { padding-inline: 12px; }
+    :host(.material-editor-dialog) .actions { padding: 12px 12px max(12px, env(safe-area-inset-bottom)); }
+  }
 `];
 
 // @m3e/web 2.6.1's focus trap skips slots directly inside a shadow root,

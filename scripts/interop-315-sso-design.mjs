@@ -1,0 +1,10 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import {deflateRawSync} from 'node:zlib';
+const file=new URL('../docs/design/android-interop-315.m3e.json',import.meta.url);
+const doc=JSON.parse(await readFile(file,'utf8')),id='sso315',x=12500;
+doc.frames=doc.frames.filter(f=>f.id!==id);doc.groups=doc.groups.filter(g=>g.frameId!==id);
+doc.frames.push({id,name:'第三方登录 · 关联账号',x,y:0,w:420,h:860});
+const rows=[[12,'topAppBar','第三方登录','close',''],[100,'textField','SSO 提供商','','GOOGLE'],[208,'select','关联账号','person','选择已保存的账号'],[320,'listItem','Google 个人账号','account_circle','user@example.com'],[412,'listItem','当前关联（尚未找到）','link_off','原有关联保留，重新选择后替换'],[540,'button','解除账号关联','link_off',''],[672,'listItem','账号与密码','key','关联不会复制或显示账号密码'],[778,'button','加密保存','check','']];
+rows.forEach(([y,kind,label,icon,supporting],i)=>doc.groups.push({id:`${id}-g${i}`,frameId:id,x:x+12,y,axis:'y',gap:4,items:[{id:`${id}-i${i}`,kind,label,icon,supporting,size:396,radius:24,variant:'filled'}]}));
+const json=JSON.stringify(doc,null,2)+'\n';await writeFile(file,json);
+await writeFile(new URL('../docs/design/sso-315.md',import.meta.url),`# SSO 关联账号\n\n沿用 Android 第三方登录提供商与账号关联流程。使用同一来源的账号标题和用户名选择，不要求输入内部编号。未解析关联保留，明确选择或解除后才修改；详情显示账号名称。当前稳定关联支持扩展本地库与 MDBX，Android 稳定关联写回仍待实现。\n\n[本地可编辑 Canvas](http://127.0.0.1:5186/#docz=${deflateRawSync(json).toString('base64url')})\n`);

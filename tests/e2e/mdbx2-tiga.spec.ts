@@ -207,7 +207,7 @@ test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text
     await expectCentered(panel.locator(".mdbx2-tiga-overview-icon"), panel.locator(".mdbx2-tiga-overview-icon m3e-icon"));
     await expectCentered(panel.locator(".mdbx2-tiga-limitation-icon").first(), panel.locator(".mdbx2-tiga-limitation-icon m3e-icon").first());
 
-    const details = panel.locator(".mdbx2-tiga-m3e-expansion-panel");
+    const details = panel.locator(".mdbx2-tiga-details");
     await expect(details).not.toHaveAttribute("open", "");
     await details.getByText("查看只读策略详情", { exact: true }).click();
     await expect(details).toHaveAttribute("open", "");

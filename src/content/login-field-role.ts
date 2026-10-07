@@ -1,6 +1,7 @@
 import { elementByIdInRoot } from "./composed-dom";
 
 export type LoginFieldRole = "username" | "current-password" | "new-password" | "totp" | "other";
+export type AutofillFormControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
 const OTP_HINT = /^(totp|otp|2fa|twofa|mfa)(code|token|input|field|password)?$|^(code|token)(totp|otp|2fa|twofa|mfa)$|^(verification|verify|sms|auth|authentication|login)(code|token)$|^(动态|短信|登录|身份)验证码$/;
 const AMBIGUOUS_CODE_HINT = /^(code|token|pin|securitycode|securitytoken|验证码|安全码|校验码)$/;
@@ -8,6 +9,7 @@ const NEW_PASSWORD_HINT = /(newpassword|confirmpassword|passwordconfirmation|cre
 const NEW_PASSWORD_SCOPE = /(signup|sign-up|register|registration|createaccount|resetpassword|forgotpassword|changepassword|注册|创建账户|重置密码|修改密码|设置密码)/;
 
 export function loginFieldRole(input: HTMLInputElement, fallbackRoot: ParentNode = input.ownerDocument): LoginFieldRole {
+  if (!['text', 'search', 'email', 'tel', 'url', 'number', 'password'].includes(input.type)) return 'other';
   const autocomplete = autocompleteTokens(input);
   const hints = inputHints(input);
   if (looksLikeOtpInput(input, autocomplete, hints)) return "totp";
@@ -25,7 +27,7 @@ export function loginFieldRole(input: HTMLInputElement, fallbackRoot: ParentNode
   return "other";
 }
 
-export function loginFieldScope(input: HTMLInputElement, fallbackRoot: ParentNode = input.ownerDocument): ParentNode {
+export function loginFieldScope(input: AutofillFormControl, fallbackRoot: ParentNode = input.ownerDocument): ParentNode {
   if (input.form) return input.form;
   const semantic = input.closest<HTMLElement>('[role="form"],dialog,[aria-modal="true"]');
   if (semantic) return semantic;
@@ -37,10 +39,10 @@ export function loginFieldScope(input: HTMLInputElement, fallbackRoot: ParentNod
   return input.getRootNode() as ParentNode || fallbackRoot;
 }
 
-export function inputHints(input: HTMLInputElement): string[] {
+export function inputHints(input: AutofillFormControl): string[] {
   const labelledBy = (input.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
     .map((id) => elementByIdInRoot(input, id)?.textContent);
-  return [input.id, input.name, input.getAttribute("aria-label"), input.placeholder, ...labelledBy, ...Array.from(input.labels || []).map((label) => label.textContent)]
+  return [input.id, input.name, input.getAttribute("aria-label"), input.getAttribute("placeholder"), ...labelledBy, ...Array.from(input.labels || []).map((label) => label.textContent)]
     .map((value) => normalizeHint(value || ""))
     .filter(Boolean);
 }

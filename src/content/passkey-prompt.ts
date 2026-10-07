@@ -23,7 +23,7 @@ export function closePasskeyPrompt(rootDocument: Document = document): void {
 
 export function renderPasskeyPrompt(
   context: PasskeyPromptContext,
-  accept: (itemId?: string, providerId?: string) => Promise<void>,
+  accept: (itemId?: string, providerId?: string) => Promise<PasskeyPromptContext | void>,
   dismiss: () => Promise<void>,
   rootDocument: Document = document,
   options: PasskeyPromptRenderOptions = {}
@@ -39,6 +39,9 @@ export function renderPasskeyPrompt(
   const shadow = host.attachShadow({ mode: "closed" });
   TEST_ROOTS.set(host, shadow);
   shadow.innerHTML = `<style>${PROMPT_BASE_STYLES}
+    .subtitle { white-space:normal; overflow:visible; text-overflow:clip; }
+    button { min-height:48px; }
+    .icon-button { width:48px; flex:0 0 48px; }
     .site-identity { display:grid; gap:2px; min-height:64px; padding:10px 12px; border-radius:8px; background:var(--monica-surface-container); }
     .security-label { color:var(--monica-muted); font-size:0.6875rem; font-weight:700; letter-spacing:.02em; }
     .rp-id { overflow-wrap:anywhere; font-size:0.9375rem; }
@@ -66,9 +69,9 @@ export function renderPasskeyPrompt(
   i18n.attribute(card, "lang", getUiLocale);
   card.innerHTML = `<header class="header"><div class="heading"><strong id="monica-passkey-title" class="title"></strong><span class="subtitle"></span></div><button class="icon-button" type="button">${promptIcon("close")}</button></header>`;
   card.querySelector(".header")!.prepend(createMonicaLogo(rootDocument));
-  i18n.text(card.querySelector(".title")!, () => context.operation === "create" ? tr('创建 Monica Passkey？') : tr('使用 Monica Passkey 登录？'));
+  i18n.text(card.querySelector(".title")!, () => context.unlockRequired ? tr('解锁 Monica 以继续') : context.operation === "create" ? tr('创建 Monica Passkey？') : tr('使用 Monica Passkey 登录？'));
   i18n.attribute(card.querySelector(".icon-button")!, "aria-label", () => tr('取消 Passkey 操作'));
-  i18n.text((card.querySelector(".subtitle") as HTMLElement), () => context.operation === "create" ? tr('确认网站与保存位置') : tr('确认网站并选择账户'));
+  i18n.text((card.querySelector(".subtitle") as HTMLElement), () => context.unlockRequired ? tr('解锁后选择 Passkey 账户或保存位置') : context.operation === "create" ? tr('确认网站与保存位置') : tr('确认网站并选择账户'));
 
   const siteIdentity = rootDocument.createElement("div");
   siteIdentity.className = "site-identity";
@@ -81,7 +84,7 @@ export function renderPasskeyPrompt(
 
   let selectedProviderId = context.defaultSaveTargetId;
   let targetSelect: HTMLSelectElement | undefined;
-  if (context.operation === "create") {
+  if (context.operation === "create" && !context.unlockRequired) {
     const summary = rootDocument.createElement("div");
     summary.className = "summary";
     summary.innerHTML = `<div class="summary-copy"><strong></strong><span class="muted supporting"></span></div>`;
@@ -117,7 +120,7 @@ export function renderPasskeyPrompt(
 
   const requiresExplicitSelection = context.credentials.some((credential) => credential.credentialConflict);
   let selected = requiresExplicitSelection ? undefined : context.credentials[0]?.itemId;
-  if (context.operation === "get") {
+  if (context.operation === "get" && !context.unlockRequired) {
     const choices = rootDocument.createElement("div");
     choices.className = "choices";
     choices.setAttribute("role", "radiogroup");
@@ -170,7 +173,10 @@ export function renderPasskeyPrompt(
   notice.id = "monica-passkey-description";
   notice.className = "notice";
   notice.innerHTML = `${promptIcon("info")}<span></span>`;
-  i18n.text((notice.querySelector("span") as HTMLElement), () => requiresExplicitSelection
+  i18n.text((notice.querySelector("span") as HTMLElement), () => context.unlockRequired
+    ? tr('请在 Monica 安全窗口中解锁，随后返回本次 Passkey 请求。')
+    : context.userVerified ? tr('已验证身份，确认后完成本次 Passkey 操作。')
+    : requiresExplicitSelection
     ? tr('凭据 ID 重复，请确认密码源。只有明确选择后才会使用对应私钥。')
     : context.userVerificationRequired
     ? context.userVerificationMethod === "master-password"
@@ -182,7 +188,7 @@ export function renderPasskeyPrompt(
   const status = rootDocument.createElement("p"); status.className = "status"; status.setAttribute("aria-live", "polite");
   const actions = rootDocument.createElement("footer"); actions.className = "actions";
   const cancel = rootDocument.createElement("button"); cancel.type = "button"; cancel.className = "secondary"; i18n.text(cancel, () => tr('取消'));
-  const confirm = rootDocument.createElement("button"); confirm.type = "button"; confirm.className = "primary"; i18n.text(confirm, () => context.operation === "create" ? tr('创建 Passkey') : tr('继续登录'));
+  const confirm = rootDocument.createElement("button"); confirm.type = "button"; confirm.className = "primary"; i18n.text(confirm, () => context.unlockRequired ? tr('解锁并继续') : context.operation === "create" ? tr('创建 Passkey') : tr('继续登录'));
   actions.append(cancel, confirm); card.append(notice, status, actions); shadow.append(card); rootDocument.documentElement.append(host);
 
   let busy = false;
@@ -226,8 +232,11 @@ export function renderPasskeyPrompt(
     if (targetSelect) targetSelect.disabled = true;
     status.className = "status";
     status.removeAttribute("role");
-    i18n.text(status, () => context.userVerificationRequired ? context.userVerificationMethod === "master-password" ? tr('请在 Monica 安全窗口中确认…') : tr('正在等待 Windows Hello…') : context.operation === "create" ? tr('正在创建并加密保存…') : tr('正在完成安全签名…'));
-    void accept(selected, selectedProviderId).then(cleanup).catch((error) => {
+    i18n.text(status, () => context.unlockRequired ? tr('请在 Monica 安全窗口中确认…') : context.userVerificationRequired && !context.userVerified ? context.userVerificationMethod === "master-password" ? tr('请在 Monica 安全窗口中确认…') : tr('正在等待 Windows Hello…') : context.operation === "create" ? tr('正在创建并加密保存…') : tr('正在完成安全签名…'));
+    void accept(selected, selectedProviderId).then(next => {
+      cleanup();
+      if (next) renderPasskeyPrompt(next, accept, dismiss, rootDocument, options);
+    }).catch((error) => {
       busy = false;
       card.removeAttribute("aria-busy");
       for (const control of busyControls) control.disabled = false;
@@ -246,7 +255,7 @@ export function renderPasskeyPrompt(
     observer.observe(rootDocument.documentElement, { childList: true, subtree: true });
     observer.observe(host, { attributes: true });
   }
-  rootDocument.defaultView?.setTimeout(() => (context.operation === "get" ? shadow.querySelector<HTMLButtonElement>(".choice") : confirm)?.focus(), 0);
+  rootDocument.defaultView?.setTimeout(() => (context.operation === "get" && !context.unlockRequired ? shadow.querySelector<HTMLButtonElement>(".choice") : confirm)?.focus(), 0);
   return host;
 }
 

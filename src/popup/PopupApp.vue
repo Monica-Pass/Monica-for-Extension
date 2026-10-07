@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
+import { formatAutofillCredential } from '../autofill/credential-identity';
 
 import "@m3e/web/theme";
 import "@m3e/web/button";
@@ -8,6 +9,7 @@ import "@m3e/web/icon";
 import "@m3e/web/icon-button";
 import ListPagination from "../components/ListPagination.vue";
 import PopupLoginRow from "./PopupLoginRow.vue";
+import { openVaultSidePanel } from "./side-panel";
 import WebsiteIcon from "../components/WebsiteIcon.vue";
 import { websiteIconCache } from "../lib/website-icon-cache";
 import { useListPagination } from "../lib/list-pagination";
@@ -45,6 +47,8 @@ const runtimeReloadRequired = ref(false);
 const masterPassword = ref("");
 const lifecycle = ref<VaultLifecycleStatus>("locked");
 const tabId = ref<number | null>(null);
+const windowId = ref<number | null>(null);
+const sidePanelAvailable = typeof chrome.sidePanel?.open === "function";
 const tabUrl = ref("");
 const tabTitle = ref("");
 const scans = shallowRef<PageScan[]>([]);
@@ -130,6 +134,7 @@ async function initialize(preserveTarget = false) {
     const nextLifecycle = await vaultClient.status();
     if (revision !== initializeRevision) return;
     tabId.value = tab.id;
+    windowId.value = tab.windowId;
     tabUrl.value = tab.url || "";
     tabTitle.value = tab.title || tr('当前页面');
     scans.value = nextScans;
@@ -192,12 +197,16 @@ const filteredLogins = computed(() => {
   const matched = new Set(matches.value.map((item) => item.id));
   const base = allLogins.value.filter((item) => !matched.has(item.id));
   if (!query) return base;
-  return base.filter((item) => `${item.title}\n${item.username}\n${item.uris.join(" ")}`.toLowerCase().includes(query));
+  return base.filter((item) => loginSearchText(item).includes(query));
 });
 const visibleMatches = computed(() => {
   const query = search.value.trim().toLowerCase();
-  return matches.value.filter((item) => !query || `${item.title}\n${item.username}\n${item.uris.join(" ")}`.toLowerCase().includes(query));
+  return matches.value.filter((item) => !query || loginSearchText(item).includes(query));
 });
+
+function loginSearchText(item: LoginMatchSummary): string {
+  return `${item.title}\n${item.username}\n${item.uris.join(' ')}\n${formatAutofillCredential(item.credentialIdentity, tr)}`.toLowerCase();
+}
 
 const loginPagination = useListPagination(() => filteredLogins.value.length, () => [search.value, allLogins.value], 20);
 const matchPagination = useListPagination(() => visibleMatches.value.length, () => [search.value, matches.value], 20);
@@ -299,6 +308,12 @@ async function openManager() {
   window.close();
 }
 
+function openSidePanel() {
+  void openVaultSidePanel(chrome.sidePanel, windowId.value).then(() => window.close()).catch((cause) => {
+    status.value = errorMessage(cause, tr('无法打开侧栏，请重试。'));
+  });
+}
+
 function reloadRuntime() {
   masterPassword.value = "";
   chrome.runtime.reload();
@@ -371,7 +386,8 @@ function isSensitivePageAllowed(raw: string): boolean {
       </template>
 
       <p class="popup-status" aria-live="polite">{{ status }}</p>
-      <footer class="popup-footer"><m3e-button variant="text" type="button" @click="openManager"><m3e-icon slot="icon" name="database"></m3e-icon>{{ tr('管理密码库') }}</m3e-button><span>{{ tr('仅点击后填充') }}</span></footer>
+      <footer v-if="sidePanelAvailable" class="popup-footer"><m3e-button variant="text" type="button" @click="openManager"><m3e-icon slot="icon" name="database"></m3e-icon>{{ tr('管理密码库') }}</m3e-button><m3e-button variant="text" type="button" :disabled="windowId === null" :aria-label="tr('在侧栏打开密码库')" @click="openSidePanel">{{ tr('打开侧栏') }}</m3e-button></footer>
+      <footer v-else class="popup-footer"><m3e-button variant="text" type="button" @click="openManager"><m3e-icon slot="icon" name="database"></m3e-icon>{{ tr('管理密码库') }}</m3e-button><span>{{ tr('仅点击后填充') }}</span></footer>
     </main>
   </m3e-theme>
 </template>

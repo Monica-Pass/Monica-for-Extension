@@ -1,4 +1,10 @@
 import type { BitwardenSyncHint } from "../providers/bitwarden/bitwarden-sync-cache";
+import type { ProviderAccount } from "../core/model";
+
+/** Connection eligibility only; enabled, paused and unlocked gates remain outside. */
+export function mdbx2AutomaticSyncEligible(config: ProviderAccount["config"]): boolean {
+  return Boolean(config.vaultHandle && (!config.webDavBaseUrl || config.syncStateHandle && config.remotePath));
+}
 
 export interface AutomaticSyncTarget { id: string; intervalMs: number }
 export interface AutomaticSyncOutcome { busy?: boolean; morePending?: boolean }

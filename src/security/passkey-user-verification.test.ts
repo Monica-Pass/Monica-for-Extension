@@ -5,6 +5,28 @@ import { MemoryVaultStorage } from "./vault-storage";
 import type { PasskeyItem } from "../core/model";
 
 describe("Passkey master-password user verification", () => {
+  it("binds verification to one live unlock session and discards cancelled unlocks", async () => {
+    let now = 1_000;
+    const storage = new MemoryVaultStorage();
+    const sessions = new MemoryVaultSessionStore();
+    const service = new SecureVaultService(storage, sessions, () => now);
+    const password = "synthetic scoped unlock password";
+    await service.setup(password);
+    const first = await service.passkeySessionId();
+    expect(first).toBeTruthy();
+    await service.listItems();
+    expect(await service.passkeySessionId()).toBe(first);
+    await service.lock();
+    expect(await service.passkeySessionId()).toBeUndefined();
+    let checks = 0;
+    await expect(service.unlock(password, () => { if (++checks > 1) throw new Error("cancelled during key derivation"); })).rejects.toThrow("cancelled during key derivation");
+    expect(await service.status()).toBe("locked");
+    await service.unlock(password);
+    expect(await service.passkeySessionId()).not.toBe(first);
+    now += 60 * 60_000;
+    expect(await service.passkeySessionId()).toBeUndefined();
+  });
+
   it("requires the actual password without rewriting the vault or changing its session", async () => {
     const storage = new MemoryVaultStorage();
     const sessions = new MemoryVaultSessionStore();

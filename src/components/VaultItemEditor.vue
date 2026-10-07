@@ -14,6 +14,11 @@ import type {
   VaultItem,
 } from "../core/model";
 import { generateOtpUri, parseOtpUris } from "../core/totp";
+import { normalizeOtpCounter } from "../core/otp-counter";
+import { preserveUneditedProjection } from "../core/edited-projection";
+import BillingAddressFields from "./BillingAddressFields.vue";
+import WalletCardFace from "./WalletCardFace.vue";
+import CardFaceImagePicker from "./CardFaceImagePicker.vue";
 import { createOtpQrDataUrl, decodeOtpQrImage } from "../core/otp-qr";
 import { exportSteamMaFile, parseSteamMaFileBundle } from "../core/steam-mafile";
 import { itemKindLabel } from "../manager/item-metadata";
@@ -63,6 +68,9 @@ watch(kind, () => {
 });
 
 initialize();
+let initialProjection: VaultItem | undefined;
+try { initialProjection = props.item ? buildCandidate(fields.title) : undefined; }
+catch (cause) { error.value = cause instanceof Error ? cause.message : "原始数据暂不支持编辑，已保留。"; }
 
 function initialize() {
   Object.assign(fields, emptyFields());
@@ -72,6 +80,12 @@ function initialize() {
   fields.title = props.item.title;
   fields.notes = props.item.notes;
   fields.favorite = props.item.favorite;
+  if (props.item.kind === "card" || props.item.kind === "identity" || props.item.kind === "billing-address") {
+    fields.cardFaceEnabled = Boolean(props.item.cardFace);
+    fields.cardFaceName = props.item.cardFace?.imageAttachmentName || "";
+    fields.cardFaceMode = props.item.cardFace?.displayMode || "ALL";
+    fields.cardFaceBrand = props.item.cardFace?.showBrandIcon !== false;
+  }
   switch (props.item.kind) {
     case "card":
       Object.assign(fields, {
@@ -102,6 +116,7 @@ function initialize() {
     case "identity":
       Object.assign(fields, {
         documentType: props.item.documentType,
+        documentTitle: props.item.documentTitle || "",
         documentNumber: props.item.documentNumber,
         firstName: props.item.firstName,
         middleName: props.item.middleName,
@@ -216,20 +231,20 @@ async function submit() {
   error.value = "";
   const title = fields.title.trim();
   if (!title) return void (error.value = tr('请输入名称。'));
-  if (kind.value === "card" && !fields.number.trim())
+  if (!props.item && kind.value === "card" && !fields.number.trim())
     return void (error.value = tr('请输入银行卡号。'));
-  if (kind.value === "identity" && !fields.documentNumber.trim())
+  if (!props.item && kind.value === "identity" && !fields.documentNumber.trim())
     return void (error.value = tr('请输入证件号码。'));
-  if (kind.value === "billing-address" && !fields.streetAddress.trim())
+  if (!props.item && kind.value === "billing-address" && !fields.streetAddress.trim())
     return void (error.value = tr('请输入街道地址。'));
   if (
-    kind.value === "payment-account" &&
+    !props.item && kind.value === "payment-account" &&
     ![fields.accountName, fields.accountId, fields.iban].some((value) =>
       value.trim(),
     )
   )
     return void (error.value = tr('请至少填写账号名称、账号 ID 或 IBAN。'));
-  if (kind.value === "secure-note" && !fields.content.trim())
+  if (!props.item && kind.value === "secure-note" && !fields.content.trim())
     return void (error.value = tr('请输入笔记内容。'));
   if (kind.value === "totp" && !fields.secret.trim())
     return void (error.value = tr('请输入验证码密钥。'));
@@ -240,6 +255,12 @@ async function submit() {
 }
 
 function buildItem(title: string): VaultItem {
+  if (props.item && !initialProjection) throw new Error("不能安全建立原数据编辑视图，未改写原项目。");
+  const candidate = buildCandidate(title);
+  return props.item && initialProjection ? preserveUneditedProjection(props.item, initialProjection, candidate) : candidate;
+}
+
+function buildCandidate(title: string): VaultItem {
   const now = new Date().toISOString();
   const base = {
     ...(props.item || {}),
@@ -250,6 +271,7 @@ function buildItem(title: string): VaultItem {
     createdAt: props.item?.createdAt || now,
     updatedAt: now,
     providerRefs: props.item?.providerRefs || providerRefs(),
+    ...(["card","identity","billing-address"].includes(kind.value) ? { cardFace: fields.cardFaceEnabled ? { imageAttachmentName: fields.cardFaceName, displayMode: fields.cardFaceMode, showBrandIcon: fields.cardFaceBrand } : null } : {}),
   };
   switch (kind.value) {
     case "card":
@@ -284,15 +306,12 @@ function buildItem(title: string): VaultItem {
         ...base,
         kind: "identity",
         documentType: fields.documentType,
+        documentTitle: fields.documentTitle,
         documentNumber: fields.documentNumber.trim(),
         firstName: fields.firstName.trim(),
         middleName: fields.middleName.trim(),
         lastName: fields.lastName.trim(),
-        fullName:
-          fields.fullName.trim() ||
-          [fields.firstName, fields.middleName, fields.lastName]
-            .filter(Boolean)
-            .join(" "),
+        fullName: fields.fullName,
         birthDate: optional(fields.birthDate),
         issuedDate: optional(fields.issuedDate),
         expiryDate: optional(fields.expiryDate),
@@ -386,7 +405,7 @@ function buildItem(title: string): VaultItem {
         issuer: optional(fields.issuer),
         accountName: optional(fields.accountName),
         otpType: fields.otpType,
-        counter: clampNumber(fields.counter, 0, 0, Number.MAX_SAFE_INTEGER),
+        counter: normalizeOtpCounter(fields.counter),
         pin: optional(fields.pin),
         pinLength: fields.otpType === "YANDEX" && optional(fields.pinLength) ? clampNumber(fields.pinLength, 4, 4, 16) : undefined,
         link: optional(fields.link),
@@ -479,6 +498,11 @@ function clampNumber(
 
 function emptyFields() {
   return {
+    cardFaceEnabled: false,
+    cardFaceName: "",
+    cardFaceMode: "ALL" as "ALL" | "CARD_NUMBER_ONLY" | "HIDDEN",
+    cardFaceBrand: true,
+    documentTitle: "",
     title: "",
     notes: "",
     favorite: false,
@@ -589,7 +613,8 @@ function cloneCustomFields(
 function cleanCustomFields() {
   return fields.customFields
     .map((field) => ({
-      name: field.name.trim(),
+      ...field,
+      name: field.name,
       value: field.value,
       fieldType: field.fieldType,
       protected: field.fieldType === "HIDDEN",
@@ -609,28 +634,14 @@ function removeCustomField(index: number) {
 }
 
 function mergeSteamRawJson(): string {
-  let root: Record<string, unknown> = {};
-  try {
-    root = fields.steamRawJson.trim()
-      ? (JSON.parse(fields.steamRawJson) as Record<string, unknown>)
-      : {};
-  } catch {
-    root = {};
-  }
-  const set = (key: string, value: string) => {
-    if (value.trim()) root[key] = value.trim();
-  };
-  set("steamid", fields.steamId);
-  set("account_name", fields.accountName);
-  set("device_id", fields.steamDeviceId);
-  set("shared_secret", fields.secret);
-  set("identity_secret", fields.steamIdentitySecret);
-  set("revocation_code", fields.steamRevocationCode);
-  set("token_gid", fields.steamTokenGid);
-  set("access_token", fields.steamAccessToken);
-  set("refresh_token", fields.steamRefreshToken);
-  set("steamLoginSecure", fields.steamLoginSecure);
-  return JSON.stringify(root);
+  return exportSteamMaFile({
+    ...(props.item?.kind === "totp" ? props.item : {}), id: props.item?.id || "draft", kind: "totp", title: fields.title, notes: fields.notes, favorite: fields.favorite,
+    createdAt: props.item?.createdAt || "", updatedAt: props.item?.updatedAt || "", providerRefs: props.item?.providerRefs || [],
+    secret: fields.secret, steamSharedSecretBase64: fields.steamSecretEncoding === "base64" ? fields.secret : undefined, algorithm: fields.algorithm, digits: Number(fields.digits), period: Number(fields.period),
+    accountName: fields.accountName, steamId: fields.steamId, steamDeviceId: fields.steamDeviceId, steamIdentitySecret: fields.steamIdentitySecret,
+    steamRevocationCode: fields.steamRevocationCode, steamTokenGid: fields.steamTokenGid, steamAccessToken: fields.steamAccessToken, steamRefreshToken: fields.steamRefreshToken,
+    steamLoginSecure: fields.steamLoginSecure, steamRawJson: fields.steamRawJson
+  });
 }
 
 function applyOtpTransfer() {
@@ -847,11 +858,7 @@ function exportMaFile() {
             ><label slot="label">{{ tr('币种') }}</label><input v-model="fields.currency" maxlength="3" /></m3e-form-field>
 <m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
             ><label slot="label">{{ tr('客服电话') }}</label><input v-model="fields.customerServicePhone" type="tel" /></m3e-form-field>
-<m3e-form-field v-field-label variant="filled" hide-required-marker class="field field-wide"
-            ><label slot="label">{{ tr('账单地址 JSON') }}</label><textarea
-              v-model="fields.billingAddress"
-              rows="3"
-            ></textarea></m3e-form-field></div></m3e-expansion-panel></section>
+<BillingAddressFields v-model="fields.billingAddress" /></div></m3e-expansion-panel></section>
 <section v-if="kind === 'identity'" class="editor-section"><h3>{{ tr('身份信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
             ><label slot="label">{{ tr('证件类型') }}</label><component :is="materialSelectTag" @input="fields.documentType = ($event.target as HTMLElement &amp; { value: string }).value" >
               <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('ID_CARD')" value="ID_CARD">{{ tr('身份证') }}</component>
@@ -1076,7 +1083,7 @@ function exportMaFile() {
             ><label slot="label">{{ tr('账户') }}</label><input v-model="fields.accountName"
           /></m3e-form-field>
 <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="fields.otpType === 'HOTP'" class="field"
-            ><label slot="label">{{ tr('计数器') }}</label><input v-model="fields.counter" type="number" min="0" /></m3e-form-field>
+            ><label slot="label">{{ tr('计数器') }}</label><input v-model="fields.counter" type="text" inputmode="numeric" pattern="[0-9]+" /></m3e-form-field>
 <m3e-form-field v-field-label variant="filled" hide-required-marker
             v-if="fields.otpType === 'MOTP' || fields.otpType === 'YANDEX'"
             class="field"
@@ -1189,6 +1196,8 @@ function exportMaFile() {
                 >{{ tr('未知字段保持原样，用于 Monica Android 与 maFile 写回。') }}</small
               ></m3e-form-field></template
           ></div></m3e-expansion-panel></section>
+<section v-if="['card','identity','billing-address'].includes(kind)" class="editor-section"><h3>卡面与附件</h3><WalletCardFace :item="buildCandidate(fields.title)" :owner="props.item" /><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceEnabled" @input="fields.cardFaceEnabled=($event.target as any).checked"/><span>使用卡面图片</span></label><template v-if="fields.cardFaceEnabled"><CardFaceImagePicker v-model="fields.cardFaceName" :owner="props.item" :providers="props.providers" /><m3e-form-field v-field-label variant="filled"><label slot="label">卡面显示模式</label><component :is="materialSelectTag" @input="fields.cardFaceMode=($event.target as any).value"><component :is="materialOptionTag" v-for="mode in ['ALL','CARD_NUMBER_ONLY','HIDDEN']" :key="mode" :value="mode" :selected.prop="fields.cardFaceMode===mode">{{({ALL:'显示全部',CARD_NUMBER_ONLY:'只显示卡号',HIDDEN:'隐藏信息'} as any)[mode]}}</component></component></m3e-form-field><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceBrand" @input="fields.cardFaceBrand=($event.target as any).checked"/><span>显示卡组织图标</span></label></template></section>
+<section v-if="kind==='identity'" class="editor-section"><m3e-form-field v-field-label variant="filled"><label slot="label">人物称谓</label><input v-model="fields.documentTitle" autocomplete="off"/></m3e-form-field></section>
 <section class="editor-section editor-extras" :aria-label="tr('补充信息')"><h3>{{ tr('补充信息') }}</h3><m3e-expansion-panel
           v-if="
             kind === 'card' ||

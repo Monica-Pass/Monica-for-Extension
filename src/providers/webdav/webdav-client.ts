@@ -1,6 +1,6 @@
 import { bytesToBase64 } from "../../security/encoding";
 import { readBoundedResponseBytes, readBoundedResponseText } from "../bounded-body";
-import { providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
+import { ProviderTransportError, providerHttpError, resilientFetch, type ProviderResponseConsumer, type ProviderTransportPolicy } from "../provider-transport";
 import { DEFAULT_ZIP_SAFETY_LIMITS } from "./zip-safety";
 
 export interface WebDavCredentials {
@@ -41,7 +41,7 @@ export class WebDavClient {
   ) {}
 
   async testConnection(signal?: AbortSignal): Promise<void> {
-    await this.request(normalizeServerUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 连接", async (response) => {
+    await this.request(collectionUrl(this.credentials.baseUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 连接", async (response) => {
       if (!response.ok && response.status !== 207) throw webDavError("连接 WebDAV 失败", response);
     });
   }
@@ -71,7 +71,9 @@ export class WebDavClient {
     return this.request(file.url, { method: "GET", headers, signal }, "WebDAV 下载备份", async (response, requestSignal) => {
       if (!response.ok) throw webDavError(`下载备份 ${file.name} 失败`, response);
       const receivedEtag = response.headers.get("etag");
-      if (file.etag && receivedEtag && file.etag !== receivedEtag) throw new Error("WebDAV 备份在下载期间发生变化，请重新同步。");
+      // Read-only weak comparison tolerates Apache's fresh-file W/ transition.
+      // Weak validators are still never sent as If-Match or used to overwrite.
+      if (file.etag && receivedEtag && file.etag.replace(/^W\//, "") !== receivedEtag.replace(/^W\//, "")) throw new Error("WebDAV 备份在下载期间发生变化，请重新同步。");
       return readBoundedResponseBytes(response, limits.maxDownloadBytes, "WebDAV 备份下载", requestSignal);
     });
   }
@@ -82,20 +84,42 @@ export class WebDavClient {
     const now = new Date();
     const name = `monica_backup_${formatTimestamp(now)}_browser${encrypted ? ".enc.zip" : ".zip"}`;
     const url = joinUrl(backupFolderUrl(this.credentials.baseUrl), name);
-    return this.request(url, {
-      method: "PUT",
-      headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
-      body: bytes as BodyInit,
-      signal
-    }, "WebDAV 上传备份", async (response) => {
-      if (!response.ok) throw webDavError(`上传备份 ${name} 失败`, response);
-      return { name, url, etag: response.headers.get("etag") || undefined, size: bytes.length, lastModified: now.toISOString(), encrypted };
+    const file: WebDavBackupFile = { name, url, size: bytes.length, lastModified: now.toISOString(), encrypted };
+    try {
+      await this.request(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
+        body: bytes as BodyInit,
+        signal
+      }, "WebDAV 上传备份", async (response) => {
+        if (!response.ok) throw webDavError(`上传备份 ${name} 失败`, response);
+      });
+    } catch (cause) {
+      if (cause instanceof ProviderTransportError && ["conflict", "network", "timeout", "server"].includes(cause.code)) {
+        // A lost response does not authorize another PUT. Confirm this exact
+        // immutable snapshot, retaining the original error if it is not there.
+        try { return await this.verifyUpload(file, bytes, signal); } catch { /* Preserve the failed upload outcome. */ }
+      }
+      throw cause;
+    }
+    return this.verifyUpload(file, bytes, signal);
+  }
+
+  private async verifyUpload(file: WebDavBackupFile, intended: Uint8Array, signal?: AbortSignal): Promise<WebDavBackupFile> {
+    return this.request(file.url, { method: "GET", signal }, "WebDAV 确认备份", async (response, requestSignal) => {
+      if (!response.ok) throw webDavError("读取刚上传的 WebDAV 备份失败", response);
+      const received = await readBoundedResponseBytes(response, this.limits().maxDownloadBytes, "WebDAV 备份确认", requestSignal);
+      if (received.length !== intended.length || !received.every((byte, index) => byte === intended[index])) {
+        throw new Error("WebDAV 备份上传后内容校验失败，请重新同步。");
+      }
+      return { ...file, etag: response.headers.get("etag") || undefined,
+        lastModified: response.headers.get("last-modified") || file.lastModified };
     });
   }
 
   private async ensureBackupFolder(signal?: AbortSignal): Promise<void> {
     const folderUrl = backupFolderUrl(this.credentials.baseUrl);
-    const check = await this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 检查目录", async (response) => ({ status: response.status, error: response.ok || response.status === 207 ? undefined : webDavError("检查 Monica_Backups 目录失败", response) }));
+    const check = await this.request(collectionUrl(folderUrl), { method: "PROPFIND", headers: { Depth: "0" }, signal }, "WebDAV 检查目录", async (response) => ({ status: response.status, error: response.ok || response.status === 207 ? undefined : webDavError("检查 Monica_Backups 目录失败", response) }));
     if (check.status >= 200 && check.status < 300 || check.status === 207) return;
     if (check.status !== 404) throw check.error || new Error("检查 Monica_Backups 目录失败。");
     await this.request(folderUrl, { method: "MKCOL", signal }, "WebDAV 创建目录", async (response) => {
@@ -104,7 +128,7 @@ export class WebDavClient {
   }
 
   private async listFolder(folderUrl: string, signal?: AbortSignal): Promise<{ status: number; body: string; error: Error }> {
-    return this.request(folderUrl, { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份", async (response, requestSignal) => {
+    return this.request(collectionUrl(folderUrl), { method: "PROPFIND", headers: { Depth: "1" }, signal }, "WebDAV 列出备份", async (response, requestSignal) => {
       if (!response.ok && response.status !== 207) return { status: response.status, body: "", error: webDavError("读取 Monica_Backups 失败", response) };
       return { status: response.status, body: await readBoundedResponseText(response, this.limits().maxMultiStatusBytes, "WebDAV 目录响应", requestSignal), error: new Error() };
     });
@@ -115,7 +139,7 @@ export class WebDavClient {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Basic ${bytesToBase64(new TextEncoder().encode(`${this.credentials.username}:${this.credentials.password}`))}`);
     headers.set("Accept", "*/*");
-    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher }, consume);
+    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher, idempotent: init.method !== "PUT" }, consume);
   }
 
   private limits(): WebDavClientLimits {
@@ -143,6 +167,11 @@ export function normalizeServerUrl(raw: string): string {
 export function backupFolderUrl(baseUrl: string): string {
   const normalized = normalizeServerUrl(baseUrl);
   return /\/Monica_Backups$/i.test(new URL(normalized).pathname) ? normalized : joinUrl(normalized, "Monica_Backups");
+}
+
+/** Canonical directory URL: avoids Apache's 301 without relaxing redirect safety. */
+export function collectionUrl(baseUrl: string): string {
+  return `${normalizeServerUrl(baseUrl)}/`;
 }
 
 export function parseMultiStatus(xml: string, folderUrl: string): WebDavBackupFile[] {

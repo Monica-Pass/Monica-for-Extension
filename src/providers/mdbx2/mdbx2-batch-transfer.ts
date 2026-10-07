@@ -1,4 +1,8 @@
 import type { VaultItem } from "../../core/model";
+import { passwordGroupKey } from "../../core/password-groups";
+import { rebaseProjectCredentialFields } from "../../core/project-credentials";
+import { resolveBoundNote } from "../../core/bound-notes";
+import { resolveSsoAccount, ssoAccountCandidates } from "../../core/sso-links";
 import { decodeKeePassPathSegments } from "../keepass/keepass-path-codec";
 import { mdbx2LogicalObjectId } from "./mdbx2-item-codec";
 import type { Mdbx2CollectionSummary } from "./native-contract";
@@ -12,6 +16,7 @@ export interface Mdbx2TransferCategorySource {
 
 export interface Mdbx2BatchTransferPlanOptions extends Mdbx2TransferCategorySource {
   action: Mdbx2BatchTransferAction;
+  targetProviderId?: string;
   targetCollectionId?: string;
   preserveCategories: boolean;
   now?: string;
@@ -126,7 +131,9 @@ export function normalizeMdbx2TransferItem(
   if (normalized.kind === "login") {
     normalized.boundTotpItemId = undefined;
     normalized.boundNoteId = undefined;
+    normalized.boundNoteEntryId = undefined;
     normalized.ssoRefEntryId = undefined;
+    normalized.ssoRefLogicalId = undefined;
   } else if (normalized.kind === "totp" || normalized.kind === "passkey") {
     normalized.boundPasswordId = undefined;
   }
@@ -152,6 +159,7 @@ export function planMdbx2BatchTransfer(
   }
 
   const targetItems = new Map<string, VaultItem>();
+  const copiedGroupIds = new Map<string, string>();
   items.forEach((item, index) => {
     const effectiveAction = effectiveTransferAction(item, options.action);
     const targetItem = normalizeMdbx2TransferItem(item, {
@@ -160,10 +168,27 @@ export function planMdbx2BatchTransfer(
       now: options.now,
       targetItemId: effectiveAction === "copy" ? options.idFactory?.(item, index) : undefined
     });
+    if (effectiveAction === "copy" && item.kind === "login" && item.passwordGroupId && targetItem.kind === "login") {
+      const key = passwordGroupKey(item);
+      const groupId = copiedGroupIds.get(key) || targetItem.id;
+      copiedGroupIds.set(key, groupId);
+      targetItem.passwordGroupId = groupId;
+      targetItem.customFields = rebaseProjectCredentialFields(targetItem.customFields, groupId);
+    }
     targetItems.set(item.id, targetItem);
   });
 
   for (const item of items) {
+    if (item.kind === "login" && item.ssoRefLogicalId) {
+      const account = resolveSsoAccount(item, items);
+      const targetAccount = account && targetItems.get(account.id), targetLogin = targetItems.get(item.id);
+      if (targetAccount?.kind === "login" && targetLogin?.kind === "login") targetLogin.ssoRefLogicalId = mdbx2LogicalObjectId(targetAccount);
+    }
+    if (item.kind === "login" && item.boundNoteEntryId) {
+      const note = resolveBoundNote(item, items);
+      const targetNote = note && targetItems.get(note.id), targetLogin = targetItems.get(item.id);
+      if (targetNote?.kind === "secure-note" && targetLogin?.kind === "login") targetLogin.boundNoteEntryId = mdbx2LogicalObjectId(targetNote);
+    }
     if (item.kind !== "login" || !item.boundTotpItemId) continue;
     const linkedTarget = targetItems.get(item.boundTotpItemId);
     const targetLogin = targetItems.get(item.id);
@@ -175,7 +200,8 @@ export function planMdbx2BatchTransfer(
   const planned = items.map((item): Mdbx2BatchTransferPlanItem => {
     const path = sourceCategoryPath(item, options);
     const effectiveAction = effectiveTransferAction(item, options.action);
-    const blockedReason = transferBlockReason(item, selectedById, boundLoginsByTotpId);
+    const blockedReason = mdbx2PasswordHistoryTransferBlockReason(item, effectiveAction, options.targetProviderId)
+      || transferBlockReason(item, selectedById, boundLoginsByTotpId);
     if (path.segments.length && !path.complete) warnings.push(`项目「${item.title || item.id}」的来源分类层级不完整，已保留可解析部分。`);
     if (blockedReason) warnings.push(`项目「${item.title || item.id}」未传输：${blockedReason}`);
     if (!blockedReason && item.kind === "passkey" && options.action === "copy") {
@@ -210,13 +236,36 @@ function effectiveTransferAction(item: VaultItem, requested: Mdbx2BatchTransferA
   return item.kind === "passkey" ? "move" : requested;
 }
 
+/** Native MDBX2 has no Android password-only history carrier. A local overlay is not a transfer. */
+export function mdbx2PasswordHistoryTransferBlockReason(
+  item: VaultItem,
+  action: Mdbx2BatchTransferAction,
+  targetProviderId?: string
+): string | undefined {
+  if (item.kind !== 'login') return undefined;
+  if (item.passwordHistoryIncomplete) return '部分密码历史无法读取，请保留来源项目，不能完整转移到 MDBX2。';
+  if (!item.passwordHistory?.length) return undefined;
+  const source = item.providerRefs.length === 1 ? item.providerRefs[0] : undefined;
+  // A same-provider folder move keeps the existing object and its local overlay.
+  // Final adoption additionally checks that the native object ID did not change.
+  if (action === 'move' && targetProviderId && source?.providerId === targetProviderId && source.remoteId) return undefined;
+  return 'MDBX2 目标无法保存此项目的逐密码历史。请保留来源项目，通过 Monica ZIP 备份转移包含历史的项目。';
+}
+
 function transferBlockReason(
   item: VaultItem,
   selectedById: ReadonlyMap<string, VaultItem>,
   boundLoginsByTotpId: ReadonlyMap<string, VaultItem[]>
 ): string | undefined {
+  if (item.kind === "opaque") return "此原生类型或版本仅可安全查看，不能使用普通项目传输。";
   if (item.deletedAt) return "已删除项目必须先从回收站恢复。";
-  if (item.kind === "login" && item.boundNoteId != null) return "绑定笔记缺少可迁移的逻辑 ID，需先解除绑定。";
+  if (item.kind === "login" && (item.ssoRefLogicalId || item.ssoRefEntryId != null)) {
+    const selected = [...selectedById.values()], account = resolveSsoAccount(item, selected);
+    if (!account || !ssoAccountCandidates(item, selected).some(candidate => candidate.id === account.id)) return "SSO account cannot be uniquely resolved; the source is retained.";
+  }
+  if (item.kind === "login" && (item.boundNoteId != null || item.boundNoteEntryId)) {
+    if (!resolveBoundNote(item, [...selectedById.values()])) return "关联笔记无法唯一识别，整组保留在来源库。";
+  }
   if (item.kind === "login" && item.boundTotpItemId) {
     const linked = selectedById.get(item.boundTotpItemId);
     if (linked?.kind !== "totp") return "绑定验证码需要与登录项一起传输。";
@@ -245,7 +294,8 @@ function transferPayloadPatch(
   };
   if (effectiveAction === "copy") common.room_id = null;
   if (item.kind === "login") {
-    return { ...common, bound_note_room_id: null, bound_note_entry_id: null };
+    return { ...common, bound_note_room_id: null, bound_note_entry_id: item.boundNoteEntryId || null,
+      sso_ref_entry_id: null, sso_ref_logical_id: item.ssoRefLogicalId || null };
   }
   if (item.kind === "passkey") return common;
   return {

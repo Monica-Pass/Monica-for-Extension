@@ -1,0 +1,45 @@
+[package]
+name = "mdbx-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = [
+    "search",
+    "benchmark",
+    "kdbx-import",
+    "kdbx-export",
+    "kdbx-binary-import",
+    "kdbx-binary-export",
+    "external-blob-store",
+    "sync-compression",
+]
+core = ["mdbx-storage/core"]
+external-blob-store = ["mdbx-storage/filesystem-blob-store"]
+sync-compression = ["mdbx-sync/zstd-compression"]
+search = ["mdbx-storage/derived-search-index"]
+benchmark = ["mdbx-storage/benchmarks"]
+kdbx-import = ["mdbx-storage/kdbx-import"]
+kdbx-export = ["mdbx-storage/kdbx-export"]
+kdbx-binary-import = ["kdbx-import", "mdbx-storage/kdbx-binary-import"]
+kdbx-binary-export = ["kdbx-export", "mdbx-storage/kdbx-binary-export"]
+
+[[bin]]
+name = "mdbx"
+path = "src/main.rs"
+
+[dependencies]
+mdbx-core = { path = "../mdbx-core" }
+mdbx-storage = { path = "../mdbx-storage", default-features = false }
+mdbx-sync = { path = "../mdbx-sync", default-features = false }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+rpassword = "=7.4.0"
+sha2 = { workspace = true }
+uuid = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tempfile = "3"
+zeroize = { workspace = true }

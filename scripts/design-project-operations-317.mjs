@@ -1,0 +1,52 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { deflateRawSync } from 'node:zlib';
+const source = new URL('../docs/design/android-interop-315.m3e.json', import.meta.url);
+const doc = JSON.parse(await readFile(source, 'utf8'));
+const ids = ['credentialactions317', 'credentialorder317', 'credentialremove317'];
+doc.frames = doc.frames.filter(frame => !ids.includes(frame.id));
+doc.groups = doc.groups.filter(group => !ids.includes(group.frameId));
+const start = Math.max(...doc.frames.map(frame => frame.x + (frame.w || 420))) + 120;
+function frame(id, name, offset, height = 930) {
+  const x = start + offset;
+  doc.frames.push({ id, name, x, y: 0, w: 320, h: height });
+  let serial = 0;
+  return (y, item, inset = 12) => {
+    const groupId = `${id}-${serial++}`;
+    doc.groups.push({ id: groupId, frameId: id, x: x + inset, y, axis: 'y', gap: 4,
+      items: [{ id: `${groupId}-control`, icon: null, variant: 'filled', size: 320 - inset * 2, ...item }] });
+  };
+}
+const edit = frame(ids[0], '密码项目 · 管理入口 · 320px', 0);
+edit(12, { kind: 'topAppBar', label: '编辑密码项目', icon: 'close' });
+edit(104, { kind: 'textField', label: '项目名称', radius: 24 });
+edit(174, { kind: 'listItem', label: '工作账号', icon: 'person', icon2: 'more_vert', radius: 24 });
+edit(234, { kind: 'textField', label: '用户名', radius: 4 });
+edit(294, { kind: 'textField', label: '密码 1', trailingIcon: 'more_vert', radius: 4 });
+edit(354, { kind: 'textField', label: '密码 2', trailingIcon: 'more_vert', radius: 4 });
+edit(414, { kind: 'textField', label: '内嵌验证码密钥', radius: 24 });
+edit(482, { kind: 'button', label: '添加密码', icon: 'add', variant: 'tonal', radius: 24 });
+edit(550, { kind: 'listItem', label: '恢复账号', supporting: '1 个密码', icon: 'person', icon2: 'more_vert', radius: 24 });
+edit(630, { kind: 'listItem', label: '调整凭据顺序', icon: 'swap_vert', icon2: 'chevron_right', radius: 24 });
+edit(706, { kind: 'textField', label: '项目备注', radius: 24 });
+edit(810, { kind: 'button', label: '加密保存', icon: 'check', radius: 24 });
+edit(872, { kind: 'button', label: '取消', variant: 'text', radius: 24 });
+const order = frame(ids[1], '密码项目 · 排序 · 320px', 440, 820);
+order(12, { kind: 'topAppBar', label: '调整凭据顺序', icon: 'close' });
+order(106, { kind: 'text', label: '工作账号', size: 18 });
+order(142, { kind: 'listItem', label: '密码 1', icon: 'drag_indicator', icon2: 'expand_more', radius: 24 });
+order(208, { kind: 'listItem', label: '密码 2', icon: 'drag_indicator', icon2: 'expand_less', radius: 24 });
+order(292, { kind: 'text', label: '其他凭据组', size: 18 });
+order(332, { kind: 'listItem', label: '恢复账号', supporting: '1 个密码', icon: 'drag_indicator', icon2: 'expand_more', radius: 24 });
+order(410, { kind: 'listItem', label: '管理账号', supporting: '2 个密码', icon: 'drag_indicator', icon2: 'expand_less', radius: 24 });
+order(518, { kind: 'text', label: '主要凭据保留在最前方', size: 14 });
+order(590, { kind: 'button', label: '完成', icon: 'check', radius: 24 });
+order(660, { kind: 'button', label: '撤销本次排序', variant: 'text', radius: 24 });
+const remove = frame(ids[2], '密码项目 · 移除确认 · 320px', 880, 700);
+remove(12, { kind: 'topAppBar', label: '编辑密码项目', icon: 'close' });
+remove(128, { kind: 'dialog', label: '移除恢复账号？', supporting: '移除这一组的 2 个密码。保存项目后生效。', radius: 28 });
+remove(454, { kind: 'listItem', label: '恢复账号已从草稿移除', icon: 'person_remove', icon2: 'undo', radius: 24 });
+remove(550, { kind: 'button', label: '加密保存', icon: 'check', radius: 24 });
+remove(618, { kind: 'button', label: '取消', variant: 'text', radius: 24 });
+await writeFile(source, JSON.stringify(doc, null, 2) + '\n');
+const link = 'http://127.0.0.1:5186/#docz=' + deflateRawSync(JSON.stringify(doc)).toString('base64url');
+await writeFile(new URL('../docs/design/project-operations-317.md', import.meta.url), `# Password project operations\n\nDesign target, not an implementation-complete claim. Match the current Android main editor: the primary credential stays first; other credential groups can be ordered with the project content. Each password retains its identity, group-owned username/OTP and own history. Removal changes a draft, requires explicit scope, can be undone before saving, and cancel leaves the persisted project unchanged. A project keeps at least one password; removing the owning password must transfer shared content/assets before its tombstone commits.\n\nReuse Monica teal M3E surface tokens, Segoe UI/Microsoft YaHei UI, 16px control text, 12px horizontal inset, joined4px corners with24px outer corners. Controls remain usable at320px; protected values never appear in management menus. Use list rows, text fields and the native confirmation dialog. Sorting supports keyboard buttons and drag handles.\n\n[Editable local Canvas](${link})\n\nFrames: ${ids.join(', ')}.\n`);

@@ -1,6 +1,7 @@
+import { launchEdgeContext } from "./fixtures/edge";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import path from "node:path";
-import { chromium, expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
 import { decodeBitwardenCipher, encodeBitwardenPasskeyCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
 import { deriveBitwardenMasterKey, stretchBitwardenMasterKey, type BitwardenSymmetricKey } from "../../src/providers/bitwarden/bitwarden-crypto";
@@ -72,7 +73,7 @@ for (const mode of ["zero-offline", "positive", "during-sync", "failure", "cance
   test(`Bitwarden Passkey runtime: ${mode}`, async ({}, testInfo) => {
     const mock = await server(mode === "zero-offline" || mode === "discover" ? 0 : 3);
     const extensionPath = path.resolve("dist");
-    const context = await chromium.launchPersistentContext(testInfo.outputPath("profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+    const context = await launchEdgeContext(testInfo.outputPath("profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     let concurrentSync: Promise<unknown> | undefined;
     try {
       await context.route(`${HOST}/**`, mock.route);
@@ -80,6 +81,8 @@ for (const mode of ["zero-offline", "positive", "during-sync", "failure", "cance
       const manager = await context.newPage();
       await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
       await send(manager, { type: "VAULT_SETUP", masterPassword: "synthetic browser vault password" });
+      // This suite isolates ceremony-driven traffic from the periodic sync scheduler.
+      await manager.evaluate(() => chrome.storage.local.set({ "monica.sync.preferences.v1": { enabled: false } }));
       const login = await send(manager, { type: "BITWARDEN_LOGIN", name: "Counter test", vaultUrl: HOST, email: EMAIL, masterPassword: PASSWORD, isDefaultSaveTarget: false });
       if (mode !== "discover") await send(manager, { type: "PROVIDER_SYNC", providerId: login.providerId });
       mock.events.length = 0;

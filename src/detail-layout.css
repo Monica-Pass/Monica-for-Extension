@@ -150,6 +150,7 @@
 @container item-detail (max-width: 36rem) {
   #root .detail-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   #root .detail-heading > .row-icon { display: none; }
+  #root .detail-heading > .row-icon.website-icon--custom { display: grid; flex: 0 0 40px; width: 40px; height: 40px; border-radius: 14px; }
 }
 
 @container item-detail (max-width: 20rem) {

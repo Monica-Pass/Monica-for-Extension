@@ -18,6 +18,7 @@ export const INLINE_AUTOFILL_STYLES = `
   .account strong,.account small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .account strong { font-size:14px; font-weight:500; }
   .account small { font-size:12px; color:var(--muted); }
+  .account .credential-identity { white-space:normal; overflow-wrap:anywhere; color:var(--text); }
   .hint { color:var(--muted); font-size:11px; max-width:80px; overflow-wrap:anywhere; }
   .empty,.count,.status { margin:0; padding:12px; font-size:12px; line-height:1.6; color:var(--muted); overflow-wrap:anywhere; }
   .empty { min-height:64px; display:flex; align-items:center; }

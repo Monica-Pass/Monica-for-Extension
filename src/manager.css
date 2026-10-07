@@ -1773,3 +1773,21 @@
   }
 }
 .timeline-title { display: block; margin-top: 2px; color: var(--app-muted); font-size: .78rem; font-weight: 400; overflow-wrap: anywhere; }
+
+.source-session-details > summary {
+  cursor: pointer;
+  min-height: 48px;
+  padding: 14px 16px;
+  border-radius: 24px;
+  background: var(--md-sys-color-surface-container-high);
+  font-weight: 550;
+}
+.source-session-details > summary:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 3px;
+}
+.source-session-details[open] > summary { margin-bottom: 8px; }
+
+.password-display-controls { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 12px; }
+.password-display-controls m3e-form-field { flex: 1 1 190px; min-width: 0; max-width: 340px; }
+.password-stack-manage { justify-self: start; margin-inline: 12px; }

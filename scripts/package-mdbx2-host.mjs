@@ -25,6 +25,7 @@ const entries = new Map([
   ["host-manifest.template.json", new Uint8Array(await readFile(resolve(hostRoot, "host-manifest.template.json")))],
   ["README.md", new Uint8Array(await readFile(resolve(hostRoot, "README.md")))],
   ["Cargo.lock", new Uint8Array(await readFile(resolve(hostRoot, "Cargo.lock")))],
+  ["ENGINE-PROVENANCE.json", new Uint8Array(await readFile(resolve(hostRoot, "ENGINE-PROVENANCE.json")))],
   ["LICENSE", new Uint8Array(await readFile(resolve(root, "LICENSE")))]
 ]);
 const metadata = {
@@ -34,7 +35,9 @@ const metadata = {
   platform: "windows-x64",
   hostName: "com.monica_pass.mdbx2",
   protocolVersion: 2,
-  coreRevision: "974c517465e7b6cac0947d2d59875aa4211fa16b",
+  coreRevision: "90005c8c608c952093a4522ffa507a562e2e39a4",
+  runtimeProfile: "android-1.0.315-90005c8-four-overlays",
+  runtimeProvenanceSha256: sha256(entries.get("ENGINE-PROVENANCE.json")),
   source: { commit: sourceCommit, trackedWorktreeClean: sourceTreeClean },
   executable: { file: executableName, size: executableBytes.length, sha256: sha256(executableBytes) },
   installScope: "current-user",

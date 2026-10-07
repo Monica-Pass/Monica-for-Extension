@@ -46,6 +46,11 @@ async function navigate(page: Page, name: string, openLabel = "Open navigation")
 // Check actual controls, including Shadow DOM hit areas. Root scrollWidth alone
 // can miss a control clipped by a card or an invisible oversized touch target.
 async function expectUsableControls(root: Locator) {
+  await root.evaluate(async element => {
+    await Promise.all(element.getAnimations({ subtree: true })
+      .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+      .map(animation => animation.finished.catch(() => {})));
+  });
   const problems = await root.evaluate((root) => {
     const problems: string[] = [];
     const viewport = document.documentElement.clientWidth;
@@ -145,7 +150,7 @@ for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 60
     try {
       await navigate(page, "登录项", "打开导航");
       await page.getByRole("button", { name: "新建", exact: true }).click();
-      const dialog = dialogContent(page, { name: "添加登录项", exact: true });
+      const dialog = dialogContent(page, { name: "添加密码", exact: true });
       const save = dialog.getByRole("button", { name: "加密保存", exact: true });
       await expect(save).toBeInViewport({ ratio: 1 });
       const initial = await save.boundingBox();
@@ -154,7 +159,7 @@ for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 60
       await dialog.getByRole("button", { name: "添加字段", exact: true }).click();
       await dialog.getByLabel("自定义字段 1 名称").fill("自定义字段");
       await dialog.getByLabel("自定义字段 1 值").fill("synthetic value");
-      await dialog.getByLabel("备注", { exact: true }).fill("保留字段滚动与保存操作");
+      await dialog.getByLabel("恢复备注与笔记", { exact: true }).fill("保留字段滚动与保存操作");
       await expectUsableControls(dialog);
       await expect(save).toBeInViewport({ ratio: 1 });
       const final = await save.boundingBox();

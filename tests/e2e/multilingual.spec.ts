@@ -9,6 +9,11 @@ const password = "multilingual synthetic vault password";
 const extraLanguages = localeOptions.filter((option) => option.value !== "zh-CN" && option.value !== "en");
 
 async function usable(root: Locator) {
+  await root.evaluate(async element => {
+    await Promise.all(element.getAnimations({ subtree: true })
+      .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+      .map(animation => animation.finished.catch(() => {})));
+  });
   const issues = await root.evaluate((root) => {
     const issues: string[] = [];
     const width = document.documentElement.clientWidth;
@@ -121,11 +126,11 @@ for (const language of extraLanguages) {
       }
       await navigate(1);
       await manager.getByRole("button", { name: catalog["新建"], exact: true }).click();
-      const editor = dialogContent(manager, { name: catalog["添加登录项"], exact: true });
+      const editor = dialogContent(manager, { name: catalog["添加{0}"].replace("{0}", catalog["密码"]), exact: true });
       const save = editor.getByRole("button", { name: catalog["加密保存"], exact: true });
       await expect(save).toBeInViewport({ ratio: 1 });
       await editor.getByLabel(catalog["名称 *"], { exact: true }).fill("多语言编辑 / " + language.value);
-      await editor.getByLabel(catalog["备注"], { exact: true }).fill("保留原文 <>& {0}");
+      await editor.getByLabel("恢复备注与笔记", { exact: true }).fill("保留原文 <>& {0}");
       await usable(editor);
       await expect(save).toBeInViewport({ ratio: 1 });
       await manager.screenshot({ path: testInfo.outputPath(`editor-${language.value}-200.png`), animations: "disabled" });

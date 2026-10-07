@@ -16,6 +16,22 @@ describe("extension runtime client commands", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it('preserves the confirmed project restore identity and distinguishes an unstaged operation', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ok:true,data:[]});
+    stubRuntime(sendMessage);
+    const input={operationId:'restore-1',anchorItemId:'item-1',providerId:'mdbx-1',deletedAt:'2026-10-05T00:00:00Z',expected:{'item-1':'2026-10-05T00:00:00Z'}};
+    await vaultClient.restorePasswordProject(input,true);
+    await vaultClient.listPasswordProjectRestores(input.operationId);
+    await vaultClient.resumePasswordProjectRestore(input.operationId);
+    expect(sendMessage.mock.calls.map(([message])=>message)).toEqual([
+      {type:'VAULT_PASSWORD_PROJECT_RESTORE',input,confirmed:true},
+      {type:'VAULT_PASSWORD_PROJECT_RESTORES',operationId:input.operationId},
+      {type:'VAULT_PASSWORD_PROJECT_RESTORE_RESUME',operationId:input.operationId},
+    ]);
+    sendMessage.mockResolvedValue({ok:false,error:'Concurrent deletion changed the cohort',code:'password-project-restore-not-staged'});
+    await expect(vaultClient.restorePasswordProject(input,true)).rejects.toMatchObject({code:'password-project-restore-not-staged'});
+  });
+
   it("keeps archive, recycle-bin, restore, and empty-vault confirmation manager messages explicit", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ ok: true, data: {} });
     stubRuntime(sendMessage);
@@ -134,11 +150,13 @@ describe("extension runtime client commands", () => {
     await vaultClient.planMdbx2BatchTransfer(input);
     await vaultClient.executeMdbx2BatchTransfer(input, true);
     await vaultClient.mdbx2BatchTransferStatus(input.operationId);
+    await vaultClient.listMdbx2PendingMoves();
 
     expect(sendMessage.mock.calls.map(([message]) => message)).toEqual([
       { type: "MDBX2_BATCH_TRANSFER_PLAN", input },
       { type: "MDBX2_BATCH_TRANSFER_EXECUTE", input, confirmed: true },
-      { type: "MDBX2_BATCH_TRANSFER_STATUS", operationId: input.operationId }
+      { type: "MDBX2_BATCH_TRANSFER_STATUS", operationId: input.operationId },
+      { type: "MDBX2_PENDING_MOVES" }
     ]);
   });
 

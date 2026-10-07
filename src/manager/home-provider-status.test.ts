@@ -11,6 +11,8 @@ describe("homepage database status", () => {
     expect(homeProviderStatus({ ...provider, lastSyncAt: "2026-09-13T00:00:00Z" }).state).toBe("synced");
     expect(homeProviderStatus(provider, { providerId: "work", pending: 3, failed: 0 })).toMatchObject({ state: "pending", count: 3 });
     expect(homeProviderStatus({ ...provider, kind: "keepass", config: { sourceMode: "local-file" } }).state).toBe("file");
+    expect(homeProviderStatus({ ...provider, kind: "keepass", config: { sourceMode: "onedrive" } }).state).toBe("never");
+    expect(homeProviderStatus({ ...provider, kind: "keepass", config: { sourceMode: "onedrive" }, lastSyncAt: "2026-10-05T00:00:00Z" }).state).toBe("synced");
   });
   it("prioritizes actionable conflicts and errors without exposing error payloads", () => {
     const failing = { ...provider, lastError: "https://secret@example.test?token=private" };

@@ -12,6 +12,7 @@ test("Android generator history stays compact masked and deletable", async ({}, 
   ];
   let remote = zipSync({ [historyPath]: strToU8(JSON.stringify(history)) });
   let latestName = "monica_backup_20260824_120000.zip";
+  let currentEtag = '"history"';
   let context: BrowserContext | undefined;
   try {
     context = await chromium.launchPersistentContext(testInfo.outputPath("generator-history-profile"), {
@@ -26,14 +27,15 @@ test("Android generator history stays compact masked and deletable", async ({}, 
       const depth = request.headers()["depth"];
       if (method === "PROPFIND" && depth === "1") {
         const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/Monica_Backups/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/dav/Monica_Backups/${latestName}</d:href><d:propstat><d:prop><d:getetag>&quot;history&quot;</d:getetag><d:getlastmodified>Mon, 24 Aug 2026 04:00:00 GMT</d:getlastmodified><d:getcontentlength>${remote.byteLength}</d:getcontentlength></d:prop></d:propstat></d:response></d:multistatus>`;
-        await route.fulfill({ status: 207, contentType: "application/xml", body: xml });
+        await route.fulfill({ status: 207, contentType: "application/xml", body: xml.replace('&quot;history&quot;', currentEtag.replaceAll('"', '&quot;')) });
       } else if (method === "PROPFIND") {
         await route.fulfill({ status: 207, contentType: "application/xml", body: "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\"/>" });
       } else if (method === "GET") {
-        await route.fulfill({ status: 200, contentType: "application/zip", body: Buffer.from(remote) });
+        await route.fulfill({ status: 200, contentType: "application/zip", headers: { ETag: currentEtag }, body: Buffer.from(remote) });
       } else if (method === "PUT") {
         remote = new Uint8Array(request.postDataBuffer()!);
         latestName = new URL(request.url()).pathname.split("/").pop()!;
+        currentEtag = '"history-next"';
         await route.fulfill({ status: 201, headers: { etag: '"history-next"' } });
       } else {
         await route.fulfill({ status: 405 });

@@ -1,21 +1,39 @@
 <script setup lang="ts">
+import { BILLING_ADDRESS_FIELDS, readBillingAddress, type BillingAddressField } from "../core/billing-address";
+import PasskeyBindings from "./PasskeyBindings.vue";
 import { tr, locale } from '../i18n';
 
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, useId } from "vue";
 import type { LoginItem, ProviderAccount, TotpItem, VaultItem } from "../core/model";
 import { findBoundTotpItem } from "../core/login-otp";
 import { itemIcon, itemKindLabel, sourceLabel } from "../manager/item-metadata";
 import { parseSshKeyMetadata, parseWifiMetadata } from "../core/special-login";
+import { wifiAdvancedDetailFields } from "../core/wifi-settings";
 import TotpCodeCell from "./TotpCodeCell.vue";
 import WebsiteIcon from "./WebsiteIcon.vue";
+import ProtectedValue from "./ProtectedValue.vue";
+import AttachmentPreview from "./AttachmentPreview.vue";
+import WalletCardFace from "./WalletCardFace.vue";
+import { resolveBoundNote } from "../core/bound-notes";
+import { resolveSsoAccount } from "../core/sso-links";
+import PasswordContentDetail from "./PasswordContentDetail.vue";
+import { contentRank, isContentMetadata } from "../core/password-content";
+import { readGpgFields, isCredentialMetadata } from "../core/credential-fields";
+import { passwordGroupMembers } from "../core/password-groups";
+import { passwordProjectGroups } from "../core/password-project-view";
+import ProjectCredentialNavigation from './ProjectCredentialNavigation.vue';
+import PasswordHistoryDetail from './PasswordHistoryDetail.vue';
 
 const props = defineProps<{
   item: VaultItem;
   items: VaultItem[];
   providers: ProviderAccount[];
   consumeOtp: (item: LoginItem | TotpItem) => Promise<void>;
+  readOnly?: boolean;
+  attachmentOwner?: VaultItem;
+  deleteHistory?: (item: LoginItem, index: number) => Promise<void>;
 }>();
-const emit = defineEmits<{ close: []; edit: [item: VaultItem] }>();
+const emit = defineEmits<{ close: []; edit: [item: VaultItem]; open: [item: VaultItem]; detach: [item: LoginItem] }>();
 
 interface DetailField {
   id?: string;
@@ -29,15 +47,32 @@ interface DetailField {
   custom?: boolean;
   compact?: boolean;
   secondary?: boolean;
+  section?: string;
 }
 
 const revealed = reactive(new Set<string>());
 const status = ref("");
 
-const editable = computed(() => !props.item.deletedAt && props.item.kind !== "passkey");
+const editable = computed(() => !props.readOnly && !props.item.deletedAt && props.item.kind !== "passkey" && props.item.kind !== "opaque");
+const members = computed(() => props.item.kind === "login" ? passwordGroupMembers(props.item, props.items) : []);
+const projectGroups = computed(() => passwordProjectGroups(members.value));
+const selectedPasswordLabel = computed(() => {
+  const groupIndex = projectGroups.value?.findIndex(group => group.rows.some(row => row.item.id === props.item.id)) ?? -1;
+  if (groupIndex < 0) return tr('主要信息');
+  const group = projectGroups.value![groupIndex];
+  return tr('{0} · 密码 {1}', {0: group.label || tr('凭据组 {0}', {0: groupIndex + 1}), 1: group.rows.findIndex(row => row.item.id === props.item.id) + 1});
+});
+const canDetach = computed(() => editable.value && members.value.length > 1 && props.item.providerRefs.every(ref => props.providers.some(provider => provider.id === ref.providerId && ["local", "mdbx2", "monica-webdav"].includes(provider.kind))));
+const cardFace = computed(() => ["card","identity","billing-address"].includes(props.item.kind) ? (props.item as import('../core/model').CardItem).cardFace : undefined);
+const linkedNote = computed(() => props.item.kind === "login" ? resolveBoundNote(props.item, props.items) : undefined);
+const noteOpen = ref(false);
+const nestedTitleId = `vault-detail-title-${useId()}`;
+const titleId = computed(() => props.readOnly ? nestedTitleId : "vault-detail-title");
+const rank = (token: string) => props.item.kind === "login" ? contentRank(props.item.customFields, token) : 0;
+const safeHref = (href: string) => { try { return /^https?:$/.test(new URL(href).protocol); } catch { return false; } };
 const providerName = computed(() => props.providers.find((provider) => provider.id === props.item.providerRefs[0]?.providerId)?.name || tr('Monica 本地库'));
 const stateLabel = computed(() => props.item.deletedAt ? tr('在回收站') : props.item.archivedAt ? tr('已归档') : props.item.favorite ? tr('已收藏') : '');
-const detailType = computed(() => props.item.kind === "login" ? ({ WIFI: "Wi-Fi", SSH_KEY: tr('SSH 密钥'), BARCODE: tr('条码') } as Record<string, string>)[props.item.loginType || ""] || itemKindLabel(props.item.kind) : itemKindLabel(props.item.kind));
+const detailType = computed(() => props.item.kind === "login" ? ({ WIFI: "Wi-Fi", SSH_KEY: tr('SSH 密钥'), GPG_KEY: "GPG 密钥", API_KEY: "API Key", BARCODE: tr('条码') } as Record<string, string>)[props.item.loginType || ""] || itemKindLabel(props.item.kind) : itemKindLabel(props.item.kind));
 const detailIcon = computed(() => props.item.kind === "login" ? ({ WIFI: "wifi", SSH_KEY: "terminal", BARCODE: "qr_code_2" } as Record<string, string>)[props.item.loginType || ""] || itemIcon(props.item.kind) : itemIcon(props.item.kind));
 const otpSource = computed(() => props.item.kind === "totp" ? props.item : props.item.kind === "login" ? findBoundTotpItem(props.item, props.items) || props.item : undefined);
 
@@ -71,9 +106,18 @@ function formatDateTime(value: string | undefined): string {
   return value ? new Date(value).toLocaleString(locale.value, { dateStyle: "medium", timeStyle: "short" }) : "";
 }
 
+function cardAddressFields(value: string | undefined): DetailField[] {
+  if (!value) return [];
+  const address = readBillingAddress(value);
+  const rows: DetailField[] = address.editable ? (Object.keys(BILLING_ADDRESS_FIELDS) as BillingAddressField[]).filter(key => address.fields[key] !== "").map(key => ({secondary:true,label:`${tr('账单地址')} · ${tr(BILLING_ADDRESS_FIELDS[key])}`,value:address.fields[key]})) : [];
+  rows.push({secondary:true,label:tr('账单地址 JSON'),value,secret:true,mono:true});
+  return rows;
+}
+
 const fields = computed<DetailField[]>(() => {
   const item = props.item;
   switch (item.kind) {
+    case "opaque": return [];
     case "api-token": return [
       { label: tr('服务商'), value: item.provider },
       { label: tr('API 密钥'), value: item.token, secret: true, mono: true },
@@ -89,9 +133,10 @@ const fields = computed<DetailField[]>(() => {
         if (wifi?.security) rows.push({ label: tr('安全类型'), value: wifi.security });
         if (wifi?.bssid) rows.push({ secondary: true, label: "BSSID", value: wifi.bssid, mono: true });
         if (wifi) rows.push({ secondary: true, label: tr('隐藏网络'), value: wifi.hiddenNetwork ? tr('是') : tr('否') });
+        if (wifi) rows.push(...wifiAdvancedDetailFields(wifi).map(field => ({ ...field, label: tr(field.label), secondary: true })));
       }
       if (item.loginType !== "BARCODE" && item.loginType !== "SSH_KEY" && item.username) rows.push({ label: tr('用户名'), value: item.username });
-      if (item.password) rows.push({ label: item.loginType === "WIFI" ? tr('Wi-Fi 密码') : item.loginType === "BARCODE" ? tr('条码内容') : tr('密码'), value: item.password, secret: true, mono: item.loginType === "BARCODE" });
+      if (item.password) rows.push({ label: item.loginType === "WIFI" ? tr('Wi-Fi 密码') : item.loginType === "BARCODE" ? tr('条码内容') : item.loginType === "GPG_KEY" ? "GPG 私钥" : item.loginType === "API_KEY" ? "API Key" : tr('密码'), value: item.password, secret: true, mono: item.loginType === "BARCODE" });
       if (item.loginType === "SSH_KEY") {
         if (ssh?.algorithm) rows.push({ secondary: true, label: tr('算法'), value: ssh.algorithm });
         if (ssh?.keySize) rows.push({ secondary: true, label: tr('密钥位数'), value: String(ssh.keySize) });
@@ -102,12 +147,19 @@ const fields = computed<DetailField[]>(() => {
       }
       if (item.loginType === "SSO") {
         if (item.ssoProvider) rows.push({ label: tr('SSO 提供商'), value: item.ssoProvider });
-        if (item.ssoRefEntryId != null) rows.push({ secondary: true, label: tr('关联条目'), value: String(item.ssoRefEntryId) });
+        if (item.ssoRefLogicalId || item.ssoRefEntryId != null) {
+          const account = resolveSsoAccount(item, props.items);
+          rows.push({ label: tr('关联账号'), value: account ? [account.title, account.username].filter(Boolean).join(' · ') : tr('当前关联（尚未找到）') });
+        }
       }
-      if (item.totpSecret || item.boundTotpItemId || otpSource.value?.kind === "totp") rows.push({ label: tr('动态验证码'), value: "", otp: true });
-      for (const uri of item.uris) rows.push({ label: tr('网址'), value: uri, href: uri });
-      if (item.appPackageName) rows.push({ secondary: true, label: tr('关联应用'), value: item.appPackageName });
-      for (const field of item.customFields) rows.push({ label: field.name, value: field.value, secret: field.protected, mono: field.fieldType === "HIDDEN", custom: true });
+      if (item.totpSecret || item.boundTotpItemId || otpSource.value?.kind === "totp") rows.push({ label: tr('动态验证码'), value: "", otp: true, section: "AUTHENTICATOR" });
+      if (item.loginType === "GPG_KEY") { try { const gpg = readGpgFields(item.customFields); rows.push({label:"GPG 公钥",value:gpg.publicKey,mono:true},{label:"指纹",value:gpg.fingerprint},{label:"用户身份",value:gpg.userId}); } catch { rows.push({label:"GPG 公钥状态",value:"分段或版本不受支持；原始字段完整保留。"}); } }
+      if (item.loginType === "API_KEY") rows.push({label:"API 地址",value:item.customFields.find(field=>field.name==="monica_api_key_url")?.value||""});
+      for (const [key,label,section] of [["email","邮箱","CONTACT"],["phone","电话","CONTACT"],["addressLine","街道地址","ADDRESS"],["city","城市","ADDRESS"],["state","州 / 省","ADDRESS"],["zipCode","邮编","ADDRESS"],["country","国家","ADDRESS"],["creditCardNumber","卡号","PAYMENT"],["creditCardHolder","持卡人","PAYMENT"],["creditCardExpiry","有效期","PAYMENT"],["creditCardCVV","安全码","PAYMENT"]]) { const value = item[key as keyof LoginItem]; if(typeof value === "string" && value) rows.push({label,value,section,secret:key==="creditCardNumber"||key==="creditCardCVV"}); }
+      for (const uri of item.uris) rows.push({ label: tr('网址'), value: uri, href: uri, section: "WEBSITES" });
+      if (item.appName) rows.push({ secondary: true, label: tr('应用名称'), value: item.appName });
+      if (item.appPackageName) rows.push({ secondary: true, label: tr('应用包名'), value: item.appPackageName, mono: true });
+      for (const field of item.customFields.filter(field=>!isContentMetadata(field.name)&&!isCredentialMetadata(field.name))) rows.push({ label: field.name, value: field.value, secret: field.protected, mono: field.fieldType === "HIDDEN", custom: true });
       return rows;
     }
     case "card": {
@@ -130,6 +182,7 @@ const fields = computed<DetailField[]>(() => {
         item.currency && { secondary: true, label: tr('币种'), value: item.currency },
         item.customerServicePhone && { secondary: true, label: tr('客服电话'), value: item.customerServicePhone }
       ].filter(Boolean) as DetailField[];
+      rows.push(...cardAddressFields(item.billingAddress));
       for (const field of item.customFields || []) rows.push({ label: field.name, value: field.value, secret: field.protected, custom: true });
       return rows;
     }
@@ -242,9 +295,11 @@ const fieldSections = computed(() => {
     wide: Boolean((field.secret && !field.compact) || field.href || field.otp || field.value.length > 28 || field.value.includes("\n"))
   }));
   return [
-    { id: "primary", title: tr('主要信息'), collapsible: false, fields: indexed.filter(field => !field.custom && !field.secondary) },
-    { id: "secondary", title: tr('更多信息'), collapsible: true, fields: indexed.filter(field => !field.custom && field.secondary) },
-    { id: "custom", title: tr('自定义字段'), collapsible: true, fields: indexed.filter(field => field.custom) }
+    { id: "primary", order: -2, title: selectedPasswordLabel.value, collapsible: false, fields: indexed.filter(field => !field.custom && !field.secondary && !field.section) },
+    { id: "websites", order: -1, title: tr('匹配网站（可选）'), collapsible: false, fields: indexed.filter(field => field.section === "WEBSITES") },
+    { id: "secondary", order: -1, title: tr('更多信息'), collapsible: true, fields: indexed.filter(field => !field.custom && field.secondary && !field.section) },
+    { id: "custom", order: rank("CUSTOM_FIELDS"), title: tr('自定义字段'), collapsible: true, fields: indexed.filter(field => field.custom) },
+    ...[["AUTHENTICATOR","验证码"],["PAYMENT","支付信息"],["CONTACT","个人信息"],["ADDRESS","地址"]].map(([id,title])=>({id,title,order:rank(id),collapsible:false,fields:indexed.filter(field=>field.section===id)}))
   ].filter(section => section.fields.length).map(section => {
     // Keep short fields in pairs without leaving a half-empty row before a wide value.
     let unpaired: (typeof indexed)[number] | undefined;
@@ -262,22 +317,33 @@ const fieldSections = computed(() => {
 
 <template>
   <div class="modal-backdrop" role="presentation" @mousedown.self="emit('close')">
-    <section class="editor-dialog vault-item-dialog detail-dialog" :data-item-kind="item.kind" role="dialog" aria-modal="true" aria-labelledby="vault-detail-title">
+    <section class="editor-dialog vault-item-dialog detail-dialog" :data-item-kind="item.kind" :data-nested-dialog="readOnly?'':undefined" role="dialog" aria-modal="true" :aria-labelledby="titleId">
         <header class="detail-header">
           <div class="detail-heading">
             <WebsiteIcon class="row-icon" :item="item" :fallback="detailIcon" />
             <div class="detail-title-block">
               <p class="detail-eyebrow">{{ detailType }}</p>
-              <h2 id="vault-detail-title">{{ item.title }}</h2>
+              <h2 :id="titleId">{{ item.title }}</h2>
               <div v-if="stateLabel || item.categoryName" class="detail-badges"><span v-if="stateLabel">{{ stateLabel }}</span><span v-if="item.categoryName">{{ item.categoryName }}</span></div>
             </div>
           </div>
-          <m3e-icon-button :aria-label="tr('关闭详情')" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+          <m3e-icon-button data-dialog-close :aria-label="tr('关闭详情')" @click="emit('close')"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
         </header>
 
       <div class="detail-scroll">
         <div class="detail-body">
-          <div class="detail-main">
+          <div class="detail-main" style="display:flex;flex-direction:column">
+            <section v-if="item.kind==='opaque'" class="detail-section"><h3>只读保护</h3><p>{{item.readOnlyReason}}</p><p>类型 {{item.nativeType}} · 版本 {{item.payloadSchemaVersion}}</p><ProtectedValue v-if="item.originalPayload!==undefined" label="完整原始内容" :value="item.originalPayload" secret /></section>
+            <ProjectCredentialNavigation v-if="members.length > 1 || projectGroups" :item-id="item.id" :members="members" @open="member => emit('open', member)"><m3e-button v-if="canDetach && item.kind==='login'" type="button" variant="text" @click="emit('detach',item)">{{ tr('拆分为独立密码') }}</m3e-button></ProjectCredentialNavigation>
+            <section v-if="item.kind === 'login' && (item.boundNoteEntryId || item.boundNoteId != null)" class="detail-section" :style="{order:rank('NOTES')}">
+              <h3>{{ tr('关联笔记') }}</h3>
+              <template v-if="linkedNote"><p>{{ linkedNote.title }}</p><m3e-button type="button" variant="tonal" @click="noteOpen = true"><m3e-icon slot="icon" name="note"/>{{ tr('查看关联笔记') }}</m3e-button></template>
+              <p v-else>{{ tr('暂时找不到关联笔记，原有关联已保留。') }}</p>
+            </section>
+            <section v-if="['card','identity','billing-address'].includes(item.kind)" class="detail-section detail-card-face" style="order:-3"><WalletCardFace :item="item" :owner="attachmentOwner"/><AttachmentPreview v-if="cardFace?.imageAttachmentName" :owner="attachmentOwner||item" :name="cardFace.imageAttachmentName" label="打开卡面图片"/></section>
+            <PasswordContentDetail v-if="item.kind==='login'" :item="item" :items="items" :providers="providers" />
+            <section v-if="item.kind==='login' &amp;&amp; item.passkeyBindings" class="detail-section" :style="{order:rank('AUTHENTICATOR')}"><h3>Passkey 绑定</h3><PasskeyBindings :raw="item.passkeyBindings" /></section>
+            <m3e-expansion-panel v-if="item.kind==='login' &amp;&amp; item.customFields.some(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name))" class="detail-section" :style="{order:rank('CUSTOM_FIELDS')}"><span slot="header">受保护的内部字段与未来数据</span><ProtectedValue label="内部字段" :value="JSON.stringify(item.customFields.filter(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name)),null,2)" secret /></m3e-expansion-panel>
             <section v-if="item.kind === 'secure-note'" class="detail-section detail-note" aria-labelledby="detail-content-title">
               <div class="detail-section-heading"><h3 id="detail-content-title" class="detail-section-title">{{ tr('内容') }}</h3><m3e-icon-button v-if="noteContent" :aria-label="tr('复制{0}', { 0: tr('内容') })" @click="copyField({ label: tr('内容'), value: noteContent })"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button></div>
               <pre v-if="noteContent">{{ noteContent }}</pre>
@@ -288,15 +354,15 @@ const fieldSections = computed(() => {
               </div>
             </section>
 
-            <component :is="section.collapsible ? 'm3e-expansion-panel' : 'section'" v-for="section in fieldSections" :key="section.id" class="detail-section" :class="{ 'detail-disclosure': section.collapsible }" :aria-labelledby="`detail-${section.id}-title`">
+            <component :is="section.collapsible ? 'm3e-expansion-panel' : 'section'" v-for="section in fieldSections" :key="section.id" :style="{order:section.order}" class="detail-section" :class="{ 'detail-disclosure': section.collapsible }" :aria-labelledby="`detail-${section.id}-title`">
               <span slot="header" v-if="section.collapsible"><span><span :id="`detail-${section.id}-title`">{{ section.title }}</span><small>{{ section.fields.length }}</small></span></span>
               <h3 v-else :id="`detail-${section.id}-title`" class="detail-section-title">{{ section.title }}</h3>
-              <dl class="detail-grid">
+              <dl class="detail-grid detail-connected-fields">
                 <div v-for="field in section.fields" :key="field.id" class="detail-row" :class="{ 'detail-row-wide': field.wide, 'detail-row-otp': field.otp }">
                   <dt>{{ field.label }}</dt>
                   <dd>
                     <TotpCodeCell v-if="field.otp && otpSource" :item="otpSource" class="detail-otp" allow-use show-copy-icon :consume-code="item.deletedAt ? undefined : consumeOtp" />
-                    <a v-else-if="field.href && !isHidden(field)" class="detail-field-value" :href="field.href" target="_blank" rel="noreferrer">{{ field.value }}</a>
+                    <a v-else-if="field.href && safeHref(field.href) && !isHidden(field)" class="detail-field-value" :href="field.href" target="_blank" rel="noreferrer">{{ field.value }}</a>
                     <code v-else-if="field.mono || field.secret" class="detail-field-value">{{ isHidden(field) ? maskedDisplay(field) : field.value }}</code>
                     <span v-else class="detail-field-value">{{ isHidden(field) ? maskedDisplay(field) : field.value }}</span>
                     <span v-if="field.secret || field.value" class="detail-field-actions">
@@ -308,11 +374,12 @@ const fieldSections = computed(() => {
               </dl>
             </component>
 
-            <section v-if="item.notes" class="detail-section detail-notes" aria-labelledby="detail-notes-title">
+            <PasswordHistoryDetail v-if="item.kind === 'login'" :key="item.id" :item="item" :remove="readOnly ? undefined : deleteHistory" :local-only="item.providerRefs.some(ref => providers.some(provider => provider.id === ref.providerId && ['keepass', 'mdbx2'].includes(provider.kind)))" />
+            <section v-if="item.notes" :style="{order:rank('NOTES')}" class="detail-section detail-notes" aria-labelledby="detail-notes-title">
               <h3 id="detail-notes-title" class="detail-section-title">{{ tr('备注') }}</h3>
               <p class="detail-notes-line">{{ item.notes }}</p>
             </section>
-            <p v-if="!fieldSections.length && item.kind !== 'secure-note' && !item.notes" class="detail-empty">{{ tr('暂无内容') }}</p>
+            <p v-if="!fieldSections.length && item.kind !== 'secure-note' && item.kind !== 'opaque' && !item.notes" class="detail-empty">{{ tr('暂无内容') }}</p>
             <p v-if="item.kind === 'passkey' && sourceLabel(item.sourceMode) === tr('Android 元数据')" class="supporting detail-context-note">{{ tr('该 Passkey 来自 Android 备份，仅保留元数据；浏览器无法用它完成 WebAuthn 签名。') }}</p>
           </div>
 
@@ -336,5 +403,6 @@ const fieldSections = computed(() => {
         </div>
       </footer>
     </section>
+    <VaultItemDetail v-if="noteOpen && linkedNote" :item="linkedNote" :items="items" :providers="providers" :consume-otp="consumeOtp" read-only @close="noteOpen = false" />
   </div>
 </template>

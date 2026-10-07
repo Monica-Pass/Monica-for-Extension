@@ -1,6 +1,7 @@
+import { launchEdgeContext } from "./fixtures/edge";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import path from "node:path";
-import { chromium, expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createPasskey } from "../../src/passkey/webauthn-core";
 import * as kdbxweb from "kdbxweb";
@@ -58,7 +59,7 @@ function websiteHtml(early = false): string {
 
 async function launch(testInfo: TestInfo, suffix: string, bytes: Uint8Array, early = false): Promise<Client> {
   const extensionPath = path.resolve("dist");
-  const context = await chromium.launchPersistentContext(testInfo.outputPath(`profile-${suffix}`), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+  const context = await launchEdgeContext(testInfo.outputPath(`profile-${suffix}`), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const manager = await context.newPage();

@@ -3,7 +3,12 @@ import type { SshKeyMetadata, WifiMetadata } from "../core/special-login";
 
 export interface LoginForm {
   name: string;
+  customIconType?: string;
+  iconBusy?: boolean;
+  customIconValue?: string;
   username: string;
+  appName: string;
+  appPackageName: string;
   password: string;
   wifiPassword: string;
   barcodeContent: string;
@@ -15,12 +20,37 @@ export interface LoginForm {
   loginType: NonNullable<LoginItem["loginType"]>;
   ssoProvider: string;
   ssoRefEntryId: string;
+  ssoRefLogicalId?: string;
+  ssoRefEdited?: boolean;
   totpSecret: string;
   boundTotpItemId: string;
+  boundNoteEntryId?: string;
+  boundNoteEdited?: boolean;
   uriRules: LoginUriRule[];
   customFields: SecureCustomField[];
   wifiMetadataRaw: string;
   wifi: WifiMetadata;
   sshKeyDataRaw: string;
   sshKey: SshKeyMetadata;
+  passwordGroupId: string;
+  /** Draft-only stable password identities; never remove source snapshots here. */
+  removedPasswordIds?: string[];
+  groupMembers: Array<{ id: string; username: string; password: string; totpSecret?: string; customFields?: SecureCustomField[]; original?: LoginItem }>;
+  passkeyBindings: string;
+  apiKeyUrl: string;
+  gpgPublicKey: string;
+  gpgFingerprint: string;
+  gpgUserId: string;
+  gpgError: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  country: string;
+  creditCardNumber: string;
+  creditCardHolder: string;
+  creditCardExpiry: string;
+  creditCardCVV: string;
 }

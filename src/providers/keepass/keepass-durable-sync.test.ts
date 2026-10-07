@@ -145,7 +145,7 @@ describe("KeePass durable item synchronization", () => {
 
     const first = await coordinator.synchronize(environment.account);
 
-    expect(first.warnings.join("\n")).toContain(`本轮按 Monica Android 上限处理了 ${KEEPASS_ITEM_SYNC_BATCH_LIMIT} 条`);
+    expect(first.warnings.join("\n")).toContain(`本轮处理了 ${KEEPASS_ITEM_SYNC_BATCH_LIMIT} 条`);
     expect(vault.state.mutationQueue).toEqual([expect.objectContaining({ id: "mutation-100", itemId: "item-100" })]);
     expect(await activeEntryCount(environment.provider, environment.account)).toBe(KEEPASS_ITEM_SYNC_BATCH_LIMIT);
     expect(await environment.storage.readReceipt(environment.account.id, KEEPASS_ITEM_SYNC_RECEIPT_ID)).toBeUndefined();
@@ -188,7 +188,7 @@ class TestDurableVault implements KeePassDurableSyncVault {
     this.state.mutationQueue = this.state.mutationQueue.filter((mutation) => {
       if (mutation.providerId !== providerId || conflictsByItem.has(mutation.itemId)) return true;
       const result = resultById.get(mutation.itemId);
-      if (mutation.operation === "delete") return Boolean(result);
+      if (mutation.operation === "delete") return Boolean(result && !result.deletedAt);
       return !result?.providerRefs.some((reference) => reference.providerId === providerId && reference.remoteId);
     });
     return { conflicts: conflicts.length };

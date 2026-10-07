@@ -4,6 +4,7 @@ import { chromium, expect, test, type BrowserContext, type Locator, type Page, t
 import * as kdbxweb from "kdbxweb";
 import path from "node:path";
 import { buildKeePassFixture, keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
+import { completeUserVerification } from "./fixtures/passkey-verification";
 
 const kdbxRuntime = ((kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb);
 const VAULT_PASSWORD = "keepass webdav manager vault password";
@@ -218,6 +219,7 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
+    await completeUserVerification(context, VAULT_PASSWORD);
     await expect(page.locator("#result")).toContainText("registered:");
     await expect(page.locator("#result")).not.toContainText("error:");
 
@@ -240,6 +242,7 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
+    await completeUserVerification(context, VAULT_PASSWORD);
     await expect(page.locator("#result")).toContainText("authenticated:");
     await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await vaultPasskeys(launched.manager);
@@ -337,7 +340,7 @@ async function installRemoteRoute(context: BrowserContext, remote: RemoteState):
   await context.route(`${REMOTE_ORIGIN}/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (request.method() === "PROPFIND" && url.pathname === "/dav") {
+    if (request.method() === "PROPFIND" && url.pathname === "/dav/") {
       await route.fulfill({ status: 207, contentType: "application/xml; charset=utf-8", body: "<d:multistatus xmlns:d=\"DAV:\"></d:multistatus>" });
       return;
     }

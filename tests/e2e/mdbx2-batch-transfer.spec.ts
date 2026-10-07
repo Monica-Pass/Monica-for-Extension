@@ -156,7 +156,7 @@ test("MDBX2 batch transfer provides safe M3E planning progress confirmation and 
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS("border-radius", "16px");
     await expect(dialog).toHaveCSS("background-image", "none");
-    await expect(dialog.locator(".batch-panel").first()).toHaveCSS("border-radius", "8px");
+    await expect(dialog.locator(".batch-panel").first()).toHaveCSS("border-radius", "24px");
     await expect(dialog.locator(".batch-panel").first()).toHaveCSS("background-image", "none");
 
     await dialog.getByRole("checkbox", { name: /Work Login/ }).check();

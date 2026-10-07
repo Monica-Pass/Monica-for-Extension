@@ -83,7 +83,7 @@ let listGeneration = 0;
 const deleteOperationIds = new Map<string, string>();
 
 const selectedProvider = computed(() => props.providers.find((provider) => provider.id === selectedProviderId.value));
-const readOnlyProvider = computed(() => selectedProvider.value?.kind === "monica-webdav" && !Boolean(selectedProvider.value.config.backupPassword));
+const readOnlyProvider = computed(() => selectedProvider.value?.kind === "monica-webdav" && selectedProvider.value.config.backupPasswordConfigured !== true);
 const transferTargets = computed(() => props.providers.filter((provider) => provider.id !== selectedProviderId.value));
 const pendingTransferTarget = computed(() => transferTargets.value.find((provider) => provider.id === pendingTransfer.value?.targetProviderId));
 const interactionLocked = computed(() => listBusy.value || uploadBusy.value || transferBusy.value || recoveryBusy.value || Boolean(downloadingAttachmentId.value) || Boolean(deletingAttachmentId.value));
@@ -103,6 +103,7 @@ const providerDescription = computed(() => {
     ? tr('来自 Monica Android 的 portable 附件；设置 WebDAV 备份密码后才能安全写回。')
     : tr('Android portable 附件写入已加密 WebDAV 备份，并在下载前校验大小和 SHA-256。');
   if (selectedProvider.value?.config.sourceMode === "webdav") return tr('KeePass 附件写入本机加密工作副本，并通过精确 ETag 发布到 WebDAV。');
+  if (selectedProvider.value?.config.sourceMode === "onedrive") return tr('KeePass 附件加密保存在数据库中，并随数据库同步到 OneDrive。');
   return tr('KeePass 附件保存在当前已解锁的 KDBX 会话中，完成后需要导出数据库文件。');
 });
 
@@ -546,7 +547,7 @@ function transferErrorMessage(cause: unknown): string {
 
 <template>
   <div class="modal-backdrop attachment-backdrop" role="presentation" @mousedown.self="closeDialog">
-    <section ref="dialogRoot" class="editor-dialog provider-attachments-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-attachments-title">
+    <section ref="dialogRoot" class="editor-dialog provider-attachments-dialog" data-nested-dialog role="dialog" aria-modal="true" aria-labelledby="provider-attachments-title">
       <header>
         <div>
           <h2 id="provider-attachments-title">{{ tr('附件 · {0}', { 0: item.title }) }}</h2>

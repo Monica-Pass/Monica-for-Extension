@@ -11,6 +11,7 @@ Monica 的单一用途是安全管理并按用户明确操作保存、同步和�
 | `cookies` | 仅在用户明确刷新或处理 Steam 登录/交易确认时，临时设置 Steam Mobile Confirmation 所需 Cookie；请求结束后恢复用户原有 Cookie。 | 不读取、上传或修改其他网站 Cookie，也不会长期保留 Steam 会话 Cookie。 |
 | `identity` | 为用户明确发起的 Bitwarden 企业 SSO 和 WebAuthn 两步验证打开官方 OAuth/connector 窗口，并接收一次性回调。 | 不读取其他扩展的身份数据，不保存 OAuth code、PKCE verifier 或 WebAuthn token。 |
 | `nativeMessaging` | 由后台 Service Worker 连接本机安装的 `com.monica_pass.mdbx2` Host，在受限消息中执行 MDBX2 格式、加密、Commit 与同步操作。Host 清单只授权安装时写入的精确插件 ID。 | Content Script 与 Popup 无法连接 Host；插件不向 Host 暴露网页来源，也不允许 MDBX1 文件进入 MDBX2 运行环境。 |
+| `sidePanel` | 用户点击 Popup 的“打开侧栏”后，在 Edge 真实侧栏中打开同一个 `index.html` 管理页；查询参数只标识呈现位置。 | 不自动打开、不替换 Popup、不绕过主密码或锁定状态；不扩大网页、内容脚本或可访问资源的权限。 |
 
 ## 主机权限
 
@@ -31,3 +32,5 @@ Popup 与后台会使用 `chrome.tabs.query/get/sendMessage` 访问当前 HTTP/H
 - 所有运行时代码随扩展打包；Content Security Policy 禁止远程脚本和任意对象加载。
 
 更详细的数据流见 [隐私政策](PRIVACY.md) 和 [架构说明](ARCHITECTURE.md)。
+
+1.0.315 互通适配后的最低 Chromium API 版本为 128，保证无损 JSON 的 `JSON.rawJSON` / reviver source 能力；本次真实浏览器验收只使用 Microsoft Edge。侧栏与全页遵循相同的 runtime sender origin/path 校验与会话级解锁，未引入新远端脚本。

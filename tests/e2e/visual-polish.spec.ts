@@ -26,11 +26,11 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
 
     await page.getByRole("button", { name: "密码源" }).click();
     const connectionButtons = page.locator(".provider-connect-grid .connect-source");
-    await expect(connectionButtons).toHaveCount(4);
+    await expect(connectionButtons).toHaveCount(5);
     await expect(page.locator(".provider-config-card")).toHaveCount(0);
     await expect(page.locator(".provider-list .source-card")).toHaveCount(1);
     expect((await page.locator(".provider-page").boundingBox())!.width).toBeLessThanOrEqual(820);
-    const connectionBoxes = await Promise.all(Array.from({ length: 4 }, (_, index) => connectionButtons.nth(index).boundingBox()));
+    const connectionBoxes = await Promise.all(Array.from({ length: 5 }, (_, index) => connectionButtons.nth(index).boundingBox()));
     for (const box of connectionBoxes.slice(1)) expect(Math.abs(connectionBoxes[0]!.width - box!.width)).toBeLessThanOrEqual(1);
     await expectCentered(page.locator(".source-icon").first(), page.locator(".source-icon m3e-icon").first());
     await expectCentered(page.locator(".connect-icon").first(), page.locator(".connect-icon m3e-icon").first());
@@ -73,7 +73,7 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
     await page.getByRole("button", { name: "选择新建类型", exact: true }).click();
     const picker = page.getByRole("menu", { name: "选择新建类型", exact: true });
     await expect(picker).toBeVisible();
-    await expect(picker.getByRole("menuitem")).toHaveCount(11);
+    await expect(picker.getByRole("menuitem")).toHaveCount(13);
     for (const option of await picker.getByRole("menuitem").all()) await expect(option).toBeInViewport({ ratio: 1 });
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
@@ -386,7 +386,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
 
     await openSection("登录项");
     await page.getByRole("button", { name: "新建", exact: true }).click();
-    dialog = dialogContent(page, { name: "添加登录项" });
+    dialog = dialogContent(page, { name: "添加密码" });
     await audit("登录项", dialog);
     await dialog.getByRole("button", { name: "关闭" }).click();
 
@@ -440,8 +440,8 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
 
     await page.getByRole("button", { name: "打开导航" }).click();
     await page.locator(".sidebar").getByRole("button", { name: /^登录项/ }).click();
-    await page.getByRole("button", { name: "添加登录项" }).first().click();
-    const editor = dialogContent(page, { name: "添加登录项" });
+    await page.getByRole("button", { name: "新建", exact: true }).click();
+    const editor = dialogContent(page, { name: "添加密码" });
     await expect(editor).toBeVisible();
     await expectDirectChildrenSeparated(editor.locator(".login-item-form"));
     const type = await editor.getByRole("combobox", { name: "项目类型", exact: true }).boundingBox();

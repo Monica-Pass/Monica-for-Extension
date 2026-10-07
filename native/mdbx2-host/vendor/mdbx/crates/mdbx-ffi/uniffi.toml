@@ -1,0 +1,8 @@
+[bindings.kotlin]
+android = true
+kotlin_target_version = "2.0"
+
+[bindings.kotlin.rename]
+"MdbxFfiError.Storage.message" = "detail"
+"MdbxFfiError.Serialization.message" = "detail"
+"MdbxFfiError.SyncProtocol.message" = "detail"

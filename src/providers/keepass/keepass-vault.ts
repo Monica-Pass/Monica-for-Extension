@@ -1,4 +1,6 @@
 import * as kdbxweb from "kdbxweb";
+import { readProjectCredential } from '../../core/project-credentials';
+import { readKeePassCustomIcon } from "./keepass-custom-icon";
 import type { LoginItem, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { MonicaItemBase } from "../monica-item-data";
 import { buildKeePassCredentialCandidates, keePassInvalidCredentialMessage } from "./keepass-credentials";
@@ -162,8 +164,11 @@ export function readKeePassEntries(
       providerId,
       hasRecycleBinMeta
     });
-    if (decoded.item) items.push(decoded.item);
-    else if (decoded.reason) skipped.push({ entryUuid, groupPath: context.groupPath, reason: decoded.reason });
+    if (decoded.item) {
+      if (decoded.item.kind === "login" || decoded.item.kind === "totp") Object.assign(decoded.item, readKeePassCustomIcon(database, context.entry));
+      items.push(decoded.item);
+    }
+    if (decoded.reason) skipped.push({ entryUuid, groupPath: context.groupPath, reason: decoded.reason });
   }
 
   return { items, skipped, entriesByUuid, hasRecycleBinMeta };
@@ -197,9 +202,9 @@ export function decodeKeePassEntry(
   if (isKeePassSecureItemEntry(fields)) {
     if (isKeePassPasskeyEntry(fields)) return { reason: "monica-secure-item" };
     const projection = readKeePassSecureItemFields(fields);
-    if (!projection) return { reason: "unknown-item-type" };
+    if (!projection) return opaqueKeePassEntry(context, fields, base, options);
     const item = keePassSecureItemToVaultItem(projection, base);
-    return item ? { item } : { reason: "unknown-item-type" };
+    return item ? { item } : opaqueKeePassEntry(context, fields, base, options);
   }
 
   if (isKeePassPasskeyEntry(fields)) {
@@ -232,6 +237,20 @@ export function decodeKeePassEntry(
   return { item: buildLoginItem(fields, base) };
 }
 
+function opaqueKeePassEntry(context: KeePassEntryContext, fields: KeePassEntryFields, base: MonicaItemBase, options: KeePassDecodeOptions): KeePassDecodedEntry {
+  return {
+    reason: "unknown-item-type",
+    item: {
+      ...base,
+      kind: "opaque",
+      nativeType: keePassFieldValue(fields, "MonicaItemType") || "unknown",
+      payloadSchemaVersion: 1,
+      originalPayload: keePassSourceRecordFor(context.entry, options.providerId).payload,
+      readOnlyReason: "未知 KeePass 项目类型；原字段及附件仍在数据库中，仅可只读查看。"
+    }
+  };
+}
+
 /** A login that also carries TOTP fields stays a login, so only a blank username and password qualify. */
 function isTotpOnlyEntry(fields: KeePassEntryFields): boolean {
   const login = readKeePassLoginFields(fields);
@@ -243,6 +262,8 @@ function isTotpOnlyEntry(fields: KeePassEntryFields): boolean {
  * the login instead of silently defaulting when the code is generated.
  */
 function keePassEntryTotpUri(fields: KeePassEntryFields): string | undefined {
+  const original = keePassFieldValue(fields, "otp");
+  if (original.includes("://")) return original;
   const totp = readKeePassEntryTotp(fields);
   if (!totp) return undefined;
   return keePassTotpFieldsFor(totp, totp.issuer || totp.accountName)[KEEPASS_TOTP_FIELDS.otp];
@@ -263,15 +284,18 @@ function buildLoginItem(fields: KeePassEntryFields, base: MonicaItemBase): Login
     notes: projection.notes,
     username: projection.username,
     password: projection.password,
-    uris: projection.url ? [projection.url] : [],
-    uriRules: projection.url ? [{ uri: projection.url, matchType: "base-domain" }] : [],
+    uris: projection.url ? projection.url.split(/\r?\n/).filter(Boolean) : [],
+    uriRules: projection.url ? projection.url.split(/\r?\n/).filter(Boolean).map((uri) => ({ uri, matchType: "base-domain" as const })) : [],
     customFields: projection.customFields,
+    passwordGroupId: readProjectCredential(projection.customFields)?.projectId,
     // Android would have emitted a second TOTP row for this entry; here the credential rides along on
     // the login instead, since both rows would otherwise claim the same entry-derived id.
     totpSecret: keePassEntryTotpUri(fields),
     loginType: projection.loginType,
+    isGroupCover: projection.isGroupCover,
     ssoProvider: projection.ssoProvider,
     ssoRefEntryId: projection.ssoRefEntryId,
+    ssoRefLogicalId: projection.ssoRefLogicalId,
     appPackageName: projection.appPackageName,
     appName: projection.appName,
     email: projection.email,
@@ -281,6 +305,10 @@ function buildLoginItem(fields: KeePassEntryFields, base: MonicaItemBase): Login
     state: projection.state,
     zipCode: projection.zipCode,
     country: projection.country,
+    creditCardNumber: projection.creditCardNumber,
+    creditCardHolder: projection.creditCardHolder,
+    creditCardExpiry: projection.creditCardExpiry,
+    creditCardCVV: projection.creditCardCVV,
     sshKeyData: projection.sshKeyData,
     wifiMetadata: projection.wifiMetadata
   };

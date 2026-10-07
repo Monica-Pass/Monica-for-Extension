@@ -1,4 +1,9 @@
 import * as kdbxweb from "kdbxweb";
+import { preserveLocalPasswordHistory } from '../../core/password-history';
+import { passwordGroupKey } from '../../core/password-groups';
+import { planKeePassProjectRemoval, type KeePassProjectRemovalDraft } from '../../core/keepass-project-removal';
+import { prepareKeePassProjectAttachmentHandoff } from './keepass-project-attachments';
+import { isRemoteKeePassSource, type KeePassSourceMode } from "./keepass-source";
 import type { PasskeyItem, PendingMutation, ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAcknowledgedMutation, ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
 import { createSourceRecord } from "../../core/source-records";
@@ -11,7 +16,8 @@ import {
   type ProviderAttachmentSummary
 } from "../attachments/attachment-contract";
 import { keePassSourceRecordFor, openKeePassVault, readKeePassEntries, type KeePassSkippedEntry, type KeePassVaultEntries } from "./keepass-vault";
-import { createKeePassEntry, removeKeePassEntry, writeKeePassEntry } from "./keepass-writer";
+import { assertKnownKeePassType, createKeePassEntry, removeKeePassEntry, restoreKeePassEntry, writeKeePassEntry,
+  prepareKeePassEntryWrite, validateKeePassEntryRemoval, validateKeePassEntryRestore, type PreparedKeePassEntryWrite } from "./keepass-writer";
 import { readKeePassPasskeyFields } from "./keepass-passkey-codec";
 import {
   KEEPASS_GROUP_MAX_PAGE_SIZE,
@@ -55,7 +61,7 @@ export class KeePassPasskeyCredentialConflictError extends Error {
  */
 export interface KeePassSessionSummary {
   providerId: string;
-  sourceMode: "local-file" | "webdav";
+  sourceMode: KeePassSourceMode;
   databaseName: string;
   versionMajor: number;
   cipherName?: string;
@@ -81,7 +87,7 @@ export interface KeePassUnlockCredential {
   password: string;
   keyFile?: Uint8Array;
   sourceName?: string;
-  sourceMode?: "local-file" | "webdav";
+  sourceMode?: KeePassSourceMode;
   dirty?: boolean;
 }
 
@@ -140,7 +146,8 @@ export class KeePassProvider implements ProviderAdapter {
   async unlock(
     account: ProviderAccount,
     bytes: Uint8Array,
-    credential: KeePassUnlockCredential
+    credential: KeePassUnlockCredential,
+    preserveUnchangedAttachmentHandles = false
   ): Promise<KeePassSessionSummary> {
     const snapshot = await openKeePassVault(bytes, {
       password: credential.password,
@@ -150,14 +157,36 @@ export class KeePassProvider implements ProviderAdapter {
       providerId: account.id
     });
 
+    // Remote publication reloads the same working copy. Keep a displayed handle
+    // only while its entry, name and exact bytes still match in that live session.
+    const retained = [...this.attachmentHandles].filter(([, handle]) => {
+      if (!preserveUnchangedAttachmentHandles || handle.providerId !== account.id) return false;
+      const before = this.sessions.get(account.id)?.entries.entriesByUuid.get(handle.entryUuid)?.binaries.get(handle.fileName);
+      const after = snapshot.entriesByUuid.get(handle.entryUuid)?.binaries.get(handle.fileName);
+      if (!before || !after || binarySize(before) !== binarySize(after)) return false;
+      const size = binarySize(before);
+      for (let offset = 0; offset < size; offset += PROVIDER_ATTACHMENT_CHUNK_BYTES) {
+        const end = Math.min(size, offset + PROVIDER_ATTACHMENT_CHUNK_BYTES);
+        const left = copyBinaryRange(before, offset, end);
+        const right = copyBinaryRange(after, offset, end);
+        const equal = left.every((value, index) => value === right[index]);
+        left.fill(0); right.fill(0);
+        if (!equal) return false;
+      }
+      return true;
+    });
     this.lockAccount(account.id);
+    for (const [id, handle] of retained) {
+      this.attachmentHandles.set(id, handle);
+      this.attachmentHandleByKey.set(attachmentHandleKey(handle.providerId, handle.entryUuid, handle.fileName), id);
+    }
     this.sessions.set(account.id, {
       database: snapshot.database,
       databaseId: databaseIdOf(account),
       entries: { items: snapshot.items, skipped: snapshot.skipped, entriesByUuid: snapshot.entriesByUuid },
       summary: {
         providerId: account.id,
-        sourceMode: credential.sourceMode === "webdav" ? "webdav" : "local-file",
+        sourceMode: isRemoteKeePassSource(credential.sourceMode) ? credential.sourceMode : "local-file",
         databaseName: snapshot.database.meta.name || credential.sourceName || "KeePass 数据库",
         versionMajor: snapshot.versionMajor,
         cipherName: snapshot.cipherName,
@@ -199,6 +228,64 @@ export class KeePassProvider implements ProviderAdapter {
   async snapshotFile(providerId: string): Promise<Uint8Array> {
     const session = this.requireSession(providerId);
     return new Uint8Array(await session.database.save());
+  }
+
+  /** Prepare one complete file replacement in an isolated session. The caller
+   * must persist these exact output bytes before conditional publication; no live
+   * session, source file or local item is changed by this method, even on failure.
+   */
+  async prepareProjectRemovalFile(account: ProviderAccount, draft: KeePassProjectRemovalDraft, input: {
+    bytes: Uint8Array; expectedSha256: string; credential: KeePassUnlockCredential;
+  }) {
+    const source = structuredClone(account), request = structuredClone(draft);
+    const bytes = input.bytes.slice(), expected = input.expectedSha256, credential = structuredClone(input.credential);
+    const digest = async (value: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', value.slice().buffer))]
+      .map(byte => byte.toString(16).padStart(2, '0')).join('');
+    if (!/^[a-f0-9]{64}$/.test(expected) || await digest(bytes) !== expected) throw new Error('KeePass 文件版本已变化，原密码尚未移除。');
+    const plan = planKeePassProjectRemoval(request, request.originals, source);
+    const isolated = new KeePassProvider();
+    let handoff: ReturnType<typeof prepareKeePassProjectAttachmentHandoff> | undefined;
+    try {
+      await isolated.unlock(source, bytes, credential);
+      const session = isolated.requireSession(source.id);
+      const native = session.entries.items.filter(item => item.kind === 'login' && !item.deletedAt && item.passwordGroupId === plan.projectId);
+      const originalByUuid = new Map(request.originals.map(item => [referenceOf(item, source.id)!.remoteId!, item]));
+      if (native.length !== originalByUuid.size || native.some(item => !originalByUuid.has(remoteIdOf(item, source.id))))
+        throw new Error('KeePass 文件项目成员已变化，原密码尚未移除。');
+      for (const item of native) {
+        const original = originalByUuid.get(remoteIdOf(item, source.id))!;
+        const baseline = restoreContentFingerprint(referenceOf(original, source.id)?.etag || '');
+        if (!baseline || baseline !== restoreContentFingerprint(fingerprint(item)))
+          throw new Error('KeePass 文件项目内容已变化，原密码尚未移除。');
+      }
+      const entries = new Map(request.originals.map(item => [item.id, session.entries.entriesByUuid.get(referenceOf(item, source.id)!.remoteId!)!]));
+      const writes = plan.retained.map(item => ({ item, entry: entries.get(item.id),
+        prepared: prepareKeePassEntryWrite(item, entries.get(item.id)?.fields) }));
+      for (const item of plan.removed) validateKeePassEntryRemoval(session.database, entries.get(item.id)!);
+      // New retained members are created only in the disposable session. A later
+      // collision, serialization or attachment failure discards the whole copy.
+      for (const row of writes) if (!row.entry) {
+        row.entry = createKeePassEntry(session.database, row.item, row.item.keepassGroupPath, row.prepared).entry;
+        entries.set(row.item.id, row.entry);
+      }
+      if (plan.ownerTransfer) handoff = prepareKeePassProjectAttachmentHandoff(session.database,
+        entries.get(plan.ownerTransfer.sourceItemId)!, entries.get(plan.ownerTransfer.targetItemId)!);
+      handoff?.apply();
+      for (const row of writes) if (originalByUuid.has(row.entry!.uuid.toString()))
+        writeKeePassEntry(session.database, row.entry!, row.item, row.prepared);
+      for (const item of plan.removed) removeKeePassEntry(session.database, entries.get(item.id)!);
+      isolated.reread(session, source.id);
+      const identityByUuid = new Map([...plan.retained, ...plan.removed].map(item => [entries.get(item.id)!.uuid.toString(), item]));
+      const items = session.entries.items.filter(item => identityByUuid.has(remoteIdOf(item, source.id)))
+        .map(item => finalize(item, identityByUuid.get(remoteIdOf(item, source.id)), source.id));
+      if (items.length !== identityByUuid.size) throw new Error('KeePass 项目文件写入不完整，原文件已保留。');
+      const output = await isolated.snapshotFile(source.id);
+      return { inputSha256: expected, outputSha256: await digest(output), bytes: output, items };
+    } finally {
+      handoff?.dispose();
+      isolated.lock();
+      credential.keyFile?.fill(0);
+    }
   }
 
   listGroups(
@@ -318,6 +405,7 @@ export class KeePassProvider implements ProviderAdapter {
     historyId: string
   ): KeePassHistoryRestoreResult {
     const { session, entryUuid, entry } = this.requireHistoryEntry(account, item);
+    assertKnownKeePassType(entry.fields);
     const mutation = this.historyStore.restore(
       session.database,
       account.id,
@@ -380,6 +468,7 @@ export class KeePassProvider implements ProviderAdapter {
       throw new ProviderAttachmentError("attachment-size-invalid", "KeePass 附件超过当前浏览器支持的 256 MiB 上限。");
     }
     const { session, entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    assertKnownKeePassType(entry.fields);
     if (entry.binaries.has(fileName) && !replaceExisting) {
       throw new ProviderAttachmentError("attachment-name-conflict", "此条目已有同名附件，需要明确确认替换。");
     }
@@ -395,6 +484,7 @@ export class KeePassProvider implements ProviderAdapter {
 
   deleteAttachment(account: ProviderAccount, item: VaultItem, attachmentId: string): boolean {
     const { session, entryUuid, entry } = this.requireAttachmentEntry(account, item);
+    assertKnownKeePassType(entry.fields);
     const handle = this.requireAttachmentHandle(account.id, entryUuid, attachmentId);
     if (!entry.binaries.has(handle.fileName)) {
       return false;
@@ -475,6 +565,7 @@ export class KeePassProvider implements ProviderAdapter {
     const conflicts: ProviderSyncResult["conflicts"] = [];
     const keepLocal = new Map<string, VaultItem>();
     const updates: Array<{ entryUuid: string; item: VaultItem }> = [];
+    const restorations: Array<{ entryUuid: string; item: VaultItem; edited: boolean }> = [];
     const deletions: string[] = [];
 
     for (const [entryUuid, local] of localByUuid) {
@@ -491,7 +582,7 @@ export class KeePassProvider implements ProviderAdapter {
         continue;
       }
       /** No stored fingerprint means no baseline, so the safe move is always to take the file's copy. */
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== passkeyContentFingerprint(reference.etag!);
+      const localChanged = Boolean(reference.etag) && fingerprint(local) !== storedFingerprint(reference.etag!);
 
       if (pendingByItemId && !pendingByItemId.has(local.id) && (localChanged || local.deletedAt)) {
         keepLocal.set(entryUuid, local);
@@ -506,7 +597,27 @@ export class KeePassProvider implements ProviderAdapter {
         continue;
       }
 
-      const remoteChanged = (referenceOf(remote, account.id)?.revision || "") !== (reference.revision || "");
+      // UsageCount is not an edit revision: Android/KeePass clients can change
+      // fields without incrementing it. Compare the represented native content.
+      const remoteBaseline = restoreContentFingerprint(reference.etag || '');
+      const remoteChanged = (referenceOf(remote, account.id)?.revision || "") !== (reference.revision || "")
+        || Boolean(remoteBaseline && restoreContentFingerprint(fingerprint(remote)) !== remoteBaseline);
+      if (remote.deletedAt) {
+        if (local.deletedAt) continue; // Already in the bin: never purge it on a repeated sync.
+        if (pendingByItemId?.get(local.id)?.keepassRestore) {
+          const baseline = restoreContentFingerprint(reference.etag || '');
+          if (!baseline || restoreContentFingerprint(fingerprint(remote)) !== baseline) {
+            conflicts.push({ itemId: local.id, reason: 'KeePass 回收站条目在删除后发生变化，请核对后再恢复。', local, remote });
+            keepLocal.set(entryUuid, local);
+          } else {
+            restorations.push({ entryUuid, item: local, edited: restoreContentFingerprint(fingerprint(local)) !== baseline });
+          }
+        } else if (localChanged) {
+          conflicts.push({ itemId: local.id, reason: '此条目已移入 KeePass 回收站，但浏览器中仍有未同步修改。', local, remote });
+          keepLocal.set(entryUuid, local);
+        }
+        continue;
+      }
       if (local.deletedAt) {
         if (remoteChanged) {
           conflicts.push({ itemId: local.id, reason: "此条目在浏览器中已删除，但 Monica Android 之后又修改过它。", local, remote });
@@ -525,8 +636,8 @@ export class KeePassProvider implements ProviderAdapter {
       updates.push({ entryUuid, item: local });
     }
 
-    const passkeyConflicts = conflictingPasskeyMutations(session, updates, creations);
-    for (const update of updates) {
+    const passkeyConflicts = conflictingPasskeyMutations(session, [...updates, ...restorations], creations);
+    for (const update of [...updates, ...restorations]) {
       if (!passkeyConflicts.has(update.item.id)) continue;
       conflicts.push({
         itemId: update.item.id,
@@ -541,23 +652,66 @@ export class KeePassProvider implements ProviderAdapter {
       conflicts.push({ itemId: item.id, reason: "目标 KeePass 数据库中已存在相同的 Passkey 凭据 ID。", local: item });
       deferredCreations.push(item);
     }
-    const applicableUpdates = updates.filter((update) => !passkeyConflicts.has(update.item.id));
-    const applicableCreations = creations.filter((item) => !passkeyConflicts.has(item.id));
+    const prepared = new Map<string, PreparedKeePassEntryWrite>();
+    // Build all patches before touching the KDBX. A malformed final member must
+    // not leave preceding writes in memory for a later export/publication.
+    const validate = (item: VaultItem, check: () => void) => {
+      if (passkeyConflicts.has(item.id)) return;
+      try { check(); }
+      catch {
+        conflicts.push({ itemId: item.id, reason: '此 KeePass 项目的字段、图标或回收站状态无法安全写入，请检查原始数据。', local: item,
+          remote: referenceOf(item, account.id)?.remoteId ? remoteByUuid.get(referenceOf(item, account.id)!.remoteId!) : undefined });
+      }
+    };
+    for (const update of updates) validate(update.item, () => {
+      const entry = session.entries.entriesByUuid.get(update.entryUuid)!;
+      prepared.set(update.item.id, prepareKeePassEntryWrite(update.item, entry.fields));
+    });
+    for (const restore of restorations) validate(restore.item, () => {
+      const entry = session.entries.entriesByUuid.get(restore.entryUuid)!;
+      validateKeePassEntryRestore(session.database, entry);
+      if (restore.edited) prepared.set(restore.item.id, prepareKeePassEntryWrite(restore.item, entry.fields));
+    });
+    for (const item of creations) validate(item, () => { prepared.set(item.id, prepareKeePassEntryWrite(item)); });
+    for (const entryUuid of deletions) validate(localByUuid.get(entryUuid)!, () => {
+      validateKeePassEntryRemoval(session.database, session.entries.entriesByUuid.get(entryUuid)!);
+    });
+
+    const blockedIds = new Set(conflicts.map(conflict => conflict.itemId));
+    const blockedProjects = new Set(scoped.filter(item => blockedIds.has(item.id) && item.kind === 'login' && item.passwordGroupId)
+      .map(item => passwordGroupKey(item as import('../../core/model').LoginItem)));
+    for (const item of scoped) {
+      if (item.kind !== 'login' || !item.passwordGroupId || !blockedProjects.has(passwordGroupKey(item))) continue;
+      if (!blockedIds.has(item.id)) conflicts.push({ itemId: item.id, reason: '同一密码项目的成员存在同步冲突或无效数据，整组修改已保留，请一起核对。', local: item,
+        remote: referenceOf(item, account.id)?.remoteId ? remoteByUuid.get(referenceOf(item, account.id)!.remoteId!) : undefined });
+      blockedIds.add(item.id);
+    }
+    for (const [entryUuid, item] of localByUuid) if (blockedIds.has(item.id)) keepLocal.set(entryUuid, item);
+    for (const item of creations) if (blockedIds.has(item.id) && !deferredCreations.some(row => row.id === item.id)) deferredCreations.push(item);
+    const applicableUpdates = updates.filter(update => !blockedIds.has(update.item.id));
+    const applicableRestorations = restorations.filter(update => !blockedIds.has(update.item.id));
+    const applicableCreations = creations.filter(item => !blockedIds.has(item.id));
+    const applicableDeletions = deletions.filter(uuid => !blockedIds.has(localByUuid.get(uuid)!.id));
 
     for (const update of applicableUpdates) {
       const entry = session.entries.entriesByUuid.get(update.entryUuid);
-      if (entry) writeKeePassEntry(session.database, entry, update.item);
+      if (entry) writeKeePassEntry(session.database, entry, update.item, prepared.get(update.item.id)!);
+    }
+    for (const restore of applicableRestorations) {
+      const entry = session.entries.entriesByUuid.get(restore.entryUuid)!;
+      restoreKeePassEntry(session.database, entry);
+      if (restore.edited) writeKeePassEntry(session.database, entry, restore.item, prepared.get(restore.item.id)!);
     }
     for (const item of applicableCreations) {
-      const { entry } = createKeePassEntry(session.database, item, item.keepassGroupPath);
+      const { entry } = createKeePassEntry(session.database, item, item.keepassGroupPath, prepared.get(item.id)!);
       localByUuid.set(entry.uuid.toString(), item);
     }
-    for (const entryUuid of deletions) {
+    for (const entryUuid of applicableDeletions) {
       const entry = session.entries.entriesByUuid.get(entryUuid);
       if (entry) removeKeePassEntry(session.database, entry);
     }
 
-    if (applicableUpdates.length + applicableCreations.length + deletions.length) session.dirty = true;
+    if (applicableUpdates.length + applicableCreations.length + applicableRestorations.length + applicableDeletions.length) session.dirty = true;
     this.reread(session, account.id);
 
     const warnings = [...session.summary.warnings];
@@ -568,7 +722,7 @@ export class KeePassProvider implements ProviderAdapter {
       emitted.add(entryUuid);
       const conflicted = keepLocal.get(entryUuid);
       if (conflicted) items.push(conflicted);
-      else if (!remote.deletedAt) items.push(finalize(remote, localByUuid.get(entryUuid), account.id));
+      else items.push(finalize(remote, localByUuid.get(entryUuid), account.id));
     }
     for (const [entryUuid, local] of keepLocal) if (!emitted.has(entryUuid)) items.push(local);
 
@@ -576,8 +730,8 @@ export class KeePassProvider implements ProviderAdapter {
       warnings.push(`有 ${session.entries.skipped.length} 个条目本版本无法解析，已原样保留、不会被改写。`);
     }
     if (session.dirty) {
-      warnings.push(account.config.sourceMode === "webdav"
-        ? "KeePass 数据库的改动已保存到本机工作副本，上传 WebDAV 后其他设备才能读取。"
+      warnings.push(isRemoteKeePassSource(account.config.sourceMode)
+        ? "KeePass 数据库的改动已保存到本机工作副本，同步到远端后其他设备才能读取。"
         : "KeePass 数据库的改动仅存在于内存中，请导出文件并覆盖原文件后再在 Monica Android 或 KeePassXC 中打开。");
     }
 
@@ -605,7 +759,7 @@ export class KeePassProvider implements ProviderAdapter {
     for (const remote of session.entries.items) {
       const remoteId = remoteIdOf(remote, account.id);
       const local = localByUuid.get(remoteId);
-      if (!remote.deletedAt) items.push(finalize(remote, local, account.id));
+      items.push(finalize(remote, local, account.id));
     }
     const warnings = [...session.summary.warnings];
     if (session.entries.skipped.length) warnings.push(`有 ${session.entries.skipped.length} 个条目本版本无法解析，已原样保留、不会被改写。`);
@@ -925,6 +1079,7 @@ function boundedPendingMutations(input: PendingMutation[], providerId: string): 
     if (!mutation || mutation.providerId !== providerId || !mutation.id || !mutation.itemId || result.has(mutation.itemId)) {
       throw new Error("KeePass 项目同步批次包含无效或重复操作。");
     }
+    if (mutation.keepassRestore !== undefined && (mutation.keepassRestore !== true || mutation.operation !== 'update')) throw new Error('KeePass 恢复操作格式无效。');
     result.set(mutation.itemId, mutation);
   }
   return result;
@@ -953,13 +1108,14 @@ function remoteIdOf(item: VaultItem, providerId: string): string {
 }
 
 /**
- * Keeps the browser-side identity of an item that already existed locally. `favorite` is carried over
- * because a KeePass login entry has no field for it, so taking the decoded entry verbatim would reset
- * the user's local flag on every sync.
+ * Keeps the browser-side identity of an item that already existed locally. `favorite` and
+ * `archivedAt` are local overlays: the current Android KDBX field contract does not carry them.
+ * A file refresh must not silently reactivate a password or Passkey the user archived here.
  */
 function finalize(remote: VaultItem, local: VaultItem | undefined, providerId: string): VaultItem {
-  const content = local?.kind === "passkey" && remote.kind === "passkey" ? preserveLocalPasskeyUsage(local, remote) : remote;
-  const merged = (local ? { ...content, id: local.id, favorite: local.favorite } : content) as VaultItem;
+  const content = local?.kind === "passkey" && remote.kind === "passkey" ? preserveLocalPasskeyUsage(local, remote)
+    : local?.kind === 'login' && remote.kind === 'login' ? preserveLocalPasswordHistory(local, remote) : remote;
+  const merged = (local ? { ...content, id: local.id, favorite: local.favorite, archivedAt: local.archivedAt } : content) as VaultItem;
   const reference: ProviderReference = {
     providerId,
     remoteId: remoteIdOf(remote, providerId),
@@ -977,10 +1133,40 @@ function finalize(remote: VaultItem, local: VaultItem | undefined, providerId: s
 function fingerprint(item: VaultItem): string {
   const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, ...content } = item;
   if (content.kind === "passkey") { delete content.useCount; delete content.lastUsedAt; delete content.signCountHighWaterMark; }
+  // KDBX project identity is carried by the exact custom-field metadata. Projecting
+  // it for display must not make pre-upgrade cached rows look locally edited.
+  if (content.kind === 'login') {
+    delete content.passwordGroupId;
+    if (content.totpSecret === '') delete content.totpSecret;
+  }
   return JSON.stringify(content, (_key, value) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)))
       : value);
+}
+
+function storedFingerprint(value: string): string {
+  const normalized = passkeyContentFingerprint(value);
+  try {
+    const content = JSON.parse(normalized);
+    if (content?.kind === 'login' && (Object.prototype.hasOwnProperty.call(content, 'passwordGroupId') || content.totpSecret === '')) {
+      delete content.passwordGroupId;
+      if (content.totpSecret === '') delete content.totpSecret;
+      return JSON.stringify(content);
+    }
+  } catch { /* Preserve invalid legacy fingerprints so normal conflict handling applies. */ }
+  return normalized;
+}
+
+/** Compare represented entry contents, excluding routing and local-only overlays.
+ * Moving an entry into the bin changes its parent, not its credential payload. */
+function restoreContentFingerprint(value: string): string | undefined {
+  try {
+    const content = JSON.parse(storedFingerprint(value));
+    if (!content || typeof content !== 'object' || Array.isArray(content)) return undefined;
+    for (const key of ['keepassGroupPath', 'keepassGroupUuid', 'favorite', 'archivedAt', 'passwordHistory', 'passwordHistoryIncomplete']) delete content[key];
+    return JSON.stringify(content);
+  } catch { return undefined; }
 }
 
 function attachmentHandleKey(providerId: string, entryUuid: string, fileName: string): string {

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "kdf_vectors": [
+    {
+      "description": "Argon2id Sky preset with ASCII password",
+      "password_utf8": "correct horse battery staple",
+      "salt_hex": "30313233343536373839616263646566",
+      "profile": {
+        "memory_kib": 8192,
+        "iterations": 1,
+        "parallelism": 1,
+        "output_len": 32
+      },
+      "expected_key_hex": "134d180cae7bf730852877729435966ede036ffdf67eac851183c21a9a855d7c"
+    }
+  ],
+  "keyring_vectors": [
+    {
+      "description": "HKDF domain separation from Sky-derived key",
+      "password_utf8": "correct horse battery staple",
+      "salt_hex": "30313233343536373839616263646566",
+      "vault_context_utf8": "mdbx-test-vault",
+      "profile": {
+        "memory_kib": 8192,
+        "iterations": 1,
+        "parallelism": 1,
+        "output_len": 32
+      },
+      "expected_vault_key_hex": "bbe7be86cfadd6609d9187d2dd44d9c5c00ed4f80648c854581bdac341da8cc8",
+      "expected_record_subkey_hex": "fcdb6847da339c95bcdaa8362b8558ff47160657ae074cea857538fbb8f25d71",
+      "expected_attachment_subkey_hex": "f8fdab06c7e78cc706c946b751149dbef23b3189ca4ef61c07535a0a31e51a95",
+      "expected_metadata_subkey_hex": "6350ca2c1a0ac9dfed2c029fedc21ccc0ed4b9f674a68eb2dcc0fdf1a5630d44",
+      "expected_history_subkey_hex": "4feda7042ade3f24e14e95acac15a97a5c5095b7a7d6a6f88516b30cb4e30354",
+      "expected_integrity_subkey_hex": "211258fb4e583c2747cdf021bfdfe412ab30a9eee1a3cfe30c4e6b493013f110"
+    }
+  ],
+  "aead_vectors": [
+    {
+      "description": "XChaCha20-Poly1305 known-answer decrypt vector",
+      "key_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "nonce_hex": "222222222222222222222222222222222222222222222222",
+      "aad_utf8": "entry:test-1:payload",
+      "plaintext_hex": "48656c6c6f2c204d44425821",
+      "ciphertext_hex": "cb028b603395c4d9a10f4ceaddcb1e6e4aba97eb9a389a1d121095e4"
+    }
+  ]
+}

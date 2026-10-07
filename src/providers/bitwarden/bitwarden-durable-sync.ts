@@ -3,11 +3,12 @@ import type { PendingMutation, ProviderAccount, ProviderMutationReceipt, VaultIt
 import type { ProviderAcknowledgedMutation, ProviderSyncContext, ProviderSyncGuard, ProviderSyncResult } from "../../core/provider";
 import type { BitwardenProvider } from "./bitwarden-provider";
 import { bitwardenSshComparableData } from "./bitwarden-cipher-codec";
+import { assertPasswordProjectRemovalSyncSafe } from "../../core/password-project-removal-sync";
 
 export const BITWARDEN_ITEM_SYNC_BATCH_LIMIT = 100;
 
 export interface BitwardenDurableSyncVault {
-  readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue" | "providerMutationReceipts">>;
+  readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue" | "providerMutationReceipts" | "passwordProjectRemovals">>;
   prepareProviderMutationReceipts(receipts: ProviderMutationReceipt[]): Promise<void>;
   markProviderMutationReceiptsAttempted(providerId: string, mutationIds: string[]): Promise<void>;
   commitProviderMutationReceipts(providerId: string, acknowledgements: ProviderAcknowledgedMutation[]): Promise<void>;
@@ -69,7 +70,9 @@ export function bitwardenComparablePayload(item: VaultItem): Record<string, unkn
     "updatedAt",
     "deletedAt",
     "bitwardenCustomFieldsVersion",
-    "bitwardenSshKeyMode"
+    "bitwardenCipherId",
+    "bitwardenSshKeyMode",
+    "passwordGroupId" // Derived from the credential custom field, which is already fingerprinted.
   ])) as Record<string, unknown>;
 }
 
@@ -84,6 +87,9 @@ export class BitwardenDurableSyncCoordinator {
     signal?.throwIfAborted();
 
     let state = await this.vault.readState(false);
+    const passwordProjectRemovals = structuredClone(state.passwordProjectRemovals);
+    assertPasswordProjectRemovalSyncSafe(account, { now: new Date().toISOString(), localItems: state.items,
+      pendingMutations: state.mutationQueue, passwordProjectRemovals });
     const allPending = state.mutationQueue
       .filter((mutation) => mutation.providerId === account.id)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
@@ -168,6 +174,7 @@ export class BitwardenDurableSyncCoordinator {
       signal,
       now: new Date().toISOString(),
       localItems: structuredClone(snapshot),
+      passwordProjectRemovals,
       pendingMutations: structuredClone(activePending),
       acknowledgedMutations: committed,
       mutationReceipts: structuredClone(receipts),

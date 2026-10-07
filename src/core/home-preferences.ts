@@ -1,3 +1,5 @@
+import { PASSWORD_STACK_MODES, type PasswordStackMode, type WebsiteStackMatch } from "./password-display-stacks";
+
 export const HOME_MODULES = ["frequent", "favorites", "types", "folders", "databases", "lifecycle"] as const;
 export type HomeModuleId = typeof HOME_MODULES[number];
 export const MAX_HOME_PINS = 24;
@@ -14,6 +16,8 @@ export interface HomePreferences {
   startupSource: "all" | "fixed" | "last";
   preferredSourceId: string;
   lastSourceId: string;
+  passwordStackMode: PasswordStackMode;
+  passwordWebsiteMatch: WebsiteStackMatch;
 }
 
 /** Preferences contain identifiers only and live inside the encrypted vault. */
@@ -35,7 +39,9 @@ export function normalizeHomePreferences(input?: unknown): HomePreferences {
     density: raw.density === "comfortable" ? "comfortable" : "compact",
     startupSource: raw.startupSource === "all" || raw.startupSource === "fixed" ? raw.startupSource : "last",
     preferredSourceId: sourceId(raw.preferredSourceId, "local"),
-    lastSourceId: sourceId(raw.lastSourceId, "all")
+    lastSourceId: sourceId(raw.lastSourceId, "all"),
+    passwordStackMode: PASSWORD_STACK_MODES.includes(raw.passwordStackMode as PasswordStackMode) ? raw.passwordStackMode as PasswordStackMode : "none",
+    passwordWebsiteMatch: raw.passwordWebsiteMatch === "relaxed" ? "relaxed" : "strict"
   };
 }
 

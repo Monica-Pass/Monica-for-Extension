@@ -1,5 +1,6 @@
 import * as kdbxweb from "kdbxweb";
-import { isKeePassFieldProtected, keePassFieldText } from "./keepass-login-codec";
+import { isKeePassFieldProtected, keePassFieldText, readKeePassCustomFields } from "./keepass-login-codec";
+import { readProjectCredential } from '../../core/project-credentials';
 
 export type KeePassRebaseConflictKind =
   | "field"
@@ -7,10 +8,12 @@ export type KeePassRebaseConflictKind =
   | "history"
   | "entry-structure"
   | "entry-metadata"
-  | "group-structure";
+  | "group-structure"
+  | "password-project";
 
 export interface KeePassRebaseConflict {
   kind: KeePassRebaseConflictKind;
+  projectId?: string;
   entryUuid?: string;
   groupUuid?: string;
   fieldNames?: string[];
@@ -48,6 +51,128 @@ interface FieldState {
   protected?: boolean;
 }
 
+export interface KeePassProjectConflictSide {
+  entryUuids: string[];
+  addedEntryUuids: string[];
+  removedEntryUuids: string[];
+  modifiedEntryUuids: string[];
+  activeCount: number;
+  trashCount: number;
+}
+
+export interface KeePassProjectConflictPreview {
+  projectId: string;
+  baseEntryUuids: string[];
+  local: KeePassProjectConflictSide;
+  remote: KeePassProjectConflictSide;
+}
+
+export interface KeePassProjectConflictChoice { projectId: string; choice: 'local' | 'remote' }
+
+/** Apply explicit project decisions to disposable decoded snapshots only.
+ * Callers must retain the original encrypted files before committing the result.
+ * Base and remote are scratch databases; working remains unchanged.
+ */
+export function resolveKeePassProjectConflicts(base: kdbxweb.Kdbx, working: kdbxweb.Kdbx, remote: kdbxweb.Kdbx,
+  choices: KeePassProjectConflictChoice[]): KeePassRemoteRebaseResult {
+  const previews = previewKeePassProjectConflicts(base, working, remote);
+  const unresolved = new Set(previews.map(row => row.projectId));
+  if (!Array.isArray(choices) || !choices.length || choices.length !== unresolved.size) throw new Error('请逐项确认当前密码项目冲突。');
+  for (const row of choices) {
+    if (!row || !['local', 'remote'].includes(row.choice) || !unresolved.delete(row.projectId)) throw new Error('密码项目冲突选择已失效。');
+  }
+  const selected = new Set(choices.map(row => row.projectId));
+  const assignments = new Map<string, Set<string | undefined>>();
+  for (const database of [base, working, remote]) for (const [uuid, { entry }] of collectEntries(database)) {
+    const ids = assignments.get(uuid) || new Set<string | undefined>();
+    ids.add(readProjectCredential(readKeePassCustomFields(entry.fields))?.projectId); assignments.set(uuid, ids);
+  }
+  for (const ids of assignments.values()) if (ids.size > 1 && [...ids].some(id => id && selected.has(id)))
+    throw new Error('冲突条目的项目归属已变化，请先核对凭据标识。');
+  if (![working, remote].every(database => database.getDefaultGroup().uuid.equals(base.getDefaultGroup().uuid)))
+    throw new Error('冲突数据库根标识不一致。');
+
+  for (const row of choices) {
+    // Making the selected project equal to working in the scratch baseline
+    // suppresses its ordinary field merge while leaving unrelated changes intact.
+    replaceProjectSnapshot(base, working, row.projectId);
+    if (row.choice === 'local') replaceProjectSnapshot(remote, working, row.projectId);
+  }
+  const result = rebaseKeePassDatabase(base, working, remote);
+  return { ...result, changed: result.changed || choices.some(row => row.choice === 'local') };
+}
+
+function replaceProjectSnapshot(target: kdbxweb.Kdbx, source: kdbxweb.Kdbx, projectId: string): void {
+  const belongs = (entry: kdbxweb.KdbxEntry) => readProjectCredential(readKeePassCustomFields(entry.fields))?.projectId === projectId;
+  const rows = [...collectEntries(source).values()].filter(row => belongs(row.entry));
+  const retained = new Set(rows.map(row => row.entry.uuid.toString()));
+  const copyIcon = (uuid: kdbxweb.KdbxUuid | undefined) => {
+    if (!uuid) return;
+    const icon = source.meta.customIcons.get(uuid.toString());
+    if (!icon) throw new Error('冲突项目引用的图标不存在。');
+    const existing = target.meta.customIcons.get(uuid.toString());
+    if (existing && (existing.data.byteLength !== icon.data.byteLength || new Uint8Array(existing.data).some((byte, i) => byte !== new Uint8Array(icon.data)[i])))
+      throw new Error('冲突项目的共享图标内容不一致。');
+    if (!existing) target.meta.customIcons.set(uuid.toString(), { ...icon, data: icon.data.slice(0), lastModified: icon.lastModified && new Date(icon.lastModified) });
+  };
+  const ensureParent = (group: kdbxweb.KdbxGroup): kdbxweb.KdbxGroup => {
+    const existing = target.getGroup(group.uuid);
+    if (existing) return existing;
+    if (!group.parentGroup) throw new Error('冲突项目的父分组不存在。');
+    const parent = ensureParent(group.parentGroup);
+    copyIcon(group.customIcon);
+    const created = target.createGroup(parent, group.name || '未命名分组');
+    created.uuid = group.uuid; copyGroupMetadata(created, group);
+    if (group.uuid.equals(source.meta.recycleBinUuid)) {
+      if (target.meta.recycleBinUuid && target.getGroup(target.meta.recycleBinUuid) && !target.meta.recycleBinUuid.equals(group.uuid))
+        throw new Error('冲突数据库的回收站标识不一致。');
+      target.meta.recycleBinUuid = group.uuid; target.meta.recycleBinEnabled = source.meta.recycleBinEnabled;
+    }
+    return created;
+  };
+  // Validate and copy all referenced resources before replacing any entry.
+  for (const row of rows) {
+    ensureParent(row.entry.parentGroup!);
+    for (const entry of [row.entry, ...row.entry.history]) copyIcon(entry.customIcon);
+  }
+  for (const { entry } of collectEntries(target).values()) if (belongs(entry)) {
+    if (!retained.has(entry.uuid.toString())) target.move(entry, null);
+    else entry.parentGroup!.entries.splice(entry.parentGroup!.entries.indexOf(entry), 1);
+  }
+  target.deletedObjects = target.deletedObjects.filter(row => !row.uuid || !retained.has(row.uuid.toString()));
+  for (const row of rows) insertEntry(target, ensureParent(row.entry.parentGroup!), row.entry, source);
+}
+
+/** Read-only identity/size summary. No password, note, attachment bytes or raw
+ * field signatures may leave this boundary. File revision binding is supplied
+ * by the remote session before a future resolution is committed.
+ */
+export function previewKeePassProjectConflicts(base: kdbxweb.Kdbx, local: kdbxweb.Kdbx, remote: kdbxweb.Kdbx): KeePassProjectConflictPreview[] {
+  const before = collectEntries(base), working = collectEntries(local), latest = collectEntries(remote);
+  const conflicts = concurrentPasswordProjectChanges(before, working, latest, base, local, remote);
+  const members = (entries: Map<string, EntryLocation>, id: string) => new Map([...entries].filter(([, row]) =>
+    readProjectCredential(readKeePassCustomFields(row.entry.fields))?.projectId === id));
+  return conflicts.map(conflict => {
+    const projectId = conflict.projectId!, original = members(before, projectId);
+    const side = (entries: Map<string, EntryLocation>, database: kdbxweb.Kdbx): KeePassProjectConflictSide => {
+      const current = members(entries, projectId), ids = [...current.keys()].sort();
+      let trashCount = 0;
+      for (const { entry } of current.values()) {
+        for (let parent = entry.parentGroup; parent; parent = parent.parentGroup) {
+          if (parent.uuid.equals(database.meta.recycleBinUuid)) { trashCount++; break; }
+        }
+      }
+      return { entryUuids: ids, addedEntryUuids: ids.filter(id => !original.has(id)),
+        removedEntryUuids: [...original.keys()].filter(id => !current.has(id)).sort(),
+        modifiedEntryUuids: ids.filter(id => {
+          const old = original.get(id), now = current.get(id)!;
+          return !!old && entryFullSignature(old.entry, base, old.parentUuid) !== entryFullSignature(now.entry, database, now.parentUuid);
+        }), activeCount: ids.length - trashCount, trashCount };
+    };
+    return { projectId, baseEntryUuids: [...original.keys()].sort(), local: side(working, local), remote: side(latest, remote) };
+  });
+}
+
 /**
  * Applies the browser working copy on top of the newest remote KDBX using the same three-way
  * decision used by Android's KeePassChangeSetApplier. The base and working databases are never
@@ -64,6 +189,12 @@ export function rebaseKeePassDatabase(
   const baseEntries = collectEntries(baseDatabase);
   const workingEntries = collectEntries(workingDatabase);
   let remoteEntries = collectEntries(remoteDatabase);
+  // A multi-password project is one edit unit. Three-way field merging across
+  // different members could otherwise combine incompatible shared credentials,
+  // membership or deletion decisions despite having no same-field conflict.
+  const projectConflicts = concurrentPasswordProjectChanges(baseEntries, workingEntries, remoteEntries,
+    baseDatabase, workingDatabase, remoteDatabase);
+  if (projectConflicts.length) throw new KeePassRemoteRebaseConflictError(projectConflicts);
   const conflicts: KeePassRebaseConflict[] = [];
   let changed = false;
 
@@ -232,6 +363,30 @@ export function rebaseKeePassDatabase(
 
   if (conflicts.length) throw new KeePassRemoteRebaseConflictError(deduplicateConflicts(conflicts));
   return { database: remoteDatabase, changed };
+}
+
+function concurrentPasswordProjectChanges(
+  base: Map<string, EntryLocation>, working: Map<string, EntryLocation>, remote: Map<string, EntryLocation>,
+  baseDatabase: kdbxweb.Kdbx, workingDatabase: kdbxweb.Kdbx, remoteDatabase: kdbxweb.Kdbx
+): KeePassRebaseConflict[] {
+  const projects = (entries: Map<string, EntryLocation>, database: kdbxweb.Kdbx) => {
+    const result = new Map<string, Array<[string, string]>>();
+    for (const [uuid, location] of entries) {
+      const id = readProjectCredential(readKeePassCustomFields(location.entry.fields))?.projectId;
+      if (!id) continue;
+      const rows = result.get(id) || [];
+      rows.push([uuid, entryFullSignature(location.entry, database, location.parentUuid)]); result.set(id, rows);
+    }
+    return new Map([...result].map(([id, rows]) => [id, JSON.stringify(rows.sort(([a], [b]) => a.localeCompare(b)))]));
+  };
+  const before = projects(base, baseDatabase), local = projects(working, workingDatabase), latest = projects(remote, remoteDatabase);
+  const conflicts: KeePassRebaseConflict[] = [];
+  for (const id of new Set([...before.keys(), ...local.keys(), ...latest.keys()])) {
+    if (local.get(id) !== before.get(id) && latest.get(id) !== before.get(id) && local.get(id) !== latest.get(id)) {
+      conflicts.push({ kind: 'password-project', projectId: id, reason: '同一密码项目在两端均有修改，请核对整组密码后再同步。' });
+    }
+  }
+  return conflicts;
 }
 
 function collectGroups(database: kdbxweb.Kdbx): Map<string, GroupLocation> {

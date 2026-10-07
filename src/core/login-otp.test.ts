@@ -25,14 +25,14 @@ describe("login OTP binding", () => {
     const result = await resolveLoginOtp(login, [login, hotp], 1_700_000_000_000);
     expect(result?.code).toBe("755224");
     expect(hotp.counter).toBe(0);
-    expect(result?.updatedItem).toMatchObject({ id: "hotp", counter: 1 });
+    expect(result?.usage).toMatchObject({ itemId: "hotp", counter: 0 });
   });
 
   it("advances inline HOTP URIs while leaving TOTP unchanged", async () => {
     const inline = { ...login, boundTotpItemId: undefined, providerRefs: [], totpSecret: "otpauth://hotp/Test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=4" };
     const result = await resolveLoginOtp(inline, [inline], 0);
     expect(result?.code).toBe("338314");
-    expect((result?.updatedItem as LoginItem).totpSecret).toContain("counter=5");
+    expect(result?.usage).toMatchObject({ itemId: inline.id, counter: 4 });
   });
 
   it("prioritizes an explicit authenticator over Android reverse links and inline secrets", async () => {
@@ -47,7 +47,7 @@ describe("login OTP binding", () => {
     const deleted = { ...hotp, deletedAt: base.updatedAt };
     expect(findBoundTotpItem(item, [deleted])).toBeUndefined();
     const resolution = await resolveLoginOtp(item, [deleted], 59_000);
-    expect(resolution).toEqual({ code: "287082", updatedItem: undefined });
+    expect(resolution).toEqual({ code: "287082", usage: undefined });
     expect(await resolveLoginOtp({ ...item, totpSecret: undefined }, [deleted])).toBeUndefined();
   });
 

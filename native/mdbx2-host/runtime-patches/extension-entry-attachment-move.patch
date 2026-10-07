@@ -1,0 +1,136 @@
+diff --git a/crates/mdbx-storage/src/repo/attachment.rs b/crates/mdbx-storage/src/repo/attachment.rs
+index 3ad25d8..2bb1dab 100644
+--- a/crates/mdbx-storage/src/repo/attachment.rs
++++ b/crates/mdbx-storage/src/repo/attachment.rs
+@@ -404,6 +404,36 @@ impl AttachmentRepo {
+         AttachmentRepo::list_where(conn, "deleted = 0 AND entry_id = ?1", params![entry_id])
+     }
+ 
++    /// Move an entry-owned attachment inside the entry's existing transaction.
++    /// Content and Blob identity are independent of Collection ownership.
++    pub(crate) fn move_with_entry(
++        conn: &VaultConnection,
++        ctx: &CommitContext,
++        attachment: &Attachment,
++        entry_id: &str,
++        target_project_id: &str,
++    ) -> StorageResult<()> {
++        if attachment.deleted || attachment.entry_id.as_deref() != Some(entry_id) {
++            return Err(StorageError::ConstraintViolation("attachment owner mismatch".to_string()));
++        }
++        let owner = crate::repo::EntryRepo::get_by_id(conn, entry_id)?
++            .ok_or_else(|| StorageError::NotFound(entry_id.to_string()))?;
++        if owner.deleted || owner.project_id != target_project_id {
++            return Err(StorageError::ConstraintViolation("attachment destination owner mismatch".to_string()));
++        }
++        CollectionProfileRepo::ensure_collection_write_capabilities(conn, &attachment.project_id)?;
++        CollectionProfileRepo::ensure_collection_write_capabilities(conn, target_project_id)?;
++        let commit_id = ctx.commit_object_change(conn, "attachments", &attachment.attachment_id, "move", "attachment")?;
++        conn.inner().execute(
++            "UPDATE attachments SET project_id = ?2, head_commit_id = ?3,
++             updated_at = ?4, updated_by_device_id = ?5 WHERE attachment_id = ?1",
++            params![attachment.attachment_id, target_project_id, commit_id,
++                chrono::Utc::now().to_rfc3339(), ctx.device_id],
++        )?;
++        ObjectVersionRepo::record_attachment_current(conn, &commit_id, &attachment.attachment_id)?;
++        Ok(())
++    }
++
+     pub fn list_deleted(conn: &VaultConnection) -> StorageResult<Vec<Attachment>> {
+         AttachmentRepo::list_where(conn, "deleted = 1", [])
+     }
+diff --git a/crates/mdbx-storage/src/repo/entry.rs b/crates/mdbx-storage/src/repo/entry.rs
+index c73010e..8e0f1cd 100644
+--- a/crates/mdbx-storage/src/repo/entry.rs
++++ b/crates/mdbx-storage/src/repo/entry.rs
+@@ -11,7 +11,7 @@ use crate::crypto_layer::{decrypt_field, encrypt_field, FieldKeyPurpose};
+ use crate::error::{StorageError, StorageResult};
+ use crate::repo::commit_ctx::CommitContext;
+ use crate::repo::object_version::ObjectVersionRepo;
+-use crate::repo::CollectionProfileRepo;
++use crate::repo::{AttachmentRepo, CollectionProfileRepo};
+ use crate::repo::TombstoneRepo;
+ use crate::sync_state::EntryRow;
+ 
+@@ -619,6 +619,15 @@ impl EntryRepo {
+ 
+             ObjectVersionRepo::record_entry_current(conn, &commit_id, entry_id)?;
+ 
++            // Entry and active attachments must remain in the same Collection.
++            // The outer operation context coalesces attachment versions and parents
++            // into this commit; any failure rolls back the entire entry move.
++            for attachment in AttachmentRepo::list_by_entry(conn, entry_id)? {
++                if attachment.project_id != target_project_id {
++                    AttachmentRepo::move_with_entry(conn, ctx, &attachment, entry_id, target_project_id)?;
++                }
++            }
++
+             EntryRepo::get_by_id(conn, entry_id)?
+                 .ok_or_else(|| StorageError::NotFound(entry_id.to_string()))
+         })
+diff --git a/crates/mdbx-storage/src/repo/operation_coordinator.rs b/crates/mdbx-storage/src/repo/operation_coordinator.rs
+index e16749d..da4750f 100644
+--- a/crates/mdbx-storage/src/repo/operation_coordinator.rs
++++ b/crates/mdbx-storage/src/repo/operation_coordinator.rs
+@@ -1762,6 +1762,61 @@ mod tests {
+         assert_eq!(count(&conn, "commits"), commits_before + 1);
+     }
+ 
++    #[test]
++    fn entry_move_relocates_attachments_in_one_replayable_commit_and_rolls_back_failures() {
++        let (conn, ctx, _) = setup();
++        let source = ProjectRepo::create(&conn, &ctx, "Source", None, None).unwrap();
++        let target = ProjectRepo::create(&conn, &ctx, "Target", None, None).unwrap();
++        let entry = EntryRepo::create(&conn, &ctx, &source.project_id,
++            ObjectTypeId::custom("com.monica.test.movable").unwrap(), Some("Move"), &serde_json::json!({})).unwrap();
++        let mut attachments = Vec::new();
++        for name in ["first.bin", "second.bin"] {
++            attachments.push(AttachmentRepo::add(&conn, &ctx, &source.project_id, Some(&entry.entry_id),
++                name, Some("application/octet-stream"), &"ab".repeat(32), 3).unwrap());
++        }
++        let unrelated = AttachmentRepo::add(&conn, &ctx, &source.project_id, None,
++            "project.bin", None, &"cd".repeat(32), 4).unwrap();
++        let request = WriteOperationRequest::new("move-with-attachments", "move-entry", vec![WriteCommand::MoveEntry {
++            entry_id: entry.entry_id.clone(), project_id: source.project_id.clone(), target_project_id: target.project_id.clone(),
++        }]);
++        let commits_before = count(&conn, "commits");
++        let versions_before = count(&conn, "object_versions");
++        // Fail after the entry mutation has begun; the entire transaction must roll back.
++        conn.inner().execute_batch("CREATE TEMP TRIGGER fail_attachment_move BEFORE UPDATE OF project_id ON attachments BEGIN SELECT RAISE(ABORT, 'synthetic move failure'); END;").unwrap();
++        assert!(OperationCoordinator::execute(&conn, &ctx, request.clone()).is_err());
++        assert_eq!(count(&conn, "commits"), commits_before);
++        assert_eq!(count(&conn, "object_versions"), versions_before);
++        assert_eq!(EntryRepo::get_by_id(&conn, &entry.entry_id).unwrap().unwrap().project_id, source.project_id);
++        for before in &attachments {
++            let after = AttachmentRepo::get_by_id(&conn, &before.attachment_id).unwrap().unwrap();
++            assert_eq!(after.project_id, source.project_id);
++            assert_eq!(after.head_commit_id, before.head_commit_id);
++        }
++        conn.inner().execute_batch("DROP TRIGGER fail_attachment_move;").unwrap();
++        let moved = OperationCoordinator::execute(&conn, &ctx, request.clone()).unwrap();
++        assert_eq!(count(&conn, "commits"), commits_before + 1);
++        assert_eq!(count(&conn, "object_versions"), versions_before + 3);
++        assert_eq!(EntryRepo::get_by_id(&conn, &entry.entry_id).unwrap().unwrap().head_commit_id, moved.commit_id);
++        for before in &attachments {
++            let after = AttachmentRepo::get_by_id(&conn, &before.attachment_id).unwrap().unwrap();
++            assert_eq!(after.project_id, target.project_id);
++            assert_eq!(after.entry_id, before.entry_id);
++            assert_eq!(after.head_commit_id, moved.commit_id);
++            assert_eq!(after.content_hash, before.content_hash);
++            assert_eq!(after.file_name_ct, before.file_name_ct);
++            assert_eq!(after.storage_mode, before.storage_mode);
++            let parents: i64 = conn.inner().query_row("SELECT COUNT(*) FROM commit_parents WHERE commit_id = ?1 AND parent_commit_id = ?2",
++                params![moved.commit_id, before.head_commit_id], |row| row.get(0)).unwrap();
++            assert_eq!(parents, 1);
++        }
++        assert_eq!(AttachmentRepo::get_by_id(&conn, &unrelated.attachment_id).unwrap().unwrap().project_id, source.project_id);
++        let retry = OperationCoordinator::execute(&conn, &ctx, request).unwrap();
++        assert!(retry.already_committed);
++        assert_eq!(retry.commit_id, moved.commit_id);
++        assert_eq!(count(&conn, "commits"), commits_before + 1);
++        assert_eq!(count(&conn, "object_versions"), versions_before + 3);
++    }
++
+     #[test]
+     fn move_command_retains_the_repository_move_commit_kind() {
+         let (conn, ctx, _) = setup();

@@ -1,0 +1,302 @@
+{
+  "title": "Monica · MDBX 完整备份与恢复",
+  "brief": "复用密码源页和现有导入表单；12px留白、连续列表组、明确附件保留与恢复步骤。普通MDBX保持原流程，插件直接打开ZIP完整备份；Android的直接ZIP及完整附件恢复尚未打通。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "backup317",
+      "name": "MDBX 完整备份 · 420px",
+      "x": 0,
+      "y": 0,
+      "w": 420,
+      "h": 840
+    },
+    {
+      "id": "restore317",
+      "name": "MDBX 备份恢复 · 420px",
+      "x": 480,
+      "y": 0,
+      "w": 420,
+      "h": 840
+    }
+  ],
+  "groups": [
+    {
+      "id": "backup-g1",
+      "frameId": "backup317",
+      "x": 12,
+      "y": 20,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i2",
+          "icon": "arrow_back",
+          "variant": "filled",
+          "size": 396,
+          "kind": "topAppBar",
+          "label": "密码源"
+        }
+      ]
+    },
+    {
+      "id": "backup-g3",
+      "frameId": "backup317",
+      "x": 12,
+      "y": 104,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i4",
+          "icon": "storage",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "个人数据库",
+          "supporting": "MDBX2 · 已解锁"
+        }
+      ]
+    },
+    {
+      "id": "backup-g5",
+      "frameId": "backup317",
+      "x": 12,
+      "y": 200,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i6",
+          "icon": "backup",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "完整备份",
+          "supporting": "包含密码、Passkey、卡面与笔记附件"
+        },
+        {
+          "id": "backup-i7",
+          "icon": "history",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "保留附件与历史记录",
+          "supporting": "使用原数据库密码恢复"
+        }
+      ]
+    },
+    {
+      "id": "backup-g8",
+      "frameId": "backup317",
+      "x": 12,
+      "y": 384,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i9",
+          "icon": "download",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "导出 MDBX2 完整备份",
+          "action": {
+            "to": "restore317",
+            "transition": "fade"
+          }
+        }
+      ]
+    },
+    {
+      "id": "backup-g10",
+      "frameId": "backup317",
+      "x": 12,
+      "y": 470,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i11",
+          "icon": "smartphone",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "Android 恢复支持",
+          "supporting": "暂不支持直接恢复此完整备份 ZIP"
+        },
+        {
+          "id": "backup-i12",
+          "icon": "folder",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "保留完整备份",
+          "supporting": "在插件中打开 ZIP 可恢复数据库和附件"
+        }
+      ]
+    },
+    {
+      "id": "backup-g13",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 20,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i14",
+          "icon": "arrow_back",
+          "variant": "filled",
+          "size": 396,
+          "kind": "topAppBar",
+          "label": "打开 MDBX2 数据库"
+        }
+      ]
+    },
+    {
+      "id": "backup-g15",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 108,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i16",
+          "icon": null,
+          "variant": "filled",
+          "size": 396,
+          "kind": "textField",
+          "label": "名称",
+          "supporting": "个人数据库"
+        }
+      ]
+    },
+    {
+      "id": "backup-g17",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 200,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i18",
+          "icon": "folder_open",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "选择 MDBX 或完整备份 ZIP"
+        }
+      ]
+    },
+    {
+      "id": "backup-g19",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 292,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i20",
+          "icon": "folder_zip",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "personal.mdbx-backup.zip",
+          "supporting": "恢复数据库和附件 · 合计不超过 512 MiB"
+        }
+      ]
+    },
+    {
+      "id": "backup-g21",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 390,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i22",
+          "icon": null,
+          "variant": "filled",
+          "size": 396,
+          "kind": "textField",
+          "label": "原数据库密码"
+        }
+      ]
+    },
+    {
+      "id": "backup-g23",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 490,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i24",
+          "icon": "verified_user",
+          "variant": "filled",
+          "size": 396,
+          "kind": "listItem",
+          "label": "先检查完整性，再打开",
+          "supporting": "缺失或损坏的附件会停止恢复"
+        }
+      ]
+    },
+    {
+      "id": "backup-g25",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 608,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i26",
+          "icon": "lock_open",
+          "variant": "filled",
+          "size": 396,
+          "kind": "button",
+          "label": "打开数据库"
+        }
+      ]
+    },
+    {
+      "id": "backup-g27",
+      "frameId": "restore317",
+      "x": 492,
+      "y": 686,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "backup-i28",
+          "icon": null,
+          "variant": "text",
+          "size": 396,
+          "kind": "button",
+          "label": "取消",
+          "action": {
+            "to": "backup317",
+            "transition": "fade"
+          }
+        }
+      ]
+    }
+  ]
+}

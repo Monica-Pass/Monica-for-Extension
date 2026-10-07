@@ -1,0 +1,2 @@
+runtime-patches/*.patch text eol=lf
+vendor/**/*.mdbx binary

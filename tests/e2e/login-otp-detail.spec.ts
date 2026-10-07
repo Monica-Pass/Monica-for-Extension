@@ -1,9 +1,8 @@
 import { chooseOption, dialogContent } from "./fixtures/material";
 import AxeBuilder from "@axe-core/playwright";
-import { chromium, expect, test as base, type Page } from "@playwright/test";
+import { expect, test as base, type Page } from "@playwright/test";
+import { launchEdgeContext } from './fixtures/edge';
 import { createHmac } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import type { LoginItem, TotpItem, VaultItem } from "../../src/core/model";
 
@@ -23,11 +22,11 @@ function expectedCode(counter: number, algorithm = "sha1", digits = 6): string {
 }
 
 const test = base.extend<{ manager: Page }>({
-  manager: async ({}, use) => {
-    const profile = await mkdtemp(path.join(tmpdir(), "monica-otp-"));
+  manager: async ({}, use, info) => {
+    const profile = info.outputPath('p');
     const extension = path.resolve("dist");
-    const context = await chromium.launchPersistentContext(profile, {
-      channel: "chromium", headless: true, locale: "zh-CN", reducedMotion: "reduce",
+    const context = await launchEdgeContext(profile, {
+      locale: "zh-CN", reducedMotion: "reduce",
       viewport: { width: 1280, height: 900 },
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
     });
@@ -41,10 +40,6 @@ const test = base.extend<{ manager: Page }>({
       await use(page);
     } finally {
       await context.close();
-      const resolved = await realpath(profile);
-      const temp = await realpath(tmpdir());
-      if (path.dirname(resolved) !== temp || !path.basename(resolved).startsWith("monica-otp-")) throw new Error("Unexpected OTP fixture path");
-      await rm(resolved, { recursive: true, force: true });
     }
   }
 });
@@ -53,7 +48,7 @@ async function openLogin(page: Page, items: VaultItem[]) {
   expect(await page.evaluate(items => chrome.runtime.sendMessage({ type: "VAULT_IMPORT_ITEMS", items }), items)).toMatchObject({ ok: true });
   await page.reload();
   await page.locator("button.nav-item").filter({ hasText: "登录项" }).click();
-  await page.clock.install({ time });
+  await page.clock.install({ time: new Date(time.getTime() - 1000) });
   await page.clock.pauseAt(time);
   await page.getByRole("button", { name: "查看Login with OTP详情", exact: true }).click();
   return dialogContent(page, { name: /Login with OTP/ });
@@ -109,7 +104,7 @@ test("editing an Android legacy binding preserves its selection and an explicit 
   await manager.clock.resume();
   await expect(detail.locator(".totp-code-cell")).toBeVisible();
   await detail.getByRole("button", { name: "编辑", exact: true }).click();
-  const editor = dialogContent(manager, { name: "编辑登录项", exact: true });
+  const editor = dialogContent(manager, { name: "编辑密码", exact: true });
   await expect(editor.getByRole("combobox", { name: "绑定独立验证器", exact: true })).toHaveJSProperty("value", authenticator.id);
   await chooseOption(editor.getByRole("combobox", { name: "绑定独立验证器", exact: true }), "");
   await expect(editor.getByLabel("内嵌验证码密钥", { exact: true })).toBeVisible();
@@ -128,7 +123,7 @@ test("editing an Android legacy binding preserves its selection and an explicit 
 test("a linked authenticator takes priority and fits narrow translated details", async ({ manager }, testInfo) => {
   const detail = await openLogin(manager, [
     { ...login, boundTotpItemId: authenticator.id, totpSecret: "INVALID INLINE FALLBACK" },
-    { ...authenticator, algorithm: "SHA256", digits: 8, period: 45, archivedAt: time.toISOString() }
+    { ...authenticator, algorithm: "SHA256", digits: 8, period: 45 }
   ]);
   const current = expectedCode(Math.floor(time.getTime() / 1000 / 45), "sha256", 8);
   const code = detail.locator(".totp-code-cell").getByRole("button");
@@ -231,7 +226,7 @@ test("HOTP copying waits for a pending counter save before allowing another use"
     fixture.otpCounterSave = { writes: 0 };
     const send = chrome.runtime.sendMessage.bind(chrome.runtime);
     chrome.runtime.sendMessage = ((message: { type: string }) => {
-      if (message.type !== "VAULT_UPSERT_ITEM") return send(message);
+      if (message.type !== "VAULT_CONSUME_HOTP") return send(message);
       fixture.otpCounterSave.writes++;
       return new Promise(resolve => { fixture.otpCounterSave.release = async () => { resolve(await send(message)); }; });
     }) as typeof chrome.runtime.sendMessage;
@@ -241,10 +236,16 @@ test("HOTP copying waits for a pending counter save before allowing another use"
   expect(await manager.evaluate(() => navigator.clipboard.readText())).toBe("755224");
   await code.evaluate(button => (button as HTMLButtonElement).click());
   expect(await manager.evaluate(() => (window as unknown as { otpCounterSave: { writes: number } }).otpCounterSave.writes)).toBe(1);
+  // The pending acknowledgement must preserve edits from another operation.
+  expect(await manager.evaluate(async id => {
+    const current = (await chrome.runtime.sendMessage({ type: 'VAULT_GET_ITEM', itemId: id })).data;
+    return chrome.runtime.sendMessage({ type: 'VAULT_UPSERT_ITEM', item: { ...current, notes: 'Edited during clipboard acknowledgement' } });
+  }, authenticator.id)).toMatchObject({ ok: true });
   await manager.evaluate(() => (window as unknown as { otpCounterSave: { release: () => Promise<void> } }).otpCounterSave.release());
   await expect(code).toBeEnabled();
   await expect(code.locator("strong")).toHaveText("287082");
   expect(await manager.evaluate(async itemId => (await chrome.runtime.sendMessage({ type: "VAULT_GET_ITEM", itemId })).data.counter, authenticator.id)).toBe(1);
+  expect(await manager.evaluate(async itemId => (await chrome.runtime.sendMessage({ type: 'VAULT_GET_ITEM', itemId })).data.notes, authenticator.id)).toBe('Edited during clipboard acknowledgement');
 });
 
 test("login OTP clears while hidden, refreshes on return and is removed when locked", async ({ manager }) => {

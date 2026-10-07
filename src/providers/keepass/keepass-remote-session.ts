@@ -1,4 +1,11 @@
 import type { ProviderAccount } from "../../core/model";
+import type { KeePassProjectRemovalDraft } from '../../core/keepass-project-removal';
+import { keePassRemovalFileRequestHash } from '../../core/keepass-project-removal-journal';
+import { normalizeOneDriveIdentity, type OneDriveItemIdentity } from "../onedrive/onedrive-graph-client";
+import { keePassConflictReviewToken, type KeePassConflictRevision } from './keepass-conflict-review-token';
+import { KeePassProjectResolutionService, type KeePassProjectResolutionRequest } from './keepass-project-resolution';
+import type { KeePassConflictRecoveryStorage } from './keepass-conflict-recovery-store';
+import { isRemoteKeePassSource, type KeePassRemoteSourceMode } from "./keepass-source";
 import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
 import { ProviderTransportError } from "../provider-transport";
 import { normalizeServerUrl } from "../webdav/webdav-client";
@@ -14,7 +21,7 @@ import {
 } from "./keepass-webdav-client";
 import { KeePassProvider, type KeePassSessionSummary } from "./keepass-provider";
 import { openKeePassVault } from "./keepass-vault";
-import { KeePassRemoteRebaseConflictError, rebaseKeePassDatabase, type KeePassRebaseConflict } from "./keepass-remote-rebase";
+import { KeePassRemoteRebaseConflictError, rebaseKeePassDatabase, previewKeePassProjectConflicts, type KeePassRebaseConflict, type KeePassProjectConflictPreview } from "./keepass-remote-rebase";
 import {
   KeePassWorkingCopyStoreError,
   type KeePassDurableMutationKind,
@@ -42,6 +49,13 @@ export interface KeePassWebDavOpenInput {
   databasePassword: string;
   keyFile?: string;
 }
+
+export interface KeePassOneDriveOpenInput extends OneDriveItemIdentity {
+  databasePassword: string;
+  keyFile?: string;
+}
+type KeePassOneDriveConfig = OneDriveItemIdentity & { sourceMode: "onedrive" };
+type KeePassRemoteConfig = KeePassWebDavConfig | KeePassOneDriveConfig;
 
 export interface KeePassRemoteProbeResult {
   reachable: true;
@@ -73,6 +87,7 @@ export type KeePassRemoteSessionErrorCode =
   | "remote-operation-reused"
   | "remote-cache-key-missing"
   | "remote-receipt-invalid"
+  | "remote-project-batch-limit"
   | "remote-rebase-conflict";
 
 export class KeePassRemoteSessionError extends Error {
@@ -83,10 +98,16 @@ export class KeePassRemoteSessionError extends Error {
 }
 
 export class KeePassRemoteRebaseSessionError extends KeePassRemoteSessionError {
-  constructor(readonly conflicts: readonly KeePassRebaseConflict[]) {
+  constructor(readonly conflicts: readonly KeePassRebaseConflict[], readonly projects: readonly KeePassProjectConflictPreview[] = []) {
     super("remote-rebase-conflict", "KeePass 远端文件与本机修改存在字段或结构冲突，请处理后重试。");
     this.name = "KeePassRemoteRebaseSessionError";
   }
+}
+
+export interface KeePassProjectConflictReview extends KeePassConflictRevision {
+  providerId: string;
+  reviewToken: string;
+  projects: KeePassProjectConflictPreview[];
 }
 
 export type KeePassRemoteManagerErrorCode =
@@ -115,7 +136,7 @@ export interface KeePassRemoteManagerError {
 
 export interface KeePassRemoteManagerStatus {
   providerId: string;
-  sourceMode: "webdav";
+  sourceMode: KeePassRemoteSourceMode;
   sessionState: "unlocked" | "restorable" | "reconnect-required";
   workingCopyState: "ready" | "missing";
   publicationState: "clean" | "local-changes" | "pending-confirmation";
@@ -138,6 +159,7 @@ const KEEPASS_REMOTE_MANAGER_ERROR_CODES = new Set<KeePassRemoteManagerErrorCode
   "remote-operation-reused",
   "remote-cache-key-missing",
   "remote-receipt-invalid",
+  "remote-project-batch-limit",
   "remote-rebase-conflict",
   "remote-path-invalid",
   "remote-file-missing",
@@ -177,7 +199,8 @@ export class KeePassRemoteSessionService {
   constructor(
     private readonly provider: KeePassProvider,
     private readonly storage: KeePassWorkingCopyStorage,
-    private readonly clientFactory: KeePassRemoteFileClientFactory = (config) => new KeePassWebDavClient(config)
+    private readonly clientFactory: KeePassRemoteFileClientFactory = (config) => new KeePassWebDavClient(config),
+    private readonly oneDriveClientFactory?: (account: ProviderAccount, identity: OneDriveItemIdentity) => KeePassRemoteFileClient
   ) {}
 
   async probe(input: Pick<KeePassWebDavOpenInput, "baseUrl" | "username" | "webDavPassword" | "remotePath">, signal?: AbortSignal): Promise<KeePassRemoteProbeResult> {
@@ -188,21 +211,40 @@ export class KeePassRemoteSessionService {
   }
 
   async open(account: ProviderAccount, input: KeePassWebDavOpenInput, signal?: AbortSignal): Promise<KeePassRemoteSessionResult> {
+    return this.openRemote(account, input, normalizeRemoteConfig(input), signal);
+  }
+
+  async openOneDrive(account: ProviderAccount, input: KeePassOneDriveOpenInput, signal?: AbortSignal): Promise<KeePassRemoteSessionResult> {
+    return this.openRemote(account, input, { sourceMode: "onedrive", ...normalizeOneDriveIdentity(input) }, signal);
+  }
+
+  private fileClient(account: ProviderAccount, config: KeePassRemoteConfig): KeePassRemoteFileClient {
+    if ("sourceMode" in config) {
+      if (!this.oneDriveClientFactory) throw invalidProvider();
+      return this.oneDriveClientFactory(account, config);
+    }
+    return this.clientFactory(config);
+  }
+
+  private async openRemote(account: ProviderAccount, input: Pick<KeePassWebDavOpenInput, "databasePassword" | "keyFile">,
+    remote: KeePassRemoteConfig, signal?: AbortSignal): Promise<KeePassRemoteSessionResult> {
     if (account.kind !== "keepass") throw invalidProvider();
-    const remote = normalizeRemoteConfig(input);
+    signal?.throwIfAborted();
     const keyFile = decodeKeyFile(input.keyFile);
     let snapshot: KeePassWebDavSnapshot | undefined;
     let existing: Awaited<ReturnType<KeePassWorkingCopyStorage["read"]>>;
     try {
-      snapshot = await this.clientFactory(remote).read(signal);
+      snapshot = await this.fileClient(account, remote).read(signal);
+      signal?.throwIfAborted();
       const session = await this.provider.unlock(account, snapshot.bytes, {
         password: input.databasePassword,
         keyFile,
         sourceName: snapshot.fileName,
-        sourceMode: "webdav",
+        sourceMode: "sourceMode" in remote ? remote.sourceMode : "webdav",
         dirty: false
       });
       existing = await this.storage.read(account.id);
+      signal?.throwIfAborted();
       const record = await this.storage.save({
         providerId: account.id,
         baseBytes: snapshot.bytes,
@@ -232,10 +274,10 @@ export class KeePassRemoteSessionService {
   }
 
   async restore(account: ProviderAccount): Promise<KeePassRemoteSessionResult> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") throw invalidProvider();
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) throw invalidProvider();
     const record = await this.storage.read(account.id);
     if (!record) {
-      throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+      throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接远端文件。");
     }
     let keyFile: Uint8Array | undefined;
     try {
@@ -248,7 +290,7 @@ export class KeePassRemoteSessionService {
         password,
         keyFile,
         sourceName: stringConfig(account, "fileName") || "remote.kdbx",
-        sourceMode: "webdav",
+        sourceMode: remoteSourceMode(account),
         dirty: record.workingSha256 !== record.baseSha256
       });
       return {
@@ -263,7 +305,7 @@ export class KeePassRemoteSessionService {
   }
 
   async managerStatus(account: ProviderAccount): Promise<KeePassRemoteManagerStatus> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") throw invalidProvider();
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) throw invalidProvider();
     const [record, hasReceipts] = await Promise.all([
       this.storage.read(account.id),
       this.storage.hasReceipts(account.id)
@@ -283,7 +325,7 @@ export class KeePassRemoteSessionService {
           : "clean";
       return {
         providerId: account.id,
-        sourceMode: "webdav",
+        sourceMode: remoteSourceMode(account),
         sessionState,
         workingCopyState,
         publicationState,
@@ -303,7 +345,7 @@ export class KeePassRemoteSessionService {
     kind: KeePassDurableMutationKind,
     intentSha256: string
   ): Promise<KeePassDurableMutationReceipt | undefined> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return undefined;
     const envelope = await this.storage.readReceipt(account.id, operationId);
     if (!envelope) return undefined;
     const receipt = await this.openReceipt(account, envelope);
@@ -314,20 +356,20 @@ export class KeePassRemoteSessionService {
   }
 
   async readAnyDurableReceipt(account: ProviderAccount, operationId: string): Promise<KeePassDurableMutationReceipt | undefined> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return undefined;
     const envelope = await this.storage.readReceipt(account.id, operationId);
     return envelope ? this.openReceipt(account, envelope) : undefined;
   }
 
   async deleteDurableReceipt(account: ProviderAccount, operationId: string): Promise<void> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return;
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return;
     await this.storage.deleteReceipt(account.id, operationId);
   }
 
   async reconcileAccountConfig(account: ProviderAccount): Promise<Record<string, unknown>> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") throw invalidProvider();
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) throw invalidProvider();
     const record = await this.storage.read(account.id);
-    if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+    if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接远端文件。");
     try {
       return await this.accountConfigForRecord(account, record);
     } finally {
@@ -340,14 +382,14 @@ export class KeePassRemoteSessionService {
     account: ProviderAccount,
     receipt?: KeePassDurableMutationReceipt
   ): Promise<KeePassRemotePersistenceResult | undefined> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return undefined;
     if (receipt && receipt.providerId !== account.id) {
       throw new KeePassRemoteSessionError("remote-provider-invalid", "KeePass 持久操作与密码源不一致。");
     }
     return this.runPersistenceExclusive(account.id, async () => {
       const record = await this.storage.read(account.id);
       if (!record) {
-        throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+        throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接远端文件。");
       }
       let bytes: Uint8Array | undefined;
       try {
@@ -387,16 +429,107 @@ export class KeePassRemoteSessionService {
     });
   }
 
+  /** Inspect exact encrypted versions without refreshing the live provider or
+   * changing its working file. A future commit must recapture under this same
+   * persistence queue and validate its reviewToken before retaining/writing data.
+   */
+  async reviewProjectConflicts(input: ProviderAccount, signal?: AbortSignal): Promise<KeePassProjectConflictReview> {
+    const account = structuredClone(input);
+    if (account.kind !== 'keepass' || !account.enabled || !isRemoteKeePassSource(account.config.sourceMode)) throw invalidProvider();
+    return this.runPersistenceExclusive(account.id, async () => {
+      const record = await this.storage.read(account.id);
+      if (!record) throw new KeePassRemoteSessionError('remote-working-copy-missing', '远端 KeePass 本机工作副本不存在，请重新连接远端文件。');
+      let snapshot: KeePassWebDavSnapshot | undefined, keyFile: Uint8Array | undefined;
+      try {
+        signal?.throwIfAborted();
+        keyFile = decodeKeyFile(optionalStringConfig(account, 'keyFile'));
+        const password = stringConfig(account, 'databasePassword');
+        snapshot = await this.fileClient(account, remoteConfigFromAccount(account)).read(signal);
+        if (!snapshot.etag) throw new KeePassWebDavError('remote-etag-required', 'KeePass 远端基线缺少 ETag，已拒绝覆盖写入。');
+        const [baseSha256, workingSha256, remoteSha256] = await Promise.all([
+          sha256Hex(record.baseBytes), sha256Hex(record.workingBytes), sha256Hex(snapshot.bytes)
+        ]);
+        if (baseSha256 !== record.baseSha256 || workingSha256 !== record.workingSha256 || remoteSha256 !== snapshot.sha256)
+          throw new KeePassWorkingCopyStoreError('record-invalid', 'KeePass 冲突预览文件校验失败。');
+        const [base, working, remote] = await Promise.all([
+          openRemoteVault(record.baseBytes, password, keyFile, account), openRemoteVault(record.workingBytes, password, keyFile, account),
+          openRemoteVault(snapshot.bytes, password, keyFile, account)
+        ]);
+        signal?.throwIfAborted();
+        const version = { revision: record.revision, baseSha256, workingSha256, remoteSha256, remoteEtag: snapshot.etag };
+        return { providerId: account.id, ...version, reviewToken: await keePassConflictReviewToken(account, version),
+          projects: previewKeePassProjectConflicts(base.database, working.database, remote.database) };
+      } finally { record.baseBytes.fill(0); record.workingBytes.fill(0); snapshot?.bytes.fill(0); keyFile?.fill(0); }
+    });
+  }
+
+  /** File commit only; background integration must serialize/flush vault edits
+   * and invalidate its live provider before adopting this committed snapshot. */
+  async resolveProjectConflicts(account: ProviderAccount, request: KeePassProjectResolutionRequest,
+    recovery: KeePassConflictRecoveryStorage, signal?: AbortSignal): Promise<KeePassDurableMutationReceipt> {
+    const service = new KeePassProjectResolutionService(this.storage, recovery,
+      (source, abort) => this.fileClient(source, remoteConfigFromAccount(source)).read(abort),
+      (providerId, task) => this.runPersistenceExclusive(providerId, task));
+    return service.resolve(account, request, signal);
+  }
+
+  async withUncommittedProjectResolution<T>(account: ProviderAccount, request: KeePassProjectResolutionRequest,
+    recovery: KeePassConflictRecoveryStorage, cancel: (requestHash: string) => Promise<T>): Promise<T> {
+    return new KeePassProjectResolutionService(this.storage, recovery,
+      (source, abort) => this.fileClient(source, remoteConfigFromAccount(source)).read(abort),
+      (providerId, task) => this.runPersistenceExclusive(providerId, task)).withUncommitted(account, request, cancel);
+  }
+
+  /** Internal project transaction: encrypted output and encrypted retry receipt
+   * commit together under the working-copy revision CAS. This does not publish,
+   * reload the live provider or adopt local items; the coordinator owns those
+   * later steps and must serialize all provider operations around this call.
+   */
+  async persistProjectRemoval(account: ProviderAccount, input: {
+    operationId: string; expectedWorkingSha256: string; draft: KeePassProjectRemovalDraft;
+  }): Promise<KeePassDurableMutationReceipt> {
+    const source = structuredClone(account), request = structuredClone(input);
+    if (source.kind !== 'keepass' || !source.enabled || !isRemoteKeePassSource(source.config.sourceMode)) throw invalidProvider();
+    const intentSha256 = await keePassRemovalFileRequestHash(source, request);
+    return this.runPersistenceExclusive(source.id, async () => {
+      const previous = await this.readDurableReceipt(source, request.operationId, 'project-remove', intentSha256);
+      if (previous) return previous;
+      const record = await this.storage.read(source.id);
+      if (!record) throw new KeePassRemoteSessionError('remote-working-copy-missing', 'KeePass 本机工作副本不存在。');
+      let output: Uint8Array | undefined, keyFile: Uint8Array | undefined;
+      try {
+        if (record.workingSha256 !== request.expectedWorkingSha256) throw new KeePassWorkingCopyStoreError('revision-stale', 'KeePass 文件版本已变化，原密码尚未移除。');
+        keyFile = decodeKeyFile(optionalStringConfig(source, 'keyFile'));
+        const result = await this.provider.prepareProjectRemovalFile(source, request.draft, {
+          bytes: record.workingBytes, expectedSha256: request.expectedWorkingSha256,
+          credential: { password: stringConfig(source, 'databasePassword'), keyFile, sourceMode: remoteSourceMode(source) }
+        });
+        output = result.bytes;
+        const receipt: KeePassDurableMutationReceipt = { providerId: source.id, operationId: request.operationId, kind: 'project-remove',
+          intentSha256, completedAt: new Date().toISOString(), result: { type: 'project-remove',
+            inputSha256: result.inputSha256, outputSha256: result.outputSha256, snapshotItems: result.items } };
+        const encrypted = await sealKeePassDurableReceipt(source, receipt);
+        const saved = await this.storage.save({ providerId: source.id, baseBytes: record.baseBytes, workingBytes: output,
+          baseEtag: record.baseEtag, baseLastModified: record.baseLastModified, baseSha256: record.baseSha256,
+          workingSha256: result.outputSha256, updatedAt: receipt.completedAt }, record.revision, encrypted);
+        saved.baseBytes.fill(0); saved.workingBytes.fill(0);
+        return receipt;
+      } finally {
+        output?.fill(0); keyFile?.fill(0); record.baseBytes.fill(0); record.workingBytes.fill(0);
+      }
+    });
+  }
+
   /**
-   * Publishes the encrypted working copy with an atomic WebDAV ETag precondition. A changed remote
+   * Publishes the encrypted working copy with a WebDAV ETag precondition. A changed remote
    * file is rebased from the stored base KDBX; only independent fields/categories are applied. The
    * working copy is replaced with the verified remote bytes before the provider session is reloaded.
    */
   async publishWorkingCopy(account: ProviderAccount, signal?: AbortSignal): Promise<KeePassRemotePublishResult | undefined> {
-    if (account.kind !== "keepass" || account.config.sourceMode !== "webdav") return undefined;
+    if (account.kind !== "keepass" || !isRemoteKeePassSource(account.config.sourceMode)) return undefined;
     return this.runPersistenceExclusive(account.id, async () => {
       const record = await this.storage.read(account.id);
-      if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接 WebDAV 文件。");
+      if (!record) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 本机工作副本不存在，请重新连接远端文件。");
       let keyFile: Uint8Array | undefined;
       let remoteSnapshot: KeePassWebDavSnapshot | undefined;
       let outputBytes: Uint8Array | undefined;
@@ -404,7 +537,7 @@ export class KeePassRemoteSessionService {
       try {
         keyFile = decodeKeyFile(optionalStringConfig(account, "keyFile"));
         const password = stringConfig(account, "databasePassword");
-        const client = this.clientFactory(remoteConfigFromAccount(account));
+        const client = this.fileClient(account, remoteConfigFromAccount(account));
         const remoteStat = await client.stat(signal);
         if (!remoteStat) throw new KeePassRemoteSessionError("remote-working-copy-missing", "远端 KeePass 文件不存在。");
 
@@ -439,11 +572,12 @@ export class KeePassRemoteSessionService {
           const baseVault = await openRemoteVault(record.baseBytes, password, keyFile, account);
           const workingVault = await openRemoteVault(record.workingBytes, password, keyFile, account);
           const remoteVault = await openRemoteVault(remoteSnapshot.bytes, password, keyFile, account);
+          const projectPreviews = previewKeePassProjectConflicts(baseVault.database, workingVault.database, remoteVault.database);
           try {
             rebaseKeePassDatabase(baseVault.database, workingVault.database, remoteVault.database);
           } catch (rebaseCause) {
             if (rebaseCause instanceof KeePassRemoteRebaseConflictError) {
-              throw new KeePassRemoteRebaseSessionError(rebaseCause.conflicts);
+              throw new KeePassRemoteRebaseSessionError(rebaseCause.conflicts, projectPreviews);
             }
             throw rebaseCause;
           }
@@ -540,9 +674,9 @@ export class KeePassRemoteSessionService {
       password,
       keyFile,
       sourceName: stringConfig(account, "fileName") || "remote.kdbx",
-      sourceMode: "webdav",
+      sourceMode: remoteSourceMode(account),
       dirty
-    });
+    }, true);
   }
 
   private async accountConfigForRecord(account: ProviderAccount, record: { revision: number; baseEtag?: string; baseLastModified?: string; baseSha256: string; workingSha256: string }): Promise<Record<string, unknown>> {
@@ -557,7 +691,7 @@ export class KeePassRemoteSessionService {
     }
     return {
       ...account.config,
-      sourceMode: "webdav",
+      sourceMode: remoteSourceMode(account),
       [KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]: cacheEncryptionKey,
       workingCopyRevision: record.revision,
       remoteEtag: record.baseEtag,
@@ -596,7 +730,15 @@ function normalizeRemoteConfig(input: Pick<KeePassWebDavOpenInput, "baseUrl" | "
   };
 }
 
-function remoteConfigFromAccount(account: ProviderAccount): KeePassWebDavConfig {
+function remoteSourceMode(account: ProviderAccount): KeePassRemoteSourceMode {
+  if (!isRemoteKeePassSource(account.config.sourceMode)) throw invalidProvider();
+  return account.config.sourceMode;
+}
+
+function remoteConfigFromAccount(account: ProviderAccount): KeePassRemoteConfig {
+  if (account.config.sourceMode === "onedrive") return { sourceMode: "onedrive", ...normalizeOneDriveIdentity({
+    driveId: stringConfig(account, "oneDriveDriveId"), itemId: stringConfig(account, "oneDriveItemId")
+  }) };
   return normalizeRemoteConfig({
     baseUrl: stringConfig(account, "webDavBaseUrl"),
     username: stringConfig(account, "webDavUsername"),
@@ -623,7 +765,7 @@ async function openRemoteVault(
 
 function remoteAccountConfig(
   account: ProviderAccount,
-  remote: KeePassWebDavConfig,
+  remote: KeePassRemoteConfig,
   databasePassword: string,
   keyFile: Uint8Array | undefined,
   snapshot: KeePassWebDavSnapshot,
@@ -632,15 +774,21 @@ function remoteAccountConfig(
   const databaseId = Number(account.config.databaseId);
   return {
     databaseId: Number.isSafeInteger(databaseId) && databaseId > 0 ? databaseId : Date.now(),
-    sourceMode: "webdav",
+    sourceMode: "sourceMode" in remote ? remote.sourceMode : "webdav",
     fileName: snapshot.fileName,
     protectionMode: keyFile
       ? databasePassword ? "password-and-key-file" : "key-file"
       : databasePassword ? "password" : "empty",
-    webDavBaseUrl: remote.baseUrl,
-    webDavUsername: remote.username,
-    webDavPassword: remote.password,
-    remotePath: remote.remotePath,
+    ...("sourceMode" in remote ? {
+      oneDriveDriveId: remote.driveId,
+      oneDriveItemId: remote.itemId,
+      oneDriveConnection: account.config.oneDriveConnection
+    } : {
+      webDavBaseUrl: remote.baseUrl,
+      webDavUsername: remote.username,
+      webDavPassword: remote.password,
+      remotePath: remote.remotePath
+    }),
     databasePassword,
     ...(keyFile ? { keyFile: bytesToBase64(keyFile) } : {}),
     [KEEPASS_CACHE_ENCRYPTION_KEY_CONFIG]: hasKeePassCacheEncryptionKey(account)

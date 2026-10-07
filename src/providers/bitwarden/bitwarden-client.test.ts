@@ -441,6 +441,25 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+describe("actual Vaultwarden 1.37.3 direct-upload URL contract", () => {
+  it("accepts the exact same-cipher relative direct-upload path without treating it as an Azure URL", async () => {
+    const client = new BitwardenClient(async () => new Response(JSON.stringify({ attachmentId: "attachment-1", fileUploadType: 0, url: "/ciphers/cipher-1/attachment/attachment-1" }), { status: 200 }));
+    const result = await client.prepareAttachmentUpload(activeSession(), "cipher-1", { key: "synthetic-wrapped-key", fileName: "synthetic-encrypted-name", fileSize: 96, lastKnownRevisionDate: "2026-09-30T00:00:00.000Z" });
+    expect(result.upload).toMatchObject({ attachmentId: "attachment-1", fileUploadType: 0, url: "/ciphers/cipher-1/attachment/attachment-1" });
+  });
+
+  it.each([
+    { fileUploadType: 0, url: "/ciphers/other/attachment/attachment-1" },
+    { fileUploadType: 0, url: "/ciphers/cipher-1/attachment/other" },
+    { fileUploadType: 0, url: "//external.example/collect" },
+    { fileUploadType: 0, url: "/ciphers/cipher-1/attachment/attachment-1?target=other" },
+    { fileUploadType: 1, url: "/ciphers/cipher-1/attachment/attachment-1" }
+  ])("rejects ambiguous or wrong-target relative upload hint $url ($fileUploadType)", async data => {
+    const client = new BitwardenClient(async () => new Response(JSON.stringify({ attachmentId: "attachment-1", ...data }), { status: 200 }));
+    await expect(client.prepareAttachmentUpload(activeSession(), "cipher-1", { key: "synthetic-wrapped-key", fileName: "synthetic-encrypted-name", fileSize: 96, lastKnownRevisionDate: "2026-09-30T00:00:00.000Z" })).rejects.toThrow();
+  });
+});
+
 function activeSession() {
   return {
     vaultUrl: "https://self.example.com",

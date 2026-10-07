@@ -19,11 +19,23 @@ describe("Android special login records", () => {
     const raw = '{"algorithm":"ED25519","keySize":256,"publicKeyOpenSsh":"ssh-ed25519 AAAA","future":7}';
     const parsed = parseSshKeyMetadata(raw);
     const output = JSON.parse(serializeSshKeyMetadata(raw, { ...parsed, comment: "joy@monica" }));
-    expect(output).toMatchObject({ algorithm: "ED25519", keySize: 256, publicKeyOpenSsh: "ssh-ed25519 AAAA", comment: "joy@monica", future: 7, format: "OPENSSH" });
+    expect(output).toMatchObject({ algorithm: "ED25519", keySize: 256, publicKeyOpenSsh: "ssh-ed25519 AAAA", comment: "joy@monica", future: 7 });
+    expect(output).not.toHaveProperty("format");
   });
 
   it("keeps untouched SSH metadata byte-identical", () => {
     const raw = '{"future":true,"algorithm":"RSA","keySize":4096,"publicKeyOpenSsh":"ssh-rsa AAAA","privateKeyOpenSsh":"private","fingerprintSha256":"SHA256:x","comment":"","format":"OPENSSH"}';
     expect(serializeSshKeyMetadata(raw, parseSshKeyMetadata(raw))).toBe(raw);
+  });
+
+  it("preserves nulls, missing fields, exact numbers and whitespace during a known-field edit", () => {
+    const raw = '{"ssid":" Lab ","security":"future-security","proxy":{"port":9223372036854775807},"eap":null,"bssid":null}';
+    const edited = serializeWifiMetadata(raw, { ...parseWifiMetadata(raw), hiddenNetwork: true });
+    expect(edited).toContain('"port":9223372036854775807');
+    expect(JSON.parse(edited)).toMatchObject({ ssid: " Lab ", security: "future-security", eap: null, bssid: null, hiddenNetwork: true });
+    const ssh = '{"future":9223372036854775807,"publicKeyOpenSsh":null}';
+    expect(serializeSshKeyMetadata(ssh, parseSshKeyMetadata(ssh))).toBe(ssh);
+    expect(serializeSshKeyMetadata(ssh, { ...parseSshKeyMetadata(ssh), comment: "  comment  " })).toContain('"comment":"  comment  "');
+    expect(() => serializeWifiMetadata("invalid", parseWifiMetadata("invalid"))).toThrow("未覆盖");
   });
 });

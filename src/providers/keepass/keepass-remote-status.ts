@@ -38,7 +38,7 @@ const RECONNECT_CODES = new Set<KeePassRemoteManagerErrorCode>([
   "record-invalid"
 ]);
 
-export function presentKeePassRemoteError(error: KeePassRemoteManagerError | undefined): KeePassRemoteErrorPresentation | undefined {
+export function presentKeePassRemoteError(error: KeePassRemoteManagerError | undefined, sourceMode?: unknown): KeePassRemoteErrorPresentation | undefined {
   if (!error || error.code === "cancelled") return undefined;
   if (error.code === "remote-rebase-conflict" || error.code === "conflict") {
     return {
@@ -52,16 +52,16 @@ export function presentKeePassRemoteError(error: KeePassRemoteManagerError | und
   if (error.code === "authentication") {
     return {
       icon: "password",
-      title: tr('WebDAV 身份验证失败'),
-      message: tr('服务器拒绝了当前用户名或密码，请重新配置凭据。'),
+      title: sourceMode === 'onedrive' ? tr('OneDrive 登录已过期') : tr('WebDAV 身份验证失败'),
+      message: sourceMode === 'onedrive' ? tr('请使用原 Microsoft 账号重新登录，本机未同步修改会保留。') : tr('服务器拒绝了当前用户名或密码，请重新配置凭据。'),
       action: "reconnect",
-      actionLabel: tr('重新配置')
+      actionLabel: sourceMode === 'onedrive' ? tr('重新登录') : tr('重新配置')
     };
   }
   if (error.code === "permission") {
     return {
       icon: "lock",
-      title: tr('WebDAV 权限不足'),
+      title: sourceMode === 'onedrive' ? tr('OneDrive 权限不足') : tr('WebDAV 权限不足'),
       message: tr('当前账号缺少读取或写入此 KDBX 文件的权限。'),
       action: "reconnect",
       actionLabel: tr('检查配置')
@@ -71,7 +71,7 @@ export function presentKeePassRemoteError(error: KeePassRemoteManagerError | und
     return {
       icon: "link_off",
       title: tr('需要重新连接 KeePass'),
-      message: tr('本机工作副本、远端基线或解锁凭据不可用，请重新检查 WebDAV 与 KDBX 设置。'),
+      message: sourceMode === 'onedrive' ? tr('请检查 OneDrive 账号、所选文件和数据库密码。本机修改会保留。') : tr('本机工作副本、远端基线或解锁凭据不可用，请重新检查 WebDAV 与 KDBX 设置。'),
       action: "reconnect",
       actionLabel: tr('重新连接')
     };

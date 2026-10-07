@@ -1,11 +1,12 @@
-import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import { launchEdgeContext } from "./fixtures/edge";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
 test("popup blocks and restores the focused field through the encrypted background policy", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(testInfo.outputPath("field-policy-profile"), {
+    context = await launchEdgeContext(testInfo.outputPath("field-policy-profile"), {
       channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 390, height: 720 },
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
     });

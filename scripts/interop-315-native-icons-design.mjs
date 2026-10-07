@@ -1,0 +1,12 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { deflateRawSync } from 'node:zlib';
+const path = new URL('../docs/design/android-interop-315.m3e.json', import.meta.url);
+const doc = JSON.parse(await readFile(path, 'utf8'));
+const id = 'nativeicons315', x = 13600;
+doc.frames = doc.frames.filter(frame => frame.id !== id);
+doc.groups = doc.groups.filter(group => group.frameId !== id);
+doc.frames.push({ id, name: 'KeePass 图标 · 选择与预览', x, y: 0, w: 420, h: 880 });
+const rows = [[16,'topAppBar','更换项目图标','arrow_back',''],[92,'listItem','GitHub','image','当前：数据库图标'],[184,'button','从图片选择','image',''],[258,'button','跟随网站','language',''],[340,'searchBar','搜索图标名称','search',''],[420,'listItem','GitHub','code','离线图标库'],[512,'textField','Emoji','mood','🔑'],[610,'button','使用这个 Emoji','check',''],[706,'listItem','预览','image','保存项目后生效'],[804,'button','完成','check','']];
+rows.forEach(([y,kind,label,icon,supporting],index)=>doc.groups.push({id:`${id}-g${index}`,frameId:id,x:x+12,y,axis:'y',gap:4,items:[{id:`${id}-i${index}`,kind,label,icon,supporting,variant:'filled',size:396,radius:24}]}));
+const json=JSON.stringify(doc,null,2)+'\n';await writeFile(path,json);
+await writeFile(new URL('../docs/design/native-icons-315.md',import.meta.url),`# KeePass 项目图标\n\n沿用 Android 的图标预览与明确替换流程。保留主题配色、Roboto 字体及 12px 外侧留白；当前图标与展开区使用外侧 24px、相邻 4px 圆角。图片入口只对 KeePass 显示；图片在本机缩放为 PNG，品牌及 Emoji 保存到 KeePass 时同样转换为原生图标。错误不覆盖当前选择，取消编辑不修改条目。草图表达控件层级，真实预览使用图像本身。\n\n[本地可编辑 Canvas](http://127.0.0.1:5186/#docz=${deflateRawSync(json).toString('base64url')})\n`);

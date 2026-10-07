@@ -9,6 +9,7 @@ interface Verification extends PasskeyVerificationContext {
   busy: boolean;
   resolve: () => void;
   reject: (error: Error) => void;
+  verify: (password: string, assertActive: () => void) => Promise<void>;
 }
 
 /** Passwords never enter the requesting website, its DOM or its content-script bridge. */
@@ -25,13 +26,13 @@ export class PasskeyUserVerification {
     });
   }
 
-  request(input: Omit<PasskeyVerificationContext, "verificationId"> & { candidateId: string }): Promise<void> {
+  request(input: Omit<PasskeyVerificationContext, "verificationId"> & { candidateId: string }, verify: (password: string, assertActive: () => void) => Promise<void> = this.verifyPassword): Promise<void> {
     if (input.expiresAt <= this.now()) return Promise.reject(new Error("Passkey 身份验证已过期。"));
     this.cancelCandidate(input.candidateId);
     const verificationId = crypto.randomUUID();
     return new Promise<void>((resolve, reject) => {
       const entry: Verification = {
-        ...input, verificationId, attempts: 0, busy: false, resolve, reject,
+        ...input, verificationId, attempts: 0, busy: false, resolve, reject, verify,
         timer: setTimeout(() => this.finish(entry, false), input.expiresAt - this.now())
       };
       this.pending.set(verificationId, entry);
@@ -48,17 +49,18 @@ export class PasskeyUserVerification {
 
   context(verificationId: string, sender: chrome.runtime.MessageSender): PasskeyVerificationContext {
     const entry = this.require(verificationId, sender);
-    return { verificationId, operation: entry.operation, rpId: entry.rpId, origin: entry.origin, accountName: entry.accountName, expiresAt: entry.expiresAt };
+    return { verificationId, operation: entry.operation, rpId: entry.rpId, origin: entry.origin, accountName: entry.accountName, expiresAt: entry.expiresAt, unlockRequired: entry.unlockRequired, method: entry.method };
   }
 
-  async verify(verificationId: string, password: string, sender: chrome.runtime.MessageSender): Promise<void> {
+  async verify(verificationId: string, password: string, sender: chrome.runtime.MessageSender, method: "master-password" | "windows-hello" = "master-password"): Promise<void> {
     const entry = this.require(verificationId, sender);
+    if ((entry.method || "master-password") !== method) throw new Error("Passkey 身份验证方式不匹配。");
     if (entry.busy) throw new Error("正在验证身份，请稍候。");
-    if (typeof password !== "string" || !password || password.length > 4096) throw new Error("请输入 Monica 主密码。");
+    if (method === "master-password" && (typeof password !== "string" || !password || password.length > 4096)) throw new Error("请输入 Monica 主密码。");
     entry.busy = true;
     entry.attempts++;
     try {
-      await this.verifyPassword(password);
+      await entry.verify(password, () => { this.require(verificationId, sender); });
       this.require(verificationId, sender);
       this.finish(entry, true);
     } catch (error) {

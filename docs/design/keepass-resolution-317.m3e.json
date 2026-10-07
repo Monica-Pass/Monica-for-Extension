@@ -1,0 +1,335 @@
+{
+  "title": "Monica · KeePass 项目冲突",
+  "brief": "现有青绿色主题、系统字体、12px留白，24px外角与4px相邻圆角。逐项目明确选择，本地接纳后另行同步；中断恢复不能误报成功。",
+  "frame": "phone",
+  "platform": "web",
+  "paletteKey": "teal",
+  "theme": {
+    "dark": false,
+    "bothModes": true,
+    "contrast": "standard",
+    "shape": "rounded",
+    "font": "system",
+    "emphasized": true,
+    "motion": "standard"
+  },
+  "frames": [
+    {
+      "id": "keepassresolve317",
+      "name": "选择保留版本",
+      "x": 0,
+      "y": 0,
+      "w": 360,
+      "h": 840
+    },
+    {
+      "id": "keepassresolverecovery317",
+      "name": "恢复冲突处理",
+      "x": 460,
+      "y": 0,
+      "w": 360,
+      "h": 640
+    }
+  ],
+  "groups": [
+    {
+      "id": "keepassresolve317-0",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-0-control",
+          "icon": "arrow_back",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "topAppBar",
+          "label": "处理项目冲突"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-1",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 104,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-1-control",
+          "icon": "cloud_sync",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "个人 KeePass 密码库",
+          "supporting": "选择每个项目要保留的完整版本"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-2",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 194,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-2-control",
+          "icon": "key",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "工作账号",
+          "supporting": "共享字段、密码与附件一起保留"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-3",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 272,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-3-control",
+          "icon": "devices",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "本机版本 · 2 个密码",
+          "supporting": "新增 0 · 修改 1 · 移除 1"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-4",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 350,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-4-control",
+          "icon": "cloud",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "远端版本 · 3 个密码",
+          "supporting": "新增 1 · 修改 1 · 移除 0"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-5",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 444,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-5-control",
+          "icon": null,
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "select",
+          "label": "保留的版本",
+          "options": [
+            "请选择",
+            "保留本机版本",
+            "保留远端版本"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-6",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 550,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-6-control",
+          "icon": "restore",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "原始版本会保留为加密恢复副本",
+          "supporting": "完成后仍需同步到其他设备"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-7",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 660,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-7-control",
+          "icon": "check",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "button",
+          "label": "确认选择并保存"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolve317-8",
+      "frameId": "keepassresolve317",
+      "x": 12,
+      "y": 734,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolve317-8-control",
+          "icon": null,
+          "size": 336,
+          "variant": "text",
+          "radius": 24,
+          "kind": "button",
+          "label": "返回"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-0",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 12,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-0-control",
+          "icon": "arrow_back",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "topAppBar",
+          "label": "未完成的冲突处理",
+          "icon2": "refresh"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-1",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 110,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-1-control",
+          "icon": "pending_actions",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "个人 KeePass 密码库",
+          "supporting": "需要核对文件保存结果"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-2",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 210,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-2-control",
+          "icon": "restore",
+          "size": 336,
+          "variant": "tonal",
+          "radius": 24,
+          "kind": "button",
+          "label": "核对并继续"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-3",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 286,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-3-control",
+          "icon": "undo",
+          "size": 336,
+          "variant": "text",
+          "radius": 24,
+          "kind": "button",
+          "label": "检查并取消"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-4",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 380,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-4-control",
+          "icon": "info",
+          "size": 336,
+          "variant": "filled",
+          "radius": 24,
+          "kind": "listItem",
+          "label": "只有文件尚未提交时才能取消",
+          "supporting": "原文件、当前编辑与恢复副本均保留"
+        }
+      ]
+    },
+    {
+      "id": "keepassresolverecovery317-5",
+      "frameId": "keepassresolverecovery317",
+      "x": 472,
+      "y": 486,
+      "axis": "y",
+      "gap": 4,
+      "items": [
+        {
+          "id": "keepassresolverecovery317-5-control",
+          "icon": "refresh",
+          "size": 336,
+          "variant": "tonal",
+          "radius": 24,
+          "kind": "button",
+          "label": "重新查看冲突"
+        }
+      ]
+    }
+  ],
+  "dynamicColor": false
+}

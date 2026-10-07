@@ -17,7 +17,7 @@ import {
   BitwardenAttachmentDownloadService,
   type BitwardenAttachmentVaultContext
 } from "./bitwarden-attachments";
-import { resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
+import { assertKnownBitwardenCipher, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import {
   BitwardenClient,
   type BitwardenClientLimits,
@@ -147,6 +147,7 @@ export class BitwardenAttachmentMutationService {
   }
 
   async upload(input: BitwardenAttachmentUploadMutationInput): Promise<BitwardenAttachmentMutationResult> {
+    assertKnownBitwardenCipher(input.rawCipher);
     const normalized = await this.normalizeUploadInput(input);
     const activeKey = operationKey(normalized.providerId, normalized.operationId);
     const fingerprint = uploadOperationFingerprint(normalized);
@@ -165,6 +166,7 @@ export class BitwardenAttachmentMutationService {
   }
 
   async delete(input: BitwardenAttachmentDeleteMutationInput): Promise<BitwardenAttachmentMutationResult> {
+    assertKnownBitwardenCipher(input.rawCipher);
     validateContext(input);
     assertOperationId(input.operationId);
     assertOpaqueId(input.attachmentId, "附件");
@@ -677,6 +679,7 @@ export class BitwardenAttachmentMutationService {
     const ciphers = arrayValue(synced.payload, "Ciphers", "ciphers");
     const rawCipher = ciphers.map(asRecord).find((candidate) => optionalString(candidate, "Id", "id") === cipherId);
     if (!rawCipher) throw mutationError("bitwarden-cipher-not-found", "Bitwarden Cipher 不存在或已被删除。");
+    assertKnownBitwardenCipher(rawCipher);
     revisionDateOf(rawCipher);
     return { session: synced.session, rawCipher };
   }

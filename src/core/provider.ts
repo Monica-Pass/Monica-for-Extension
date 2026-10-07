@@ -21,6 +21,9 @@ export interface ProviderRequestedMutation {
 }
 
 export interface ProviderSyncContext {
+  /** Encrypted transaction state: never send these records to the provider. */
+  passwordProjectRemovals?: import('./password-project-removal-journal').PasswordProjectRemovalRecord[];
+  mdbx2RestoreBatches?: import('./mdbx2-restore-batch-journal').Mdbx2RestoreBatchRecord[];
   signal?: AbortSignal;
   now: string;
   localItems: VaultItem[];
@@ -41,6 +44,9 @@ export interface ProviderSyncContext {
 }
 
 export interface ProviderSyncResult {
+  /** Staged writes were merged onto a newer remote revision. A Passkey counter
+   * reservation must advance again before signing, even if values matched. */
+  sourceWriteRebased?: boolean;
   items: VaultItem[];
   accountPatch?: Partial<ProviderAccount>;
   conflicts: ProviderConflictInput[];
@@ -64,11 +70,24 @@ export interface ProviderSyncGuard {
 /** Ignore rotating tokens and sync metadata, but never merge results from a replaced source. */
 export function sameProviderBinding(left: ProviderAccount, right: ProviderAccount): boolean {
   if (left.id !== right.id || left.kind !== right.kind) return false;
+  if (left.kind === "keepass" && (left.config.sourceMode === "onedrive" || right.config.sourceMode === "onedrive")) {
+    const a = oneDriveConnectionBinding(left.config.oneDriveConnection);
+    const b = oneDriveConnectionBinding(right.config.oneDriveConnection);
+    if (!a || !b || a !== b) return false;
+  }
   const keys = left.kind === "bitwarden" ? ["vaultUrl", "apiUrl", "identityUrl", "email", "deviceId", "vaultKeyEnc", "vaultKeyMac"]
     : left.kind === "monica-webdav" ? ["baseUrl", "username", "password", "backupPassword"]
-    : left.kind === "keepass" ? ["sourceMode", "webDavBaseUrl", "webDavUsername", "webDavPassword", "remotePath", "databasePassword", "keyFile"]
+    : left.kind === "keepass" ? ["sourceMode", "webDavBaseUrl", "webDavUsername", "webDavPassword", "remotePath", "databasePassword", "keyFile", "oneDriveDriveId", "oneDriveItemId"]
     : left.kind === "mdbx2" ? ["vaultHandle", "syncStateHandle", "webDavBaseUrl", "webDavUsername", "webDavPassword", "remotePath"] : [];
   return keys.every(key => left.config[key] === right.config[key]);
+}
+
+function oneDriveConnectionBinding(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const connection = value as Record<string, unknown>;
+  const profile = connection.profile as Record<string, unknown> | undefined;
+  const parts = [connection.id, connection.clientId, profile?.id];
+  return parts.every(part => typeof part === "string" && part.length > 0) ? JSON.stringify(parts) : undefined;
 }
 
 export interface ProviderAdapter<TAccount extends ProviderAccount = ProviderAccount> {

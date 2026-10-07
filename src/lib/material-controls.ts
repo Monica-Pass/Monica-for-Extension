@@ -84,12 +84,17 @@ const choiceLabel: ObjectDirective<HTMLLabelElement> = { beforeMount: associateC
 
 // List-action's focusable button lives in its shadow tree. Keep accessible
 // names and expansion state on that button, rather than its structural host.
-type ListActionSemantics = string | { label?: string; expanded: boolean };
+type ListActionSemantics = string | { label?: string; expanded?: boolean; current?: boolean };
 async function associateAction(action: M3eListActionElement, semantics: ListActionSemantics) {
   await action.updateComplete;
   const label = typeof semantics === "string" ? semantics : semantics.label;
   if (label) action.button?.setAttribute("aria-label", label);
-  if (typeof semantics !== "string") action.button?.setAttribute("aria-expanded", String(semantics.expanded));
+  if (typeof semantics !== "string") {
+    if (semantics.expanded !== undefined) action.button?.setAttribute("aria-expanded", String(semantics.expanded));
+    else action.button?.removeAttribute("aria-expanded");
+    if (semantics.current) action.button?.setAttribute("aria-current", "true");
+    else action.button?.removeAttribute("aria-current");
+  }
 }
 const listAction: ObjectDirective<M3eListActionElement, ListActionSemantics> = {
   mounted: (action, binding) => { void associateAction(action, binding.value); },

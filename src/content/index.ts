@@ -108,7 +108,7 @@ async function handlePasskeyRequest(requestId: string, request: PasskeyRequest):
   currentPasskeyRequestId = requestId;
   try {
     await initializeUiLocale();
-    const context = await sendRuntime<PasskeyPromptContext>({ type: "PASSKEY_BEGIN", request });
+    let context = await sendRuntime<PasskeyPromptContext>({ type: "PASSKEY_BEGIN", request });
     let settled = false;
     let accepting = false;
     let requestedCancellation: PasskeyCancellationReason | undefined;
@@ -180,9 +180,21 @@ async function handlePasskeyRequest(requestId: string, request: PasskeyRequest):
       accepting = true;
       let result: PasskeyResult;
       try {
+        if (context.unlockRequired) {
+          context = await sendRuntimeWithTransportRetry<PasskeyPromptContext>({ type: "PASSKEY_UNLOCK_CONTINUE", candidateId: context.candidateId }, 2);
+          accepting = false;
+          if (settled) return;
+          if (requestedCancellation) { await dismiss(requestedCancellation); return; }
+          return context;
+        }
         result = await sendRuntimeWithTransportRetry<PasskeyResult>({ type: "PASSKEY_ACCEPT", candidateId: context.candidateId, itemId, providerId }, 2);
       } catch (error) {
         if (settled) return;
+        if (error instanceof RuntimeRequestError && error.code === "PASSKEY_UNAVAILABLE") {
+          rejectPage({ message: error.message, name: "NotSupportedError" });
+          closePasskeyPrompt();
+          return;
+        }
         if (error instanceof RuntimeRequestError && (error.code === "PASSKEY_CANCELLED" || error.code === "PASSKEY_EXCLUDED")) {
           const reason = error.code === "PASSKEY_EXCLUDED"
             ? { message: error.message, name: "InvalidStateError" as const }
