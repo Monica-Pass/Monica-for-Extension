@@ -16,4 +16,6 @@ Local validation:
 
 Exploration failures remain recorded locally: comparing new worker target IDs failed because the browser reused the original ID; querying an execution context during teardown failed with `Service worker restarted` before the bounded transition handling was added. No production timeout, cryptography, restore policy or publication gate was relaxed. Synthetic profiles and temporary copied extensions were removed by their existing ownership/path checks.
 
-CI now runs the script fixture checks and requires the new auto-lock UI cases in the existing Windows Edge acceptance step. Remote validation/publication of this commit is pending at commit time; check the CI run for this exact source commit before treating Preview as published. No stable release or version change was made.
+CI now runs the script fixture checks and requires the new auto-lock UI cases in the existing Windows Edge acceptance step. No stable release or version change was made.
+
+Remote result at `3d1a8783de514d836051dca6ae5f9051d63a03b2`: run `41296323578` completed with `validate`, `mdbx2-host-windows` and `Publish rolling Preview` all successful. The `preview` tag resolves to `3d1a8783de51`, and the release carries `monica-extension-1.0.103-preview-3d1a8783de51-41296323578-1.zip` plus the matching Windows MDBX Host ZIP with SHA-256 sidecars; the release notes name the same source commit. Preview for this commit is published, not merely pending. The other `main` checks on the same commit (CodeQL, Secret Scan, OpenSSF Scorecard) also succeeded.
