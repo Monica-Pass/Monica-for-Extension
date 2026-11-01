@@ -29,7 +29,7 @@ test('installed Android provider exchanges passwords and signs a browser Passkey
   expect(callAdb(['shell', 'am', 'get-current-user']).trim()).toBe(androidUser);
   const applicationId = process.env.MONICA_ANDROID_APPLICATION_ID || 'takagi.ru.monica';
   expect(['takagi.ru.monica', 'takagi.ru.monica.fdroid']).toContain(applicationId);
-  const testClass = process.env.MONICA_ANDROID_NEARBY_TEST_CLASS || 'takagi.ru.monica.lansync.NearbyBrowserInteropTest';
+  const testClass = process.env.MONICA_ANDROID_NEARBY_TEST_CLASS || 'takagi.ru.monica.lansync.NearbyIncrementalBrowserInteropTest';
   expect(testClass).toMatch(/^takagi\.ru\.monica\.lansync\.Nearby(?:Incremental)?BrowserInteropTest$/);
   expect(callAdb(['emu','avd','name'])).toContain('Monica_Issue136_API_32');
   const port=Number(callAdb(['forward','tcp:0','tcp:39483']).trim());
@@ -67,9 +67,11 @@ test('installed Android provider exchanges passwords and signs a browser Passkey
     await page.evaluate(()=>{const port=chrome.runtime.connect({name:'monica-nearby-manager-v1'}),s={port,id:0,ready:false,pending:new Map()};(window as any).nearbyAndroid=s;
       port.onMessage.addListener(m=>{if(m.type==='ready')s.ready=true;else if(s.pending.has(m.id)){s.pending.get(m.id)(m);s.pending.delete(m.id);}});});
     await page.waitForFunction(()=>(window as any).nearbyAndroid.ready);
+    const phases: Array<{phone?:string;browser?:string}> = []; evidence.phases = phases;
     const complete=async()=>{let phone=false,browser=false;await expect.poll(async()=>{
-      if(!phone)phone=(await control({op:'progress'})).phase==='completed';
-      if(!browser)browser=(await command(page,{type:'progress'})).phase==='completed';
+      const step: {phone?:string;browser?:string} = {}; phases.push(step);
+      if(!phone){step.phone=(await control({op:'progress'})).phase;phone=step.phone==='completed';}
+      if(!browser){step.browser=(await command(page,{type:'progress'})).phase;browser=step.browser==='completed';}
       return phone&&browser;
     },{timeout:60000}).toBe(true);};
     const pairing=await command(page,{type:'pair'}),parts=pairing.pairing.invitations[0].split(':');parts[2]='10.0.2.2';
@@ -79,7 +81,10 @@ test('installed Android provider exchanges passwords and signs a browser Passkey
     if (incrementalAcceptance) expect((await control({op:'seed'})).seeded).toBe(200);
     const peerId=(await command(page,{type:'status'})).peerId;
     const exchange=async()=>{const prepared=await command(page,{type:'prepare',peerId});if(prepared.phase==='review')await command(page,{type:'confirm',reviewId:prepared.review.id});else expect(prepared.phase).toBe('ready');
-      const start=await command(page,{type:'start'});await control({op:'sync',port:start.endpoint.port});await complete();};
+      const listener=await control({op:'sync',listen:true});
+      const forwarded=Number(callAdb(['forward','tcp:0',`tcp:${listener.port}`]).trim());
+      try{await command(page,{type:'start',endpoint:{addresses:['127.0.0.1'],port:forwarded}});await complete();}
+      finally{callAdb(['forward','--remove',`tcp:${forwarded}`]);}};
     await exchange();const phone=await control({op:'inspect'});expect(phone.passkeys).toBe(1);expect(phone.items).toContainEqual({title:'Browser synthetic',password:'browser-original'});
     const initialBytes = incrementalAcceptance ? (await control({op:'metrics'})).total : undefined;
     expect(await runtime(page,{type:'VAULT_LIST_ITEMS'})).toEqual(expect.arrayContaining([expect.objectContaining({title:'Android synthetic',password:'android-original'})]));

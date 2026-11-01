@@ -68,18 +68,22 @@ class NearbyIncrementalBrowserInteropTest {
                                     .put("sync_request",settings.syncRequest).put("revision",outgoing.revision)
                                     .put("content_type","vault").put("vault_content_version",2).put("sync_mode","bidirectional")
                                     .put("incremental_sync",if(enrollment) 0 else 1).put("resume_sync",if(enrollment) 0 else 1)
-                                val request = JSONObject().put("operation","connect").put("protocol",2).put("vault_id","monica-passwords-v1")
+                                val listening = !enrollment && command.optBoolean("listen",false)
+                                val request = JSONObject().put("operation",if(listening) "start" else "connect").put("protocol",2).put("vault_id","monica-passwords-v1")
                                     .put("device",device).put("content_key",outgoing.contentKey).put("outgoing_directory",outgoing.directory.absolutePath)
-                                    .put("incoming_directory",incoming.absolutePath).put("invitation",if(enrollment) command.getString("invitation")
-                                        else "monica-lan:2:10.0.2.2:${command.getInt("port")}:${peer!!.trustedKey}")
+                                    .put("incoming_directory",incoming.absolutePath)
+                                if(listening) request.put("listen_address","127.0.0.1").put("trusted_key",peer!!.trustedKey)
+                                else request.put("invitation",if(enrollment) command.getString("invitation")
+                                    else "monica-lan:2:10.0.2.2:${command.getInt("port")}:${peer!!.trustedKey}")
                                 if(!enrollment) request.put("expected_device_id",peer!!.deviceId).put("resume_root",File(root,"resume").absolutePath)
-                                val started = RustLanSync.request(request); handle = started.getLong("handle"); JSONObject().put("started",true)
+                                val started = RustLanSync.request(request); handle = started.getLong("handle")
+                                JSONObject().put("started",true).put("port",started.optInt("port"))
                             }
                             "progress" -> {
                                 val id = requireNotNull(handle)
                                 val state = RustLanSync.request(JSONObject().put("operation","progress").put("handle",id))
                                 val phase = state.getString("phase"); metrics = JSONObject().put("total",state.optLong("total")).put("resumed",state.optLong("resumed"))
-                                check(phase != "failed") { state.optString("error") }
+                                check(phase != "failed") { "${state.optString("error")}; stage=${state.optString("failed_at")}; total=${state.optLong("total")}; transferred=${state.optLong("transferred")}" }
                                 if(phase == "received" && !acknowledged) {
                                     val remote = state.getJSONObject("peer")
                                     if(enrollment) {
@@ -88,7 +92,9 @@ class NearbyIncrementalBrowserInteropTest {
                                         preferences.save(settings)
                                         assertEquals(1,db.passwordEntryDao().getDeviceSyncLocalPasswords().size)
                                     } else {
-                                        provider.apply(incoming,remote)
+                                        provider.apply(incoming,remote) { count ->
+                                            error("Unexpected synthetic deletion review: $count")
+                                        }
                                         val items = db.passwordEntryDao().getDeviceSyncLocalPasswords()
                                         assertTrue(items.all { it.password != "browser-original" && it.password != "android-original" })
                                         for(key in db.passkeyDao().getAllPasskeysSync()) {
