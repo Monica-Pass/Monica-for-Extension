@@ -130,16 +130,17 @@ test("remote KeePass restores from Chromium IndexedDB after a new Service Worker
     expect(listed, listed.error).toMatchObject({ ok: true });
     assertSecretsAbsent(listed);
 
-    await terminateExtensionServiceWorker(context, launched.manager, launched.extensionId);
+    const originalEpoch = await terminateExtensionServiceWorker(context, launched.manager, launched.extensionId);
     await expect.poll(
-      () => extensionServiceWorkerTargetId(context!, launched.manager, launched.extensionId),
-      { message: "The original extension Service Worker should stop before restore" }
-    ).toBeUndefined();
+      () => extensionWorkerEpoch(context!, launched.extensionId),
+      { message: "The original Service Worker's in-memory instance must disappear before restore" }
+    ).not.toBe(originalEpoch);
     const restored = await launched.manager.evaluate(async (id) => chrome.runtime.sendMessage({ type: "KEEPASS_STATUS", providerId: id }), providerId) as RuntimeResponse<KeePassOpenResult["session"]>;
     await expect.poll(
       () => extensionServiceWorkerTargetId(context!, launched.manager, launched.extensionId),
       { message: "A new extension Service Worker target should handle the restore request" }
     ).toBeDefined();
+    await expect.poll(() => extensionWorkerEpoch(context!, launched.extensionId)).toBe('fresh');
 
     expect(restored, restored.error).toMatchObject({
       ok: true,
@@ -290,25 +291,49 @@ test("remote KeePass group, attachment and history acknowledgements replay after
   }
 });
 
-async function terminateExtensionServiceWorker(context: BrowserContext, manager: Page, extensionId: string): Promise<void> {
+async function terminateExtensionServiceWorker(context: BrowserContext, manager: Page, extensionId: string): Promise<string> {
+  const worker = context.serviceWorkers().find(candidate => new URL(candidate.url()).host === extensionId);
+  expect(worker, 'The original running extension worker must be available').toBeTruthy();
+  const epoch = await worker!.evaluate(() => {
+    const marker = crypto.randomUUID();
+    (globalThis as typeof globalThis & { __monicaE2eWorkerEpoch?: string }).__monicaE2eWorkerEpoch = marker;
+    return marker;
+  });
   const session = await context.newCDPSession(manager);
   try {
     const targets = await session.send("Target.getTargets") as { targetInfos: Array<{ targetId: string; type: string; url: string }> };
     const target = targets.targetInfos.find((candidate) => candidate.type === "service_worker" && new URL(candidate.url).host === extensionId);
     expect(target, "Extension Service Worker target was not found").toBeTruthy();
-    await session.send("ServiceWorker.enable");
-    await session.send("ServiceWorker.stopAllWorkers");
+    const closed = await session.send('Target.closeTarget', { targetId: target!.targetId }) as { success: boolean };
+    expect(closed.success, 'The exact original worker target must be closed').toBe(true);
+    return epoch;
   } finally {
     await session.detach();
   }
 }
 
 async function restartWorker(context: BrowserContext, manager: Page, extensionId: string): Promise<void> {
-  await terminateExtensionServiceWorker(context, manager, extensionId);
+  const originalEpoch = await terminateExtensionServiceWorker(context, manager, extensionId);
   await expect.poll(
-    () => extensionServiceWorkerTargetId(context, manager, extensionId),
-    { message: "The extension Service Worker should stop before durable replay" }
-  ).toBeUndefined();
+    () => extensionWorkerEpoch(context, extensionId),
+    { message: "The original worker memory must disappear before durable replay" }
+  ).not.toBe(originalEpoch);
+  // Wake a fresh instance without touching inactivity or restoring KeePass.
+  expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_STATUS' }))).toMatchObject({ ok: true });
+  await expect.poll(() => extensionWorkerEpoch(context, extensionId)).toBe('fresh');
+}
+
+async function extensionWorkerEpoch(context: BrowserContext, extensionId: string): Promise<string | undefined> {
+  const worker = context.serviceWorkers().find(candidate => new URL(candidate.url()).host === extensionId);
+  if (!worker) return undefined;
+  try {
+    return await worker.evaluate(() => (globalThis as typeof globalThis & { __monicaE2eWorkerEpoch?: string }).__monicaE2eWorkerEpoch ?? 'fresh');
+  } catch (error) {
+    // A destroyed execution context is expected while the worker restarts.
+    // Later assertions still require an evaluable fresh worker and real data.
+    if (error instanceof Error && error.message.includes('Service worker restarted')) return undefined;
+    throw error;
+  }
 }
 
 async function extensionServiceWorkerTargetId(context: BrowserContext, manager: Page, extensionId: string): Promise<string | undefined> {

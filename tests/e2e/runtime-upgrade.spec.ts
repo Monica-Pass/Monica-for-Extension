@@ -1,4 +1,6 @@
-import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
+import { launchTestContext } from './fixtures/edge';
+import { olderRuntimeWorker } from '../../scripts/runtime-upgrade-fixture.mjs';
 import { cp, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,12 +17,9 @@ for (const surface of ["index.html", "popup.html"]) {
       const currentWorker = await readFile(workerPath, "utf8");
       // Keep the real dispatcher, crypto and storage. Omit only routes that an
       // older running worker does not understand, retaining the same manifest.
-      expect(currentWorker).toContain('"VAULT_LOCKED_AUTOFILL_IDS"');
-      const olderWorker = currentWorker
-        .replaceAll('"VAULT_LOCKED_AUTOFILL_IDS"', '"LEGACY_LOCKED_AUTOFILL_IDS"')
-        .replaceAll('"RUNTIME_INFO"', '"LEGACY_RUNTIME_INFO"');
+      const olderWorker = olderRuntimeWorker(currentWorker);
       await writeFile(workerPath, olderWorker);
-      context = await chromium.launchPersistentContext(path.join(fixtureRoot, "profile"), {
+      context = await launchTestContext(path.join(fixtureRoot, "profile"), {
         channel: "chromium", headless: true, locale: "zh-CN",
         args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
       });
@@ -35,6 +34,9 @@ for (const surface of ["index.html", "popup.html"]) {
       const extensionId = new URL(worker.url()).host;
       const manager = await context.newPage();
       await manager.goto(`chrome-extension://${extensionId}/index.html`);
+      for (const type of ['RUNTIME_INFO', 'VAULT_LOCKED_AUTOFILL_IDS']) {
+        expect(await manager.evaluate(type => chrome.runtime.sendMessage({ type }), type)).toMatchObject({ ok: false });
+      }
       const setup = await manager.evaluate(masterPassword => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword }), password);
       expect(setup, setup.error).toMatchObject({ ok: true });
       const now = new Date().toISOString();
