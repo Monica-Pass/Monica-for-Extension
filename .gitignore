@@ -20,6 +20,7 @@ native/mdbx2-browser/target/
 native/mdbx2-browser/pkg/
 native/mdbx2-browser/vendor/tempfile/.cargo-ok
 .codex-tmp/
+.zcode/
 
 # Editable UI drafts and browser screenshots remain local.
 /docs/design/
