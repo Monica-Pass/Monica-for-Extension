@@ -1,4 +1,5 @@
 import { createEmptyVaultState, type PasskeyItem, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderMutationReceipt, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState, type WindowsHelloBinding } from "../core/model";
+import { validAutoLockMinutes } from '../core/auto-lock';
 import { sameProviderBinding, type ProviderAcknowledgedMutation, type ProviderRequestedMutation, type ProviderSyncGuard } from "../core/provider";
 import { matchesBinding, oneDriveConnectionBinding, parseOneDriveConnection, validOneDriveTokens, type OneDriveConnection } from "../providers/onedrive/onedrive-token-manager";
 import type { OneDriveTokens } from "../providers/onedrive/onedrive-auth";
@@ -847,6 +848,33 @@ export class SecureVaultService {
 
   async getAutofillSitePolicy(): Promise<AutofillSitePolicy> {
     return this.readProjection(state => ({ blockedHosts: state.settings.autofillBlockedHosts, saveBlockedHosts: state.settings.saveBlockedHosts }));
+  }
+
+  async getAutoLockMinutes(): Promise<number> {
+    return this.readProjection(state => state.settings.autoLockMinutes);
+  }
+
+  async setAutoLockMinutes(minutes: number): Promise<number> {
+    if (!validAutoLockMinutes(minutes)) throw new Error('锁定时间必须是 1～1440 分钟的整数。');
+    return this.runExclusive(async () => {
+      const { state, envelope, key } = await this.mutableContext();
+      const sessionId = (await this.sessions.read())?.id;
+      if (!sessionId) throw new VaultLockedError();
+      state.settings.autoLockMinutes = minutes;
+      state.updatedAt = new Date(this.now()).toISOString();
+      await this.persist(state, key, envelope.kdf, false, false, () => this.assertLocalTransferSession(sessionId));
+      try {
+        await this.touchSession(minutes);
+      } catch {
+        // A shorter setting is already durable. Never leave the longer old
+        // session active if updating its deadline failed, or revive an expired one.
+        this.clearDecryptedState();
+        if (envelope.kdf.name === 'DEVICE-KEY') await this.deviceKeys.setAutoUnlockSuspended(true);
+        await this.sessions.clear();
+        throw new VaultLockedError('锁定时间已保存，请重新解锁。');
+      }
+      return minutes;
+    });
   }
 
   async getHomePreferences(): Promise<HomePreferences> {

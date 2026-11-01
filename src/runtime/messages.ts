@@ -289,6 +289,8 @@ export type ExtensionRequest =
   | { type: "RUNTIME_INFO" }
   | { type: "CLIPBOARD_ARM"; digest: string }
   | { type: "VAULT_STATUS" }
+  | { type: "VAULT_AUTO_LOCK_GET" }
+  | { type: "VAULT_AUTO_LOCK_SET"; minutes: number }
   | { type: "VAULT_SETUP"; masterPassword: string }
   | { type: "VAULT_UNLOCK"; masterPassword: string }
   | { type: "VAULT_UNLOCK_HELLO" }

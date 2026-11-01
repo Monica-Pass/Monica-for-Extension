@@ -12,7 +12,16 @@ if (-not (Test-Path -LiteralPath $root)) { return }
 foreach ($parent in @($workspace, (Join-Path $workspace '.tmp'), $root)) {
     if ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked parent: $parent" }
 }
-$browsers = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(msedge|chrome|chromium)\.exe$' })
+try {
+    $browsers = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(msedge|chrome|chromium)\.exe$' })
+} catch {
+    # WMI can fail after a browser exits. The native process API can safely
+    # confirm there are no browsers; any remaining browser still requires its
+    # command line to protect active profiles, so preserve the original denial.
+    $nativeBrowsers = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -match '^(msedge|chrome|chromium)$' })
+    if ($nativeBrowsers.Count) { throw }
+    $browsers = @()
+}
 if (@($browsers | Where-Object { -not $_.CommandLine }).Count) { throw 'Cannot determine active browser profiles; nothing removed.' }
 $live = @($browsers | ForEach-Object {
     if ($_.CommandLine -match '--user-data-dir=(?:"([^"]+)"|([^\s]+))') {

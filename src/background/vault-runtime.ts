@@ -29,11 +29,11 @@ interface Dependencies {
     mdbx2Provider: Pick<MdbxRuntime["mdbx2Provider"], "lock">;
     nearbyOwner: Pick<import("./nearby-owner").NearbyManagerOwner, "close">;
     providerSync: Pick<ReturnType<typeof createProviderSyncRuntime>, "abortAll">;
-    service: Pick<import("../security/secure-vault-service").SecureVaultService, "authenticatedExport" | "changeMasterPassword" | "clearRecoveryCopies" | "enrollWindowsHello" | "lock" | "protectionModeForRuntime" | "restoreEncryptedBackup" | "revokeWindowsHello" | "setup" | "status" | "storageOverview" | "unlock" | "unlockWithWindowsHello" | "windowsHelloBindingIdForRuntime">;
+    service: Pick<import("../security/secure-vault-service").SecureVaultService, "authenticatedExport" | "changeMasterPassword" | "getAutoLockMinutes" | "setAutoLockMinutes" | "clearRecoveryCopies" | "enrollWindowsHello" | "lock" | "protectionModeForRuntime" | "restoreEncryptedBackup" | "revokeWindowsHello" | "setup" | "status" | "storageOverview" | "unlock" | "unlockWithWindowsHello" | "windowsHelloBindingIdForRuntime">;
     windowsHelloNativeClient: Pick<MdbxRuntime["windowsHelloNativeClient"], "enrollWindowsHello" | "revokeWindowsHello" | "verifyWindowsHello" | "windowsHelloStatus">;
 }
 export type VaultRuntimeRequest = Extract<ExtensionRequest, {
-    type: "RUNTIME_INFO" | "CLIPBOARD_ARM" | "VAULT_STATUS" | "VAULT_UNLOCK_HELLO" | "VAULT_HELLO_STATUS" | "VAULT_HELLO_ENROLL" | "VAULT_HELLO_REVOKE" | "VAULT_SETUP" | "VAULT_UNLOCK" | "VAULT_LOCK" | "VAULT_CHANGE_MASTER_PASSWORD" | "VAULT_EXPORT_ENCRYPTED" | "VAULT_AUTHENTICATED_EXPORT" | "VAULT_STORAGE_OVERVIEW" | "VAULT_RECOVERY_CLEAR" | "VAULT_RESTORE_ENCRYPTED";
+    type: "RUNTIME_INFO" | "CLIPBOARD_ARM" | "VAULT_STATUS" | "VAULT_AUTO_LOCK_GET" | "VAULT_AUTO_LOCK_SET" | "VAULT_UNLOCK_HELLO" | "VAULT_HELLO_STATUS" | "VAULT_HELLO_ENROLL" | "VAULT_HELLO_REVOKE" | "VAULT_SETUP" | "VAULT_UNLOCK" | "VAULT_LOCK" | "VAULT_CHANGE_MASTER_PASSWORD" | "VAULT_EXPORT_ENCRYPTED" | "VAULT_AUTHENTICATED_EXPORT" | "VAULT_STORAGE_OVERVIEW" | "VAULT_RECOVERY_CLEAR" | "VAULT_RESTORE_ENCRYPTED";
 }>;
 export function createVaultRuntime(deps: Dependencies) {
     const LEGACY_VAULT_KEY = "monica.extension.credentials.v1";
@@ -72,6 +72,14 @@ export function createVaultRuntime(deps: Dependencies) {
         },
         "VAULT_STATUS": async (request, sender, nativeWriteLocked) => {
             return deps.service.status();
+        },
+        "VAULT_AUTO_LOCK_GET": async (request, sender, nativeWriteLocked) => {
+            assertManagerPage(sender);
+            return deps.service.getAutoLockMinutes();
+        },
+        "VAULT_AUTO_LOCK_SET": async (request, sender, nativeWriteLocked) => {
+            assertManagerPage(sender);
+            return deps.service.setAutoLockMinutes(request.minutes);
         },
         "VAULT_UNLOCK_HELLO": async (request, sender, nativeWriteLocked) => {
             assertManagerPage(sender);

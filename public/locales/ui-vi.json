@@ -4061,5 +4061,14 @@
   "热点密码": "Mật khẩu điểm phát sóng",
   "收到 {0} 条历史删除记录。尚未修改本机内容，请选择本次如何处理。": "Đã nhận {0} bản ghi xóa trước đây. Nội dung trên thiết bị chưa thay đổi. Hãy chọn cách xử lý cho lần đồng bộ này.",
   "来自：{0}": "Từ: {0}",
-  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Bỏ qua thao tác xóa để giữ nội dung trên thiết bị. Bao gồm thao tác xóa có thể chuyển mật khẩu hoặc mã xác minh tương ứng vào thùng rác. Lựa chọn chỉ áp dụng cho lần đồng bộ này."
+  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Bỏ qua thao tác xóa để giữ nội dung trên thiết bị. Bao gồm thao tác xóa có thể chuyển mật khẩu hoặc mã xác minh tương ứng vào thùng rác. Lựa chọn chỉ áp dụng cho lần đồng bộ này.",
+  "自动锁定": "Tự động khóa",
+  "自动锁定时间（分钟）": "Thời gian tự động khóa (phút)",
+  "在所设时长内没有密码库操作时自动锁定。默认 15 分钟，支持 1～1440 分钟；保存后重新开始计时，浏览器退出会结束当前会话。": "Khóa sau khoảng thời gian đã chọn nếu không có thao tác trong kho. Mặc định là 15 phút; có thể chọn từ 1 đến 1440 phút. Lưu sẽ khởi động lại bộ đếm; thoát trình duyệt sẽ kết thúc phiên hiện tại.",
+  "锁定时间必须是 1～1440 分钟的整数。": "Thời gian khóa phải là số nguyên từ 1 đến 1440 phút.",
+  "保存锁定时间": "Lưu thời gian khóa",
+  "锁定时间已保存。": "Đã lưu thời gian khóa.",
+  "未能读取锁定时间，请重试。": "Không thể đọc thời gian khóa. Vui lòng thử lại.",
+  "未能保存锁定时间，请重试。": "Không thể lưu thời gian khóa. Vui lòng thử lại.",
+  "锁定时间已保存，请重新解锁。": "Đã lưu thời gian khóa. Vui lòng mở khóa lại."
 }

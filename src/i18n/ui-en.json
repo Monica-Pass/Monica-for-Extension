@@ -4061,5 +4061,14 @@
   "热点密码": "Hotspot password",
   "收到 {0} 条历史删除记录。尚未修改本机内容，请选择本次如何处理。": "Received {0} historical deletions. Local content has not changed. Choose how to handle them for this sync.",
   "来自：{0}": "From: {0}",
-  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Skip deletions to keep local content. Including deletions may move matching local passwords or verification codes to the recycle bin. This choice applies only to this sync."
+  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Skip deletions to keep local content. Including deletions may move matching local passwords or verification codes to the recycle bin. This choice applies only to this sync.",
+  "自动锁定": "Automatic lock",
+  "自动锁定时间（分钟）": "Automatic lock time (minutes)",
+  "在所设时长内没有密码库操作时自动锁定。默认 15 分钟，支持 1～1440 分钟；保存后重新开始计时，浏览器退出会结束当前会话。": "Locks after the selected period without vault activity. The default is 15 minutes; choose 1–1440 minutes. Saving restarts the timer, and exiting the browser ends the current session.",
+  "锁定时间必须是 1～1440 分钟的整数。": "Lock time must be a whole number from 1 to 1440 minutes.",
+  "保存锁定时间": "Save lock time",
+  "锁定时间已保存。": "Lock time saved.",
+  "未能读取锁定时间，请重试。": "Could not read the lock time. Please try again.",
+  "未能保存锁定时间，请重试。": "Could not save the lock time. Please try again.",
+  "锁定时间已保存，请重新解锁。": "Lock time saved. Please unlock again."
 }

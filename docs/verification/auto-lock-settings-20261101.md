@@ -1,0 +1,21 @@
+# Custom automatic lock duration
+
+Extension version: 1.0.103. Source build: `61771f1e358be95424e5`. Baseline: `7be33a35422730ecabf5b6d2101aa09586d9cc2c`.
+
+The protection page now exposes the existing encrypted `autoLockMinutes` setting. Integer values from 1 to 1440 are accepted; new vaults still default to 15. Saving renews the active session from the save time. Reading the value does not renew activity, and the existing browser-session, alarm, authentication and cryptographic rules remain in effect. The automatic-lock control is a separate component; the 3-line background entry remains unchanged.
+
+Both read and write commands require the exact trusted extension manager page. Runtime validation independently rejects empty/non-numeric values, fractions and out-of-range durations. An encrypted write failure leaves the old setting and deadline unchanged. If the encrypted setting is durable but updating the session deadline fails or the session expires during the write, the session is cleared and device automatic unlock is suspended rather than retaining a longer old deadline or reviving the expired session.
+
+Nine new messages are available in all seven translated catalogs. Existing encrypted backup settings retain the duration. No Android, Native Host or WASM source changes, dependency updates, version bump or published-release edits were needed.
+
+Validation:
+
+- Relevant security, runtime, background-routing, migration and translation regression: 57 files, 827 tests passed in 90.48 seconds. Includes 19 setting-service cases and six real handler cases. Synthetic master-password and device-key vaults cover preserved credentials, recreation/unlock, minimum/maximum expiry, invalid inputs, non-renewing reads, write failures and expired-session rejection.
+- All 29 command-wiring audit fixtures passed; 233 runtime commands parsed with complete handler coverage. Both added commands also pass the manager-only production security gate.
+- Complete TypeScript/interop checks and production extension build passed. Bundled source verification and all four emitted-page asset checks passed. Final production security audit passed. Existing large-chunk warnings remain.
+- Actual installed Edge: all five functional cases passed in 2.8 minutes, without skips. Three new cases cover invalid form inputs, 37/1440-minute settings, manual lock/unlock, browser restart, a 320px layout, a real one-minute inactivity expiry without query keepalive, English keyboard saving and device-key use. The two existing settings-page cases cover navigation/focus, exclusions, toggles, protection changes and portable backup export. The new cases assert no page JavaScript errors.
+- The final browser run's cleanup hook failed because Windows CIM process enumeration returned `0x80041032`; subsequent queries also returned `0x80004005`. Its command exit was therefore nonzero despite five passing test cases. Cleanup now falls back to native process enumeration only when no browsers remain; a remaining browser or a failed native query still rejects cleanup. All three cleanup safety tests passed. Explicit cleanup then deleted exactly the five profiles owned by that final run; no test/build task remains running.
+
+The first type check/build failed on the test fixture's partial dependency cast and an optional legacy session ID; both were corrected and logs retained. The initial command audit correctly rejected its stale fixed count of 231; its expected count is now 233, retaining declaration/handler/wiring assertions. The first actual Edge case failed because Vue number inputs produce numbers while the component initially called a string-only validator. The production validator now handles numeric and empty input; subsequent browser tests also assert that no page errors occur. That run was stopped after the confirmed failure, and its two owned browser profiles were deleted. Its failure trace and logs remain local, outside Git.
+
+Previously blocked deletion of approximately 4 GiB of native build caches is still unresolved. This task does not retry or bypass that execution-policy rejection. Current build output is retained for verification; synthetic browser profiles are cleaned by their per-run owner.

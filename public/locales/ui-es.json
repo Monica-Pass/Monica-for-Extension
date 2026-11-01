@@ -4061,5 +4061,14 @@
   "热点密码": "Contraseña del punto de acceso",
   "收到 {0} 条历史删除记录。尚未修改本机内容，请选择本次如何处理。": "Se recibieron {0} eliminaciones anteriores. El contenido local todavía no ha cambiado. Elige cómo tratarlas en esta sincronización.",
   "来自：{0}": "De: {0}",
-  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Omitir eliminaciones conserva el contenido local. Incluirlas puede mover las contraseñas o códigos de verificación locales correspondientes a la papelera. Esta elección solo se aplica a esta sincronización."
+  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Omitir eliminaciones conserva el contenido local. Incluirlas puede mover las contraseñas o códigos de verificación locales correspondientes a la papelera. Esta elección solo se aplica a esta sincronización.",
+  "自动锁定": "Bloqueo automático",
+  "自动锁定时间（分钟）": "Tiempo de bloqueo automático (minutos)",
+  "在所设时长内没有密码库操作时自动锁定。默认 15 分钟，支持 1～1440 分钟；保存后重新开始计时，浏览器退出会结束当前会话。": "Se bloquea tras el periodo elegido sin actividad en la bóveda. El valor predeterminado es de 15 minutos; se admite de 1 a 1440 minutos. Guardar reinicia el temporizador y cerrar el navegador finaliza la sesión actual.",
+  "锁定时间必须是 1～1440 分钟的整数。": "El tiempo de bloqueo debe ser un número entero de 1 a 1440 minutos.",
+  "保存锁定时间": "Guardar tiempo de bloqueo",
+  "锁定时间已保存。": "Tiempo de bloqueo guardado.",
+  "未能读取锁定时间，请重试。": "No se pudo leer el tiempo de bloqueo. Inténtalo de nuevo.",
+  "未能保存锁定时间，请重试。": "No se pudo guardar el tiempo de bloqueo. Inténtalo de nuevo.",
+  "锁定时间已保存，请重新解锁。": "Tiempo de bloqueo guardado. Desbloquea de nuevo."
 }

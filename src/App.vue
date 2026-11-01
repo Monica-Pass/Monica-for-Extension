@@ -33,6 +33,7 @@ import InlineAutofillSettings from "./components/InlineAutofillSettings.vue";
 import AutomaticSyncSettings from "./components/AutomaticSyncSettings.vue";
 import AuthenticatedExportDialog from './components/AuthenticatedExportDialog.vue';
 import ClipboardSettings from './components/ClipboardSettings.vue';
+import AutoLockSettings from './components/AutoLockSettings.vue';
 import VaultStoragePanel from './components/VaultStoragePanel.vue';
 import RuntimeDiagnostics from './components/RuntimeDiagnostics.vue';
 import ExtensionUpdates from './components/ExtensionUpdates.vue';
@@ -3256,6 +3257,7 @@ function errorCode(error: unknown): string | undefined {
                 <SettingsPasswordField v-model="passwordChange.confirmation" :label="tr('确认新主密码')" :minlength="passwordChange.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" />
                 <m3e-button variant="filled" :disabled="Boolean(securityBusy)" @click="changeMasterPassword">{{ securityBusy === 'password' ? tr('正在重新加密…') : tr('更改主密码') }}</m3e-button>
                 <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p></section>
+<section class="settings-content"><AutoLockSettings @busy="settingsChildBusy = $event" /></section>
 <section class="settings-content"><ClipboardSettings /></section>
 <section class="settings-content windows-hello-card" aria-labelledby="settings-hello-heading"><h2 id="settings-hello-heading">Windows Hello</h2><p class="supporting">{{ tr('使用 Windows Hello 保护设备密钥；私钥不离开本机。') }}</p>
             <div v-if="windowsHelloStatus" class="hello-status-grid" aria-live="polite"><span><strong>{{ windowsHelloStatus.native.available ? tr('设备可用') : tr('设备不可用') }}</strong><small>{{ tr('平台验证器') }}</small></span><span><strong>{{ windowsHelloStatus.vaultEnrolled ? windowsHelloStatus.bindingConsistent ? tr('已注册') : tr('绑定异常') : tr('未注册') }}</strong><small>{{ tr('当前密码库') }}</small></span><span><strong>{{ windowsHelloStatus.protectionMode === 'device-key' ? tr('设备密钥') : windowsHelloStatus.protectionMode === 'master-password' ? tr('主密码') : tr('未知') }}</strong><small>{{ tr('保护方式') }}</small></span></div>

@@ -89,7 +89,7 @@ if (!handlers.has('MDBX2_HOST_STATUS') || handlers.has('MDBX_OPEN')) throw new E
 for (const type of ["CREDENTIAL_CAPTURE", "CREDENTIAL_PENDING", "CREDENTIAL_ACCEPT", "CREDENTIAL_DISMISS", "PASSKEY_BEGIN", "PASSKEY_UNLOCK_CONTINUE", "PASSKEY_ACCEPT", "PASSKEY_DISMISS"]) {
   if (!webTypes.has(type)) throw new Error(`Page request allowlist is missing ${type}.`);
 }
-for (const type of ['VAULT_BATCH_MUTATE', 'VAULT_AUTHENTICATED_EXPORT', 'VAULT_STORAGE_OVERVIEW', 'VAULT_RECOVERY_CLEAR']) {
+for (const type of ['VAULT_BATCH_MUTATE', 'VAULT_AUTHENTICATED_EXPORT', 'VAULT_STORAGE_OVERVIEW', 'VAULT_RECOVERY_CLEAR', 'VAULT_AUTO_LOCK_GET', 'VAULT_AUTO_LOCK_SET']) {
   if (allowlistBlock.includes(type) || !handlers.get(type)?.includes('assertManagerPage(sender)')) throw new Error(`Export/recovery command ${type} is not manager-only.`);
 }
 if (!handlers.get('VAULT_RECOVERY_CLEAR')?.includes('request.confirmed !== true') || !handlers.get('VAULT_EXPORT_ENCRYPTED')?.includes('throw')) throw new Error('Recovery confirmation or legacy export denial is missing.');

@@ -1,4 +1,5 @@
 import type { HomePreferences } from "./home-preferences";
+import { DEFAULT_AUTO_LOCK_MINUTES } from './auto-lock';
 
 export type VaultItemKind =
   | "login"
@@ -586,7 +587,7 @@ export function createEmptyVaultState(now = new Date().toISOString()): VaultStat
     providerDiagnostics: [],
     sourceRecords: [],
     settings: {
-      autoLockMinutes: 15,
+      autoLockMinutes: DEFAULT_AUTO_LOCK_MINUTES,
       defaultProviderId: localProviderId,
       protectionMode: "master-password",
       autofillBlockedHosts: [],

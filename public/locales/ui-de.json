@@ -4061,5 +4061,14 @@
   "热点密码": "Hotspot-Passwort",
   "收到 {0} 条历史删除记录。尚未修改本机内容，请选择本次如何处理。": "{0} frühere Löschungen empfangen. Lokale Inhalte wurden noch nicht geändert. Wähle, wie sie bei dieser Synchronisierung behandelt werden.",
   "来自：{0}": "Von: {0}",
-  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Löschungen überspringen behält lokale Inhalte. Einschließen kann entsprechende lokale Passwörter oder Bestätigungscodes in den Papierkorb verschieben. Diese Auswahl gilt nur für diese Synchronisierung."
+  "跳过删除可保留本机内容；包含删除可能将本机对应的密码或验证码移入回收站。此选择仅对本次同步有效。": "Löschungen überspringen behält lokale Inhalte. Einschließen kann entsprechende lokale Passwörter oder Bestätigungscodes in den Papierkorb verschieben. Diese Auswahl gilt nur für diese Synchronisierung.",
+  "自动锁定": "Automatische Sperre",
+  "自动锁定时间（分钟）": "Automatische Sperrzeit (Minuten)",
+  "在所设时长内没有密码库操作时自动锁定。默认 15 分钟，支持 1～1440 分钟；保存后重新开始计时，浏览器退出会结束当前会话。": "Sperrt nach der gewählten Zeit ohne Tresoraktivität. Standard: 15 Minuten; möglich sind 1–1440 Minuten. Speichern startet den Timer neu. Das Beenden des Browsers beendet die aktuelle Sitzung.",
+  "锁定时间必须是 1～1440 分钟的整数。": "Die Sperrzeit muss eine ganze Zahl zwischen 1 und 1440 Minuten sein.",
+  "保存锁定时间": "Sperrzeit speichern",
+  "锁定时间已保存。": "Sperrzeit gespeichert.",
+  "未能读取锁定时间，请重试。": "Die Sperrzeit konnte nicht gelesen werden. Bitte erneut versuchen.",
+  "未能保存锁定时间，请重试。": "Die Sperrzeit konnte nicht gespeichert werden. Bitte erneut versuchen.",
+  "锁定时间已保存，请重新解锁。": "Sperrzeit gespeichert. Bitte erneut entsperren."
 }

@@ -7,7 +7,7 @@ const sources = await readRuntimeAuditSources(fileURLToPath(new URL('..', import
 test('all declared commands have exactly one wired handler', () => {
   const result = auditRuntimeCommands(sources);
   assert.equal(result.handlers.size, result.declaredTypes.size);
-  assert.equal(result.handlers.size, 231);
+  assert.equal(result.handlers.size, 233);
   assert.equal(result.wiredModules.size, 18);
 });
 

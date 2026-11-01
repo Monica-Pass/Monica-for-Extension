@@ -1,4 +1,5 @@
 import { argon2id } from "hash-wasm";
+import { validAutoLockMinutes } from '../core/auto-lock';
 import type { VaultState } from "../core/model";
 import { MAX_SOURCE_RECORD_TAG_LENGTH, migrateVaultState, validProviderMutationReceipt } from "../core/migrations";
 import { normalizeSitePolicy } from "../autofill/site-policy";
@@ -160,9 +161,7 @@ export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey)
     (state.settings.protectionMode !== "master-password" && state.settings.protectionMode !== "device-key") ||
     (state.settings.windowsHello !== undefined && !validWindowsHelloBinding(state.settings.windowsHello)) ||
     !validSitePolicySettings(state.settings) ||
-    !Number.isInteger(state.settings.autoLockMinutes) ||
-    state.settings.autoLockMinutes < 1 ||
-    state.settings.autoLockMinutes > 1440 ||
+    !validAutoLockMinutes(state.settings.autoLockMinutes) ||
     !state.providers.some((provider) => provider.id === state.settings.defaultProviderId)
   ) {
     throw new Error("Vault payload is invalid or unsupported");
