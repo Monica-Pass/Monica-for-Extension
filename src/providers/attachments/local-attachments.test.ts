@@ -3,7 +3,7 @@ import { SecureVaultService } from '../../security/secure-vault-service';
 import { MemoryVaultStorage } from '../../security/vault-storage';
 import { MemoryVaultSessionStore } from '../../security/vault-session';
 import { createLoginItem } from '../../core/model';
-import { bytesToBase64, base64ToBytes } from '../../security/encoding';
+import { bytesToBase64 } from '../../security/encoding';
 import { LocalAttachmentService } from './local-attachments';
 import type { LocalAttachmentMutation } from '../../core/local-attachments';
 

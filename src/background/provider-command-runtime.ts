@@ -58,11 +58,11 @@ export function createProviderCommandRuntime(deps: Dependencies) {
         };
     }
     const handlers: CommandHandlers<ProviderCommandRuntimeRequest> = {
-        "PROVIDER_LIST": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_LIST": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.listProviders();
         },
-        "PROVIDER_QUEUE_STATUS": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_QUEUE_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const state = await deps.service.readState();
             const preparationRecoveries = readPasswordProjectRemovalJournal(state.passwordProjectRemovals)
@@ -87,19 +87,19 @@ export function createProviderCommandRuntime(deps: Dependencies) {
                 };
             });
         },
-        "PROVIDER_CONFLICT_LIST": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_CONFLICT_LIST": async (request, sender) => {
             assertManagerPage(sender);
             return (await deps.service.listProviderConflicts(request.providerId)).map(toProviderConflictSummary);
         },
-        "PROVIDER_CONFLICT_RESOLVE": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_CONFLICT_RESOLVE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.resolveProviderConflict(request.conflictId, request.resolution);
         },
-        "PROVIDER_DIAGNOSTIC_EXPORT": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_DIAGNOSTIC_EXPORT": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.exportProviderDiagnostics();
         },
-        "WEBDAV_TEST": async (request, sender, nativeWriteLocked) => {
+        "WEBDAV_TEST": async (request, sender) => {
             assertManagerPage(sender);
             const existing = request.providerId ? await deps.service.getProvider(request.providerId) : undefined;
             if (existing && existing.kind !== "monica-webdav")
@@ -114,7 +114,7 @@ export function createProviderCommandRuntime(deps: Dependencies) {
             };
             return deps.providers.get("monica-webdav").testConnection(temporary);
         },
-        "WEBDAV_SAVE": async (request, sender, nativeWriteLocked) => {
+        "WEBDAV_SAVE": async (request, sender) => {
             assertManagerPage(sender);
             const existing = request.providerId ? await deps.service.getProvider(request.providerId) : undefined;
             if (existing && existing.kind !== "monica-webdav")
@@ -138,7 +138,7 @@ export function createProviderCommandRuntime(deps: Dependencies) {
             await deps.providers.get("monica-webdav").testConnection(account);
             return deps.service.upsertProvider(account);
         },
-        "PROVIDER_REMOVE": async (request, sender, nativeWriteLocked) => {
+        "PROVIDER_REMOVE": async (request, sender) => {
             assertManagerPage(sender);
             deps.nearbyOwner.close('provider-changed');
             return deps.providerOperations.run(request.providerId, () => deps.runKeePassMutationExclusive(request.providerId, async () => {

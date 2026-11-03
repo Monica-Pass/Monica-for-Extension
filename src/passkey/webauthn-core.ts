@@ -149,7 +149,7 @@ export async function createAssertion(input: PasskeyAssertionInput): Promise<{ r
 export function normalizeRpId(value: string): string {
   const trimmed = value.trim().replace(/\.+$/, "");
   if (!trimmed) return "";
-  if (/[\/@?#%]/.test(trimmed)) return "";
+  if (/[/@?#%]/.test(trimmed)) return "";
   const ipv6 = /^\[[0-9a-f:.]+\]$/i.test(trimmed);
   if (trimmed.includes(":") && !ipv6) return "";
   try {

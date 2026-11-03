@@ -10,7 +10,7 @@ const kdbx = (kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdb
 const PASSWORD = "synthetic automatic KDBX password";
 const REMOTE_PATH = "/dav/vault.kdbx";
 
-test("WebDAV checks ETags, automatically receives and publishes KDBX edits, and respects a database lock", async ({}, testInfo) => {
+test("WebDAV checks ETags, automatically receives and publishes KDBX edits, and respects a database lock", async (_, testInfo) => {
   test.setTimeout(90_000);
   let bytes = await buildKeePassFixture({ password: PASSWORD, name: "Synthetic automatic KDBX", entries: [
     { title: "Phone KDBX", fields: { UserName: "phone-user" }, protectedFields: { Password: "synthetic-only" } },

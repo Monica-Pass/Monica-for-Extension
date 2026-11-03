@@ -58,7 +58,7 @@ async function confirmSavePrompt(page: Page): Promise<void> {
   await expect(prompt).toHaveCount(0, { timeout: 20_000 });
 }
 
-test("save prompt explicitly stores a newly submitted login in the encrypted local vault", async ({}, testInfo) => {
+test("save prompt explicitly stores a newly submitted login in the encrypted local vault", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "new-login-profile");
@@ -70,7 +70,6 @@ test("save prompt explicitly stores a newly submitted login in the encrypted loc
     await page.locator("#password").fill("new-login-secret");
     await triggerLogin(page);
 
-    const prompt = page.locator("#monica-save-prompt-host");
     await confirmSavePrompt(page);
 
     await expect.poll(async () => (await listItems(launched.manager)).length).toBe(1);
@@ -81,7 +80,7 @@ test("save prompt explicitly stores a newly submitted login in the encrypted loc
   }
 });
 
-test("save prompt updates the matching login with a submitted replacement password", async ({}, testInfo) => {
+test("save prompt updates the matching login with a submitted replacement password", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "update-login-profile");
@@ -110,7 +109,6 @@ test("save prompt updates the matching login with a submitted replacement passwo
     await page.locator("#password").fill("replacement-secret");
     await triggerLogin(page);
 
-    const prompt = page.locator("#monica-save-prompt-host");
     await confirmSavePrompt(page);
 
     await expect.poll(async () => (await listItems(launched.manager)).find((item) => item.id === existing.id)?.password).toBe("replacement-secret");
@@ -122,7 +120,7 @@ test("save prompt updates the matching login with a submitted replacement passwo
   }
 });
 
-test("an unchanged autofilled login stays silent, but an edited password can still be updated", async ({}, testInfo) => {
+test("an unchanged autofilled login stays silent, but an edited password can still be updated", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "unchanged-autofill-profile");
@@ -165,7 +163,7 @@ test("an unchanged autofilled login stays silent, but an edited password can sti
 });
 
 for (const mode of ["manual", "inline"] as const) {
-  test(`unchanged ${mode} credentials do not prompt even among same-username records`, async ({}, testInfo) => {
+  test(`unchanged ${mode} credentials do not prompt even among same-username records`, async (_, testInfo) => {
     let context: BrowserContext | undefined;
     try {
       const launched = await launchExtension(testInfo, `unchanged-${mode}-copies`);
@@ -210,7 +208,7 @@ for (const mode of ["manual", "inline"] as const) {
   });
 }
 
-test("reverting a submitted password discards the stale prompt and navigation candidate", async ({}, testInfo) => {
+test("reverting a submitted password discards the stale prompt and navigation candidate", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "reverted-update-profile");
@@ -240,7 +238,7 @@ test("reverting a submitted password discards the stale prompt and navigation ca
   }
 });
 
-test("save prompt requires choosing among same-username accounts", async ({}, testInfo) => {
+test("save prompt requires choosing among same-username accounts", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "save-choice");
@@ -273,7 +271,7 @@ test("save prompt requires choosing among same-username accounts", async ({}, te
   }
 });
 
-test("save prompt fits 375px at 200 percent text", async ({}, testInfo) => {
+test("save prompt fits 375px at 200 percent text", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "save-zoom", { width: 375, height: 667 });
@@ -315,7 +313,7 @@ test("save prompt fits 375px at 200 percent text", async ({}, testInfo) => {
   }
 });
 
-test("save prompt dismisses a submitted login without writing it", async ({}, testInfo) => {
+test("save prompt dismisses a submitted login without writing it", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "dismiss-login-profile");

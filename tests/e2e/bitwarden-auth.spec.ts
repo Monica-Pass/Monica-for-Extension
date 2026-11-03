@@ -11,7 +11,7 @@ const EMAIL = "alice@example.com";
 const MASTER_PASSWORD = "bitwarden new device password";
 
 for (const keyResponse of ['legacy', 'nested'] as const) {
-test(`Bitwarden login completes current prelogin and new-device email verification (${keyResponse})`, async ({}, testInfo) => {
+test(`Bitwarden login completes current prelogin and new-device email verification (${keyResponse})`, async (_, testInfo) => {
   const masterKey = await deriveBitwardenMasterKey(MASTER_PASSWORD, EMAIL, { type: 0, iterations: 1 });
   const stretchedKey = await stretchBitwardenMasterKey(masterKey);
   const vaultKey: BitwardenSymmetricKey = { encKey: new Uint8Array(32).fill(1), macKey: new Uint8Array(32).fill(2) };
@@ -109,7 +109,7 @@ test(`Bitwarden login completes current prelogin and new-device email verificati
 }
 
 for (const reset of ["none", "password", "server", "email", "close"] as const) {
-  test(`Bitwarden retains new-device verification through subsequent email two-factor retries (${reset})`, async ({}, testInfo) => {
+  test(`Bitwarden retains new-device verification through subsequent email two-factor retries (${reset})`, async (_, testInfo) => {
     const masterKey = await deriveBitwardenMasterKey(MASTER_PASSWORD, EMAIL, { type: 0, iterations: 1 });
     const stretchedKey = await stretchBitwardenMasterKey(masterKey);
     const protectedKey = await new BitwardenClient().protectVaultKey({ encKey: new Uint8Array(32).fill(1), macKey: new Uint8Array(32).fill(2) }, stretchedKey, new Uint8Array(16));
@@ -209,7 +209,7 @@ for (const reset of ["none", "password", "server", "email", "close"] as const) {
   });
 }
 
-test("Bitwarden retains email two-factor verification when the device challenge follows it", async ({}, testInfo) => {
+test("Bitwarden retains email two-factor verification when the device challenge follows it", async (_, testInfo) => {
   const masterKey = await deriveBitwardenMasterKey(MASTER_PASSWORD, EMAIL, { type: 0, iterations: 1 });
   const stretchedKey = await stretchBitwardenMasterKey(masterKey);
   const protectedKey = await new BitwardenClient().protectVaultKey({ encKey: new Uint8Array(32).fill(1), macKey: new Uint8Array(32).fill(2) }, stretchedKey, new Uint8Array(16));

@@ -7,7 +7,7 @@ import { launchEdgeContext } from './fixtures/edge';
 import type { Mdbx2ContentAttachments } from '../../src/providers/mdbx2/content-attachments';
 
 const sha = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
-test('bundled MDBX atomically adopts content and assets with durable replay and original Passkey signing', async ({}, info) => {
+test('bundled MDBX atomically adopts content and assets with durable replay and original Passkey signing', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(240_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), db = `synthetic-content-${randomUUID()}`;
   await mkdir(extension, { recursive: true });

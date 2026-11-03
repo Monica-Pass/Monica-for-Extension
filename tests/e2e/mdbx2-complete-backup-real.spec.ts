@@ -1,5 +1,5 @@
 import { chooseOption } from './fixtures/material';
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -18,7 +18,7 @@ async function send(page: Page, message: Record<string, unknown>) {
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-test("real Edge complete MDBX backup restores password projects, external attachments and original Passkeys", async ({}, info) => {
+test("real Edge complete MDBX backup restores password projects, external attachments and original Passkeys", async (_, info) => {
   test.skip(!sourceFixture, 'Requires an explicit verified Android MDBX fixture and Windows Native Host');
   test.setTimeout(240_000);
   const evidence: Record<string, any> = { status: "failed", androidApplicationAcceptance: false, phases: [], errors: [] };
@@ -36,6 +36,7 @@ test("real Edge complete MDBX backup restores password projects, external attach
   let context = await launchEdgeContext(info.outputPath("source-profile"), options("source"));
   let host: Awaited<ReturnType<typeof temporaryNativeHost>> | undefined;
   const watch = () => context.on("page", page => page.on("pageerror", error => evidence.errors.push(error.message))); watch();
+  let cleanupFailure: unknown;
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const extensionId = new URL(worker.url()).host; const root = `chrome-extension://${extensionId}/`;
@@ -214,7 +215,8 @@ test("real Edge complete MDBX backup restores password projects, external attach
   finally {
     await context.close();
     try { await host?.restore(); evidence.nativeHost = host?.evidence; }
-    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); throw error; }
+    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); cleanupFailure = error; }
     finally { await writeFile(info.outputPath("evidence.json"), JSON.stringify(evidence, null, 2)); }
   }
+  if (cleanupFailure) throw cleanupFailure;
 });

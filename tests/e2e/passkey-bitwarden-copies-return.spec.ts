@@ -25,7 +25,7 @@ async function approve(context:BrowserContext,page:Page,index:number){
   await verification.getByLabel('Monica 主密码',{exact:true}).fill(password);
   await verification.getByRole('button',{name:'确认',exact:true}).click();
 }
-for(const name of ['copies-complete','copies-cancel'])test(`Android repaired ${name} returns every source binding to actual browser sign-in`,async ({},info)=>{
+for(const name of ['copies-complete','copies-cancel'])test(`Android repaired ${name} returns every source binding to actual browser sign-in`,async (_,info)=>{
   test.skip(process.env.MONICA_BITWARDEN_SNAPSHOT_PHASE!=='return','Explicit repaired Android return required');
   expect(path.resolve(process.env.MONICA_BITWARDEN_SNAPSHOT_DIR||'')).toBe(directory);
   const read=async(file:string)=>JSON.parse(await readFile(path.join(directory,file),'utf8'));

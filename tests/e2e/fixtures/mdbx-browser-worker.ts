@@ -207,7 +207,7 @@ async function action(op: string, data: any): Promise<unknown> {
         if(op==='nearby-native-coordinator-review') {
           recoveryCoordinator?.close(); recoveryCoordinator = coordinator;
           try { return await coordinator.reviewRecovery(data.operationId); }
-          catch(error) { throw Error(`${String(error)}; synthetic review diagnostic: ${reviewError}`); }
+          catch(error) { throw Error(`${String(error)}; synthetic review diagnostic: ${reviewError}`, { cause: error }); }
         }
         try{return await coordinator.recover(data.operationId);}finally{coordinator.close();}
       }

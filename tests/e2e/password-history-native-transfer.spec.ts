@@ -14,7 +14,7 @@ async function send<T = unknown>(page: Page, request: Record<string, unknown>): 
   expect(result.ok, result.error).toBe(true); return result.data as T;
 }
 
-test('actual Edge and Native Host block history loss before MDBX transfer and preserve it after restart', async ({}, info) => {
+test('actual Edge and Native Host block history loss before MDBX transfer and preserve it after restart', async (_, info) => {
   test.skip(!process.env.MONICA_317_NATIVE_PASSKEY_FIXTURE, 'Requires an explicit verified Android MDBX fixture and Windows Native Host');
   test.setTimeout(120_000);
   const fixtureRoot = process.env.MONICA_317_NATIVE_PASSKEY_FIXTURE!;

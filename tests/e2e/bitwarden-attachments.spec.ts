@@ -1,6 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { dialogContent } from "./fixtures/material";
-import { expect, test, type BrowserContext, type Download, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Download, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
@@ -45,7 +45,7 @@ interface AttachmentServer {
   routeObjects(route: Route): Promise<void>;
 }
 
-test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover interrupted deletes", async ({}, testInfo) => {
+test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover interrupted deletes", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createAttachmentServer();
   try {

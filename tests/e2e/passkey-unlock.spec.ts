@@ -60,7 +60,7 @@ async function confirm(page: Page, operation: 'create' | 'get') {
 
 const browserOptions = () => ({ locale: 'zh-CN', args: [`--disable-extensions-except=${path.resolve('dist')}`, `--load-extension=${path.resolve('dist')}`] });
 
-test('locked RSA registration and login resume with one scoped password verification, including browser restart', async ({}, info) => {
+test('locked RSA registration and login resume with one scoped password verification, including browser restart', async (_, info) => {
   test.setTimeout(120_000);
   const profile = info.outputPath('unlock');
   let context = await launchEdgeContext(profile, browserOptions());
@@ -157,7 +157,7 @@ function rgb(hex: string): string {
   return `rgb(${channels.join(', ')})`;
 }
 
-test('locked requests cancel on Escape, abort, navigation, timeout and explicit relock without signing', async ({}, info) => {
+test('locked requests cancel on Escape, abort, navigation, timeout and explicit relock without signing', async (_, info) => {
   test.setTimeout(150_000);
   const context = await launchEdgeContext(info.outputPath('cancel'), browserOptions());
   try {

@@ -19,7 +19,7 @@ async function create(page: Page, label: string) {
   await page.getByRole('menuitem', { name: label, exact: true }).click();
   return dialogContent(page);
 }
-test('new wallet stays in its group, card subtypes persist and standalone editors cannot switch groups', async ({}, info) => {
+test('new wallet stays in its group, card subtypes persist and standalone editors cannot switch groups', async (_, info) => {
   test.setTimeout(150000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce', viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -82,7 +82,7 @@ test('new wallet stays in its group, card subtypes persist and standalone editor
   } finally { await context.close(); }
 });
 
-test('credential group includes native API token with reversible separate drafts and resets after cancel', async ({}, info) => {
+test('credential group includes native API token with reversible separate drafts and resets after cancel', async (_, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce', args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -123,7 +123,7 @@ test('credential group includes native API token with reversible separate drafts
   } finally { await context.close(); }
 });
 
-test('legacy payment accounts remain editable while filtered primary create cannot create another payment account', async ({}, info) => {
+test('legacy payment accounts remain editable while filtered primary create cannot create another payment account', async (_, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce', viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
   try {

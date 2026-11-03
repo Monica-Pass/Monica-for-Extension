@@ -15,7 +15,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
   expect(Math.abs((containerBox!.y + containerBox!.height / 2) - (iconBox!.y + iconBox!.height / 2))).toBeLessThanOrEqual(1);
 }
 
-test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text dark mode", async ({}, testInfo) => {
+test("MDBX2 diagnostics refresh safely and remain readable in narrow large-text dark mode", async (_, testInfo) => {
   test.setTimeout(90_000);
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;

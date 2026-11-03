@@ -14,7 +14,7 @@ async function send(page: Page, op: string, params: Record<string, unknown> = {}
 }
 const rpc = (page: Page, method: string, params: Record<string, unknown> = {}) => send(page, 'rpc', params, method);
 
-test('MDBX routes legacy Native Host and bundled browser vaults across restart without changing keys', async ({}, info) => {
+test('MDBX routes legacy Native Host and bundled browser vaults across restart without changing keys', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(180_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), engine = path.join(extension, 'mdbx-browser');
   await mkdir(engine, { recursive: true });
@@ -40,7 +40,9 @@ test('MDBX routes legacy Native Host and bundled browser vaults across restart w
     return { page, extensionId };
   };
   try {
-    let { page, extensionId } = await launch();
+    const launched = await launch();
+    let { page } = launched;
+    const { extensionId } = launched;
     registration = await temporaryNativeHost(extensionId, path.join(run, 'native'));
     evidence.originStore = await send(page, 'origin-suite');
     // Create with the production typed API; the initial vault is the browser one.

@@ -36,7 +36,7 @@ async function usable(root: Locator) {
   expect(issues).toEqual([]);
 }
 
-test("language names stay readable in settings on narrow screens", async ({}, testInfo) => {
+test("language names stay readable in settings on narrow screens", async (_, testInfo) => {
   const context = await launchTestContext(testInfo.outputPath("language-picker-profile"), {
     channel: "chromium", headless: true, locale: "zh-CN", reducedMotion: "reduce",
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
@@ -81,7 +81,7 @@ test("language names stay readable in settings on narrow screens", async ({}, te
 });
 
 for (const language of extraLanguages) {
-  test(`${language.label}: offline pages, narrow controls, editing and locked autofill`, async ({}, testInfo) => {
+  test(`${language.label}: offline pages, narrow controls, editing and locked autofill`, async (_, testInfo) => {
     const catalog: Record<string, string> = JSON.parse(readFileSync(`public/locales/ui-${language.value}.json`, "utf8"));
     const context = await launchTestContext(testInfo.outputPath("profile"), {
       channel: "chromium", headless: true, locale: language.value, colorScheme: "dark", reducedMotion: "reduce",

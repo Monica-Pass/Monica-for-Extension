@@ -6,7 +6,7 @@ import { launchEdgeContext } from './fixtures/edge';
 async function send(page: Page, input: object) {
   return page.evaluate(request => chrome.runtime.sendMessage(request), input);
 }
-test('fresh export authentication and optional clipboard expiry use production Edge paths', async ({}, info) => {
+test('fresh export authentication and optional clipboard expiry use production Edge paths', async (_, info) => {
   test.setTimeout(120000);
   // Explicit permission-granted test fixture; production JavaScript is unchanged.
   // The real optional permission bubble remains a manual acceptance item.
@@ -16,12 +16,12 @@ test('fresh export authentication and optional clipboard expiry use production E
   manifest.permissions.push(...manifest.optional_permissions); delete manifest.optional_permissions;
   await writeFile(manifestPath,JSON.stringify(manifest));
   const options = { locale: 'zh-CN', viewport: {width: 1100, height: 900}, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] };
-  let context = await launchEdgeContext(info.outputPath('profile'), options);
+  const context = await launchEdgeContext(info.outputPath('profile'), options);
   let originalClipboard: string | undefined;
   try {
-    let worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const origin = `chrome-extension://${new URL(worker.url()).host}`;
-    let page = await context.newPage(); await page.goto(`${origin}/index.html`);
+    const page = await context.newPage(); await page.goto(`${origin}/index.html`);
     expect((await send(page, {type: 'VAULT_SETUP', masterPassword: '1234'})).ok).toBe(true);
     const now = new Date().toISOString();
     expect((await send(page, {type: 'VAULT_UPSERT_ITEM', item: {id:'synthetic-export-item',kind:'login',title:'Synthetic export account',username:'synthetic',password:'Synthetic clipboard value',uris:[],customFields:[],notes:'',favorite:false,providerRefs:[],createdAt:now,updatedAt:now}})).ok).toBe(true);
@@ -89,7 +89,7 @@ test('fresh export authentication and optional clipboard expiry use production E
   }
 });
 
-test('encrypted checkpoints survive reopening, require authentication, and diagnostics stay redacted', async ({}, info) => {
+test('encrypted checkpoints survive reopening, require authentication, and diagnostics stay redacted', async (_, info) => {
   const extension=path.resolve('dist');
   const context=await launchEdgeContext(info.outputPath('profile'),{locale:'zh-CN',viewport:{width:1100,height:900},args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});
   try {

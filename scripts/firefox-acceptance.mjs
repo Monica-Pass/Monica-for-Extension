@@ -121,6 +121,6 @@ try {
   evidence.status='passed';
 } catch(e) { evidence.failure=String(e);throw e; }
 finally {
-  try {await ff.call('POST','/moz/context',{context:'chrome'});evidence.browserErrors=await ff.evaluate(`return Services.console.getMessageArray().filter(m=>String(m.message).includes('moz-extension')).map(m=>String(m.message)).slice(-25);`);await ff.call('POST','/moz/context',{context:'content'});} catch{}
+  try {await ff.call('POST','/moz/context',{context:'chrome'});evidence.browserErrors=await ff.evaluate(`return Services.console.getMessageArray().filter(m=>String(m.message).includes('moz-extension')).map(m=>String(m.message)).slice(-25);`);await ff.call('POST','/moz/context',{context:'content'});} catch{/* best-effort diagnostics: browser may already be gone */}
   await writeFile(path.join(scratch,'evidence.json'),JSON.stringify(evidence,null,2));await ff.close();await new Promise(r=>server.close(r));
 }

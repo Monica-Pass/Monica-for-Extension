@@ -5,15 +5,17 @@ import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import type { WifiMetadata } from "../core/special-login";
 import { changeWifiSettingKind, wifiSettingKind, wifiEapMethods, wifiPhase2Methods } from "../core/wifi-settings";
 const props = defineProps<{ wifi: WifiMetadata }>();
+// 表单草稿模式：父组件持有 reactive 对象，本组件按契约就地编辑其字段。
+const wifi = props.wifi;
 const eventValue = (event: Event) => (event.target as HTMLInputElement).value;
-const value = (group: "eap" | "proxy" | "ip", key: string, fallback = "") => String(props.wifi[group]?.[key] ?? fallback);
+const value = (group: "eap" | "proxy" | "ip", key: string, fallback = "") => String(wifi[group]?.[key] ?? fallback);
 const update = (group: "eap" | "proxy" | "ip", key: string, event: Event, numeric = false) => {
-  props.wifi[group] = { ...props.wifi[group], [key]: numeric ? Number(eventValue(event)) : eventValue(event) };
+  wifi[group] = { ...wifi[group], [key]: numeric ? Number(eventValue(event)) : eventValue(event) };
 };
 const proxyOptions = [{value:"None",label:"无代理"},{value:"Manual",label:"手动代理"},{value:"AutoConfig",label:"自动代理配置"}];
 const ipOptions = [{value:"Dhcp",label:"DHCP"},{value:"Static",label:"静态 IP"}];
 const macOptions = [{value:"DEFAULT",label:"系统默认"},{value:"RANDOMIZED",label:"随机 MAC"},{value:"DEVICE_MAC",label:"设备 MAC"}];
-watch(() => props.wifi.security, security => { if (security.includes("ENTERPRISE") && props.wifi.eap == null) props.wifi.eap = { method: "PEAP", phase2: "MSCHAPV2" }; });
+watch(() => wifi.security, security => { if (security.includes("ENTERPRISE") && wifi.eap == null) wifi.eap = { method: "PEAP", phase2: "MSCHAPV2" }; });
 </script>
 
 <template>

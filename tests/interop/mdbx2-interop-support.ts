@@ -132,7 +132,8 @@ export async function acquireAndroidInteropPrerequisites(
       } catch (cleanupError) {
         throw new AggregateError(
           [setupError, cleanupError],
-          "Android MDBX2 interoperability setup and environment cleanup both failed."
+          "Android MDBX2 interoperability setup and environment cleanup both failed.",
+          { cause: cleanupError }
         );
       }
     }

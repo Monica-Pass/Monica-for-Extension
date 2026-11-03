@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {readFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {launchEdgeContext} from './fixtures/edge';
-test('local pairing Canvas uses QR and links without manual addresses',async({},info)=>{
+test('local pairing Canvas uses QR and links without manual addresses',async(_,info)=>{
   const run=info.outputPath('isolated');await mkdir(run,{recursive:true});
   const context=await launchEdgeContext(path.join(run,'profile'),{viewport:{width:1880,height:1100}});
   try{const page=await context.newPage();await page.goto((await readFile('docs/design/nearby-pairing-320.md','utf8')).match(/\((http:\/\/127[^)]+)\)/)![1]);

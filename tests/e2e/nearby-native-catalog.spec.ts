@@ -8,7 +8,7 @@ import type { NearbyNativeSource } from '../../src/nearby/native-source';
 import type { NearbyNativeMetadataRecord } from '../../src/nearby/native-metadata';
 import type { NearbyNativeProjection } from '../../src/nearby/native-records';
 
-test('native nearby catalog adopts folder and root metadata while preserving original content and blocked rows', async ({}, info) => {
+test('native nearby catalog adopts folder and root metadata while preserving original content and blocked rows', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(240_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), database = `synthetic-nearby-catalog-${randomUUID()}`;
   await mkdir(extension, { recursive: true });

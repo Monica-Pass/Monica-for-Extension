@@ -20,7 +20,7 @@ async function close(context: BrowserContext | undefined, profile: string) {
   await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
 }
 
-test("website icons are private, cached, and consistent across lists, details and popup", async ({}, testInfo) => {
+test("website icons are private, cached, and consistent across lists, details and popup", async (_, testInfo) => {
   const profile = await mkdtemp(profilePrefix);
   let context: BrowserContext | undefined;
   let server: Server | undefined;
@@ -173,7 +173,7 @@ test("website icons are private, cached, and consistent across lists, details an
   }
 });
 
-test("a previously visited website uses the real Chromium favicon cache, including local HTTP", async ({}, testInfo) => {
+test("a previously visited website uses the real Chromium favicon cache, including local HTTP", async (_, testInfo) => {
   const profile = await mkdtemp(profilePrefix);
   let context: BrowserContext | undefined;
   let server: Server | undefined;

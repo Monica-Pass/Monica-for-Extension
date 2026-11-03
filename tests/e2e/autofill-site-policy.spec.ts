@@ -22,7 +22,7 @@ async function launch(testInfo: TestInfo): Promise<{ context: BrowserContext; pa
   return { context, page };
 }
 
-test("settings manages encrypted autofill site exclusions on a secondary page", async ({}, testInfo) => {
+test("settings manages encrypted autofill site exclusions on a secondary page", async (_, testInfo) => {
   const { context, page } = await launch(testInfo);
   try {
     const result = await page.evaluate(async () => chrome.runtime.sendMessage({

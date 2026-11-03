@@ -46,7 +46,7 @@ function listening(port: number): Promise<boolean> {
   });
 }
 
-test('production nearby manager owns cancellation, trust and recovery across real Edge restarts', async ({}, info) => {
+test('production nearby manager owns cancellation, trust and recovery across real Edge restarts', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(180000);
   const extension = path.resolve('dist'), run = path.resolve(info.outputPath('isolated')); await mkdir(run, { recursive: true });
   const contexts = new Map<string, BrowserContext>(), evidence: Record<string, any> = { status: 'failed', productionBackground: true, managerUi: false, androidApplicationAcceptance: false, phases: [] };

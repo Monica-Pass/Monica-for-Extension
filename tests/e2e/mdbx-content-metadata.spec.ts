@@ -8,7 +8,7 @@ import { launchEdgeContext } from './fixtures/edge';
 import type { Mdbx2ContentMetadata } from '../../src/providers/mdbx2/content-metadata';
 
 const sha = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
-test('bundled MDBX reads native metadata and tombstones with precision, revision and Power policy', async ({}, info) => {
+test('bundled MDBX reads native metadata and tombstones with precision, revision and Power policy', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge acceptance'); test.setTimeout(180_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension');
   await mkdir(extension, { recursive: true });

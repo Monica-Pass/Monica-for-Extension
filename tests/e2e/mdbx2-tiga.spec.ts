@@ -14,7 +14,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
   expect(Math.abs((containerBox!.y + containerBox!.height / 2) - (iconBox!.y + iconBox!.height / 2))).toBeLessThanOrEqual(1);
 }
 
-test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text themes", async ({}, testInfo) => {
+test("MDBX2 Tiga posture is compact, read-only and truthful in narrow large-text themes", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

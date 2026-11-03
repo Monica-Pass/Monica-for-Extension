@@ -1,18 +1,18 @@
-export function publicKeyCredential(result: Record<string, any>): Credential {
-  const responseData = result.response;
+export function publicKeyCredential(result: Record<string, unknown>): Credential {
+  const responseData = result.response as Record<string, unknown>;
   const responsePrototype = result.operation === "create" ? window.AuthenticatorAttestationResponse?.prototype : window.AuthenticatorAssertionResponse?.prototype;
   const response = Object.create(responsePrototype || Object.prototype);
   const binaryFields = result.operation === "create" ? ["clientDataJSON", "attestationObject"] : ["clientDataJSON", "authenticatorData", "signature", "userHandle"];
-  for (const key of binaryFields) Object.defineProperty(response, key, { enumerable: true, value: decode(responseData[key]) });
+  for (const key of binaryFields) Object.defineProperty(response, key, { enumerable: true, value: decode(responseData[key] as string) });
   if (result.operation === "create") {
     Object.defineProperties(response, {
-      getAuthenticatorData: { value: () => decode(responseData.authenticatorData) }, getPublicKey: { value: () => decode(responseData.publicKey) },
+      getAuthenticatorData: { value: () => decode(responseData.authenticatorData as string) }, getPublicKey: { value: () => decode(responseData.publicKey as string) },
       getPublicKeyAlgorithm: { value: () => responseData.publicKeyAlgorithm }, getTransports: { value: () => ["internal"] }
     });
   }
   const credential = Object.create(window.PublicKeyCredential?.prototype || Object.prototype);
   Object.defineProperties(credential, {
-    id: { enumerable: true, value: result.id }, rawId: { enumerable: true, value: decode(result.rawId) }, type: { enumerable: true, value: "public-key" },
+    id: { enumerable: true, value: result.id }, rawId: { enumerable: true, value: decode(result.rawId as string) }, type: { enumerable: true, value: "public-key" },
     response: { enumerable: true, value: response }, authenticatorAttachment: { enumerable: true, value: "platform" },
     getClientExtensionResults: { value: () => result.clientExtensionResults || {} },
     // Web IDL methods are writable/configurable. webauthn-json replaces toJSON

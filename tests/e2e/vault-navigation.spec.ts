@@ -4,7 +4,7 @@ import { launchEdgeContext } from "./fixtures/edge";
 import path from "node:path";
 import { homeBackup, homePassword } from "./fixtures/vault-home";
 
-test("top filter combines database, favorites, type and folders without duplicate list controls", async ({}, info) => {
+test("top filter combines database, favorites, type and folders without duplicate list controls", async (_, info) => {
   test.setTimeout(120_000);
   const extension = path.resolve("dist");
   const context = await launchEdgeContext(info.outputPath("profile"), { locale: "zh-CN", viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

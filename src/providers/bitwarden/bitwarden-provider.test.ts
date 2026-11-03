@@ -1110,7 +1110,7 @@ describe("Bitwarden provider", () => {
 
   it("defers local edits outside the durable batch instead of overwriting them", async () => {
     let remoteA = await loginCipher("remote-a", OLD_REVISION);
-    let remoteB = { ...(await loginCipher("remote-b", OLD_REVISION)), Id: "cipher-2" };
+    const remoteB = { ...(await loginCipher("remote-b", OLD_REVISION)), Id: "cipher-2" };
     let putCount = 0;
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remoteA, remoteB] });

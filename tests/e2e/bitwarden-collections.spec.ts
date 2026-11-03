@@ -1,6 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { chooseOption, dialogContent } from "./fixtures/material";
-import { expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
@@ -31,7 +31,7 @@ interface CollectionServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden organization Collections are permission-aware, manager-only, and routed without gradients", async ({}, testInfo) => {
+test("Bitwarden organization Collections are permission-aware, manager-only, and routed without gradients", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createCollectionServer();
   try {

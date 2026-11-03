@@ -1,4 +1,4 @@
-import { createSHA256, sha256 } from "hash-wasm";
+import { sha256 } from "hash-wasm";
 import { describe, expect, it } from "vitest";
 import { Mdbx2OneDriveClient } from "./mdbx2-onedrive-client";
 

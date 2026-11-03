@@ -4,7 +4,7 @@ import { expect, test, type BrowserContext, type Locator } from "@playwright/tes
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
 
-test("auth card omits the decorative avatar", async ({}, testInfo) => {
+test("auth card omits the decorative avatar", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("auth-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -16,7 +16,7 @@ test("auth card omits the decorative avatar", async ({}, testInfo) => {
   } finally { await context?.close(); }
 });
 
-test("provider page is compact and decorated icon glyphs are centered", async ({}, testInfo) => {
+test("provider page is compact and decorated icon glyphs are centered", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("provider-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -113,7 +113,7 @@ test("provider page is compact and decorated icon glyphs are centered", async ({
   } finally { await context?.close(); }
 });
 
-test("manager sections remain readable with 200% text", async ({}, testInfo) => {
+test("manager sections remain readable with 200% text", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("manager-large-text-profile"), {
@@ -237,7 +237,7 @@ test("manager sections remain readable with 200% text", async ({}, testInfo) => 
   } finally { await context?.close(); }
 });
 
-test("manager keeps wheel scrolling with thin scrollbars and without horizontal jitter", async ({}, testInfo) => {
+test("manager keeps wheel scrolling with thin scrollbars and without horizontal jitter", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("manager-scrollbar-profile"), {
@@ -307,7 +307,7 @@ test("manager keeps wheel scrolling with thin scrollbars and without horizontal 
   } finally { await context?.close(); }
 });
 
-test("mobile manager actions remain complete with 200% text", async ({}, testInfo) => {
+test("mobile manager actions remain complete with 200% text", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("m"), {
@@ -353,7 +353,7 @@ test("mobile manager actions remain complete with 200% text", async ({}, testInf
   } finally { await context?.close(); }
 });
 
-test("mobile manager dialogs remain complete with 200% text", async ({}, testInfo) => {
+test("mobile manager dialogs remain complete with 200% text", async (_, testInfo) => {
   test.slow();
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
@@ -434,7 +434,7 @@ test("mobile manager dialogs remain complete with 200% text", async ({}, testInf
   } finally { await context?.close(); }
 });
 
-test("manager dialogs use one-column large-text forms", async ({}, testInfo) => {
+test("manager dialogs use one-column large-text forms", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("dialog-large-text-profile"), {
@@ -479,7 +479,7 @@ test("manager dialogs use one-column large-text forms", async ({}, testInfo) => 
   } finally { await context?.close(); }
 });
 
-test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", async ({}, testInfo) => {
+test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("join-profile"), {
@@ -520,7 +520,7 @@ test("MDBX2 WebDAV join dialog keeps large-text controls separated at 800px", as
   } finally { await context?.close(); }
 });
 
-test("MDBX2 conflict manager is flat explicit and usable at 375px with large text", async ({}, testInfo) => {
+test("MDBX2 conflict manager is flat explicit and usable at 375px with large text", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("mdbx2-conflict-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 375, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -596,7 +596,7 @@ test("MDBX2 conflict manager is flat explicit and usable at 375px with large tex
   } finally { await context?.close(); }
 });
 
-test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text", async ({}, testInfo) => {
+test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("mdbx2-snapshot-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", colorScheme: "dark", viewport: { width: 375, height: 1000 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -719,7 +719,7 @@ test("MDBX2 snapshot manager is flat bounded and usable at 375px with large text
 });
 
 for (const width of [375, 768, 1280, 1440]) {
-  test(`manager has no horizontal overflow at ${width}px`, async ({}, testInfo) => {
+  test(`manager has no horizontal overflow at ${width}px`, async (_, testInfo) => {
     const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
     try {
       context = await launchTestContext(testInfo.outputPath(`viewport-${width}-profile`), { channel: "chromium", headless: true, locale: "zh-CN", viewport: { width, height: 900 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -735,7 +735,7 @@ for (const width of [375, 768, 1280, 1440]) {
   });
 }
 
-test("compact login list actions remain fully visible at a 1280px store viewport", async ({}, testInfo) => {
+test("compact login list actions remain fully visible at a 1280px store viewport", async (_, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchTestContext(testInfo.outputPath("table-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 1280, height: 800 }, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });

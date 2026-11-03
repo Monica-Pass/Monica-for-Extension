@@ -402,7 +402,7 @@ function removeCookie(cookies: typeof chrome.cookies, url: string, name: string,
 function callbackWithTimeout(register: (done: (error?: Error) => void) => void, message: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new SteamNetworkError(message)), 3_000);
-    register((error) => { clearTimeout(timer); error ? reject(error) : resolve(); });
+    register((error) => { clearTimeout(timer); if (error) reject(error); else resolve(); });
   });
 }
 
@@ -490,7 +490,7 @@ function parseSteamRaw(rawJson?: string): { steamId?: string; accessToken?: stri
 }
 
 function patchSteamRawSession(rawJson: string | undefined, steamId: string, accessToken: string, refreshToken: string | undefined, loginSecure: string): string {
-  let root: Record<string, unknown> = {};
+  let root: Record<string, unknown>;
   try { root = rawJson ? JSON.parse(rawJson) as Record<string, unknown> : {}; } catch { root = {}; }
   root.steamid = steamId;
   root.access_token = accessToken;

@@ -10,7 +10,7 @@ const app = (page: Page, method: string, args: unknown[] = []): Promise<any> => 
 const rpc = (page: Page, operation: string, params: object = {}) => app(page, 'call', [operation, params]);
 const device = (id: string) => ({ device_id: id, name: id, sync_mode: 'bidirectional' });
 
-test('nearby transport durably adopts local projects and original keys before acknowledgement', async ({}, info) => {
+test('nearby transport durably adopts local projects and original keys before acknowledgement', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(180000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'); await mkdir(extension, { recursive: true });
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Synthetic Monica nearby adoption', version: '1.0.0',

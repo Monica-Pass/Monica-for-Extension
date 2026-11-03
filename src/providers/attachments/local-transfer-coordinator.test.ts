@@ -3,7 +3,7 @@ import { LocalTransferCoordinator } from './local-transfer-coordinator';
 import { SecureVaultService } from '../../security/secure-vault-service';
 import { MemoryVaultStorage } from '../../security/vault-storage';
 import { MemoryVaultSessionStore } from '../../security/vault-session';
-import { createLoginItem, type VaultItem } from '../../core/model';
+import { createLoginItem } from '../../core/model';
 import type { Mdbx2BatchTransferRequest } from '../mdbx2/mdbx2-batch-transfer-coordinator';
 
 async function setup() {

@@ -19,7 +19,7 @@ async function send<T = any>(page: Page, request: Record<string, unknown>): Prom
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-test('current Android rich project crosses actual Edge native edit and restart', async ({}, info) => {
+test('current Android rich project crosses actual Edge native edit and restart', async (_, info) => {
   test.skip(!fixtureRoot, 'Requires the current Android writer/return artifact and provenance');
   test.setTimeout(120_000);
   const fixture = path.resolve(fixtureRoot!);

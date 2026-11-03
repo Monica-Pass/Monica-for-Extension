@@ -27,7 +27,7 @@ interface RemoteState {
   putCount: number;
 }
 
-test("with automatic sync disabled, remote KeePass presents restorable and pending states after worker restart", async ({}, testInfo) => {
+test("with automatic sync disabled, remote KeePass presents restorable and pending states after worker restart", async (_, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {
@@ -142,7 +142,7 @@ test("with automatic sync disabled, remote KeePass presents restorable and pendi
   }
 });
 
-test("remote KeePass preserves a rebase conflict code and never overwrites the changed KDBX", async ({}, testInfo) => {
+test("remote KeePass preserves a rebase conflict code and never overwrites the changed KDBX", async (_, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {
@@ -194,7 +194,7 @@ test("remote KeePass preserves a rebase conflict code and never overwrites the c
   }
 });
 
-test("KeePass passkey saves into the KDBX and signs a later assertion", async ({}, testInfo) => {
+test("KeePass passkey saves into the KDBX and signs a later assertion", async (_, testInfo) => {
   test.setTimeout(180_000);
   let context: BrowserContext | undefined;
   try {

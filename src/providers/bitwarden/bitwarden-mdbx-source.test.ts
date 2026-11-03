@@ -83,8 +83,7 @@ it.each([{ future_secret: 'do-not-lose' }, { custom_fields: [{ title: 'Recovery'
   const f = await fixture(patch); await expect(f.resource()).rejects.toThrow('原生'); expect(f.dependencies.files.readSourceAttachment).not.toHaveBeenCalled();
 });
 
-it.each([{ headCommitId: undefined }, { headCommitId: 'newer' }, { objectId: 'other' }, { collectionId: 'other' }, { deleted: true }])
-  ('refuses stale, missing or wrong native identity %#', async patch => { const f = await fixture(); f.setRecord(patch); await expect(f.resource()).rejects.toThrow('原生来源已变化'); });
+it.each([{ headCommitId: undefined }, { headCommitId: 'newer' }, { objectId: 'other' }, { collectionId: 'other' }, { deleted: true }])('refuses stale, missing or wrong native identity %#', async patch => { const f = await fixture(); f.setRecord(patch); await expect(f.resource()).rejects.toThrow('原生来源已变化'); });
 
 it('refuses a queued local edit before reading attachments', async () => {
   const f = await fixture(); if (f.item.kind === 'login') f.item.password = 'unsaved';

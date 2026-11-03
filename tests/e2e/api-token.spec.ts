@@ -23,7 +23,7 @@ async function openApiEditor(page: Page) {
   await expect(menu).toBeHidden();
 }
 
-test("API keys can be created, edited and unlocked without becoming searchable login secrets", async ({}, testInfo) => {
+test("API keys can be created, edited and unlocked without becoming searchable login secrets", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const started = await start(testInfo); context = started.context; const page = started.page;
@@ -64,7 +64,7 @@ test("API keys can be created, edited and unlocked without becoming searchable l
   } finally { await context?.close(); }
 });
 
-test("new editors stay usable at 320px with enlarged text and respect reduced motion", async ({}, testInfo) => {
+test("new editors stay usable at 320px with enlarged text and respect reduced motion", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const started = await start(testInfo); context = started.context; const page = started.page;
@@ -90,7 +90,7 @@ test("new editors stay usable at 320px with enlarged text and respect reduced mo
   } finally { await context?.close(); }
 });
 
-test("finishing an opening animation never moves focus away from the field being edited", async ({}, testInfo) => {
+test("finishing an opening animation never moves focus away from the field being edited", async (_, testInfo) => {
   const { context, page } = await start(testInfo);
   try {
     await page.addStyleTag({ content: ".dialog-enter-active { transition-duration: 600ms !important; }" });

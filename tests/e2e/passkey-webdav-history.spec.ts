@@ -26,7 +26,7 @@ async function send(page: Page, input: Record<string, unknown>) {
   return response.data;
 }
 
-test(`real WebDAV ${extension} positive history is published before Edge signs and survives restart`, async ({}, info) => {
+test(`real WebDAV ${extension} positive history is published before Edge signs and survives restart`, async (_, info) => {
   test.skip(!output, "Requires explicit output and isolated running Apache");
   test.setTimeout(180_000);
   await mkdir(output!, { recursive: true });

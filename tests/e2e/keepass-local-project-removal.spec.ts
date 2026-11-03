@@ -16,7 +16,7 @@ async function send<T = any>(page: Page, request: Record<string, unknown>): Prom
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-for (const version of [3, 4] as const) test(`local KDBX ${version} owner removal survives original-file reopen and browser restart`, async ({}, info) => {
+for (const version of [3, 4] as const) test(`local KDBX ${version} owner removal survives original-file reopen and browser restart`, async (_, info) => {
   test.setTimeout(120_000);
   const helper = info.outputPath('fixture.cjs');
   await build({ stdin: { contents: "export {buildKeePassFixture} from './src/providers/keepass/keepass-fixture'; export {openKeePassVault} from './src/providers/keepass/keepass-vault';", resolveDir: process.cwd() },

@@ -321,19 +321,19 @@ export function createCredentialRuntime(deps: Dependencies) {
     }
     function clearCredentialCaptures(): void { pendingCredentialCaptures.clear(); }
     const handlers: CommandHandlers<CredentialRuntimeRequest> = {
-        "CREDENTIAL_USERNAME_REMEMBER": async (request, sender, nativeWriteLocked) => {
+        "CREDENTIAL_USERNAME_REMEMBER": async (request, sender) => {
             return rememberCredentialUsername(request.username, sender);
         },
-        "CREDENTIAL_CAPTURE": async (request, sender, nativeWriteLocked) => {
+        "CREDENTIAL_CAPTURE": async (request, sender) => {
             return captureCredentialCandidate(request.candidate, sender);
         },
-        "CREDENTIAL_PENDING": async (request, sender, nativeWriteLocked) => {
+        "CREDENTIAL_PENDING": async (request, sender) => {
             return pendingCredentialCandidate(sender);
         },
-        "CREDENTIAL_ACCEPT": async (request, sender, nativeWriteLocked) => {
+        "CREDENTIAL_ACCEPT": async (request, sender) => {
             return acceptCredentialCandidate(request.candidateId, request.providerId, request.existingItemId, sender);
         },
-        "CREDENTIAL_DISMISS": async (request, sender, nativeWriteLocked) => {
+        "CREDENTIAL_DISMISS": async (request, sender) => {
             return dismissCredentialCandidate(request.candidateId, sender);
         },
     };

@@ -26,7 +26,7 @@ async function detail(page: Page, title: string) {
   await page.getByRole('button', { name: `查看${title}详情`, exact: true }).click();
   return dialogContent(page, { name: new RegExp(title) });
 }
-test('actual editor saves password history, protects reveal/copy/delete, and survives a full Edge restart', async ({}, info) => {
+test('actual editor saves password history, protects reveal/copy/delete, and survives a full Edge restart', async (_, info) => {
   const app = await launch(info);
   const old = 'synthetic-very-long-password-'.repeat(5) + '<img src=x onerror=alert(1)>';
   const item = createLoginItem({ title: 'History fixture', password: old, uris: ['https://history.example.test'] });
@@ -118,9 +118,9 @@ test('actual editor saves password history, protects reveal/copy/delete, and sur
   } finally { await reopened.context.close(); }
 });
 
-test('KDBX sync and same-source encrypted reopen retain local password history', async ({}, info) => {
+test('KDBX sync and same-source encrypted reopen retain local password history', async (_, info) => {
   const bytes = await buildKeePassFixture({ password: master, entries: [{ title: 'KDBX history fixture', protectedFields: { Password: 'original' } }] });
-  const app = await launch(info); let providerId = '', file = '', expected: LoginItem;
+  const app = await launch(info); let providerId: string, file: string, expected: LoginItem;
   try {
     await send(app.page, { type: 'VAULT_SETUP', masterPassword: master });
     providerId = (await send<{ account: { id: string } }>(app.page, { type: 'KEEPASS_OPEN', input: { name: 'History', fileName: 'history.kdbx', file: Buffer.from(bytes).toString('base64'), password: master } })).account.id;

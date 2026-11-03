@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { chooseOption, loginEditor, save, fill, readItem } from './interop-315-edge-features.mjs';
-const contentSnapshot=({bitwardenCipherId,bitwardenCustomFieldsVersion,...item})=>item;
+const contentSnapshot=(source)=>{const item={...source};delete item.bitwardenCipherId;delete item.bitwardenCustomFieldsVersion;return item;};
 
 export async function runBitwardenProjectUi({page,evidence,screenshot,output}) {
   const fixture=JSON.parse(await readFile(process.env.MONICA_BW_PROJECT_FIXTURE,'utf8'));

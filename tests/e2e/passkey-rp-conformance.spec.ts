@@ -68,7 +68,7 @@ function verifyAssertion(publicKey: KeyObject, challenge: string, payload: any):
 
 const EXPECTED_UV: Record<string, boolean> = { omitted: true, preferred: true, discouraged: false, required: true };
 
-test("assertions satisfy RP-side verification per userVerification mode", async ({}, testInfo) => {
+test("assertions satisfy RP-side verification per userVerification mode", async (_, testInfo) => {
   test.setTimeout(180_000);
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
@@ -139,7 +139,7 @@ test("assertions satisfy RP-side verification per userVerification mode", async 
   }
 });
 
-test("unsupported Passkey requests stay native and locked requests offer Monica unlock", async ({}, testInfo) => {
+test("unsupported Passkey requests stay native and locked requests offer Monica unlock", async (_, testInfo) => {
   test.setTimeout(240_000);
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;

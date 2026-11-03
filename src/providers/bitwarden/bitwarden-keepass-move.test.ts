@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import type { ProviderAccount, VaultItem, PasskeyItem } from '../../core/model';
+import type { ProviderAccount, PasskeyItem } from '../../core/model';
 import { PROJECT_CREDENTIAL_FIELD } from '../../core/project-credentials';
 import { sameKeePassMoveFile } from '../../core/bitwarden-keepass-move';
 import { readBitwardenBatches } from '../../core/bitwarden-batch-transfer';

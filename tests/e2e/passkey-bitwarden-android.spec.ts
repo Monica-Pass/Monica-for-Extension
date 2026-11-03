@@ -49,7 +49,7 @@ import { BitwardenProvider } from "../../src/providers/bitwarden/bitwarden-provi
 import { deriveBitwardenMasterKey, deriveBitwardenMasterPasswordHash, stretchBitwardenMasterKey } from "../../src/providers/bitwarden/bitwarden-crypto";
 import type { ProviderAccount } from "../../src/core/model";
 
-test("real Vaultwarden Edge registration and actual Android return", async ({}, info) => {
+test("real Vaultwarden Edge registration and actual Android return", async (_, info) => {
   test.skip(phase !== "prepare" && phase !== "return", "Requires explicit phase and isolated Vaultwarden");
   test.setTimeout(150_000);
   await mkdir(directory, { recursive: true });

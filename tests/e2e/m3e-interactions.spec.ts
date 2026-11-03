@@ -23,7 +23,7 @@ async function navigate(page: Page, name: RegExp) {
   await page.getByRole("navigation").getByRole("button", { name }).click();
 }
 
-test("split primary action follows each page and the menu can create another type", async ({}, testInfo) => {
+test("split primary action follows each page and the menu can create another type", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     for (const [section, button, dialog] of [
@@ -87,7 +87,7 @@ test("split primary action follows each page and the menu can create another typ
   } finally { await context.close(); }
 });
 
-test("split menu supports keyboard, Escape, outside dismissal and navigation", async ({}, testInfo) => {
+test("split menu supports keyboard, Escape, outside dismissal and navigation", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     const trigger = page.getByRole("button", { name: "选择新建类型", exact: true });
@@ -114,7 +114,7 @@ test("split menu supports keyboard, Escape, outside dismissal and navigation", a
   } finally { await context.close(); }
 });
 
-test("collapsing optional fields retains API and wallet editor drafts", async ({}, testInfo) => {
+test("collapsing optional fields retains API and wallet editor drafts", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     for (const kind of ["API Token", "银行卡"]) {
@@ -133,7 +133,7 @@ test("collapsing optional fields retains API and wallet editor drafts", async ({
   } finally { await context.close(); }
 });
 
-test("a narrow enlarged menu stays reachable and transfers focus to the selected editor", async ({}, testInfo) => {
+test("a narrow enlarged menu stays reachable and transfers focus to the selected editor", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await page.setViewportSize({ width: 320, height: 640 });
@@ -165,7 +165,7 @@ test("a narrow enlarged menu stays reachable and transfers focus to the selected
   } finally { await context.close(); }
 });
 
-test("browsers without popovers can choose another type from the full picker", async ({}, testInfo) => {
+test("browsers without popovers can choose another type from the full picker", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await page.addInitScript(() => {
@@ -188,7 +188,7 @@ test("browsers without popovers can choose another type from the full picker", a
 });
 
 for (const reducedMotion of ["no-preference", "reduce"] as const) {
-test(`dismissing an open form picker retains the editor draft (${reducedMotion})`, async ({}, testInfo) => {
+test(`dismissing an open form picker retains the editor draft (${reducedMotion})`, async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await page.emulateMedia({ reducedMotion });
@@ -217,7 +217,7 @@ test(`dismissing an open form picker retains the editor draft (${reducedMotion})
 });
 }
 
-test("generator keyboard controls produce and retain the chosen settings", async ({}, testInfo) => {
+test("generator keyboard controls produce and retain the chosen settings", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await navigate(page, /^生成器/);
@@ -242,7 +242,7 @@ test("generator keyboard controls produce and retain the chosen settings", async
   } finally { await context.close(); }
 });
 
-test("settings switches keep their saved state after a failed write and allow retry", async ({}, testInfo) => {
+test("settings switches keep their saved state after a failed write and allow retry", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await navigate(page, /^设置与备份/);
@@ -277,7 +277,7 @@ test("settings switches keep their saved state after a failed write and allow re
   } finally { await context.close(); }
 });
 
-test("appearance choices preserve a Nothing preference and return focus from the secondary page", async ({}, testInfo) => {
+test("appearance choices preserve a Nothing preference and return focus from the secondary page", async (_, testInfo) => {
   const { page, context } = await start(testInfo);
   try {
     await navigate(page, /^设置与备份/);

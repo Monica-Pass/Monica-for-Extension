@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("Steam manager handles approvals, inventory, market listings, and devices", async ({}, testInfo) => {
+test("Steam manager handles approvals, inventory, market listings, and devices", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

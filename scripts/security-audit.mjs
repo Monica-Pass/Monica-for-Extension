@@ -1,7 +1,6 @@
 import { auditRuntimeCommands, readRuntimeAuditSources } from './runtime-command-audit.mjs';
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import ts from "typescript";
 
 const root = resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(await readFile(resolve(root, "dist/manifest.json"), "utf8"));

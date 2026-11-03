@@ -37,7 +37,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   return { context, manager };
 }
 
-test("KeePass history reveals one field at a time and restores a complete KDBX4.1 version", async ({}, testInfo) => {
+test("KeePass history reveals one field at a time and restores a complete KDBX4.1 version", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);

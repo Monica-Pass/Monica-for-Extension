@@ -67,6 +67,7 @@ export class PasskeyUserVerification {
       if (entry.attempts >= 5) this.finish(entry, false);
       throw error;
     } finally {
+      // eslint-disable-next-line no-useless-assignment -- deliberate wipe of the plaintext password to shorten memory retention
       password = "";
       entry.busy = false;
     }

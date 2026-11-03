@@ -2,7 +2,7 @@ import { localNearbySource, type NearbySourceAdapter, type NearbySourceSnapshot 
 import type { NearbyAcknowledgement } from './native-journal';
 import { NEARBY_ENTRY_TYPES, remapNearbyReferences, type NearbyEntryType, type NearbyWireData } from './wire-shape';
 import { parseLosslessJson } from '../core/lossless-json';
-import { base64ToBytes, bytesToBase64 } from '../security/encoding';
+import { bytesToBase64 } from '../security/encoding';
 import type { SecureVaultService } from '../security/secure-vault-service';
 import { NearbyNativeTransport, NearbyTransportError, nearbySha256, appendNearbyAsset, readNearbyAsset, type NearbyAsset, type NearbyOperation } from './native-transport';
 import { NearbyPasskeyConsent, type NearbyPasskeyReview } from './passkey-consent';
@@ -10,7 +10,7 @@ import { nearbyDeviceHello, nearbySettingsCounter, type NearbyPreferences, type 
 import { collectNearbyPending, groupNearbyPending, nearbyApplicationReferences } from './pending';
 import { nearbyHierarchyReferences, scheduleNearbyNativeGroups } from './native-schedule';
 import { adoptNearbyNativeGroups } from './native-batches';
-import type { NearbyIncomingRecord, NearbyLocalAcknowledgement } from './local-adoption';
+import type { NearbyIncomingRecord } from './local-adoption';
 import { NearbyDataError, wireInteger, wireObject, wireText } from './wire-shape';
 import { nearbyEngineCode, nearbyErrorCode } from './errors';
 import { parseNearbyHotspotInvitation } from './hotspot-invitation';

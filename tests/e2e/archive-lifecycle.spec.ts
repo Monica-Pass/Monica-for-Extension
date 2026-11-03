@@ -44,7 +44,7 @@ async function releaseUnarchive(page: Page) {
   });
 }
 
-test('archive actions reject stale edits and deletion, preserve selected-row scope and survive Edge restart', async ({}, info) => {
+test('archive actions reject stale edits and deletion, preserve selected-row scope and survive Edge restart', async (_, info) => {
   const app = await launch(info);
   const row = { ...createLoginItem({ title: 'Archived account', password: 'old password', notes: 'old notes', uris: [site] }),
     passwordGroupId: 'explicit-project', archivedAt: '2026-01-01T00:00:00Z' };
@@ -98,7 +98,7 @@ test('archive actions reject stale edits and deletion, preserve selected-row sco
   } finally { await reopened.context.close(); }
 });
 
-test('KeePass synchronization and encrypted reopen retain archived passwords and Passkeys outside candidates', async ({}, info) => {
+test('KeePass synchronization and encrypted reopen retain archived passwords and Passkeys outside candidates', async (_, info) => {
   const credential = await createPasskey({ origin: site, challenge: Buffer.alloc(32, 3).toString('base64url'),
     rpId: 'archive.example.test', rpName: 'Archive fixture', userId: 'dGVzdA', userName: 'Synthetic',
     userDisplayName: 'Synthetic', algorithms: [-7], excludeCredentialIds: [], userVerified: true });
@@ -109,7 +109,7 @@ test('KeePass synchronization and encrypted reopen retain archived passwords and
         KPEX_PASSKEY_CREDENTIAL_ID: credential.credentialId, KPEX_PASSKEY_USER_HANDLE: 'dGVzdA' } }
   ] });
   const app = await launch(info);
-  let providerId = '', exportedFile = '', archivedIds: string[] = [];
+  let providerId: string, exportedFile: string, archivedIds: string[];
   try {
     await send(app.manager, { type: 'VAULT_SETUP', masterPassword: password });
     const opened = await send<{ account: { id: string } }>(app.manager, { type: 'KEEPASS_OPEN', input: { name: 'Archive fixture', fileName: 'archive.kdbx', file: Buffer.from(bytes).toString('base64'), password: dbPassword } });

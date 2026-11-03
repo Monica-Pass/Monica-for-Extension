@@ -296,6 +296,7 @@ async function submitDeviceRevocation() {
     notice.value = tr('Steam 授权设备已撤销。');
   } catch (cause) { setError(cause, tr('Steam 授权设备撤销失败。')); }
   finally {
+    // eslint-disable-next-line no-useless-assignment -- deliberate wipe of the plaintext password to shorten memory retention
     password = "";
     revokePassword.value = "";
     busy.value = "";

@@ -15,7 +15,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
   expect(Math.abs((containerBox!.y + containerBox!.height / 2) - (iconBox!.y + iconBox!.height / 2))).toBeLessThanOrEqual(1);
 }
 
-test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disconnect recovery", async ({}, testInfo) => {
+test("MDBX2 automatic snapshot cleanup uses an exact plan and safe stale or disconnect recovery", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   const planA = "a".repeat(64);
   const planB = "b".repeat(64);

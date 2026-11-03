@@ -16,7 +16,7 @@ const options = { locale: 'zh-CN', colorScheme: 'dark' as const, reducedMotion: 
 async function send(page: Page, request: object): Promise<any> { const response = await page.evaluate(input => chrome.runtime.sendMessage(input), request);
   expect(response.ok, response.error).toBe(true); return response.data; }
 
-test('native Bitwarden graph copies through folder/Cipher HTTP loss and two complete Edge restarts', async ({}, info) => {
+test('native Bitwarden graph copies through folder/Cipher HTTP loss and two complete Edge restarts', async (_, info) => {
   test.setTimeout(180_000);
   const key = { encKey: new Uint8Array(32).fill(12), macKey: new Uint8Array(32).fill(29) };
   const protectedKey = await new BitwardenClient().protectVaultKey(key,

@@ -18,7 +18,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
   expect(Math.abs((containerBox!.y + containerBox!.height / 2) - (iconBox!.y + iconBox!.height / 2))).toBeLessThanOrEqual(1);
 }
 
-test("MDBX2 history recovery keeps one operation identity and remains usable at 375px with large text", async ({}, testInfo) => {
+test("MDBX2 history recovery keeps one operation identity and remains usable at 375px with large text", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   const sourceCommitId = "22222222-2222-4222-8222-222222222222";
   const objectId = "55555555-5555-4555-8555-555555555555";

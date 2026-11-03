@@ -62,7 +62,7 @@ function verifyAssertion(assertion: any, record: Expected) {
     independentSignatureVerified: true, counterAcceptedForRecordedHistory: previousCount === 0 && count === 0 || count > previousCount };
 }
 
-test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and restart: ${returning ? 'Android return' : 'RSA creation'}`, async ({}, info) => {
+test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and restart: ${returning ? 'Android return' : 'RSA creation'}`, async (_, info) => {
   test.skip(!fixture, "Explicit actual Android instrumentation artifact directory required");
   test.setTimeout(240_000);
   const input = path.resolve(fixture!);
@@ -88,6 +88,7 @@ test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and 
     signatures: [], consoleErrors: [], limitations: ["Synthetic relying party with actual Edge APIs, extension verification UI, Native Messaging and Android-produced data; no Android Credential Manager or hardware UV acceptance.", "Known Android backup-flag gaps remain open."] };
   let provider: ProviderAccount;
   let created: Expected;
+  let cleanupFailure: unknown;
   const watch = () => context.on("page", page => page.on("pageerror", error => evidence.consoleErrors.push(error.message)));
   watch();
   try {
@@ -248,7 +249,8 @@ test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and 
   finally {
     await context.close();
     try { await host?.restore(); evidence.nativeHost = host?.evidence; }
-    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); throw error; }
+    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); cleanupFailure = error; }
     finally { await writeFile(info.outputPath("evidence.json"), JSON.stringify(evidence, null, 2)); }
   }
+  if (cleanupFailure) throw cleanupFailure;
 });

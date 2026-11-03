@@ -1,9 +1,9 @@
 import { chooseOption, dialogContent } from "./fixtures/material";
-import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 import { launchEdgeContext } from './fixtures/edge';
 
-test("wallet popup explicitly fills identity address card and payment fields while leaving generic fields untouched", async ({}, testInfo) => {
+test("wallet popup explicitly fills identity address card and payment fields while leaving generic fields untouched", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -108,7 +108,7 @@ test("wallet popup explicitly fills identity address card and payment fields whi
   }
 });
 
-test("manager preserves complete Android card fields and Markdown note metadata", async ({}, testInfo) => {
+test("manager preserves complete Android card fields and Markdown note metadata", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

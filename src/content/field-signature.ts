@@ -1,5 +1,5 @@
 import { queryComposedAll } from "./composed-dom";
-import { loginFieldRole, type LoginFieldRole } from "./login-field-role";
+import { loginFieldRole } from "./login-field-role";
 import { walletFieldName } from "./wallet-dom";
 import type { AutofillFieldRole } from "../autofill/field-policy";
 

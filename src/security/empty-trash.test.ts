@@ -89,7 +89,7 @@ describe("empty local trash", () => {
   });
 
   it("removes attachment bytes with the item when incremental-only sync is turned off", async () => {
-    const { service, totp } = await fixture();
+    const { service } = await fixture();
     const item = await service.upsertItem(createLoginItem({ title: "Attached local", password: "attached-secret" }));
     const { sessionId } = await attach(service, item.id);
     await service.deleteItem(item.id);

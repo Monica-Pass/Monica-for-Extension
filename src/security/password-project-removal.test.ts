@@ -139,11 +139,11 @@ describe('durable password project removal transaction', () => {
     expect((await service.readState()).mutationQueue.map(mutation => mutation.operation)).toEqual(['update', 'update']);
     await expect(service.inspectPasswordProjectRemoval(record.id)).rejects.toThrow('尚未完成同步');
     await expect(service.finalizePasswordProjectRemoval(record.id, (await service.listItems()) as LoginItem[], emptyProof(record))).rejects.toThrow('尚未完成同步');
-    let observed = await acknowledge(service, kind);
+    await acknowledge(service, kind);
     expect((await service.readState()).mutationQueue).toEqual([]);
     await service.lock(); const fresh = new SecureVaultService(storage, new MemoryVaultSessionStore()); await fresh.unlock(secret);
     expect((await fresh.readPasswordProjectRemovals())[0].status).toBe('preparing');
-    observed = (await fresh.readState()).items as LoginItem[];
+    const observed = (await fresh.readState()).items as LoginItem[];
     expect((await fresh.inspectPasswordProjectRemoval(record.id)).items).toHaveLength(3);
     await expect(fresh.finalizePasswordProjectRemoval(record.id, observed, [])).rejects.toThrow('恢复记录无效');
     expect(await fresh.listDeletedItems()).toEqual([]);

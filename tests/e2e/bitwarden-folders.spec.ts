@@ -1,6 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { chooseOption, dialogContent } from "./fixtures/material";
-import { expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
@@ -23,7 +23,7 @@ interface FolderServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route Cipher siblings", async ({}, testInfo) => {
+test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route Cipher siblings", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createFolderServer();
   try {

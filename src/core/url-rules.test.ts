@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLoginItem, type LoginUriRule } from './model';
+import { createLoginItem } from './model';
 import { ANDROID_URL_RULE_FIELD, decodeAndroidUrlRules, effectiveLoginUriRules, writeAndroidUrlRules } from './url-rules';
 import { loginMatchScore } from './matching';
 

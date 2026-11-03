@@ -14,7 +14,7 @@ for(const key of ['key','minimum_chrome_version','side_panel','externally_connec
 assert.deepEqual(m.permissions,chrome.permissions.filter(p=>!['offscreen','sidePanel','favicon'].includes(p)));
 assert.deepEqual(m.optional_permissions,chrome.optional_permissions);assert.deepEqual(m.host_permissions,chrome.host_permissions);
 assert.deepEqual(m.content_scripts,chrome.content_scripts);
-assert.deepEqual(m.web_accessible_resources,chrome.web_accessible_resources.map(({use_dynamic_url,...entry})=>entry));
+assert.deepEqual(m.web_accessible_resources,chrome.web_accessible_resources.map((resource)=>{const entry={...resource};delete entry.use_dynamic_url;return entry;}));
 assert.equal(m.content_security_policy.extension_pages,chrome.content_security_policy.extension_pages.replace("frame-ancestors 'none'","frame-ancestors 'self'"));
 for(const file of ['index.html','popup.html','background.js','content.js','main-world.js','passkey-verify.html','mdbx-offscreen.html','mdbx-browser/offscreen.js','mdbx-browser/engine-worker.js','mdbx-browser/engine.js','mdbx-browser/monica_mdbx2_browser.wasm','mdbx-browser/BROWSER-BUILD.json','mdbx-browser/THIRD-PARTY-NOTICES.json'])await access(path.join(output,file));
 const files=await readdir(output,{recursive:true});assert.equal(files.some(x=>x.endsWith('.map')),false);

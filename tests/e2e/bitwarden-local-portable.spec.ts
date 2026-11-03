@@ -26,7 +26,7 @@ const options = { locale: 'zh-CN', colorScheme: 'dark' as const, viewport: { wid
 async function send(page: Page, request: object): Promise<any> { const response = await page.evaluate(input => chrome.runtime.sendMessage(input), request);
   expect(response.ok, response.error).toBe(true); return response.data; }
 
-for (const sourceKind of ['local', 'local-move', 'local-keep-both', 'mdbx', 'mdbx-move', 'mdbx-keep-both', 'keepass', 'keepass-move', 'keepass-keep-both', 'keepass-webdav-move', 'webdav'] as const) test(`a browser-created ${sourceKind} Passkey survives Bitwarden transfer interruption and authenticates on a fresh Edge client`, async ({}, info) => {
+for (const sourceKind of ['local', 'local-move', 'local-keep-both', 'mdbx', 'mdbx-move', 'mdbx-keep-both', 'keepass', 'keepass-move', 'keepass-keep-both', 'keepass-webdav-move', 'webdav'] as const) test(`a browser-created ${sourceKind} Passkey survives Bitwarden transfer interruption and authenticates on a fresh Edge client`, async (_, info) => {
   const nativeKeePass = sourceKind.startsWith('keepass'), cloudKeePass = sourceKind === 'keepass-webdav-move';
   let keepassInitial: Uint8Array | undefined, keepassApi: typeof import('../../src/providers/keepass/keepass-fixture') & typeof import('../../src/providers/keepass/keepass-vault');
   const kdbxRemote = { bytes: Buffer.alloc(0) as Buffer, etag: '"initial"', puts: 0, loseNextReply: false, offline: false };
@@ -34,7 +34,7 @@ for (const sourceKind of ['local', 'local-move', 'local-keep-both', 'mdbx', 'mdb
   // Native registration and full-vault verification outlived the default 5s
   // assertion on this host; retain exact results with an explicit native budget.
   const nativeCheck = { timeout: nativeMdbx ? 20_000 : 5_000 };
-  let registrationMs = 0, previewMs = 0;
+  let registrationMs: number, previewMs: number;
   test.skip(nativeMdbx && !process.env.MONICA_317_NATIVE_PASSKEY_FIXTURE, 'Requires an explicitly selected verified synthetic MDBX fixture');
   test.setTimeout(180_000);
   const local = sourceKind.startsWith('local'), moving = sourceKind.endsWith('-move') || keepBoth, withProject = sourceKind !== 'local';

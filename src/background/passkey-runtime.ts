@@ -568,16 +568,16 @@ export function createPasskeyRuntime(deps: Dependencies) {
                 void cancelPendingPasskeyRequest(pending.id).catch(() => undefined);
     }
     const handlers: CommandHandlers<PasskeyRuntimeRequest> = {
-        "PASSKEY_BEGIN": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_BEGIN": async (request, sender) => {
             return beginPasskeyRequest(request.request, sender);
         },
-        "PASSKEY_UNLOCK_CONTINUE": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_UNLOCK_CONTINUE": async (request, sender) => {
             return unlockAndContinuePasskeyRequest(request.candidateId, sender);
         },
-        "PASSKEY_ACCEPT": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_ACCEPT": async (request, sender) => {
             return acceptPasskeyRequest(request.candidateId, request.itemId, request.providerId, sender);
         },
-        "PASSKEY_DISMISS": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_DISMISS": async (request, sender) => {
             return dismissPasskeyRequest(request.candidateId, sender);
         },
     };

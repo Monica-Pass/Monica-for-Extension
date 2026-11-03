@@ -9,7 +9,7 @@ import {launchEdgeContext} from './fixtures/edge';
 import type {NearbyNativeSource} from '../../src/nearby/native-source';
 import {advanceMdbx2ContentWriteAnchor,type Mdbx2ContentWriteAnchor} from '../../src/providers/mdbx2/content-write-anchor';
 
-test('bundled engine reads and atomically writes opaque profiles across encrypted import and browser restart',async({},info)=>{
+test('bundled engine reads and atomically writes opaque profiles across encrypted import and browser restart',async(_,info)=>{
   test.skip(process.platform!=='win32','Installed Edge and native fixture');test.setTimeout(180000);
   const run=path.resolve(info.outputPath('isolated')),extension=path.join(run,'extension'),fixture=path.join(run,'native');
   await mkdir(extension,{recursive:true});

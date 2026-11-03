@@ -12,7 +12,7 @@ async function send(page: Page, request: object): Promise<any> {
 
 /** The real manager page, background owner and Native Messaging path. No native
  * helper is registered in this profile, so actions must explain how to recover. */
-test("nearby sync page pairs through the background owner and explains a missing helper", async ({}, testInfo) => {
+test("nearby sync page pairs through the background owner and explains a missing helper", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   const context = await launchEdgeContext(testInfo.outputPath("profile"), { locale: "zh-CN",
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -72,7 +72,7 @@ test("nearby sync page pairs through the background owner and explains a missing
 
 // Exercise the actual manager and M3E dialog with a synthetic manager-port
 // review. Native transfer behavior is covered separately by nearby-coordinator.
-for (const incoming of [false, true]) for (const choice of ['omit', 'include', 'cancel'] as const) test(`historical deletion dialog requires a user choice: ${incoming ? 'receive' : 'send'} ${choice}`, async ({}, info) => {
+for (const incoming of [false, true]) for (const choice of ['omit', 'include', 'cancel'] as const) test(`historical deletion dialog requires a user choice: ${incoming ? 'receive' : 'send'} ${choice}`, async (_, info) => {
   const extensionPath = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
   try {

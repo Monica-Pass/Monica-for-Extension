@@ -91,7 +91,7 @@ async function stabilizePresentation(page: Page): Promise<void> {
   });
 }
 
-test("auth and unlocked manager have no serious axe violations", async ({}, testInfo) => {
+test("auth and unlocked manager have no serious axe violations", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {
@@ -116,7 +116,7 @@ test("auth and unlocked manager have no serious axe violations", async ({}, test
   }
 });
 
-test("manager navigation and dialogs expose a complete keyboard focus lifecycle", async ({}, testInfo) => {
+test("manager navigation and dialogs expose a complete keyboard focus lifecycle", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {
@@ -160,7 +160,7 @@ test("manager navigation and dialogs expose a complete keyboard focus lifecycle"
   }
 });
 
-test("locked and unlocked popup states have no serious axe violations", async ({}, testInfo) => {
+test("locked and unlocked popup states have no serious axe violations", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {
@@ -204,7 +204,7 @@ test("locked and unlocked popup states have no serious axe violations", async ({
   }
 });
 
-test("manager remains operable with reduced motion, large text, and a narrow viewport", async ({}, testInfo) => {
+test("manager remains operable with reduced motion, large text, and a narrow viewport", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   let profileDir: string | undefined;
   try {

@@ -572,6 +572,7 @@ export class Mdbx2Provider implements ProviderAdapter {
           } catch (error) {
             // An incomplete remote snapshot cannot establish absence. Abort
             // before reconciling or writing anything, retaining the local vault.
+            // eslint-disable-next-line preserve-caught-error -- tsconfig lib is ES2020 without ErrorOptions; the caught error's message is already embedded in the thrown message
             throw new Error(`${summary.title || summary.objectId}: 项目读取失败，同步未修改本地数据。${error instanceof Error ? error.message : "Tiga 披露失败"}`);
           }
           if (record.objectId !== summary.objectId || record.collectionId !== summary.collectionId || record.objectTypeId !== summary.objectTypeId || record.payloadSchemaVersion !== summary.payloadSchemaVersion || record.deleted || record.headCommitId && record.headCommitId !== summary.headCommitId) {

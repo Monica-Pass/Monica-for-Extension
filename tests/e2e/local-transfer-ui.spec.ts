@@ -36,7 +36,7 @@ async function observeTransfers(page: Page) {
 const options = { locale: 'zh-CN', colorScheme: 'dark' as const, reducedMotion: 'reduce' as const, acceptDownloads: true,
   viewport: { width: 1180, height: 950 }, args: [`--disable-extensions-except=${path.resolve('dist')}`, `--load-extension=${path.resolve('dist')}`] };
 
-test('local files and project copy use the real extension runtime and survive Edge restart', async ({}, info) => {
+test('local files and project copy use the real extension runtime and survive Edge restart', async (_, info) => {
   const profile = info.outputPath('profile');
   let context = await launchEdgeContext(profile, options);
   try {
@@ -130,7 +130,7 @@ test('local files and project copy use the real extension runtime and survive Ed
   } finally { await context.close(); }
 });
 
-test('real KDBX files copy to local through the product UI without altering the source', async ({}, info) => {
+test('real KDBX files copy to local through the product UI without altering the source', async (_, info) => {
   const context = await launchEdgeContext(info.outputPath('profile'), options);
   try {
     const page = await manager(context); await send(page, { type: 'VAULT_SETUP', masterPassword: '' }); await page.reload();

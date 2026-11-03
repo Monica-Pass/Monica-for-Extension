@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createLoginItem, type LoginItem, type ProviderAccount } from '../core/model';
+import { createLoginItem, type ProviderAccount } from '../core/model';
 import { PROJECT_CREDENTIAL_FIELD, readProjectCredential } from '../core/project-credentials';
 import { CONTENT_ORDER } from '../core/password-content';
 import type { LoginForm } from './login-form';

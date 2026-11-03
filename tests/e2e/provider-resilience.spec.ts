@@ -24,7 +24,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   return { context, extensionId, manager };
 }
 
-test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported diagnostics stay redacted", async ({}, testInfo) => {
+test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported diagnostics stay redacted", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   let remotePassword = "initial-remote-secret";
   let remoteUpdatedAt = 1_700_000_001_000;
@@ -32,7 +32,7 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
   let holdDownload = false;
   let releaseDownload: (() => void) | undefined;
   let markDownloadStarted: (() => void) | undefined;
-  let downloadStarted = Promise.resolve();
+  let downloadStarted: Promise<void>;
 
   try {
     const launched = await launchExtension(testInfo);
@@ -128,7 +128,7 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
   }
 });
 
-test("Android WebDAV backup encryption password is optional and has no minimum length", async ({}, testInfo) => {
+test("Android WebDAV backup encryption password is optional and has no minimum length", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -176,7 +176,7 @@ test("Android WebDAV backup encryption password is optional and has no minimum l
   }
 });
 
-test("KeePass UI unlocks with an empty password and key file, exposes dirty state, exports, and locks", async ({}, testInfo) => {
+test("KeePass UI unlocks with an empty password and key file, exposes dirty state, exports, and locks", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);

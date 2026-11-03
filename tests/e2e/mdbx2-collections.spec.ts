@@ -15,7 +15,7 @@ async function expectCentered(container: Locator, icon: Locator): Promise<void> 
   expect(Math.abs((containerBox!.y + containerBox!.height / 2) - (iconBox!.y + iconBox!.height / 2))).toBeLessThanOrEqual(1);
 }
 
-test("MDBX2 folders preserve Android hierarchy and retry one uncertain move intent", async ({}, testInfo) => {
+test("MDBX2 folders preserve Android hierarchy and retry one uncertain move intent", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   const personalId = "11111111-1111-4111-8111-111111111111";
   let context: BrowserContext | undefined;

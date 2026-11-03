@@ -15,11 +15,11 @@ async function command(page:Page,request:unknown):Promise<any>{
   return page.evaluate(request=>new Promise((resolve,reject)=>{
     const s=(window as any).nearbyAndroid,id=++s.id;
     const timer=setTimeout(()=>{s.pending.delete(id);reject(Error('Manager timeout'));},45000);
-    s.pending.set(id,(message:any)=>{clearTimeout(timer);message.ok?resolve(message.data):reject(Error(message.error));});s.port.postMessage({...request as object,id});
+    s.pending.set(id,(message:any)=>{clearTimeout(timer);if(message.ok)resolve(message.data);else reject(Error(message.error));});s.port.postMessage({...request as object,id});
   }),request);
 }
 
-test('installed Android provider exchanges passwords and signs a browser Passkey over authenticated LAN',async({},info)=>{
+test('installed Android provider exchanges passwords and signs a browser Passkey over authenticated LAN',async(_,info)=>{
   test.skip(process.env.MONICA_ANDROID_INTEROP!=='1','Explicit shared-AVD acceptance only');test.setTimeout(240000);
   const adb='D:/AndroidSDK/platform-tools/adb.exe',serial=process.env.MONICA_ANDROID_SERIAL||'emulator-5554';
   const run=path.resolve(info.outputPath('isolated')),extension=path.resolve('dist');await mkdir(run,{recursive:true});

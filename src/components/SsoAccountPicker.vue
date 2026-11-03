@@ -7,12 +7,14 @@ import {ssoAccountCandidates,ssoLogicalId} from '../core/sso-links';
 import {materialSelectTag,materialOptionTag} from '../lib/material-controls';
 import {tr} from '../i18n';
 const props=defineProps<{form:LoginForm;owner?:VaultItem;items:VaultItem[];providers:ProviderAccount[]}>();
-const source=computed(()=>props.providers.find(p=>p.id===props.form.providerId));
+// 表单草稿模式：父组件持有 reactive 草稿对象，本组件按契约就地编辑其字段。
+const form=props.form;
+const source=computed(()=>props.providers.find(p=>p.id===form.providerId));
 const supported=computed(()=>source.value && ['local','mdbx2','keepass','bitwarden'].includes(source.value.kind));
-const owner=computed(()=>props.owner?.kind==='login'?props.owner:withLoginDraftSource({...createLoginItem({title:''}),id:'sso-draft',providerRefs:source.value?.kind==='local'?[]:[{providerId:props.form.providerId}]},source.value));
+const owner=computed(()=>props.owner?.kind==='login'?props.owner:withLoginDraftSource({...createLoginItem({title:''}),id:'sso-draft',providerRefs:source.value?.kind==='local'?[]:[{providerId:form.providerId}]},source.value));
 const choices=computed(()=>ssoAccountCandidates(owner.value,props.items));
-const missing=computed(()=>Boolean(props.form.ssoRefLogicalId&&!choices.value.some(i=>ssoLogicalId(i)===props.form.ssoRefLogicalId)));
-function choose(value:string){props.form.ssoRefLogicalId=value;props.form.ssoRefEntryId='';props.form.ssoRefEdited=true;}
+const missing=computed(()=>Boolean(form.ssoRefLogicalId&&!choices.value.some(i=>ssoLogicalId(i)===form.ssoRefLogicalId)));
+function choose(value:string){form.ssoRefLogicalId=value;form.ssoRefEntryId='';form.ssoRefEdited=true;}
 </script>
 <template>
   <div class="sso-account-picker field-wide">

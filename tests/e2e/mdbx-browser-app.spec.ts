@@ -16,7 +16,7 @@ async function send(page: Page, message: Record<string, unknown>) {
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-test('production UI creates and reopens MDBX in the browser without an installed MDBX helper', async ({}, info) => {
+test('production UI creates and reopens MDBX in the browser without an installed MDBX helper', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(180000);
   const run = path.resolve('.tmp/browser-mdbx-app', randomUUID().slice(0, 12)), extension = path.join(run, 'extension');
   await mkdir(run, { recursive: true }); await cp(path.resolve('dist'), extension, { recursive: true });

@@ -25,7 +25,6 @@ import {
   type Mdbx2ObjectOperationResolution,
   type Mdbx2ObjectRecord,
   type Mdbx2ObjectSummaryPage,
-  type Mdbx2ObjectWriteResult,
   type Mdbx2VaultRuntimeStatus,
   type Mdbx2WriteRevision,
   type Mdbx2AttachmentMutationResult
@@ -46,8 +45,7 @@ import {
   isMdbx2RootCollection,
   type Mdbx2BatchTransferAction,
   type Mdbx2BatchTransferPlan,
-  type Mdbx2BatchTransferPlanItem,
-  type Mdbx2TransferCategorySource
+  type Mdbx2BatchTransferPlanItem
 } from "./mdbx2-batch-transfer";
 import type { Mdbx2BatchWriteEntry, Mdbx2BatchWriteResult, Mdbx2Provider } from "./mdbx2-provider";
 import type { CompletedMdbx2TransferEntry } from "../../security/secure-vault-service";

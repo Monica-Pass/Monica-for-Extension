@@ -43,111 +43,111 @@ export function createProjectRuntime(deps: Dependencies) {
         return deps.providerOperations.run(providerId, () => deps.mdbx2Restores.restore(itemId));
     }
     const handlers: CommandHandlers<ProjectRuntimeRequest> = {
-        "VAULT_PASSWORD_PROJECT_RESTORE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_RESTORE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('请先确认整组恢复的范围。');
             return passwordProjectRestores.start(request.input);
         },
-        "VAULT_PASSWORD_PROJECT_RESTORES": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_RESTORES": async (request, sender) => {
             assertManagerPage(sender);
             return passwordProjectRestores.pending(request.operationId);
         },
-        "VAULT_PASSWORD_PROJECT_RESTORE_RESUME": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_RESTORE_RESUME": async (request, sender) => {
             assertManagerPage(sender);
             return passwordProjectRestores.resume(request.operationId);
         },
-        "VAULT_PASSWORD_PROJECT_REMOVE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_REMOVE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('请先确认移除的密码成员。');
             return passwordProjectRemovals.stage(request.input);
         },
-        "VAULT_PASSWORD_PROJECT_REMOVALS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_REMOVALS": async (request, sender) => {
             assertManagerPage(sender);
             return passwordProjectRemovals.pending(request.operationId);
         },
-        "VAULT_PASSWORD_PROJECT_REMOVAL_RESUME": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_REMOVAL_RESUME": async (request, sender) => {
             assertManagerPage(sender);
             return passwordProjectRemovals.resume(request.operationId);
         },
-        "VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "VAULT_PASSWORD_PROJECT_REMOVAL_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             return passwordProjectRemovals.cancel(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_SOURCE_TOKEN": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_SOURCE_TOKEN": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectRemovals.sourceToken(request.providerId);
         },
-        "VAULT_KEEPASS_PROJECT_REMOVE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_REMOVE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('请先确认移除的密码成员。');
             return deps.keePassProjectRemovals.stageFromManager(request.input);
         },
-        "VAULT_KEEPASS_PROJECT_REMOVALS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_REMOVALS": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectRemovals.pending(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_REMOVAL_RESUME": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_REMOVAL_RESUME": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectRemovals.resume(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_REMOVAL_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectRemovals.cancel(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_CONFLICT_REVIEW": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_CONFLICT_REVIEW": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectResolutions.review(request.providerId);
         },
-        "VAULT_KEEPASS_PROJECT_RESOLVE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RESOLVE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('请先确认各项目保留的版本。');
             return deps.keePassProjectResolutions.resolve(request.providerId, request.input);
         },
-        "VAULT_KEEPASS_PROJECT_RESOLUTIONS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RESOLUTIONS": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectResolutions.pending(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_RESOLUTION_RESUME": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RESOLUTION_RESUME": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectResolutions.resume(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_RESOLUTION_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RESOLUTION_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectResolutions.cancel(request.operationId);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_LIST": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_LIST": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassProjectResolutions.recoveryCopies(request.providerId);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_DELETE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_DELETE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('请先确认删除所选恢复副本。');
             return deps.keePassProjectResolutions.deleteRecoveryCopy(request.providerId, request.operationId, request.expectedIntentTag);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_BEGIN": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_BEGIN": async (request, sender) => {
             assertManagerPage(sender);
             if (typeof request.requestId !== 'string')
                 throw new Error('恢复副本下载请求无效。');
             return deps.keePassRecoveryDownloads.begin(request.providerId, deps.mdbx2ExportOwner(sender), () => deps.keePassProjectResolutions.exportRecoveryCopy(request.providerId, request.operationId, request.expectedIntentTag, request.exportPassword), request.requestId);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_STATUS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassRecoveryDownloads.status(request.providerId, deps.mdbx2ExportOwner(sender), request.requestId);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassRecoveryDownloads.cancel(request.providerId, deps.mdbx2ExportOwner(sender), request.requestId);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_READ": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_READ": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassRecoveryDownloads.read(request.providerId, deps.mdbx2ExportOwner(sender), request.downloadHandle, request.offset);
         },
-        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_RELEASE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_RELEASE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.keePassRecoveryDownloads.release(request.providerId, deps.mdbx2ExportOwner(sender), request.downloadHandle);
         },

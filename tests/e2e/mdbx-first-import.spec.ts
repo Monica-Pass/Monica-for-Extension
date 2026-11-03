@@ -56,7 +56,7 @@ async function openManager(testInfo: { outputPath: (name: string) => string }): 
   return { context, manager };
 }
 
-test("first-run shows three entries and keeps ordinary open locked", async ({}, testInfo) => {
+test("first-run shows three entries and keeps ordinary open locked", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const opened = await openManager(testInfo);
@@ -88,7 +88,7 @@ test("first-run shows three entries and keeps ordinary open locked", async ({}, 
 });
 
 for (const container of ["mdbx", "zip"] as const) {
-test(`uninitialized manager imports ${container} with a plugin master password and retains it after reload`, async ({}, testInfo) => {
+test(`uninitialized manager imports ${container} with a plugin master password and retains it after reload`, async (_, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {
@@ -131,7 +131,7 @@ test(`uninitialized manager imports ${container} with a plugin master password a
 });
 }
 
-test("uninitialized manager imports an MDBX1 golden with a device key", async ({}, testInfo) => {
+test("uninitialized manager imports an MDBX1 golden with a device key", async (_, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {
@@ -148,7 +148,7 @@ test("uninitialized manager imports an MDBX1 golden with a device key", async ({
   }
 });
 
-test("uninitialized manager imports a KeePass KDBX as an existing vault", async ({}, testInfo) => {
+test("uninitialized manager imports a KeePass KDBX as an existing vault", async (_, testInfo) => {
   test.setTimeout(120_000);
   let context: BrowserContext | undefined;
   try {

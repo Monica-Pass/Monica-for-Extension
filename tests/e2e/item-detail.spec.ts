@@ -5,7 +5,7 @@ import { launchTestContext } from './fixtures/edge';
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
-test("list rows open a masked M3E detail page for every item kind", async ({}, testInfo) => {
+test("list rows open a masked M3E detail page for every item kind", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

@@ -14,7 +14,7 @@ async function send(page: Page, input: Record<string, unknown>) {
 }
 
 for (const locked of [false, true]) {
-  test(`native Passkey handoff preserves browser authentication and cancellation, locked=${locked}`, async ({}, testInfo) => {
+  test(`native Passkey handoff preserves browser authentication and cancellation, locked=${locked}`, async (_, testInfo) => {
     const extensionPath = path.resolve('dist');
     const context = await launchEdgeContext(testInfo.outputPath('native-profile'), {
       locale: 'zh-CN', args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]

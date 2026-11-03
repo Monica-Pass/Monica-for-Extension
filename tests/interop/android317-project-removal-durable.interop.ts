@@ -272,13 +272,12 @@ it.skipIf(!input || !output).each(['response-loss', 'redelete', 'stale-revision'
         expect(result.conflicts).toEqual([]);
         await f.local.applyProviderSync(f.account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, state.items);
       };
-      let request: Mdbx2RestoreBatchRequest;
       const run = () => new Mdbx2RestoreBatchCoordinator(f.client, f.local).restoreProject(f.rows[0].id, request);
       await f.local.deletePasswordGroup(f.rows[0].id, Object.fromEntries(f.rows.map(row => [row.id, row.updatedAt])));
       await synchronize();
       const tombstones = (await f.local.listDeletedItems()).filter(row => f.rows.some(original => original.id === row.id));
       expect(tombstones).toHaveLength(3);
-      request = { operationId: randomUUID(), anchorItemId: f.rows[0].id, providerId: f.account.id, deletedAt: tombstones[0].deletedAt!,
+      const request: Mdbx2RestoreBatchRequest = { operationId: randomUUID(), anchorItemId: f.rows[0].id, providerId: f.account.id, deletedAt: tombstones[0].deletedAt!,
         expected: Object.fromEntries(tombstones.map(row => [row.id, row.updatedAt])) };
       const writes = vi.spyOn(f.client, 'restoreObjects');
       f.storage.failNext = true;

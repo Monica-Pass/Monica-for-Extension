@@ -3,7 +3,7 @@ import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 import { normalizeImportedVaultItem } from '../../src/manager/import-items';
 
-test('Bitwarden JSON imports are editable and old local readonly imports can be removed and restored in Edge', async ({}, info) => {
+test('Bitwarden JSON imports are editable and old local readonly imports can be removed and restored in Edge', async (_, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', viewport: { width: 1180, height: 950 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

@@ -16,7 +16,7 @@ async function send(page: Page, request: Record<string, unknown>): Promise<any> 
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-for (const lostReply of [false, true]) test(`KeePass remote transfer ${lostReply ? 'resumes a lost upload response after full Edge restart' : 'rebases peer changes'} and preserves a usable Passkey`, async ({}, info) => {
+for (const lostReply of [false, true]) test(`KeePass remote transfer ${lostReply ? 'resumes a lost upload response after full Edge restart' : 'rebases peer changes'} and preserves a usable Passkey`, async (_, info) => {
   test.setTimeout(150_000);
   const helper = info.outputPath('keepass-fixture.cjs');
   await build({ stdin: { contents: "export {buildKeePassFixture} from './src/providers/keepass/keepass-fixture'; export {openKeePassVault} from './src/providers/keepass/keepass-vault';", resolveDir: process.cwd() },

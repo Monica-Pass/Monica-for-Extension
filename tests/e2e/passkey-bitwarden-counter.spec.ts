@@ -72,7 +72,7 @@ async function send(page: Page, request: object): Promise<any> {
 function json(route: Route, body: unknown, status = 200) { return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
 
 for (const mode of ["github-json", "zero-offline", "positive", "during-sync", "failure", "cancel", "discover", "regression-zero", "regression-positive", "regression-resolved"] as const) {
-  test(`Bitwarden Passkey runtime: ${mode}`, async ({}, testInfo) => {
+  test(`Bitwarden Passkey runtime: ${mode}`, async (_, testInfo) => {
     const origin = mode === "github-json" ? "https://github.com" : ORIGIN;
     const mock = await server(mode === "github-json" || mode === "zero-offline" || mode === "discover" ? 0 : 3, origin);
     const extensionPath = path.resolve("dist");

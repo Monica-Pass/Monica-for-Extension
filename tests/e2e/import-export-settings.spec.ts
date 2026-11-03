@@ -3,7 +3,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('independent file migration previews before saving and reauthenticates every export in Edge', async ({}, info) => {
+test('independent file migration previews before saving and reauthenticates every export in Edge', async (_, info) => {
   test.setTimeout(180000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce', viewport: { width: 1160, height: 1000 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

@@ -16,7 +16,7 @@ const passes = [
   { type: 'TRAVEL', label: '旅行票证', fields: { serviceNumber: 'G0007', origin: '上海', destination: '北京', departure: '2026-10-23T08:30+08:00', arrival: '2026-10-23T13:00+08:00', terminal: 'T2', gate: '007', seat: '01A', travelClass: '一等座' }, labels: { serviceNumber: '航班或车次', origin: '出发地', destination: '目的地', departure: '出发时间', arrival: '到达时间', terminal: '航站楼或站台', gate: '登机口', seat: '座位', travelClass: '舱位或席别' } }
 ] as const;
 
-test('new menu groups barcode under security and creates all wallet passes with persistent fields', async ({}, info) => {
+test('new menu groups barcode under security and creates all wallet passes with persistent fields', async (_, info) => {
   test.setTimeout(180000);
   const extension = path.resolve('dist');
   const options = { locale: 'zh-CN', reducedMotion: 'reduce' as const, viewport: { width: 1200, height: 950 },
@@ -106,7 +106,7 @@ test('new menu groups barcode under security and creates all wallet passes with 
   } finally { await context.close(); }
 });
 
-test('fallback full chooser shares categories and opens selected wallet template', async ({}, info) => {
+test('fallback full chooser shares categories and opens selected wallet template', async (_, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce',
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

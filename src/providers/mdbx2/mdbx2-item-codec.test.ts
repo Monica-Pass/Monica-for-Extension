@@ -286,8 +286,7 @@ describe("MDBX2 Android item codec", () => {
   });
 
   it.each([{ is_discoverable: 'false' }, { is_user_verification_required: 0 }, { created_at: 8.64e15 + 1 },
-    { last_used_at: -1 }, { use_count: 1.5 }, { use_count: 0x80000000 }, { icon_url: { unknown: true } }])
-    ('retains unfamiliar Passkey metadata without replacing its policy with defaults %#', patch => {
+    { last_used_at: -1 }, { use_count: 1.5 }, { use_count: 0x80000000 }, { icon_url: { unknown: true } }])('retains unfamiliar Passkey metadata without replacing its policy with defaults %#', patch => {
       const payload = { kind: 'passkey', credential_id: 'AQID', private_key_alias: P256_PKCS8, ...patch };
       const result = decodeMdbx2Object({ objectId: 'metadata', collectionId: 'vault', objectTypeId: 'passkey', title: 'Synthetic',
         payloadSchemaVersion: 1, deleted: false, payloadJson: JSON.stringify(payload) }, META, 'source');

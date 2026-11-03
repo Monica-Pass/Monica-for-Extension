@@ -49,20 +49,20 @@ export type KeePassCommandRuntimeRequest = Extract<ExtensionRequest, {
 }>;
 export function createKeePassCommandRuntime(deps: Dependencies) {
     const handlers: CommandHandlers<KeePassCommandRuntimeRequest> = {
-        "ONEDRIVE_LOGIN": async (request, sender, nativeWriteLocked) => {
+        "ONEDRIVE_LOGIN": async (request, sender) => {
             assertManagerPage(sender);
             return deps.oneDriveSessions.login(request.loginId, chrome.identity.getRedirectURL("onedrive"), deps.launchOneDriveIdentityFlow, request.clientId);
         },
-        "ONEDRIVE_LOGIN_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "ONEDRIVE_LOGIN_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             deps.oneDriveSessions.cancel(request.loginId);
             return undefined;
         },
-        "ONEDRIVE_BROWSE": async (request, sender, nativeWriteLocked) => {
+        "ONEDRIVE_BROWSE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.oneDriveSessions.browse(request.input);
         },
-        "KEEPASS_ONEDRIVE_OPEN": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_ONEDRIVE_OPEN": async (request, sender) => {
             assertManagerPage(sender);
             const input = { ...request.input };
             request.input.databasePassword = "";
@@ -71,7 +71,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
             const queueId = input.providerId || input.loginId || "onedrive-new-connection";
             return deps.providerOperations.run(queueId, () => deps.runKeePassMutationExclusive(queueId, () => deps.oneDriveConnections.connect(input)));
         },
-        "KEEPASS_WEBDAV_TEST": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_WEBDAV_TEST": async (request, sender) => {
             assertManagerPage(sender);
             const input = { ...request.input };
             const existing = input.providerId ? await deps.service.getProvider(input.providerId) : undefined;
@@ -90,7 +90,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 input.webDavPassword = "";
             }
         },
-        "KEEPASS_WEBDAV_OPEN": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_WEBDAV_OPEN": async (request, sender) => {
             assertManagerPage(sender);
             const existing = request.input.providerId ? await deps.service.getProvider(request.input.providerId) : undefined;
             if (existing && existing.kind !== "keepass")
@@ -169,18 +169,18 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             }));
         },
-        "KEEPASS_REMOTE_RESTORE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_REMOTE_RESTORE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccountRecord(request.providerId);
             await deps.providerSync.pause([account.id], false);
             return deps.providerOperations.run(account.id, () => deps.runKeePassMutationExclusive(account.id, () => deps.ensureKeePassSession(account, true), true));
         },
-        "KEEPASS_REMOTE_STATUS": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_REMOTE_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccountRecord(request.providerId);
             return deps.keePassRemoteSessions.managerStatus(account);
         },
-        "KEEPASS_OPEN": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_OPEN": async (request, sender) => {
             assertManagerPage(sender);
             let existing = request.input.providerId ? await deps.service.getProvider(request.input.providerId) : undefined;
             if (existing && existing.kind !== "keepass")
@@ -282,17 +282,17 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             }, true));
         },
-        "KEEPASS_STATUS": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccountRecord(request.providerId);
             return deps.ensureKeePassSession(account, false);
         },
-        "KEEPASS_GROUP_LIST": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_LIST": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             return deps.keePassProvider.listGroups(account, request);
         },
-        "KEEPASS_GROUP_CREATE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_CREATE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             return deps.executeKeePassDurableMutation({
@@ -307,7 +307,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_GROUP_RENAME": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_RENAME": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             return deps.executeKeePassDurableMutation({
@@ -322,7 +322,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_GROUP_MOVE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_MOVE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             return deps.executeKeePassDurableMutation({
@@ -337,7 +337,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_GROUP_DELETE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_DELETE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new KeePassGroupError("keepass-group-delete-confirmation-required", "删除 KeePass 分组需要明确确认。");
@@ -354,7 +354,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_GROUP_RESTORE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_GROUP_RESTORE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             return deps.executeKeePassDurableMutation({
@@ -369,22 +369,22 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_HISTORY_LIST": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_HISTORY_LIST": async (request, sender) => {
             assertManagerPage(sender);
             const { account, item } = await deps.requireKeePassHistoryTarget(request.providerId, request.itemId);
             return deps.keePassProvider.listEntryHistory(account, item, request);
         },
-        "KEEPASS_HISTORY_DETAIL": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_HISTORY_DETAIL": async (request, sender) => {
             assertManagerPage(sender);
             const { account, item } = await deps.requireKeePassHistoryTarget(request.providerId, request.itemId);
             return deps.keePassProvider.getEntryHistoryDetail(account, item, request.historyId);
         },
-        "KEEPASS_HISTORY_FIELD_REVEAL": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_HISTORY_FIELD_REVEAL": async (request, sender) => {
             assertManagerPage(sender);
             const { account, item } = await deps.requireKeePassHistoryTarget(request.providerId, request.itemId);
             return deps.keePassProvider.readEntryHistoryField(account, item, request.historyId, request.fieldId);
         },
-        "KEEPASS_HISTORY_RESTORE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_HISTORY_RESTORE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true) {
                 throw new KeePassHistoryError("keepass-history-restore-confirmation-required", "恢复 KeePass 历史版本需要明确确认。");
@@ -402,7 +402,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                 }
             });
         },
-        "KEEPASS_EXPORT_FILE": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_EXPORT_FILE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireKeePassAccount(request.providerId);
             const fileName = typeof account.config.fileName === "string" && account.config.fileName ? account.config.fileName : "monica.kdbx";
@@ -427,7 +427,7 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
             }
             return { fileName, file: bytesToBase64(await deps.keePassProvider.exportFile(account.id)) };
         },
-        "KEEPASS_LOCK": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_LOCK": async (request, sender) => {
             assertManagerPage(sender);
             deps.keePassRecoveryDownloads.clear();
             const ids = request.providerId ? [request.providerId] : (await deps.service.readState(false)).providers.filter(account => account.kind === "keepass").map(account => account.id);

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('UI runtime client recovers an actual missing Edge message receiver', async ({}, testInfo) => {
+test('UI runtime client recovers an actual missing Edge message receiver', async (_, testInfo) => {
   const root = testInfo.outputPath('extension');
   const { version } = JSON.parse(await readFile('package.json', 'utf8'));
   const { buildId } = JSON.parse(await readFile('src/runtime/build-id.json', 'utf8'));

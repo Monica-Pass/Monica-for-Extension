@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {launchEdgeContext} from './fixtures/edge';
 
-test('native folder and root metadata keep attachment ownership across native/local adoption and restart',async({},info)=>{
+test('native folder and root metadata keep attachment ownership across native/local adoption and restart',async(_,info)=>{
   test.skip(process.platform!=='win32','Installed Edge');test.setTimeout(180000);
   const run=path.resolve(info.outputPath('isolated')),extension=path.join(run,'extension'),database=`synthetic-metadata-${randomUUID()}`;
   await mkdir(extension,{recursive:true});

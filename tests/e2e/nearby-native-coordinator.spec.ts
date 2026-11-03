@@ -1,7 +1,6 @@
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
-import { createConnection } from 'node:net';
 import path from 'node:path';
 import { createLoginItem, type PasskeyItem } from '../../src/core/model';
 import { createPasskey } from '../../src/passkey/webauthn-core';
@@ -39,16 +38,9 @@ async function cancel(page: Page) {
   await page.evaluate(() => { const s = (window as any).nearbyManagerTest; s.port.postMessage({ id: ++s.id, type: 'cancel' }); });
   await closed(page, 'cancelled');
 }
-function listening(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const socket = createConnection({ host: '127.0.0.1', port });
-    const finish = (open: boolean) => { socket.destroy(); resolve(open); };
-    socket.once('connect', () => finish(true)); socket.once('error', () => finish(false)); socket.setTimeout(500, () => finish(false));
-  });
-}
 
 
-test('production Wi-Fi coordinator receives into bundled MDBX and returns native edits', async ({}, info) => {
+test('production Wi-Fi coordinator receives into bundled MDBX and returns native edits', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(240000);
   const extension=path.resolve('dist'),run=path.resolve(info.outputPath('isolated'));await mkdir(run,{recursive:true});
   const contexts:BrowserContext[]=[], evidence:Record<string,any>={status:'failed',productionCoordinator:true,bundledMdbx:true,androidApplicationAcceptance:false};
@@ -95,7 +87,7 @@ test('production Wi-Fi coordinator receives into bundled MDBX and returns native
     };
     await exchange();
     const collections=await runtime(b,{type:'MDBX2_COLLECTION_LIST',providerId});expect(collections.items.length).toBeGreaterThan(0);
-    let objects:any[]=[];for(const c of collections.items)objects.push(...(await runtime(b,{type:'MDBX2_OBJECT_LIST',providerId,collectionId:c.collectionId})).items);
+    const objects:any[]=[];for(const c of collections.items)objects.push(...(await runtime(b,{type:'MDBX2_OBJECT_LIST',providerId,collectionId:c.collectionId})).items);
     const saved=objects.find(row=>row.title===login.title),savedKey=objects.find(row=>row.title===passkey.title);expect(saved).toBeTruthy();expect(savedKey).toBeTruthy();
     const original=await runtime(b,{type:'MDBX2_OBJECT_REVEAL',providerId,objectId:saved.objectId}),keyRecord=await runtime(b,{type:'MDBX2_OBJECT_REVEAL',providerId,objectId:savedKey.objectId});
     const keyPayload=JSON.parse(keyRecord.payloadJson);expect(keyPayload.private_key_alias).toBe(passkey.privateKeyPkcs8);expect(keyPayload.sign_count).toBe(0);

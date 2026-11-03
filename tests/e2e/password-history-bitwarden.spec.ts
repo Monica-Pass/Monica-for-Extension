@@ -51,7 +51,7 @@ async function open(page: Page, title: string) {
   await page.getByRole('button', { name: `查看${title}详情`, exact: true }).click();
   return dialogContent(page, { name: new RegExp(`^${title}$`) });
 }
-test('real Edge native history edits reach Vaultwarden and a separate fresh browser profile', async ({}, info) => {
+test('real Edge native history edits reach Vaultwarden and a separate fresh browser profile', async (_, info) => {
   test.skip(!process.env.MONICA_317_PASSWORD_HISTORY_FIXTURE, 'Requires an explicit isolated running Vaultwarden fixture');
   const latest = JSON.parse(await readFile(process.env.MONICA_317_PASSWORD_HISTORY_FIXTURE!, 'utf8')) as { fixture: string };
   const fixture = JSON.parse(await readFile(latest.fixture, 'utf8')) as Fixture;

@@ -97,9 +97,12 @@ export async function revokeSteamAuthorizedDevice(
     await steamProtobufCall("IAuthenticationService", "RevokeToken", cleanupRequest.toBytes(), temporaryAccessToken);
     return { success: true, tokenId: tokenId.toString() };
   } finally {
+    // Deliberate wipe of plaintext credentials to shorten memory retention.
+    /* eslint-disable no-useless-assignment */
     password = "";
     temporaryAccessToken = "";
     temporaryRefreshToken = "";
+    /* eslint-enable no-useless-assignment */
   }
 }
 

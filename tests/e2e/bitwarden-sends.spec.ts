@@ -1,6 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { dialogContent } from "./fixtures/material";
-import { expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
 import {
@@ -34,7 +34,7 @@ interface SendServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden Send text and file operations are encrypted, manager-only, and responsive", async ({}, testInfo) => {
+test("Bitwarden Send text and file operations are encrypted, manager-only, and responsive", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createSendServer();
   try {

@@ -37,7 +37,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   return { context, manager };
 }
 
-test("KeePass attachments round-trip through a real KDBX session and remain usable at 375px with 200% text", async ({}, testInfo) => {
+test("KeePass attachments round-trip through a real KDBX session and remain usable at 375px with 200% text", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -212,7 +212,7 @@ test("KeePass attachments round-trip through a real KDBX session and remain usab
   }
 });
 
-test("KeePass Android-managed bank-card photos have front/back controls and preserve ordinary binaries", async ({}, testInfo) => {
+test("KeePass Android-managed bank-card photos have front/back controls and preserve ordinary binaries", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);

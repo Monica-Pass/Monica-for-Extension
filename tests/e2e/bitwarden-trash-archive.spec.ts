@@ -1,6 +1,6 @@
 import { dialogContent } from "./fixtures/material";
 import { launchTestContext } from './fixtures/edge';
-import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";
@@ -15,7 +15,7 @@ const VAULT_HOST = "https://bw-empty.example.test";
 const EMAIL = "empty@example.test";
 const MASTER_PASSWORD = "empty vault server password";
 
-test("manager archive and recycle-bin views keep records recoverable and privileged", async ({}, testInfo) => {
+test("manager archive and recycle-bin views keep records recoverable and privileged", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const extensionPath = path.resolve("dist");
@@ -79,7 +79,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
   }
 });
 
-test("manager requires explicit confirmation before adopting an authenticated empty Bitwarden vault", async ({}, testInfo) => {
+test("manager requires explicit confirmation before adopting an authenticated empty Bitwarden vault", async (_, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createEmptyVaultServer();
   try {

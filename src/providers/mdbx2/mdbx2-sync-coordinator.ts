@@ -36,7 +36,6 @@ import {
   type Mdbx2OneDriveSyncConfig,
   type Mdbx2RemoteClient,
   type Mdbx2RemoteClientFactory,
-  type Mdbx2RemoteDownloadResult,
   type Mdbx2RemoteObject,
   type Mdbx2RemoteSyncConfig,
   type Mdbx2WebDavSyncConfig
@@ -124,16 +123,12 @@ export class Mdbx2SyncCoordinator {
     // must not leave the encrypted account unable to find this exact snapshot.
     await retainPreparedState?.(prepared.stateHandle);
     signal?.throwIfAborted();
-    try {
-      const body = await this.readOutputBlob(input.vaultHandle, prepared.stateHandle, remoteBinding, prepared.file, signal);
-      await remote.putImmutable(remotePath, body, prepared.file.sha256, signal);
-      await remote.ensureDirectory(mdbx2StreamsRoot(remotePath), signal);
-      await remote.ensureDirectory(mdbx2BlobsRoot(remotePath), signal);
-      const status = await this.runtime.commitSyncBootstrap(input.vaultHandle, prepared.stateHandle, remoteBinding, prepared.file.fileHandle);
-      return { stateHandle: prepared.stateHandle, status };
-    } catch (error) {
-      throw error;
-    }
+    const body = await this.readOutputBlob(input.vaultHandle, prepared.stateHandle, remoteBinding, prepared.file, signal);
+    await remote.putImmutable(remotePath, body, prepared.file.sha256, signal);
+    await remote.ensureDirectory(mdbx2StreamsRoot(remotePath), signal);
+    await remote.ensureDirectory(mdbx2BlobsRoot(remotePath), signal);
+    const status = await this.runtime.commitSyncBootstrap(input.vaultHandle, prepared.stateHandle, remoteBinding, prepared.file.fileHandle);
+    return { stateHandle: prepared.stateHandle, status };
   }
 
   async downloadBootstrap(input: Mdbx2RemoteSyncConfig, signal?: AbortSignal): Promise<Mdbx2TransferFinishResult> {

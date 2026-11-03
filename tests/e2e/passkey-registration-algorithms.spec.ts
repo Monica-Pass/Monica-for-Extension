@@ -62,7 +62,7 @@ function verifyRegistration(registration: any, expectedAlgorithm: number) {
 }
 
 for (const source of ["local", "keepass", "onedrive"] as const) {
-  test(`${source} RSA registration honors RP negotiation and preserves portable signing material`, async ({}, info) => {
+  test(`${source} RSA registration honors RP negotiation and preserves portable signing material`, async (_, info) => {
     test.setTimeout(120_000);
     const profile = info.outputPath("registration");
     const options = { locale: "zh-CN", args: [`--disable-extensions-except=${path.resolve("dist")}`, `--load-extension=${path.resolve("dist")}`] };

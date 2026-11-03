@@ -933,7 +933,7 @@ function itemEditor(page) { return page.locator("m3e-dialog").filter({ has: page
 async function save(editor) {
   await editor.getByRole("button", { name: "加密保存", exact: true }).click();
   try { await editor.waitFor({ state: "hidden", timeout: 30000 }); }
-  catch (error) { throw new Error(`${error.message}\nVisible editor error: ${(await editor.locator('.form-error, [role="alert"]').allTextContents()).join("; ")}`); }
+  catch (error) { throw new Error(`${error.message}\nVisible editor error: ${(await editor.locator('.form-error, [role="alert"]').allTextContents()).join("; ")}`, { cause: error }); }
 }
 async function fill(scope, fields) { for (const [name, value] of Object.entries(fields)) await scope.getByLabel(name, { exact: true }).fill(value); }
 async function expand(scope, label) {
@@ -973,7 +973,7 @@ function decodeBlocks(fields) {
     return JSON.parse(bytes.toString("utf8"));
   });
 }
-function payloadHash(item) { const { providerRefs, ...fields } = item; return sha256(JSON.stringify(fields)); }
+function payloadHash(item) { const fields = { ...item }; delete fields.providerRefs; return sha256(JSON.stringify(fields)); }
 function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 function progress(message) { console.error(`${new Date().toISOString()} Edge feature step: ${message}`); }
 function syntheticPng() {

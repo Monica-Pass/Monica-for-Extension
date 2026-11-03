@@ -216,17 +216,15 @@ export function rebaseKeePassDatabase(
         }
       } else if (groupTreeSignature(working.group, workingDatabase) !== groupTreeSignature(remote.group, remoteDatabase)) {
         conflicts.push({ kind: "group-structure", groupUuid, reason: "新建分组与远端同标识分组内容不同。" });
-      } else {
       }
       continue;
     }
 
     if (base && !working) {
-      if (!remote) {
-      } else if (groupTreeSignature(base.group, baseDatabase) === groupTreeSignature(remote.group, remoteDatabase)) {
+      if (remote && groupTreeSignature(base.group, baseDatabase) === groupTreeSignature(remote.group, remoteDatabase)) {
         removeGroupTree(remoteDatabase, remote.group);
         changed = true;
-      } else {
+      } else if (remote) {
         conflicts.push({ kind: "group-structure", groupUuid, reason: "本地删除分组时远端分组也发生了变化。" });
       }
       continue;

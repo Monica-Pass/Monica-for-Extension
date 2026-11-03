@@ -4,7 +4,7 @@ import path from "node:path";
 
 const PROVIDER_ID = "bitwarden-ui-demo";
 
-test("Bitwarden status conflict permission and recovery UI is truthful responsive and secret-free", async ({}, testInfo) => {
+test("Bitwarden status conflict permission and recovery UI is truthful responsive and secret-free", async (_, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   const nativeDialogs: string[] = [];

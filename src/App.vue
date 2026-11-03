@@ -96,14 +96,14 @@ import ItemSelectionToolbar from './components/ItemSelectionToolbar.vue';
 import ApiTokenEditor from "./components/ApiTokenEditor.vue";
 import { CREDENTIAL_CREATE_TYPES, type CredentialCreateType, type ApiTokenDraft } from './manager/editor-types';
 import type { LoginForm } from "./manager/login-form";
-import { createLoginItem, isLoginItem, type ApiTokenItem, type LoginItem, type LoginUriMatchType, type LoginUriRule, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem, type VaultItemKind } from "./core/model";
+import { createLoginItem, isLoginItem, type ApiTokenItem, type LoginItem, type ProviderAccount, type ProviderConflictResolution, type ProviderConflictSummary, type SecureCustomField, type TotpItem, type VaultItem, type VaultItemKind } from "./core/model";
 import { createQrDataUrl } from "./core/otp-qr";
 import { hotpUsageFromItem, findBoundTotpItem, parametersFromItem } from "./core/login-otp";
 import { otpSecondsRemaining } from "./core/totp";
 import { createCode128DataUrl } from "./core/barcode";
-import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata, type SshKeyMetadata, type WifiMetadata } from "./core/special-login";
+import { buildWifiQrPayload, parseSshKeyMetadata, parseWifiMetadata, serializeSshKeyMetadata, serializeWifiMetadata } from "./core/special-login";
 import { activeScheme, paletteId, themeColor, useThemePreferences } from "./lib/theme";
-import { homeItemSummary, itemCarriesAuthenticator, itemIcon, itemKindLabel, itemMatchesManagerSection, itemSafeSummary, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
+import { homeItemSummary, itemCarriesAuthenticator, itemIcon, itemKindLabel, itemMatchesManagerSection, itemSearchText, itemSection, type VaultManagerSection } from "./manager/item-metadata";
 import { homeSourceIds } from "./manager/home-catalog";
 import { managerFolders, matchesManagerFolder, readManagerScope, type ManagerScope } from './manager/folder-scope';
 import FolderScopeList from './components/FolderScopeList.vue';
@@ -1108,16 +1108,6 @@ function sectionDescription(section: Section): string {
 
 function filterManagerItems(items: VaultItem[]): VaultItem[] {
   return items.filter(matchesManagerFilters);
-}
-
-function itemFolderLabel(item: VaultItem): string {
-  return item.categoryName?.trim() || tr('未分类');
-}
-
-function itemCategoryKey(item: VaultItem): string {
-  const label = item.categoryName?.trim();
-  if (!label) return "uncategorized";
-  return item.categoryId === undefined ? `name:${label}` : `id:${item.categoryId}`;
 }
 
 function isLocalItem(item: VaultItem): boolean {

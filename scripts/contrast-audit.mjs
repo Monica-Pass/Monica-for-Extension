@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 function parseColor(raw) {
   const hex = raw?.match(/^#([0-9a-fA-F]{6})$/);
   if (!hex) return null;
@@ -20,7 +18,6 @@ function contrast(a, b) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-const styles = readFileSync("src/styles.css", "utf8");
 const lightText = parseColor("#1d1b20");
 const lightMuted = parseColor("#49454f");
 const darkText = parseColor("#e7e4e8");

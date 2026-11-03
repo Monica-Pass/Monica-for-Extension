@@ -19,7 +19,7 @@ async function send(page: Page, message: object): Promise<any> {
   const result = await raw(page, message); expect(result.ok, JSON.stringify(result)).toBe(true); return result.data;
 }
 
-test('bundled MDBX WebDAV preserves projects and original Passkeys through lost replies and full restarts', async ({}, info) => {
+test('bundled MDBX WebDAV preserves projects and original Passkeys through lost replies and full restarts', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(240_000);
   const run = path.resolve('.tmp/browser-mdbx-webdav', randomUUID().slice(0, 12)), extension = path.join(run, 'extension');
   await mkdir(run, { recursive: true }); await cp(path.resolve('dist'), extension, { recursive: true });

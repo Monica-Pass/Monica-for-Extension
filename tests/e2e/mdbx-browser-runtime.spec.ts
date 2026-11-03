@@ -9,7 +9,7 @@ const api = async (page: Page, op: string, method?: string, params: Record<strin
   const response = await page.evaluate(input => chrome.runtime.sendMessage(input), { type: 'TEST_BROWSER_MDBX', op, method, params });
   expect(response.ok, JSON.stringify({ code: response.code, diagnostic: response.diagnostic })).toBe(true); return response.value;
 };
-test('offscreen MDBX accepts only its background owner and recovers after service-worker termination', async ({}, info) => {
+test('offscreen MDBX accepts only its background owner and recovers after service-worker termination', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(150_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), engine = path.join(extension, 'mdbx-browser');
   await mkdir(engine, { recursive: true });

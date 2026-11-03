@@ -28,7 +28,7 @@ async function items(page: Page) {
   return Promise.all(summaries.map(row => send<LoginItem>(page, { type: 'VAULT_GET_ITEM', itemId: row.id })));
 }
 
-test('actual Edge restores a freshly imported KDBX trash project together and publishes after a full restart', async ({}, info) => {
+test('actual Edge restores a freshly imported KDBX trash project together and publishes after a full restart', async (_, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires isolated actual Apache');
   test.setTimeout(150_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

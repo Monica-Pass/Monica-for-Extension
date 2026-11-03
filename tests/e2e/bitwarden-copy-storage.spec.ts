@@ -7,7 +7,7 @@ import { launchEdgeContext } from './fixtures/edge';
 import { resolveBitwardenCipherKey } from '../../src/providers/bitwarden/bitwarden-cipher-codec';
 import { decryptBitwardenSymmetricKey, decryptBitwardenString } from '../../src/providers/bitwarden/bitwarden-crypto';
 
-test('full Bitwarden Cipher and files recover through HTTP loss, real IndexedDB abort and two full Edge restarts', async ({}, info) => {
+test('full Bitwarden Cipher and files recover through HTTP loss, real IndexedDB abort and two full Edge restarts', async (_, info) => {
   test.setTimeout(120_000);
   const bundle = await build({ entryPoints: ['tests/e2e/fixtures/bitwarden-copy-harness.ts'], bundle: true, platform: 'browser',
     format: 'iife', globalName: 'bitwardenCopyTest', write: false, logLevel: 'silent', alias: { crypto: resolve('scripts/stubs/node-crypto.js') } });

@@ -19,7 +19,7 @@ async function send(page: Page, request: object): Promise<any> {
   expect(response.ok, response.error).toBe(true); return response.data;
 }
 
-for (const loss of ['body', 'headers'] as const) test(`Bitwarden HTTP ${loss} loss recovers or retains ambiguous Passkeys after full Edge restart`, async ({}, info) => {
+for (const loss of ['body', 'headers'] as const) test(`Bitwarden HTTP ${loss} loss recovers or retains ambiguous Passkeys after full Edge restart`, async (_, info) => {
   test.setTimeout(120_000);
   const key = { encKey: new Uint8Array(32).fill(18), macKey: new Uint8Array(32).fill(31) };
   const protectedKey = await new BitwardenClient().protectVaultKey(key,

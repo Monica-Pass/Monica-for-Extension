@@ -27,7 +27,7 @@ async function contentProbe(cdp: CDPSession) {
   throw new Error('Extension content world not found');
 }
 
-test('device-key vault remains readable while content scripts cannot access its key', async ({}, info) => {
+test('device-key vault remains readable while content scripts cannot access its key', async (_, info) => {
   const extension = path.resolve('dist');
   // The bundled headless shell cannot load extensions; use full Chromium.
   const options = { channel: 'chromium', locale: 'zh-CN', args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] };

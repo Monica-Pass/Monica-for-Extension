@@ -172,7 +172,7 @@ export class OneDriveSessionService {
     if (!loginId) throw new OneDriveAuthorizationError("请先登录 OneDrive。");
     const pending = this.pending.get(loginId);
     if (!pending?.drive || pending.drive.id !== config.driveId) throw new OneDriveAuthorizationError("OneDrive 登录已失效，请重新登录。");
-    return new Mdbx2OneDriveClient(config.driveId, async signal => {
+    return new Mdbx2OneDriveClient(config.driveId, async () => {
       await this.assertPending(loginId, pending);
       const connection = pending.connection;
       if (!connection || connection.tokens.expiresAt <= this.now() + 60_000) throw new OneDriveAuthorizationError("OneDrive 登录已过期，请重新登录。");

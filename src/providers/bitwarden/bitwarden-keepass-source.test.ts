@@ -92,8 +92,7 @@ it('converts password-only native history without losing the current password', 
     passwordHistory: [{ password: 'older', lastUsedAt: stamp }] }); } finally { result.dispose(); f.provider.lock(); }
 });
 
-it.each(['history-notes','history-files','tags','custom-data','auto-type','expires','dual-passkey','unknown-passkey-json'] as const)
-  ('refuses unrepresented %s data before copying any files', async mode => {
+it.each(['history-notes','history-files','tags','custom-data','auto-type','expires','dual-passkey','unknown-passkey-json'] as const)('refuses unrepresented %s data before copying any files', async mode => {
     const f = await fixture({ passkey: mode === 'unknown-passkey-json', mutate: entry => {
       if (mode.startsWith('history')) { entry.pushHistory(); if (mode === 'history-notes') entry.history[0].fields.set('Notes', 'older');
         else entry.history[0].binaries.set('old.bin', Uint8Array.of(1).buffer); }

@@ -15,7 +15,7 @@ function expectedSteamCode(now: number) {
   return code;
 }
 
-test('Steam section shows stored authenticators and login projections', async ({}, info) => {
+test('Steam section shows stored authenticators and login projections', async (_, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce',
     viewport: { width: 1180, height: 900 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -57,7 +57,7 @@ test('Steam section shows stored authenticators and login projections', async ({
   } finally { await context.close(); }
 });
 
-test('Android marked KDBX maFile is visible with a usable code after opening the encrypted file', async ({}, info) => {
+test('Android marked KDBX maFile is visible with a usable code after opening the encrypted file', async (_, info) => {
   const helper = info.outputPath('fixture.cjs');
   await build({ stdin: { contents: "export {buildKeePassFixture} from './src/providers/keepass/keepass-fixture';", resolveDir: process.cwd() },
     outfile: helper, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });

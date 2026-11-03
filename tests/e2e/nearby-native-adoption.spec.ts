@@ -9,7 +9,7 @@ import type { NearbyNativeSource } from '../../src/nearby/native-source';
 import type { NearbyNativeProjection } from '../../src/nearby/native-records';
 import type { NearbyIncomingRecord } from '../../src/nearby/local-adoption';
 
-test('native nearby adoption commits complete records and assets, preserves Passkeys and recovers receipts after restart', async ({}, info) => {
+test('native nearby adoption commits complete records and assets, preserves Passkeys and recovers receipts after restart', async (_, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(240_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), database = `synthetic-adoption-${randomUUID()}`;
   await mkdir(extension, { recursive: true });

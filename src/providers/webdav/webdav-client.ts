@@ -55,7 +55,6 @@ export class WebDavClient {
       result = await this.listFolder(folderUrl, signal);
     }
     if (result.status !== 200 && result.status !== 207) throw result.error;
-    const limits = this.limits();
     return parseMultiStatus(result.body, folderUrl)
       .filter((file) => BACKUP_FILE_PATTERN.test(file.name))
       .sort((left, right) => compareBackups(right, left));

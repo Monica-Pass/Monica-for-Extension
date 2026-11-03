@@ -17,7 +17,7 @@ const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).
 const local = (id: string, data: unknown) => ({ local_id: id, scope: "browser-test", guard: "saved-1", deleted: false, data });
 const device = (node: string, mode = "bidirectional", pairId?: string) => ({ device_id: node, name: node, sync_mode: mode, ...(pairId ? { pair_id: pairId } : {}) });
 
-test("Edge native LAN transport preserves a real key, large project and attachment through restart", async ({}, info) => {
+test("Edge native LAN transport preserves a real key, large project and attachment through restart", async (_, info) => {
   test.skip(process.platform !== "win32", "Installed Edge and Windows Native Messaging fixture");
   test.setTimeout(180_000);
   const run = path.resolve(info.outputPath("isolated")); await mkdir(run, { recursive: true });

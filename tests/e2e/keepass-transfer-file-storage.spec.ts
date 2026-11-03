@@ -80,7 +80,7 @@ export async function restart(saved) {
 }
 `;
 
-test('KeePass batch file and receipt survive actual IndexedDB abort, lost reply, full Edge restart and later deletion', async ({}, info) => {
+test('KeePass batch file and receipt survive actual IndexedDB abort, lost reply, full Edge restart and later deletion', async (_, info) => {
   test.setTimeout(90_000);
   const bundle = await build({ stdin: { contents: harness, resolveDir: process.cwd(), loader: 'ts' }, bundle: true,
     platform: 'browser', format: 'iife', globalName: 'keePassBatchTest', write: false, logLevel: 'silent',

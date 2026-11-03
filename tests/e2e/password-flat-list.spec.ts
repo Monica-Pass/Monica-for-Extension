@@ -8,7 +8,7 @@ async function send(page: Page, message: Record<string, unknown>) {
   return result.data;
 }
 
-for (const mode of ['website', 'manual'] as const) test(`flat password lists ignore legacy ${mode} stacks and retain project data`, async ({}, info) => {
+for (const mode of ['website', 'manual'] as const) test(`flat password lists ignore legacy ${mode} stacks and retain project data`, async (_, info) => {
   const extension = path.resolve('dist');
   const context = await launchTestContext(info.outputPath('profile'), { channel: 'chromium', headless: true,
     locale: 'zh-CN', colorScheme: mode === 'website' ? 'dark' : 'light', viewport: { width: 1280, height: 900 },
