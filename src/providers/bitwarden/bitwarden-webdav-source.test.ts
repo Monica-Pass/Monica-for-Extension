@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
-import { createEmptyVaultState, createLoginItem, type LoginItem, type PasskeyItem, type ProviderAccount } from '../../core/model';
+import { createEmptyVaultState, createLoginItem, type LoginItem, type ProviderAccount } from '../../core/model';
 import { PROJECT_CREDENTIAL_FIELD } from '../../core/project-credentials';
 import { readAndroidBackup, vaultItemToAndroidRecord } from '../webdav/android-backup-codec';
 import { createPasskey } from '../../passkey/webauthn-core';
@@ -101,8 +101,7 @@ it.each(['new-member','missing-member','field-clear','revision','binding','lock'
   await expect(f.read()).rejects.toThrow();
 });
 
-it.each([{ future: 'keep' }, { customFields: [{ title: 'Recovery', value: 'first', isProtected: true, future: 'keep' }] }])
-  ('refuses unprojected native raw data %#', async rawPatch => { const f = await fixture({ rawPatch }); await expect(f.resource()).rejects.toThrow('原生'); });
+it.each([{ future: 'keep' }, { customFields: [{ title: 'Recovery', value: 'first', isProtected: true, future: 'keep' }] }])('refuses unprojected native raw data %#', async rawPatch => { const f = await fixture({ rawPatch }); await expect(f.resource()).rejects.toThrow('原生'); });
 
 it.each([
   { history: [{ entryId: 42, password: 'older', lastUsedAt: 0, future: 'keep' }] },
@@ -111,8 +110,7 @@ it.each([
 ])('refuses unrepresented history %#', async ({ history }) => { const f = await fixture({ history }); await expect(f.resource()).rejects.toThrow(); });
 
 it.each([{ future: 'keep' }, { sizeBytes: 9 }, { sha256Hex: '0'.repeat(64) }, { parentSecureItemId: 42 }, { sizeBytes: -1 },
-  { attachmentId: 'other' }, { mimeType: 42 }, { createdAt: 'invalid' }])
-  ('refuses unrepresented or corrupt attachment data %#', async attachmentPatch => { const f = await fixture({ attachmentPatch }); await expect(f.resource()).rejects.toThrow(); });
+  { attachmentId: 'other' }, { mimeType: 42 }, { createdAt: 'invalid' }])('refuses unrepresented or corrupt attachment data %#', async attachmentPatch => { const f = await fixture({ attachmentPatch }); await expect(f.resource()).rejects.toThrow(); });
 
 it('refuses hidden portable attachments in an unencrypted backup', async () => {
   const f = await fixture(); f.document.portableAttachmentsAllowed = false; await expect(f.read()).rejects.toThrow('unencrypted');

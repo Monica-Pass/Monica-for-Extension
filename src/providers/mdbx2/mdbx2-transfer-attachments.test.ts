@@ -3,10 +3,7 @@ import { bytesToBase64 } from "../../security/encoding";
 import type { ProviderAccount, VaultItem } from "../../core/model";
 import type { ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { Mdbx2TransferAttachmentService } from "./mdbx2-transfer-attachments";
-import type {
-  Mdbx2BatchTransferNativeClient,
-  Mdbx2TransferAttachmentDescriptor
-} from "./mdbx2-batch-transfer-coordinator";
+import type { Mdbx2BatchTransferNativeClient } from "./mdbx2-batch-transfer-coordinator";
 
 const TARGET: ProviderAccount = { id: "mdbx-target", kind: "mdbx2", name: "Target", enabled: true, isDefaultSaveTarget: false, config: { vaultHandle: "11111111-1111-4111-8111-111111111111" } };
 const SOURCE_MDBX: ProviderAccount = { id: "mdbx-source", kind: "mdbx2", name: "Source", enabled: true, isDefaultSaveTarget: false, config: { vaultHandle: "22222222-2222-4222-8222-222222222222" } };

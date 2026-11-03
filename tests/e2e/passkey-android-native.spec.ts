@@ -88,6 +88,7 @@ test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and 
     signatures: [], consoleErrors: [], limitations: ["Synthetic relying party with actual Edge APIs, extension verification UI, Native Messaging and Android-produced data; no Android Credential Manager or hardware UV acceptance.", "Known Android backup-flag gaps remain open."] };
   let provider: ProviderAccount;
   let created: Expected;
+  let cleanupFailure: unknown;
   const watch = () => context.on("page", page => page.on("pageerror", error => evidence.consoleErrors.push(error.message)));
   watch();
   try {
@@ -248,7 +249,8 @@ test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and 
   finally {
     await context.close();
     try { await host?.restore(); evidence.nativeHost = host?.evidence; }
-    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); throw error; }
+    catch (error) { evidence.status = "failed"; evidence.cleanupError = String(error); cleanupFailure = error; }
     finally { await writeFile(info.outputPath("evidence.json"), JSON.stringify(evidence, null, 2)); }
   }
+  if (cleanupFailure) throw cleanupFailure;
 });

@@ -94,11 +94,6 @@ function objectOrUndefined(value: unknown): Record<string, unknown> | undefined 
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function assignOptional(output: Record<string, unknown>, key: string, value: unknown): void {
-  if (value === undefined || value === "" || (value && typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length)) delete output[key];
-  else output[key] = value;
-}
-
 function sameWifiMetadata(left: WifiMetadata, right: WifiMetadata): boolean {
   return left.ssid === right.ssid
     && left.hiddenNetwork === right.hiddenNetwork

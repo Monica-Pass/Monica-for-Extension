@@ -555,8 +555,7 @@ describe("MDBX2 batch transfer coordinator", () => {
     for(const item of items) expect((await service.getItem(item.id))!.providerRefs[0].providerId).toBe(target.id);
   });
 
-  it.each(['files during validation', 'revision after journal', 'new local dependent', 'intent persistence', 'delete reply'] as const)
-    ('guards remote move finalization against %s', async change => {
+  it.each(['files during validation', 'revision after journal', 'new local dependent', 'intent persistence', 'delete reply'] as const)('guards remote move finalization against %s', async change => {
     const { service, target, storage } = await setupVault();
     const sourceProvider: ProviderAccount = { ...target, id: 'mdbx-source', config: { vaultHandle: SOURCE_HANDLE } };
     await service.upsertProvider(sourceProvider);

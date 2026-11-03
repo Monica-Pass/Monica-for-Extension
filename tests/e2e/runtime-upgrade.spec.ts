@@ -11,6 +11,7 @@ for (const surface of ["index.html", "popup.html"]) {
     const extension = path.join(fixtureRoot, "extension");
     const password = "runtime upgrade synthetic password";
     let context: BrowserContext | undefined;
+    let unexpectedProfile = false;
     try {
       await cp(path.resolve("dist"), extension, { recursive: true });
       const workerPath = path.join(extension, "background.js");
@@ -110,8 +111,9 @@ for (const surface of ["index.html", "popup.html"]) {
       await context?.close();
       const resolved = await realpath(fixtureRoot);
       const tempRoot = await realpath(tmpdir());
-      if (path.dirname(resolved).toLowerCase() !== tempRoot.toLowerCase() || !path.basename(resolved).startsWith("monica-upgrade-")) throw new Error("Unexpected upgrade fixture path");
-      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+      if (path.dirname(resolved).toLowerCase() !== tempRoot.toLowerCase() || !path.basename(resolved).startsWith("monica-upgrade-")) unexpectedProfile = true;
+      else await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
     }
+    if (unexpectedProfile) throw new Error("Unexpected upgrade fixture path");
   });
 }

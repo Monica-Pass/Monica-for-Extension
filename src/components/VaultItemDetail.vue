@@ -315,6 +315,9 @@ const fields = computed<DetailField[]>(() => {
       ].filter(Boolean) as DetailField[];
       return rows;
     }
+    default:
+      // Unrendered or future item kinds show no detail fields.
+      return [];
   }
 });
 

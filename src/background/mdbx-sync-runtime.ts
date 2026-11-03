@@ -23,7 +23,7 @@ export type MdbxSyncRuntimeRequest = Extract<ExtensionRequest, {
 }>;
 export function createMdbxSyncRuntime(deps: Dependencies) {
     const handlers: CommandHandlers<MdbxSyncRuntimeRequest> = {
-        "MDBX2_WEBDAV_SAVE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_WEBDAV_SAVE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireMdbx2Account(request.providerId);
             const previous = account.config;
@@ -49,7 +49,7 @@ export function createMdbxSyncRuntime(deps: Dependencies) {
                 lastError: undefined
             });
         },
-        "MDBX2_ONEDRIVE_SAVE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_ONEDRIVE_SAVE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireMdbx2Account(request.providerId);
             const previous = account.config;
@@ -94,7 +94,7 @@ export function createMdbxSyncRuntime(deps: Dependencies) {
                 deps.oneDriveSessions.cancel(request.config.loginId);
             return saved;
         },
-        "MDBX2_BOOTSTRAP_DOWNLOAD": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_BOOTSTRAP_DOWNLOAD": async (request, sender) => {
             assertManagerPage(sender);
             const config: Mdbx2BootstrapDownloadInput = request.config;
             if (config.transport === "onedrive") {
@@ -104,7 +104,7 @@ export function createMdbxSyncRuntime(deps: Dependencies) {
             }
             return deps.mdbx2SyncCoordinator.downloadBootstrap(deps.effectiveMdbx2WebDavSettings(config));
         },
-        "MDBX2_BOOTSTRAP_PUBLISH": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_BOOTSTRAP_PUBLISH": async (request, sender) => {
             assertManagerPage(sender);
             const sessionId = await deps.service.passkeySessionId();
             if (!sessionId)
@@ -116,7 +116,7 @@ export function createMdbxSyncRuntime(deps: Dependencies) {
             }, false, account, { sessionId }).then(() => undefined));
             return deps.managerSyncStatus(published.status, true, true);
         },
-        "MDBX2_BOOTSTRAP_REGISTER": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_BOOTSTRAP_REGISTER": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireMdbx2Account(request.providerId);
             const config = deps.mdbx2RemoteSyncConfig(account);
@@ -131,7 +131,7 @@ export function createMdbxSyncRuntime(deps: Dependencies) {
             });
             return deps.managerSyncStatus(status, true, true);
         },
-        "MDBX2_SYNC_STATUS": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_SYNC_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.requireMdbx2Account(request.providerId);
             const configured = Boolean((deps.stringAccountConfig(account, "webDavBaseUrl") || account.config.syncTransport === "onedrive")

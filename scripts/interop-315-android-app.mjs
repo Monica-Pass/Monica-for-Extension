@@ -172,6 +172,8 @@ const baseline = await snapshot();
 const report = { stage, startedAt: runStamp, serial, androidUser: 0, avd: 'Monica_Issue136_API_32', androidVersion: runtime.match(/versionName=(\S+)/)?.[1], installedApkSha256, installedTestApkSha256, testSourceHashes, baseline, outputs: [] };
 if (deviceIndependentBuild) report.deviceProvenance = 'Not observed: build only. Installation and instrumentation must verify their own device and exact built APK hashes.';
 if (testSet) Object.assign(report, { testSet, targetedAndroidTestSources });
+let pendingError = null;
+let provenanceErrors = [];
 try {
   if (process.env.MONICA_APP_INTEROP_REVIEWED_RUNTIME) {
     report.reviewedRuntimeReuse = await verifyReviewedRuntime(process.env.MONICA_APP_INTEROP_REVIEWED_RUNTIME, repository);
@@ -480,7 +482,7 @@ try {
   if (stage === 'zip') {
     try { report.outputs.push(await pull('extension-zip-decoded.json')); } catch { /* May fail before decode. */ }
   }
-  report.status = 'failed'; report.error = error.message; throw error;
+  pendingError = error; report.status = 'failed'; report.error = error.message;
 } finally {
   if (report.ownsBitwardenReversePort) await command(adb, ['-s', serial, 'reverse', '--remove', 'tcp:18316']);
   if (stage === 'bitwarden-project') await command(adb, ['-s', serial, 'shell', 'run-as', 'takagi.ru.monica', 'rm', '-f', 'files/extension-interop-315/bitwarden-project-input.json'], { allowFailure: true });
@@ -500,7 +502,6 @@ try {
   report.androidSourcesUnchanged = JSON.stringify(baseline) === JSON.stringify(report.after);
   report.testSourceHashesAfter = await Promise.all(testSources.map(async path => ({ path, sha256: hash(await readFile(join(root, path))) })));
   report.testSourcesUnchanged = JSON.stringify(testSourceHashes) === JSON.stringify(report.testSourceHashesAfter);
-  const provenanceErrors = [];
   for (const source of targetedAndroidTestSources) {
     if (hash(await readFile(source.destination)) !== source.sha256)
       provenanceErrors.push(`Staged Android test source changed during build: ${source.destination}`);
@@ -516,5 +517,6 @@ try {
   report.finishedAt = new Date().toISOString();
   await writeFile(join(evidence, `${stage}-${runStamp}-evidence.json`), JSON.stringify(report, null, 2));
   await writeFile(join(evidence, `${stage}-evidence.json`), JSON.stringify(report, null, 2));
-  if (provenanceErrors.length) throw new Error(provenanceErrors.join('\n'));
 }
+if (provenanceErrors.length) throw new Error(provenanceErrors.join('\n'));
+if (pendingError) throw pendingError;

@@ -34,7 +34,7 @@ describe('nearby identity and peer preferences', () => {
 
   it.each([
     { version: 2 }, { extra: true }, { enabled: 'yes' }, { incrementalOnly: 'yes' }, { intervalSeconds: 1 }, { syncRequest: '9223372036854775808' },
-    { settingsVersion: 9007199254740993 }, { replicaKey: 'a'.repeat(43) }, { mode: 'both' }, { peers: [peer, peer] },
+    { settingsVersion: 9007199254740992 }, { replicaKey: 'a'.repeat(43) }, { mode: 'both' }, { peers: [peer, peer] },
     { peers: [{ ...peer, trustedKey: 'invalid' }] }, { name: 'Name\nspoofed' }
   ])('rejects invalid encrypted preference state without resetting it: %j', patch => {
     const state = createEmptyVaultState(); state.nearbyPreferences = { ...preferences(), ...patch } as any;
@@ -62,7 +62,7 @@ describe('nearby identity and peer preferences', () => {
     expect(p.intervalSeconds).toBe(120);
     const hello = JSON.stringify(nearbyDeviceHello(p)); expect(hello).toContain('"settings_version":9007199254740993'); expect(hello).toContain('"sync_request":9223372036854775807');
     expect(nearbySettingsCounter(parseLosslessJson('9007199254740993'))).toBe('9007199254740993');
-    expect(() => nearbySettingsCounter(9007199254740993)).toThrow(); expect(() => nearbySettingsCounter('1')).toThrow();
+    expect(() => nearbySettingsCounter(9007199254740992)).toThrow(); expect(() => nearbySettingsCounter('1')).toThrow();
     expect(() => changeNearbyPreferences(p, { kind: 'request-sync' }, p.epoch)).toThrow('counter-exhausted');
   });
 

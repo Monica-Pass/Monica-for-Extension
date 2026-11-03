@@ -1,6 +1,6 @@
 import { dialogContent } from "./fixtures/material";
 import { launchTestContext } from './fixtures/edge';
-import { chromium, expect, test, type BrowserContext, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";

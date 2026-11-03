@@ -24,6 +24,7 @@ const test = base.extend<{ manager: Page }>({
       viewport: { width: 1280, height: 900 },
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
     });
+    let unexpectedProfile = false;
     try {
       await context.route(/^https?:\/\//, route => route.abort());
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -35,9 +36,10 @@ const test = base.extend<{ manager: Page }>({
     } finally {
       await context.close();
       const resolved = await realpath(profile);
-      if (path.dirname(resolved) !== await realpath(tmpdir()) || !path.basename(resolved).startsWith("mtile-")) throw new Error("Unexpected tile profile path");
-      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+      if (path.dirname(resolved) !== await realpath(tmpdir()) || !path.basename(resolved).startsWith("mtile-")) unexpectedProfile = true;
+      else await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
     }
+    if (unexpectedProfile) throw new Error("Unexpected tile profile path");
   }
 });
 

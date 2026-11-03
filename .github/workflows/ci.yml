@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - run: npm run verify:toolchain
       - run: npm ci --ignore-scripts
+      - run: npm run lint
       - name: Verify runtime upgrade fixtures
         run: node --test scripts/runtime-upgrade-fixture.test.mjs
       - run: npx playwright install --with-deps chromium

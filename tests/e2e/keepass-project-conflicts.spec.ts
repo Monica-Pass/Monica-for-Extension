@@ -26,15 +26,6 @@ async function items(page: Page) {
   const rows = await send<LoginItem[]>(page, { type: 'VAULT_LIST_ITEMS' });
   return Promise.all(rows.map(row => send<LoginItem>(page, { type: 'VAULT_GET_ITEM', itemId: row.id })));
 }
-async function editor(page: Page) {
-  await page.getByRole('button', { name: /^全部项目/ }).click();
-  await page.getByLabel('搜索密码库', { exact: true }).fill(title);
-  await page.getByLabel(`查看${title}详情`, { exact: true }).first().click();
-  await page.locator('[role="dialog"][data-item-kind="login"]').getByRole('button', { name: '编辑', exact: true }).click();
-  const dialog = page.locator('m3e-dialog.material-editor-dialog');
-  await expect(dialog.locator('[data-project-credential-editor]').first()).toBeVisible();
-  return dialog;
-}
 
 for (const mode of ['normal', 'response-loss', 'writing-resume', 'writing-cancel', 'local-choice', 'automatic-publish', 'recovery-export'] as const) test(`actual Edge project conflict choice publishes and restarts: ${mode}`, async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires isolated Apache WebDAV');

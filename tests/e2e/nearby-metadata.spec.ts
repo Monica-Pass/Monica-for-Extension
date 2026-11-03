@@ -82,7 +82,7 @@ test('production nearby transfers Android-shaped folders root tags and original 
     const seedLogin = seed.items.find(item => item.kind === 'login')!;
     const originRecords = await Promise.all(['bitwarden-cipher', 'keepass-entry', 'future-format'].map((format, index) => createSourceRecord({
       providerId: `former-${format}`, remoteId: `former-record-${index}`, itemId: 'former-item', revision: 'original-source-revision', format, encoding: 'json',
-      payload: `{ \"opaque\":9007199254740993,\"decimal\":1.00000000000000001,\"raw\":\"${'synthetic archive '.repeat(index === 2 ? 5000 : 1)}\" }` })));
+      payload: `{ "opaque":9007199254740993,"decimal":1.00000000000000001,"raw":"${'synthetic archive '.repeat(index === 2 ? 5000 : 1)}" }` })));
     seed.localItemOrigins = [{ itemId: seedLogin.id, records: originRecords }];
     await runtime(a, { type: 'VAULT_RESTORE_ENCRYPTED', backupPassword: master, backup: { magic: 'MONICA_EXTENSION_BACKUP', version: 1, exportedAt: new Date().toISOString(), envelope: await encryptVaultState(seed, backupKey, kdf) } });
     await runtime(b, { type: 'VAULT_SETUP', masterPassword: master }); await openPort(a); await openPort(b);

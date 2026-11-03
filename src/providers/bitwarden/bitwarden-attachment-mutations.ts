@@ -9,7 +9,6 @@ import {
 import { ProviderTransportError, type ProviderTransportPolicy } from "../provider-transport";
 import {
   IndexedDbBitwardenAttachmentMutationStore,
-  type BitwardenAttachmentMutationKind,
   type BitwardenAttachmentMutationRecord,
   type BitwardenAttachmentMutationStore
 } from "./bitwarden-attachment-mutation-store";
@@ -21,7 +20,6 @@ import { assertKnownBitwardenCipher, resolveBitwardenCipherKey } from "./bitward
 import {
   BitwardenClient,
   type BitwardenClientLimits,
-  type BitwardenFileUploadType,
   type BitwardenSessionConfig
 } from "./bitwarden-client";
 import {
@@ -289,6 +287,7 @@ export class BitwardenAttachmentMutationService {
       return await this.uploadAndVerify(input, record, synced, material, prepared.upload.url);
     } finally {
       material.encryptedBytes.fill(0);
+      // eslint-disable-next-line no-useless-assignment -- deliberate wipe: replace the buffer holding decrypted attachment bytes
       material = { ...material, encryptedBytes: new Uint8Array() };
     }
   }
@@ -311,7 +310,7 @@ export class BitwardenAttachmentMutationService {
         record = await this.updateRecord(record, { newAttachmentId: matched.id, serverRevisionDate: revisionDateOf(synced.rawCipher) });
         remote = matched;
       } else {
-        record = await this.resetRecordToIntent(record, revisionDateOf(synced.rawCipher));
+        await this.resetRecordToIntent(record, revisionDateOf(synced.rawCipher));
         throw mutationError("bitwarden-attachment-remote-missing", "待恢复的 Bitwarden 附件元数据已不存在，请重试上传。");
       }
     }
@@ -450,7 +449,7 @@ export class BitwardenAttachmentMutationService {
     }
 
     if (!findAttachmentById(synced.rawCipher, input.attachmentId)) {
-      record = await this.updateRecord(record, { stage: "completed", serverRevisionDate: revisionDateOf(synced.rawCipher) });
+      await this.updateRecord(record, { stage: "completed", serverRevisionDate: revisionDateOf(synced.rawCipher) });
       return { changed: false, ...synced };
     }
     try {

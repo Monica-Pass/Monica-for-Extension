@@ -89,7 +89,7 @@ export class IndexedDbKeePassConflictRecoveryStorage implements KeePassConflictR
     return new Promise((resolve, reject) => {
       const transaction = database.transaction('recoveries', 'readonly');
       const request = transaction.objectStore('recoveries').index('summaries').openKeyCursor(IDBKeyRange.bound([providerId], [providerId, []]));
-      let result: KeePassConflictRecoverySummary[] = [], error: unknown;
+      const result: KeePassConflictRecoverySummary[] = []; let error: unknown;
       request.onsuccess = () => {
         try {
           const cursor = request.result;

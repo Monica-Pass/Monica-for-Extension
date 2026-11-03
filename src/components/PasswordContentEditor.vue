@@ -94,7 +94,7 @@ function containKey(event: KeyboardEvent) {
     :summary="wallet.value ? tr(walletLabels[wallet.value.kind]) : wallet.reason" :disabled="!wallet.value">
     <template v-if="wallet.value">
       <m3e-button variant="tonal" type="button" @click="openWallet(wallet.value)">{{ tr('编辑完整副本') }}</m3e-button>
-      <AttachmentPreview v-for="asset in wallet.value.assets" v-if="owner" :key="asset.name" :owner="owner!" :name="asset.name" :expected="asset" :label="asset.displayName"/>
+      <template v-if="owner"><AttachmentPreview v-for="asset in wallet.value.assets" :key="asset.name" :owner="owner" :name="asset.name" :expected="asset" :label="asset.displayName"/></template>
       <h3>{{ tr('添加副本附件或卡面') }}</h3><WalletAssetEditor :owner="owner" @added="addAsset(wallet.value!, $event)"/>
     </template>
   </EditorContentSection>

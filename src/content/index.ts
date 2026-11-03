@@ -52,7 +52,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; credential?: Fil
   }
   if (message?.type === "MONICA_SHOW_SAVE_PROMPT" && message.context !== undefined) {
     if (message.context) inlineAutofill.dismiss();
-    void showPrompt(message.context);
+    void showPrompt(message.context).catch((error) => { console.warn("[Monica] Save prompt failed:", error instanceof Error ? error.message : "unknown error"); });
     return false;
   }
   if (message?.type === "MONICA_CANCEL_PASSKEY" && message.candidateId) {
@@ -256,7 +256,7 @@ async function submitCandidate(candidate: CredentialCaptureInput, root: ParentNo
   try {
     const contexts = await createFieldContextsForRoot(root);
     const context = await sendRuntime<SavePromptContext | null>({ type: "CREDENTIAL_CAPTURE", candidate: { ...candidate, fieldSignatures: [...new Set(contexts.map((field) => field.signature))] } });
-    if (window.top === window) showPrompt(context);
+    if (window.top === window) void showPrompt(context).catch((error) => { console.warn("[Monica] Save prompt failed:", error instanceof Error ? error.message : "unknown error"); });
   } catch (error) {
     // Locked vaults and unsupported pages fail closed without retaining the password in page state.
     console.warn("[Monica] Credential candidate rejected:", error instanceof Error ? error.message : "unknown error");
@@ -272,7 +272,7 @@ function rememberUsernameContext(username: string): void {
 async function restorePendingPrompt(): Promise<void> {
   try {
     const context = await sendRuntime<SavePromptContext | null>({ type: "CREDENTIAL_PENDING" });
-    if (context) showPrompt(context);
+    if (context) void showPrompt(context).catch((error) => { console.warn("[Monica] Save prompt failed:", error instanceof Error ? error.message : "unknown error"); });
   } catch {
     // No pending candidate is the normal case.
   }

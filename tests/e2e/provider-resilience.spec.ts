@@ -32,7 +32,7 @@ test("WebDAV conflicts resolve explicitly, sync cancels promptly, and exported d
   let holdDownload = false;
   let releaseDownload: (() => void) | undefined;
   let markDownloadStarted: (() => void) | undefined;
-  let downloadStarted = Promise.resolve();
+  let downloadStarted: Promise<void>;
 
   try {
     const launched = await launchExtension(testInfo);

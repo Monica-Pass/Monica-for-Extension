@@ -13,7 +13,6 @@ import {
 } from "./bitwarden-crypto";
 import {
   BitwardenClient,
-  type BitwardenFileUploadType,
   type BitwardenSessionConfig,
   type BitwardenSendFileUploadInfo
 } from "./bitwarden-client";
@@ -121,7 +120,6 @@ const MAX_NOTES_BYTES = 512;
 const MAX_TEXT_BYTES = 350_000;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const FILE_IV_BYTES = 16;
-const FILE_MAC_BYTES = 32;
 const FILE_BLOCK_BYTES = 16;
 const FILE_ENCRYPTION_TYPE = 2;
 const SEND_RESPONSE_ONLY = new Set([
@@ -264,7 +262,7 @@ export class BitwardenSendService {
     signal?: AbortSignal
   ): Promise<{ session: BitwardenSessionConfig; send: BitwardenSendDetail }> {
     assertProviderId(providerId);
-    validateUpdateInput(input, this.now());
+    validateUpdateInput(input);
     const rawResult = await this.client.getSend(session, input.sendId, signal);
     const raw = unwrapSendRecord(rawResult.payload);
     const vaultKey = this.client.vaultKey(rawResult.session);
@@ -513,7 +511,7 @@ async function buildTextUpdateRequest(raw: Record<string, unknown>, input: Bitwa
   request.deletionDate = input.deletionDate;
   request.expirationDate = input.expirationDate || null;
   request.maxAccessCount = input.maxAccessCount ?? null;
-  applyPasswordPolicy(request, raw, action, seed, input.password);
+  await applyPasswordPolicy(request, raw, action, seed, input.password);
   request.text = {
     ...existingText,
     text: input.text === undefined ? existingText.text : await encryptBitwardenString(input.text, sendKey),
@@ -535,7 +533,7 @@ async function buildFileUpdateRequest(raw: Record<string, unknown>, input: Bitwa
   request.deletionDate = input.deletionDate;
   request.expirationDate = input.expirationDate || null;
   request.maxAccessCount = input.maxAccessCount ?? null;
-  applyPasswordPolicy(request, raw, action, seed, input.password);
+  await applyPasswordPolicy(request, raw, action, seed, input.password);
   request.file = lowerCaseRecord(recordValue(raw, "File", "file") || {});
   return request;
 }
@@ -690,7 +688,7 @@ function validateFileInput(input: BitwardenSendFileInput, now: number): Bitwarde
   return { ...input, name, fileName, notes: optionalText(input.notes, "Send 备注", MAX_NOTES_BYTES), deletionDate: normalizeIso(input.deletionDate), expirationDate: input.expirationDate ? normalizeIso(input.expirationDate) : undefined };
 }
 
-function validateUpdateInput(input: BitwardenSendUpdateInput, now: number): void {
+function validateUpdateInput(input: BitwardenSendUpdateInput): void {
   assertSendId(input.sendId);
   if (!input.expectedRevision || !Number.isFinite(Date.parse(input.expectedRevision))) throw new BitwardenSendError("send-revision-invalid", "Bitwarden Send 缺少可验证修订时间。");
   requireText(input.name, "Send 标题", MAX_NAME_BYTES);

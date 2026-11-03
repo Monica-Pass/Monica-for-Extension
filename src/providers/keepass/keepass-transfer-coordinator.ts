@@ -7,7 +7,7 @@ import type { Mdbx2BatchTransferRequest, Mdbx2BatchTransferPlanResult, Mdbx2Batc
 import type { SecureVaultService } from '../../security/secure-vault-service';
 import type { KeePassProvider } from './keepass-provider';
 import type { KeePassLocalWorkingCopyService } from './keepass-local-working-copy';
-import type { KeePassWorkingCopyStorage, KeePassDurableMutationReceipt } from './keepass-working-copy-store';
+import type { KeePassWorkingCopyStorage } from './keepass-working-copy-store';
 import { keePassTransferRequestHash, type KeePassTransferDraft, type KeePassTransferRow } from './keepass-transfer-file';
 import { passkeyAvailability } from '../../passkey/source-policy';
 import { inspectPasskeyKey } from '../../passkey/capability';

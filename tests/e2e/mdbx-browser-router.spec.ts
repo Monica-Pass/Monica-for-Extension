@@ -40,7 +40,9 @@ test('MDBX routes legacy Native Host and bundled browser vaults across restart w
     return { page, extensionId };
   };
   try {
-    let { page, extensionId } = await launch();
+    const launched = await launch();
+    let { page } = launched;
+    const { extensionId } = launched;
     registration = await temporaryNativeHost(extensionId, path.join(run, 'native'));
     evidence.originStore = await send(page, 'origin-suite');
     // Create with the production typed API; the initial vault is the browser one.

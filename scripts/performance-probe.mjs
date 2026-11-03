@@ -43,6 +43,7 @@ async function resources(page) {
   for (const name of own.filter(name => !browserProvided.includes(name))) files.push({ name, bytes: (await stat(path.join(extension, name))).size });
   return { bytes: files.reduce((total, file) => total + file.bytes, 0), files, browserProvidedRequests: browserProvided.length };
 }
+let pendingError = null;
 try {
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const id = new URL(worker.url()).host;
@@ -138,8 +139,11 @@ try {
   await mkdir(path.dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify(result, null, 2) + '\n');
   console.log('Saved synthetic performance measurements: ' + output);
+} catch (error) {
+  pendingError = error;
 } finally {
   await context.close();
-  if (path.dirname(profile) !== path.resolve(tmpdir()) || !path.basename(profile).startsWith('monica-performance-')) throw new Error('Unexpected performance profile path');
-  await rm(profile, { recursive: true, force: true, maxRetries: 3 });
+  if (path.dirname(profile) !== path.resolve(tmpdir()) || !path.basename(profile).startsWith('monica-performance-')) pendingError = new Error('Unexpected performance profile path');
+  else await rm(profile, { recursive: true, force: true, maxRetries: 3 });
 }
+if (pendingError) throw pendingError;

@@ -86,8 +86,7 @@ it('preserves Android password metadata, duplicate protected fields, URI rules a
   } finally { result.dispose(); }
 });
 
-it.each(['creditCardNumber','creditCardHolder','creditCardExpiry','creditCardCVV','barcodeData','steamRawJson','boundNoteEntryId'] as const)
-  ('refuses unsupported rich field %s instead of silently deleting it', async field => {
+it.each(['creditCardNumber','creditCardHolder','creditCardExpiry','creditCardCVV','barcodeData','steamRawJson','boundNoteEntryId'] as const)('refuses unsupported rich field %s instead of silently deleting it', async field => {
     const item = { ...createLoginItem({ title: 'Rich source' }), [field]: 'private-original-field-value' };
     await expect(resource(item)).rejects.toThrow(field);
     await expect(resource(item)).rejects.not.toThrow('private-original-field-value');

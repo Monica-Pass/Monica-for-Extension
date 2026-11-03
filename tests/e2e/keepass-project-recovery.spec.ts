@@ -66,7 +66,7 @@ test('real Apache response loss preserves a new grouped project and edits made b
   const baseUrl = `http://127.0.0.1:${address.port}${folder}`;
   const report: Record<string, unknown> = { status: 'failed', sourceSha256: hash(bytes), remoteUrl: `${config.baseUrl}${remotePath}`, audit,
     fault: 'actual Apache PUT succeeds; a loopback proxy loses its response and temporarily rejects subsequent requests' };
-  let app: Awaited<ReturnType<typeof launch>> | undefined, expected: LoginItem[] = [], providerId = '';
+  let app: Awaited<ReturnType<typeof launch>> | undefined, expected: LoginItem[], providerId = '';
   try {
     app = await launch(info); await send(app.page, { type: 'VAULT_SETUP', masterPassword: master });
     providerId = (await send<{ account: { id: string } }>(app.page, { type: 'KEEPASS_WEBDAV_OPEN', input: { name: 'Recovery WebDAV', baseUrl,

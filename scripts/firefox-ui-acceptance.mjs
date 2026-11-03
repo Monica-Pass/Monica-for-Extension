@@ -2,7 +2,7 @@
 // synthetic in-memory fixture: never inspect the real OS/browser clipboard.
 import { launchFirefox,root,scratch } from './firefox-harness.mjs';
 import { createServer } from 'node:http';
-import { cp,mkdir,readFile,writeFile,mkdtemp } from 'node:fs/promises';
+import { cp,readFile,writeFile,mkdtemp } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';

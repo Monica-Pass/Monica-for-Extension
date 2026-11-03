@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { createAutofillRuntime } from './autofill-runtime';
 import { createLoginItem } from '../core/model';
 
@@ -6,9 +6,13 @@ const root = 'chrome-extension://synthetic/';
 const sender = { id: 'synthetic', url: root + 'index.html', origin: root.slice(0, -1) };
 const url = 'https://login.example.test/';
 const documentId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-beforeEach(() => vi.stubGlobal('chrome', { runtime: { id: 'synthetic', getURL: (name: string) => root + name },
-  tabs: { get: vi.fn(async () => ({ active: true })), sendMessage: vi.fn(async () => ({ ok: false })) },
-  webNavigation: { getFrame: vi.fn(async () => ({ url, documentId, documentLifecycle: 'active' })) } }));
+let sendMessage: Mock;
+beforeEach(() => {
+  sendMessage = vi.fn(async (_tab: number, _message: unknown) => ({ ok: false }));
+  vi.stubGlobal('chrome', { runtime: { id: 'synthetic', getURL: (name: string) => root + name },
+    tabs: { get: vi.fn(async () => ({ active: true })), sendMessage },
+    webNavigation: { getFrame: vi.fn(async () => ({ url, documentId, documentLifecycle: 'active' })) } });
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe('autofill HOTP acknowledgements after partial page success', () => {
@@ -19,7 +23,7 @@ describe('autofill HOTP acknowledgements after partial page success', () => {
     const service = { readAutofillContext: vi.fn(async () => ({ items: [item], locked: false, blockedHosts: [], blockedFieldSignatures: [] })),
       dispatchAutofill: vi.fn(async (_context, work: () => Promise<unknown>) => work()),
       consumeHotp: vi.fn(async () => { events.push('consume'); return consumed; }) };
-    vi.mocked(chrome.tabs.sendMessage).mockImplementation(async (_tab, message) => {
+    sendMessage.mockImplementation(async (_tab, message) => {
       if ((message as { type?: string }).type === 'MONICA_GET_FIELD_CONTEXT') return { ok: false };
       events.push('fill'); return { ok: false, error: 'custom control failed', filledTotp };
     });

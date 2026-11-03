@@ -1,7 +1,6 @@
 import type { LoginItem, ProviderAccount, ProviderConflict, ProviderConflictResolution, ProviderDiagnosticExport, VaultItem } from "../core/model";
 export type { Mdbx2PendingMove } from "../providers/mdbx2/mdbx2-batch-transfer-coordinator";
 export type { Mdbx2FileExportBegin, Mdbx2FileExportChunk } from "../providers/mdbx2/local-file-export";
-import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult } from "../providers/attachments/attachment-contract";
 import type { ProviderAttachmentTransferRequest, ProviderAttachmentTransferResult } from "../providers/attachments/attachment-transfer";
 import type { Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, Mdbx2WindowsHelloStatus } from "../providers/mdbx2/native-contract";
@@ -12,7 +11,7 @@ import type { KeePassRemoteManagerStatus, KeePassRemoteProbeResult, KeePassWebDa
 import type { KeePassGroupMutationResult, KeePassGroupPage } from "../providers/keepass/keepass-groups";
 import type { BitwardenFolderMutationResult, BitwardenFolderPage } from "../providers/bitwarden/bitwarden-folders";
 import type { BitwardenCollectionMutationResult, BitwardenCollectionPage } from "../providers/bitwarden/bitwarden-collections";
-import type { BitwardenSendDetail, BitwardenSendFileInput, BitwardenSendPage, BitwardenSendTextInput, BitwardenSendUpdateInput } from "../providers/bitwarden/bitwarden-sends";
+import type { BitwardenSendFileInput, BitwardenSendTextInput, BitwardenSendUpdateInput } from "../providers/bitwarden/bitwarden-sends";
 import type { KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult } from "../providers/keepass/keepass-history";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
 import type { AndroidGeneratorHistoryEntry } from "../providers/webdav/android-backup-codec";

@@ -31,6 +31,7 @@ const test = base.extend<{ manager: Page }>({
     const profile = await mkdtemp(path.join(tmpdir(), "monica-details-"));
     const extension = path.resolve("dist");
     const context = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: true, locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    let unexpectedProfile = false;
     try {
       const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -43,9 +44,10 @@ const test = base.extend<{ manager: Page }>({
     } finally {
       await context.close();
       const resolved = await realpath(profile);
-      if (path.dirname(resolved) !== await realpath(tmpdir()) || !path.basename(resolved).startsWith("monica-details-")) throw new Error("Unexpected detail fixture path");
-      await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
+      if (path.dirname(resolved) !== await realpath(tmpdir()) || !path.basename(resolved).startsWith("monica-details-")) unexpectedProfile = true;
+      else await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
     }
+    if (unexpectedProfile) throw new Error("Unexpected detail fixture path");
   }
 });
 

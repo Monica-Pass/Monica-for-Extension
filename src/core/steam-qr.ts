@@ -60,5 +60,5 @@ function decodeUrlComponent(value: string): string {
 }
 
 function trimPayload(value: string): string {
-  return value.trim().replace(/^["'`<>()\[\]{}]+|["'`<>()\[\]{},.;]+$/g, "").trim();
+  return value.trim().replace(/^["'`<>()[\]{}]+|["'`<>()[\]{},.;]+$/g, "").trim();
 }

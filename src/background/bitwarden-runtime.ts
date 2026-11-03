@@ -271,7 +271,7 @@ export function createBitwardenRuntime(deps: Dependencies) {
         return undefined;
     }
     const handlers: CommandHandlers<BitwardenRuntimeRequest> = {
-        "BITWARDEN_LOGIN": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_LOGIN": async (request, sender) => {
             assertManagerPage(sender);
             const existing = request.providerId ? await deps.service.getProvider(request.providerId) : undefined;
             if (existing && existing.kind !== "bitwarden")
@@ -323,7 +323,7 @@ export function createBitwardenRuntime(deps: Dependencies) {
             await deps.service.upsertProvider(account);
             return { status: "authenticated", providerId: account.id };
         },
-        "BITWARDEN_LOGOUT": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_LOGOUT": async (request, sender) => {
             assertManagerPage(sender);
             deps.providerSync.activity.abort(request.providerId, new DOMException('Bitwarden 已退出登录', 'AbortError'));
             deps.bitwardenProvider.lockAccount(request.providerId);
@@ -345,7 +345,7 @@ export function createBitwardenRuntime(deps: Dependencies) {
             await deps.service.upsertProvider({ ...account, config, lastError: undefined });
             return undefined;
         },
-        "BITWARDEN_SEND_EMAIL_CODE": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_SEND_EMAIL_CODE": async (request, sender) => {
             assertManagerPage(sender);
             const existing = request.providerId ? await deps.service.getProvider(request.providerId) : undefined;
             return bitwardenClient.sendTwoFactorEmailCode({
@@ -355,28 +355,28 @@ export function createBitwardenRuntime(deps: Dependencies) {
                 deviceId: await bitwardenDeviceIdentity.get(existing?.config.deviceId)
             });
         },
-        "BITWARDEN_FOLDER_LIST": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_FOLDER_LIST": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const result = await bitwardenFolders.list(readBitwardenSession(account), request, undefined);
             await persistBitwardenSession(account, result.session);
             return result.page;
         },
-        "BITWARDEN_FOLDER_CREATE": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_FOLDER_CREATE": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const result = await bitwardenFolders.create(readBitwardenSession(account), request.name);
             await persistBitwardenSession(account, result.session);
             return result.result;
         },
-        "BITWARDEN_FOLDER_RENAME": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_FOLDER_RENAME": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const result = await bitwardenFolders.rename(readBitwardenSession(account), request.folderId, request.name, request.expectedRevision);
             await persistBitwardenSession(account, result.session);
             return result.result;
         },
-        "BITWARDEN_FOLDER_DELETE": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_FOLDER_DELETE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new BitwardenFolderError("folder-delete-confirmation-required", "删除 Bitwarden 文件夹需要明确确认。");
@@ -391,7 +391,7 @@ export function createBitwardenRuntime(deps: Dependencies) {
             await persistBitwardenSession(account, synced.session);
             return result.result;
         },
-        "BITWARDEN_CIPHER_MOVE_FOLDER": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_CIPHER_MOVE_FOLDER": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const item = await deps.service.getItem(request.itemId);
@@ -406,14 +406,14 @@ export function createBitwardenRuntime(deps: Dependencies) {
             await persistBitwardenSession(account, result.session);
             return publicBitwardenFolderMutationResult(result.result);
         },
-        "BITWARDEN_COLLECTION_LIST": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_COLLECTION_LIST": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const result = await bitwardenCollections.list(readBitwardenSession(account), request, undefined);
             await persistBitwardenSession(account, result.session);
             return result.page;
         },
-        "BITWARDEN_CIPHER_MOVE_COLLECTIONS": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_CIPHER_MOVE_COLLECTIONS": async (request, sender) => {
             assertManagerPage(sender);
             const account = await requireBitwardenAccountRecord(request.providerId);
             const item = await deps.service.getItem(request.itemId);

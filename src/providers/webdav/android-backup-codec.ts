@@ -7,7 +7,7 @@ import { capturePasswordHistory, assertPortablePasswordHistory } from '../../cor
 import { otpCounterJson } from "../../core/otp-counter";
 import { boundNoteLogicalId, boundNoteScope, resolveBoundNote } from "../../core/bound-notes";
 import { strFromU8, strToU8, zipSync } from "fflate";
-import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
+import type { BillingAddressItem, CardItem, IdentityItem, LoginItem, PasskeyItem, PaymentAccountItem, ProviderReference, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import {
   androidTotpNumber,
   decodeOtpCounter,
@@ -396,6 +396,7 @@ function synchronizeAndroidCategories(
       return Boolean(item.categoryName?.trim()) && (!previous || item.categoryName !== previous.categoryName || item.categoryId !== previous.categoryId);
     });
     if (hasCategoryChange) {
+      // eslint-disable-next-line preserve-caught-error -- tsconfig lib is ES2020 without ErrorOptions; the caught error's message is already embedded in the thrown message
       throw new Error(`${CATEGORIES_PATH} 无法安全更新：${error instanceof Error ? error.message : "无法解析"}`);
     }
     return;
@@ -1085,8 +1086,8 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
     notes: stringValue(raw.notes),
     createdAt,
     updatedAt,
-    deletedAt: Boolean(raw.isDeleted) ? dateValue(raw.deletedAt, updatedAt) : undefined,
-    archivedAt: Boolean(raw.isArchived) ? dateValue(raw.archivedAt, updatedAt) : undefined,
+    deletedAt: raw.isDeleted ? dateValue(raw.deletedAt, updatedAt) : undefined,
+    archivedAt: raw.isArchived ? dateValue(raw.archivedAt, updatedAt) : undefined,
     categoryId: optionalNumber(raw.categoryId),
     categoryName: optionalString(raw.categoryName),
     sortOrder: optionalNumber(raw.sortOrder),

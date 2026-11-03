@@ -9,7 +9,6 @@ import { bitwardenOrganizationRecords, resolveBitwardenOrganizationKeys } from "
 import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { generateOtpUri } from "../../core/totp";
 import { parametersFromItem } from "../../core/login-otp";
-import { bytesToBase64 } from "../../security/encoding";
 import { createSourceRecord } from "../../core/source-records";
 import { bitwardenComparablePayload, bitwardenMutationFingerprint } from "./bitwarden-durable-sync";
 import { BitwardenAttachmentDownloadService } from "./bitwarden-attachments";

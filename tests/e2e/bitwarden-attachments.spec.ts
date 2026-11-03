@@ -1,6 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { dialogContent } from "./fixtures/material";
-import { expect, test, type BrowserContext, type Download, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, test, type BrowserContext, type Download, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
 import { encodeBitwardenCipher } from "../../src/providers/bitwarden/bitwarden-cipher-codec";

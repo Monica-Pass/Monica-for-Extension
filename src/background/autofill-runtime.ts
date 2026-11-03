@@ -198,17 +198,17 @@ export function createAutofillRuntime(deps: Dependencies) {
         return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, loginType: item.loginType, iconOrigin: loginWebsiteOrigin(item), ...customIconProjection(item), hasTotp: Boolean(item.totpSecret || item.boundTotpItemId), ...(credentialIdentity ? { credentialIdentity } : {}) };
     }
     const handlers: CommandHandlers<AutofillRuntimeRequest> = {
-        "AUTOFILL_INLINE_QUERY": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_INLINE_QUERY": async (request, sender) => {
             return queryInlineAutofill(sender, request.sessionId);
         },
-        "AUTOFILL_INLINE_FILL": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_INLINE_FILL": async (request, sender) => {
             const source = assertWebPageSender(sender);
             assertInlineSessionId(request.sessionId);
             if (typeof request.itemId !== "string" || !request.itemId || request.itemId.length > 512)
                 throw new Error("登录项标识无效。");
             return fillLogin(request.itemId, source.tabId, source.frameId, source.documentId, source.origin, request.sessionId);
         },
-        "AUTOFILL_INLINE_OPEN": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_INLINE_OPEN": async (request, sender) => {
             const source = assertWebPageSender(sender);
             assertInlineSessionId(request.sessionId);
             if (!await readInlineAutofillEnabled())
@@ -218,7 +218,7 @@ export function createAutofillRuntime(deps: Dependencies) {
             await chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
             return { opened: true };
         },
-        "VAULT_MATCH_LOGINS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_MATCH_LOGINS": async (request, sender) => {
             assertExtensionPage(sender);
             if (!isSecureSensitivePageUrl(request.pageUrl))
                 return [];
@@ -230,7 +230,7 @@ export function createAutofillRuntime(deps: Dependencies) {
             return matchingLogins(context.items.filter(isLoginItem), request.pageUrl)
                 .map((item) => ({ ...toMatchSummary(item, context.credentialIdentities[item.id]), allowLockedAutofill: context.allowedIds.includes(item.id) }));
         },
-        "VAULT_LIST_LOGIN_SUMMARIES": async (request, sender, nativeWriteLocked) => {
+        "VAULT_LIST_LOGIN_SUMMARIES": async (request, sender) => {
             assertExtensionPage(sender);
             const items = await deps.service.listItems();
             const identities = autofillCredentialIdentities(items);
@@ -239,14 +239,14 @@ export function createAutofillRuntime(deps: Dependencies) {
                 .sort((left, right) => Number(right.favorite) - Number(left.favorite) || right.updatedAt.localeCompare(left.updatedAt))
                 .map(item => toMatchSummary(item, identities[item.id]));
         },
-        "VAULT_LOGIN_SECRET": async (request, sender, nativeWriteLocked) => {
+        "VAULT_LOGIN_SECRET": async (request, sender) => {
             assertExtensionPage(sender);
             const item = (await deps.service.listItems()).find((candidate): candidate is LoginItem => candidate.id === request.itemId && isLoginItem(candidate) && !candidate.deletedAt);
             if (!item)
                 throw new Error("登录项不存在或已删除。");
             return { value: request.field === "password" ? item.password : item.username };
         },
-        "VAULT_MATCH_PASSKEYS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_MATCH_PASSKEYS": async (request, sender) => {
             assertExtensionPage(sender);
             const page = new URL(request.pageUrl);
             if (!isSecureSensitivePageUrl(page.toString()))
@@ -258,11 +258,11 @@ export function createAutofillRuntime(deps: Dependencies) {
                 .filter((item) => !item.deletedAt && !item.archivedAt && passkeyMatchesPageHost(item, pageHost))
                 .map((item): PasskeyMatchSummary => ({ id: item.id, title: item.title, userName: item.userName, userDisplayName: item.userDisplayName, sourceMode: item.sourceMode, availability: passkeyAvailability(item) as PasskeyMatchSummary["availability"], discoverable: item.discoverable, lastUsedAt: item.lastUsedAt, useCount: item.useCount || 0 }));
         },
-        "VAULT_FILL_LOGIN": async (request, sender, nativeWriteLocked) => {
+        "VAULT_FILL_LOGIN": async (request, sender) => {
             assertExtensionPage(sender);
             return fillLogin(request.itemId, request.tabId, request.frameId, request.documentId, request.expectedOrigin);
         },
-        "VAULT_LIST_WALLET_ITEMS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_LIST_WALLET_ITEMS": async (request, sender) => {
             assertExtensionPage(sender);
             if (await deps.autofillBlocked(request.pageUrl))
                 return [];
@@ -270,27 +270,27 @@ export function createAutofillRuntime(deps: Dependencies) {
                 return [];
             return listWalletItems(request.kinds);
         },
-        "VAULT_FILL_WALLET": async (request, sender, nativeWriteLocked) => {
+        "VAULT_FILL_WALLET": async (request, sender) => {
             assertExtensionPage(sender);
             return fillWalletItem(request.itemId, request.tabId, request.frameId, request.documentId, request.expectedOrigin);
         },
-        "AUTOFILL_SITE_POLICY_GET": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_SITE_POLICY_GET": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.getAutofillSitePolicy();
         },
-        "AUTOFILL_SITE_POLICY_SET": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_SITE_POLICY_SET": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.setAutofillSitePolicy(request.policy);
         },
-        "AUTOFILL_FIELD_POLICY_LIST": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_FIELD_POLICY_LIST": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.listAutofillBlockedFieldSignatures();
         },
-        "AUTOFILL_FIELD_POLICY_STATUS": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_FIELD_POLICY_STATUS": async (request, sender) => {
             assertExtensionPage(sender);
             return (await deps.service.readAutofillContext()).blockedFieldSignatures.includes(request.signature);
         },
-        "AUTOFILL_FIELD_POLICY_SET_CURRENT": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_FIELD_POLICY_SET_CURRENT": async (request, sender) => {
             assertExtensionPage(sender);
             const target = await resolveSensitiveFillTarget(request.tabId, request.frameId ?? 0, request.documentId, request.expectedOrigin);
             const record = await currentFieldRecord(request.tabId, target);
@@ -301,7 +301,7 @@ export function createAutofillRuntime(deps: Dependencies) {
             await deps.service.removeAutofillBlockedFieldSignature(record.signature);
             return null;
         },
-        "AUTOFILL_FIELD_POLICY_REMOVE": async (request, sender, nativeWriteLocked) => {
+        "AUTOFILL_FIELD_POLICY_REMOVE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.removeAutofillBlockedFieldSignature(request.signature);
         },

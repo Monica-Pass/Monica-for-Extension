@@ -29,7 +29,7 @@ export function mdbx2ProjectRemovalAttachments(client: Mdbx2NativeClient, accoun
     async beginRead(providerId, itemId, attachmentId) {
       // Native reads use vault-wide IDs; prove ownership before opening the stream.
       let cursor: string | undefined; const seen = new Set<string>();
-      let found = false;
+      let found: boolean;
       do {
         const page = await listAttachments(providerId, itemId, cursor);
         found = page.items.some(item => item.attachmentId === attachmentId);

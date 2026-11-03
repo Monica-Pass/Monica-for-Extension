@@ -34,7 +34,7 @@ for (const sourceKind of ['local', 'local-move', 'local-keep-both', 'mdbx', 'mdb
   // Native registration and full-vault verification outlived the default 5s
   // assertion on this host; retain exact results with an explicit native budget.
   const nativeCheck = { timeout: nativeMdbx ? 20_000 : 5_000 };
-  let registrationMs = 0, previewMs = 0;
+  let registrationMs: number, previewMs: number;
   test.skip(nativeMdbx && !process.env.MONICA_317_NATIVE_PASSKEY_FIXTURE, 'Requires an explicitly selected verified synthetic MDBX fixture');
   test.setTimeout(180_000);
   const local = sourceKind.startsWith('local'), moving = sourceKind.endsWith('-move') || keepBoth, withProject = sourceKind !== 'local';

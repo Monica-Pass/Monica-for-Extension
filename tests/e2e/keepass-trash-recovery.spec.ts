@@ -66,7 +66,7 @@ test('real Apache deleted project and Passkey restore after response loss, resta
   const baseUrl = `http://127.0.0.1:${address.port}${folder}`;
   const report: Record<string, unknown> = { status: 'failed', sourceSha256: hash(bytes), remoteUrl: `${config.baseUrl}${remotePath}`, audit,
     fault: 'actual Apache PUT succeeds; a loopback proxy loses its response and temporarily rejects subsequent requests' };
-  let app: Awaited<ReturnType<typeof launch>> | undefined, providerId = '';
+  let app: Awaited<ReturnType<typeof launch>> | undefined, providerId: string;
   try {
     const rp = 'keepass-restore.example.test', site = `https://${rp}`, challenge = Buffer.alloc(32, 61).toString('base64url');
     const key = await createPasskey({ origin: site, challenge, rpId: rp, rpName: 'Restore RP', userId: 'AAEC_w', userName: 'restore-user',

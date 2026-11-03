@@ -60,7 +60,7 @@ test('native profiles survive local forwarding, atomic restoration and independe
     let current=await target();
     const records=localSnapshot.records.map(r=>({id:r.global_id,deleted:r.deleted,clockJson:'{"source":1}',dataJson:JSON.stringify(r.data)}));
     const empty:NearbyNativeProjection=await call('nearby-native-project',current);
-    let groups=scheduleNearbyNativeGroups(groupNearbyPending(records,new Map(),new Map(),128,false),{sourceHash:current.sourceHash,records:empty.records,readAsset:async()=>{throw Error('not used');}});
+    const groups=scheduleNearbyNativeGroups(groupNearbyPending(records,new Map(),new Map(),128,false),{sourceHash:current.sourceHash,records:empty.records,readAsset:async()=>{throw Error('not used');}});
     const adoptRecords=async(values:typeof records)=>{
       let plan;try{plan=await call('nearby-native-adopt-plan',{source:current,batch:{operationId:randomUUID(),sourceHash:current.sourceHash,records:values,assets:localSnapshot.assets}});}
       catch(error){if(String(error).includes('native-adoption-limit'))throw new NearbyDataError('native-adoption-limit');throw error;}

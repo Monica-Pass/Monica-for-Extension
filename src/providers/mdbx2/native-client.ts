@@ -1586,7 +1586,7 @@ function vaultSessionSummary(input: unknown): Mdbx2VaultSessionSummary {
 }
 
 function vaultDiagnosticsReport(input: unknown): Mdbx2VaultDiagnosticsReport {
-  let encodedBytes = Number.POSITIVE_INFINITY;
+  let encodedBytes: number;
   try {
     encodedBytes = new TextEncoder().encode(JSON.stringify(input)).byteLength;
   } catch {
@@ -1836,7 +1836,7 @@ function healthRepairChoice(input: unknown): Mdbx2HealthRepairChoice {
 }
 
 function vaultTigaPosture(input: unknown): Mdbx2VaultTigaPosture {
-  let encodedBytes = Number.POSITIVE_INFINITY;
+  let encodedBytes: number;
   try {
     encodedBytes = new TextEncoder().encode(JSON.stringify(input)).byteLength;
   } catch {
@@ -2639,7 +2639,7 @@ function exactObjectResult(value: unknown, keys: string[], message: string): Rec
 }
 
 function boundedEncodedResultBytes(value: unknown, maximum: number, label: string): number {
-  let encodedBytes = Number.POSITIVE_INFINITY;
+  let encodedBytes: number;
   try {
     encodedBytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
   } catch {

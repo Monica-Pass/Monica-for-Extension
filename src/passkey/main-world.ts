@@ -71,7 +71,7 @@ if (navigator.credentials && !(navigator.credentials as CredentialsContainer & {
   } });
 }
 
-function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: AbortSignal): Promise<Record<string, any>> {
+function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     let settled = false;

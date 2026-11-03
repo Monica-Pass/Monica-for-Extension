@@ -33,59 +33,59 @@ export function createSteamRuntime(deps: Dependencies) {
         return result;
     }
     const handlers: CommandHandlers<SteamRuntimeRequest> = {
-        "STEAM_LIST_CONFIRMATIONS": async (request, sender, nativeWriteLocked) => {
+        "STEAM_LIST_CONFIRMATIONS": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, listSteamConfirmations);
         },
-        "STEAM_RESPOND_CONFIRMATION": async (request, sender, nativeWriteLocked) => {
+        "STEAM_RESPOND_CONFIRMATION": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, (item) => respondToSteamConfirmation(item, request.confirmation, request.accept));
         },
-        "STEAM_LIST_PENDING_LOGINS": async (request, sender, nativeWriteLocked) => {
+        "STEAM_LIST_PENDING_LOGINS": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, listSteamPendingLogins);
         },
-        "STEAM_RESPOND_LOGIN": async (request, sender, nativeWriteLocked) => {
+        "STEAM_RESPOND_LOGIN": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, (item) => respondToSteamLogin(item, request.login, request.approve));
         },
-        "STEAM_LIST_AUTHORIZED_DEVICES": async (request, sender, nativeWriteLocked) => {
+        "STEAM_LIST_AUTHORIZED_DEVICES": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, listSteamAuthorizedDevices);
         },
-        "STEAM_GET_INVENTORY_OVERVIEW": async (request, sender, nativeWriteLocked) => {
+        "STEAM_GET_INVENTORY_OVERVIEW": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, getSteamInventoryOverview);
         },
-        "STEAM_LIST_INVENTORY_ITEMS": async (request, sender, nativeWriteLocked) => {
+        "STEAM_LIST_INVENTORY_ITEMS": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, (item) => listSteamInventoryItems(item, request));
         },
-        "STEAM_GET_MARKET_QUOTE": async (request, sender, nativeWriteLocked) => {
+        "STEAM_GET_MARKET_QUOTE": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, (item) => getSteamMarketQuote(item, request));
         },
-        "STEAM_LIST_MARKET_LISTINGS": async (request, sender, nativeWriteLocked) => {
+        "STEAM_LIST_MARKET_LISTINGS": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, (item) => listSteamMarketListings(item, request));
         },
-        "STEAM_SELL_MARKET_ITEMS": async (request, sender, nativeWriteLocked) => {
+        "STEAM_SELL_MARKET_ITEMS": async (request, sender) => {
             assertExtensionPage(sender);
             if (request.confirmed !== true)
                 throw new Error("Steam 出售操作需要明确确认。");
             return runSteamOperation(request.itemId, (item) => sellSteamMarketItems(item, request));
         },
-        "STEAM_CANCEL_MARKET_LISTING": async (request, sender, nativeWriteLocked) => {
+        "STEAM_CANCEL_MARKET_LISTING": async (request, sender) => {
             assertExtensionPage(sender);
             if (request.confirmed !== true)
                 throw new Error("Steam 撤销挂单需要明确确认。");
             return runSteamOperation(request.itemId, (item) => cancelSteamMarketListing(item, request.listingId));
         },
-        "STEAM_GET_MINI_PROFILE_BACKGROUND": async (request, sender, nativeWriteLocked) => {
+        "STEAM_GET_MINI_PROFILE_BACKGROUND": async (request, sender) => {
             assertExtensionPage(sender);
             return runSteamOperation(request.itemId, getSteamMiniProfileBackground);
         },
-        "STEAM_REVOKE_AUTHORIZED_DEVICE": async (request, sender, nativeWriteLocked) => {
+        "STEAM_REVOKE_AUTHORIZED_DEVICE": async (request, sender) => {
             assertExtensionPage(sender);
             if (request.confirmed !== true)
                 throw new Error("Steam 设备撤销需要明确确认。");

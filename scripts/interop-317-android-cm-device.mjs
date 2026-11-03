@@ -217,7 +217,7 @@ if (stage === 'install') {
   const inputBefore = (await readFile(join(out, 'input-method-baseline.txt'), 'utf8')).replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(Boolean);
   const inputAfter = (await readFile(join(out, 'input-method-after.txt'), 'utf8')).replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(Boolean);
   for (const line of inputBefore) {
-    const index = line.indexOf('='), key = line.slice(0, index), value = line.slice(index + 1);
+    const index = line.indexOf('='), key = line.slice(0, index);
     const observedAfter = inputAfter.find(row => row.startsWith(`${key}=`))?.slice(index + 1);
     const current = await text(['shell', 'settings', 'get', 'secure', key]);
     if (current !== observedAfter) throw new Error('Input method setting changed externally');

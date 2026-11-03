@@ -77,10 +77,10 @@ export function createPasskeyVerificationRuntime(deps: Dependencies) {
         }
     }
     const handlers: CommandHandlers<PasskeyVerificationRuntimeRequest> = {
-        "PASSKEY_VERIFICATION_CONTEXT": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_VERIFICATION_CONTEXT": async (request, sender) => {
             return passkeyUserVerification.context(request.verificationId, sender);
         },
-        "PASSKEY_VERIFY_PASSWORD": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_VERIFY_PASSWORD": async (request, sender) => {
             try {
                 await passkeyUserVerification.verify(request.verificationId, request.masterPassword, sender);
                 return { verified: true };
@@ -89,11 +89,11 @@ export function createPasskeyVerificationRuntime(deps: Dependencies) {
                 request.masterPassword = "";
             }
         },
-        "PASSKEY_VERIFY_HELLO": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_VERIFY_HELLO": async (request, sender) => {
             await passkeyUserVerification.verify(request.verificationId, "", sender, "windows-hello");
             return { verified: true };
         },
-        "PASSKEY_CANCEL_VERIFICATION": async (request, sender, nativeWriteLocked) => {
+        "PASSKEY_CANCEL_VERIFICATION": async (request, sender) => {
             passkeyUserVerification.cancel(request.verificationId, sender);
             return { cancelled: true };
         },

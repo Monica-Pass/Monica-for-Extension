@@ -15,7 +15,7 @@ import { Mdbx2NativeHostError, parseMdbx2NativeResponse } from '../../../src/pro
 const master='Synthetic hierarchy password';
 const storage=new IndexedDbVaultStorage(),service=new SecureVaultService(storage,new ChromeVaultSessionStore(),Date.now,new ChromeVaultDeviceKeyStore());
 const worker=new Worker('./mdbx-worker.js',{type:'module'}),pending=new Map<string,{resolve:(value:any)=>void;reject:(error:Error)=>void}>();
-worker.onmessage=({data})=>{const value=pending.get(data.id);if(!value)return;pending.delete(data.id);data.error?value.reject(Error(data.error.code)):value.resolve(data.result);};
+worker.onmessage=({data})=>{const value=pending.get(data.id);if(!value)return;pending.delete(data.id);if(data.error)value.reject(Error(data.error.code));else value.resolve(data.result);};
 const engine=(op:string,data:unknown)=>new Promise<any>((resolve,reject)=>{const id=crypto.randomUUID();pending.set(id,{resolve,reject});worker.postMessage({id,op,data});});
 const opened=engine('open',{name:'synthetic-nearby-hierarchy'});
 const client=new Mdbx2NativeClient({connectNative(){throw Error('Storage must use the bundled engine');},disconnectErrorMessage(){return undefined;}});

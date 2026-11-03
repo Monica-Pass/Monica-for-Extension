@@ -63,30 +63,30 @@ export function createVaultRuntime(deps: Dependencies) {
         });
     }
     const handlers: CommandHandlers<VaultRuntimeRequest> = {
-        "RUNTIME_INFO": async (request, sender, nativeWriteLocked) => {
+        "RUNTIME_INFO": async () => {
             return runtimeInfo;
         },
-        "CLIPBOARD_ARM": async (request, sender, nativeWriteLocked) => {
+        "CLIPBOARD_ARM": async (request, sender) => {
             assertExtensionPage(sender);
             return deps.clipboardLifecycle.arm(request.digest);
         },
-        "VAULT_STATUS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_STATUS": async () => {
             return deps.service.status();
         },
-        "VAULT_AUTO_LOCK_GET": async (request, sender, nativeWriteLocked) => {
+        "VAULT_AUTO_LOCK_GET": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.getAutoLockMinutes();
         },
-        "VAULT_AUTO_LOCK_SET": async (request, sender, nativeWriteLocked) => {
+        "VAULT_AUTO_LOCK_SET": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.setAutoLockMinutes(request.minutes);
         },
-        "VAULT_UNLOCK_HELLO": async (request, sender, nativeWriteLocked) => {
+        "VAULT_UNLOCK_HELLO": async (request, sender) => {
             assertManagerPage(sender);
             const state = await deps.service.unlockWithWindowsHello((bindingId, challenge) => deps.windowsHelloNativeClient.verifyWindowsHello(bindingId, challenge).then(() => undefined));
             return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
         },
-        "VAULT_HELLO_STATUS": async (request, sender, nativeWriteLocked) => {
+        "VAULT_HELLO_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const bindingId = await deps.service.windowsHelloBindingIdForRuntime();
             const protectionMode = await deps.service.protectionModeForRuntime();
@@ -115,20 +115,20 @@ export function createVaultRuntime(deps: Dependencies) {
                 unlockAvailable: Boolean(vaultEnrolled && bindingConsistent && protectionMode === "device-key" && native.supported && native.available)
             };
         },
-        "VAULT_HELLO_ENROLL": async (request, sender, nativeWriteLocked) => {
+        "VAULT_HELLO_ENROLL": async (request, sender) => {
             assertManagerPage(sender);
             deps.nearbyOwner.close('protection-changed');
             const binding = await deps.service.enrollWindowsHello((bindingId) => deps.windowsHelloNativeClient.enrollWindowsHello(bindingId), (bindingId) => deps.windowsHelloNativeClient.revokeWindowsHello(bindingId).then(() => undefined));
             return binding;
         },
-        "VAULT_HELLO_REVOKE": async (request, sender, nativeWriteLocked) => {
+        "VAULT_HELLO_REVOKE": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error("撤销 Windows Hello 需要明确确认。");
             deps.nearbyOwner.close('protection-changed');
             return deps.service.revokeWindowsHello((bindingId) => deps.windowsHelloNativeClient.revokeWindowsHello(bindingId).then(() => undefined));
         },
-        "VAULT_SETUP": async (request, sender, nativeWriteLocked) => {
+        "VAULT_SETUP": async (request, sender) => {
             assertExtensionPage(sender);
             const initialItems = await readLegacyItems();
             const state = await deps.service.setup(request.masterPassword, initialItems);
@@ -136,11 +136,11 @@ export function createVaultRuntime(deps: Dependencies) {
                 await chrome.storage.local.remove(LEGACY_VAULT_KEY);
             return state.items.filter((item) => !item.deletedAt && !item.archivedAt);
         },
-        "VAULT_UNLOCK": async (request, sender, nativeWriteLocked) => {
+        "VAULT_UNLOCK": async (request, sender) => {
             assertExtensionPage(sender);
             return (await deps.service.unlock(request.masterPassword)).items.filter((item) => !item.deletedAt && !item.archivedAt);
         },
-        "VAULT_LOCK": async (request, sender, nativeWriteLocked) => {
+        "VAULT_LOCK": async (request, sender) => {
             assertExtensionPage(sender);
             deps.nearbyOwner.close('vault-locked');
             deps.keePassRecoveryDownloads.clear();
@@ -159,16 +159,16 @@ export function createVaultRuntime(deps: Dependencies) {
             deps.clearTransferSessions();
             return deps.service.lock();
         },
-        "VAULT_CHANGE_MASTER_PASSWORD": async (request, sender, nativeWriteLocked) => {
+        "VAULT_CHANGE_MASTER_PASSWORD": async (request, sender) => {
             assertExtensionPage(sender);
             deps.nearbyOwner.close('protection-changed');
             return deps.service.changeMasterPassword(request.currentPassword, request.newPassword);
         },
-        "VAULT_EXPORT_ENCRYPTED": async (request, sender, nativeWriteLocked) => {
+        "VAULT_EXPORT_ENCRYPTED": async (request, sender) => {
             assertManagerPage(sender);
             throw new Error('导出需要重新验证身份，请重新打开导出窗口。');
         },
-        "VAULT_AUTHENTICATED_EXPORT": async (request, sender, nativeWriteLocked) => {
+        "VAULT_AUTHENTICATED_EXPORT": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.authenticatedExport(request.input, async (bindingId, challenge) => {
                 const result = await deps.windowsHelloNativeClient.verifyWindowsHello(bindingId, challenge);
@@ -176,17 +176,17 @@ export function createVaultRuntime(deps: Dependencies) {
                     throw new Error('Windows Hello 未确认用户身份。');
             });
         },
-        "VAULT_STORAGE_OVERVIEW": async (request, sender, nativeWriteLocked) => {
+        "VAULT_STORAGE_OVERVIEW": async (request, sender) => {
             assertManagerPage(sender);
             return deps.service.storageOverview();
         },
-        "VAULT_RECOVERY_CLEAR": async (request, sender, nativeWriteLocked) => {
+        "VAULT_RECOVERY_CLEAR": async (request, sender) => {
             assertManagerPage(sender);
             if (request.confirmed !== true)
                 throw new Error('清理恢复副本需要明确确认。');
             return deps.service.clearRecoveryCopies();
         },
-        "VAULT_RESTORE_ENCRYPTED": async (request, sender, nativeWriteLocked) => {
+        "VAULT_RESTORE_ENCRYPTED": async (request, sender) => {
             assertExtensionPage(sender);
             deps.nearbyOwner.close('vault-restored');
             deps.clearTransferSessions();

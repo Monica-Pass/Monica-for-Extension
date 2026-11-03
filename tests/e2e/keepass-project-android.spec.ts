@@ -37,7 +37,7 @@ test('Android native KDBX project -> Edge grouped edit/add/cancel -> file and fr
   // Preserve this failed Android parity result; browser success does not turn it into a pass.
   expect(android.projectIdentityPreserved).toBe(false); expect(android.afterProjectCount).toBe(4);
   const properties = ['username', 'password', 'notes', 'email', 'phone', 'addressLine', 'city', 'state', 'zipCode', 'country', 'creditCardNumber', 'creditCardHolder', 'creditCardExpiry', 'creditCardCVV', 'appPackageName', 'appName'] as const;
-  let app = await launch(info), providerId = '', exported = '', expected: LoginItem[] = [];
+  let app = await launch(info), providerId: string, exported: string, expected: LoginItem[];
   try {
     await send(app.page, { type: 'VAULT_SETUP', masterPassword: master });
     providerId = (await send<{ account: { id: string } }>(app.page, { type: 'KEEPASS_OPEN', input: { name: 'Android KDBX project', fileName: 'android.kdbx', file: bytes.toString('base64'), password: databasePassword } })).account.id;
@@ -63,7 +63,7 @@ test('Android native KDBX project -> Edge grouped edit/add/cancel -> file and fr
     // The same-title control remains separate; the project action advertises its three passwords.
     await app.page.locator('tr.row-clickable').filter({ hasText: /3\s*条密码/ }).getByRole('button', { name: `查看${project[0].title}详情`, exact: true }).click();
     await dialogContent(app.page, { name: new RegExp(project[0].title) }).getByRole('button', { name: '编辑', exact: true }).click();
-    let editor = dialogContent(app.page, { name: '编辑密码', exact: true }), groups = editor.locator('[data-credential-group]');
+    let editor = dialogContent(app.page, { name: '编辑密码', exact: true }); const groups = editor.locator('[data-credential-group]');
     await expect(groups).toHaveCount(2);
     await expect(groups.nth(0).getByLabel('密码 2', { exact: true })).toHaveValue('second-password');
     await groups.nth(0).getByLabel('用户名', { exact: true }).fill('edge-primary');
@@ -111,7 +111,7 @@ test('Android native KDBX project -> Edge grouped edit/add/cancel -> file and fr
       const actual = restored.find(row => row.id === old.id)!;
       expect(actual.keepassEntryUuid).toBe(old.keepassEntryUuid);
       expect(actual.keepassEntryUuid).toBeTruthy();
-      const content = ({ createdAt, updatedAt, totpSecret, ...row }: LoginItem) => ({ ...row, totpSecret: totpSecret || undefined });
+      const content = ({ createdAt: _createdAt, updatedAt: _updatedAt, totpSecret, ...row }: LoginItem) => ({ ...row, totpSecret: totpSecret || undefined });
       expect(content(actual)).toEqual(content(old));
       // KDBX4 timestamps have whole-second precision. No content change is allowed.
       expect(Date.parse(actual.createdAt)).toBe(Math.floor(Date.parse(old.createdAt) / 1000) * 1000);

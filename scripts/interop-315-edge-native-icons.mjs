@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { expect } from '@playwright/test';
 import { loginEditor, save, readItem } from './interop-315-edge-features.mjs';

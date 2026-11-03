@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LoginItem, PasskeyItem, TotpItem, VaultItem } from "../../core/model";
+import type { LoginItem, PasskeyItem, TotpItem } from "../../core/model";
 import {
   normalizeMdbx2TransferItem,
   planMdbx2BatchTransfer,

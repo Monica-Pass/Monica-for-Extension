@@ -8,25 +8,27 @@ import { activeScheme } from '../lib/theme';
 import { bitmapIconDataUrl, KEEPASS_CUSTOM_ICON_TYPE } from '../core/bitmap-icon';
 import { uploadedKeePassIcon } from '../manager/keepass-icon-image';
 const props = defineProps<{form:LoginForm;keepass?:boolean}>();
+// 表单草稿模式：父组件持有 reactive 草稿对象，本组件按契约就地编辑其字段。
+const form = props.form;
 let selection = 0;
-onBeforeUnmount(() => { selection++; props.form.iconBusy = false; });
+onBeforeUnmount(() => { selection++; form.iconBusy = false; });
 const imageInput = ref<HTMLInputElement>();
 const open = ref(false), mode = ref<'library'|'emoji'>('library'), query = ref(''), emojiInput = ref(''), error = ref('');
 const limit = ref(48);
 const choices = computed(() => brandIcons.filter(icon => `${icon.slug} ${icon.label}`.includes(query.value.trim().toLowerCase())));
-const iconItem = computed(() => ({kind:'login' as const,customIconType:props.form.customIconType,customIconValue:props.form.customIconValue}));
-const current = computed(() => props.form.customIconType === KEEPASS_CUSTOM_ICON_TYPE && bitmapIconDataUrl(props.form.customIconValue) ? tr('数据库图标') : props.form.customIconType === 'EMOJI' ? props.form.customIconValue : props.form.customIconType === 'SIMPLE_ICON' ? props.form.customIconValue : props.form.customIconType && props.form.customIconType !== 'NONE' ? tr('当前图标不可预览，保存时保留') : tr('跟随网站'));
-function choose(type:string,value?:string) { selection++; props.form.iconBusy=false; props.form.customIconType=type; props.form.customIconValue=value; error.value=''; }
+const iconItem = computed(() => ({kind:'login' as const,customIconType:form.customIconType,customIconValue:form.customIconValue}));
+const current = computed(() => form.customIconType === KEEPASS_CUSTOM_ICON_TYPE && bitmapIconDataUrl(form.customIconValue) ? tr('数据库图标') : form.customIconType === 'EMOJI' ? form.customIconValue : form.customIconType === 'SIMPLE_ICON' ? form.customIconValue : form.customIconType && form.customIconType !== 'NONE' ? tr('当前图标不可预览，保存时保留') : tr('跟随网站'));
+function choose(type:string,value?:string) { selection++; form.iconBusy=false; form.customIconType=type; form.customIconValue=value; error.value=''; }
 async function selectImage(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = '';
   if (!file) return;
-  const request = ++selection, provider = props.form.providerId, name = props.form.name;
-  props.form.iconBusy = true; error.value = '';
+  const request = ++selection, provider = form.providerId, name = form.name;
+  form.iconBusy = true; error.value = '';
   try {
     const value = await uploadedKeePassIcon(file);
-    if (request === selection && provider === props.form.providerId && name === props.form.name) choose(KEEPASS_CUSTOM_ICON_TYPE, value);
+    if (request === selection && provider === form.providerId && name === form.name) choose(KEEPASS_CUSTOM_ICON_TYPE, value);
   } catch (cause) { if (request === selection) error.value = tr(cause instanceof Error ? cause.message : '无法读取图片。'); }
-  finally { if (request === selection) props.form.iconBusy = false; }
+  finally { if (request === selection) form.iconBusy = false; }
 }
 function applyEmoji() { const value=normalizeEmojiIcon(emojiInput.value); if(!value) {error.value=tr('请输入一个有效的 Emoji');return;} choose('EMOJI',value); }
 </script>

@@ -152,7 +152,6 @@ describe("KeePass field-aware remote rebase", () => {
       entries: [{ title: "Base title", fields: { UserName: "base-user" }, protectedFields: { Password: "base-password" } }]
     });
     const [base, working, remote] = await loadCopies(bytes);
-    const baseEntry = base.getDefaultGroup().entries[0];
     const workingEntry = working.getDefaultGroup().entries[0];
     const remoteEntry = remote.getDefaultGroup().entries[0];
     workingEntry.fields.set("Title", "Local title");

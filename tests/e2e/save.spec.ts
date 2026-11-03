@@ -70,7 +70,6 @@ test("save prompt explicitly stores a newly submitted login in the encrypted loc
     await page.locator("#password").fill("new-login-secret");
     await triggerLogin(page);
 
-    const prompt = page.locator("#monica-save-prompt-host");
     await confirmSavePrompt(page);
 
     await expect.poll(async () => (await listItems(launched.manager)).length).toBe(1);
@@ -110,7 +109,6 @@ test("save prompt updates the matching login with a submitted replacement passwo
     await page.locator("#password").fill("replacement-secret");
     await triggerLogin(page);
 
-    const prompt = page.locator("#monica-save-prompt-host");
     await confirmSavePrompt(page);
 
     await expect.poll(async () => (await listItems(launched.manager)).find((item) => item.id === existing.id)?.password).toBe("replacement-secret");

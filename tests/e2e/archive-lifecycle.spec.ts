@@ -109,7 +109,7 @@ test('KeePass synchronization and encrypted reopen retain archived passwords and
         KPEX_PASSKEY_CREDENTIAL_ID: credential.credentialId, KPEX_PASSKEY_USER_HANDLE: 'dGVzdA' } }
   ] });
   const app = await launch(info);
-  let providerId = '', exportedFile = '', archivedIds: string[] = [];
+  let providerId: string, exportedFile: string, archivedIds: string[];
   try {
     await send(app.manager, { type: 'VAULT_SETUP', masterPassword: password });
     const opened = await send<{ account: { id: string } }>(app.manager, { type: 'KEEPASS_OPEN', input: { name: 'Archive fixture', fileName: 'archive.kdbx', file: Buffer.from(bytes).toString('base64'), password: dbPassword } });

@@ -28,7 +28,7 @@ test('Android 321 credential notes and URL edits persist across groups and resta
     await page.locator('button.nav-item').filter({ hasText: '登录项' }).click();
     await page.getByRole('button', { name: '查看Example Mail详情', exact: true }).click();
     await page.getByRole('button', { name: '编辑', exact: true }).click();
-    let editor = dialogContent(page, { name: '编辑密码', exact: true });
+    const editor = dialogContent(page, { name: '编辑密码', exact: true });
     await expect(editor.getByLabel('凭据备注', { exact: true })).toHaveValue('Work note');
     await editor.getByLabel('凭据备注', { exact: true }).fill('  Edited work\n备注  ');
     await editor.getByLabel('网址 1', { exact: true }).fill('https://www.example.test/Auth');

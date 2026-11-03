@@ -22,53 +22,53 @@ export type MdbxFileRuntimeRequest = Extract<ExtensionRequest, {
 }>;
 export function createMdbxFileRuntime(deps: Dependencies) {
     const handlers: CommandHandlers<MdbxFileRuntimeRequest> = {
-        "MDBX2_HOST_STATUS": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_HOST_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const handle = request.providerId ? await deps.requireMdbx2VaultHandle(request.providerId) : undefined;
             const status = await deps.mdbx2NativeClient.status(15000, handle);
             return { ...status, runtimeBackend: handle ? await deps.mdbx2NativeClient.backendForVault(handle) : 'browser' };
         },
-        "MDBX2_FILE_EXPORT_BEGIN": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_FILE_EXPORT_BEGIN": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2LocalFileExports.begin(request.providerId, deps.mdbx2ExportOwner(sender));
         },
-        "MDBX2_FILE_EXPORT_READ": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_FILE_EXPORT_READ": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2LocalFileExports.read(request.providerId, deps.mdbx2ExportOwner(sender), request.downloadHandle, request.offset);
         },
-        "MDBX2_FILE_EXPORT_RELEASE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_FILE_EXPORT_RELEASE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2LocalFileExports.release(request.providerId, deps.mdbx2ExportOwner(sender), request.downloadHandle);
         },
-        "MDBX2_FILE_RELEASE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_FILE_RELEASE": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2NativeClient.releaseFile(request.fileHandle);
         },
-        "MDBX2_VAULT_INSPECT": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_INSPECT": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2NativeClient.inspectVault(request.source);
         },
-        "MDBX2_IMPORT_DETECT": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_IMPORT_DETECT": async (request, sender) => {
             assertManagerPage(sender);
             return detectMdbxImport(deps.mdbx2NativeClient, request.source, request.kind);
         },
-        "MDBX2_IMPORT_PREPARE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_IMPORT_PREPARE": async (request, sender) => {
             assertManagerPage(sender);
             return prepareMdbxImport(deps.mdbx2ImportStore, deps.mdbx2NativeClient, request);
         },
-        "MDBX2_IMPORT_COMMIT": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_IMPORT_COMMIT": async (request, sender) => {
             assertManagerPage(sender);
             return commitMdbxImport(deps.mdbx2ImportStore, deps.mdbx2NativeClient, deps.service, (providerId) => deps.providerSync.synchronize(providerId), request);
         },
-        "MDBX2_IMPORT_CANCEL": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_IMPORT_CANCEL": async (request, sender) => {
             assertManagerPage(sender);
             return cancelMdbxImport(deps.mdbx2ImportStore, deps.mdbx2NativeClient, request.operationId, deps.service);
         },
-        "MDBX2_IMPORT_RECOVER": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_IMPORT_RECOVER": async (request, sender) => {
             assertManagerPage(sender);
             return recoverMdbxImports(deps.mdbx2ImportStore, deps.mdbx2NativeClient, deps.service);
         },
-        "MDBX2_VAULT_OPEN": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_OPEN": async (request, sender) => {
             assertManagerPage(sender);
             const sessionId = await deps.service.passkeySessionId();
             if (!sessionId)
@@ -108,7 +108,7 @@ export function createMdbxFileRuntime(deps: Dependencies) {
                 throw error;
             }
         },
-        "MDBX2_VAULT_CREATE": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_CREATE": async (request, sender) => {
             assertManagerPage(sender);
             const sessionId = await deps.service.passkeySessionId();
             if (!sessionId)
@@ -129,7 +129,7 @@ export function createMdbxFileRuntime(deps: Dependencies) {
                 throw error;
             }
         },
-        "MDBX2_VAULT_STATUS": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             const account = await deps.service.getProvider(request.providerId);
             if (!account || account.kind !== "mdbx2")
@@ -137,17 +137,17 @@ export function createMdbxFileRuntime(deps: Dependencies) {
             const vaultHandle = typeof account.config.vaultHandle === "string" ? account.config.vaultHandle : "";
             return deps.mdbx2NativeClient.vaultStatus(vaultHandle);
         },
-        "MDBX2_VAULT_DIAGNOSTICS": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_DIAGNOSTICS": async (request, sender) => {
             assertManagerPage(sender);
             const vaultHandle = await deps.requireMdbx2VaultHandle(request.providerId);
             return deps.mdbx2NativeClient.vaultDiagnostics(vaultHandle);
         },
-        "MDBX2_HEALTH_REPAIR_PLAN": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_HEALTH_REPAIR_PLAN": async (request, sender) => {
             assertManagerPage(sender);
             const vaultHandle = await deps.requireMdbx2VaultHandle(request.providerId);
             return deps.mdbx2NativeClient.planHealthRepair(vaultHandle);
         },
-        "MDBX2_HEALTH_REPAIR_APPLY": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_HEALTH_REPAIR_APPLY": async (request, sender) => {
             assertManagerPage(sender);
             if (!Array.isArray(request.decisions)) {
                 throw new Mdbx2NativeHostError("params-invalid", "MDBX2 健康修复选择无效。", false);
@@ -161,12 +161,12 @@ export function createMdbxFileRuntime(deps: Dependencies) {
             const vaultHandle = await deps.requireMdbx2VaultHandle(request.providerId);
             return deps.mdbx2NativeClient.applyHealthRepair(vaultHandle, request.planHandle, request.operationId, request.decisions);
         },
-        "MDBX2_VAULT_TIGA": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_TIGA": async (request, sender) => {
             assertManagerPage(sender);
             const vaultHandle = await deps.requireMdbx2VaultHandle(request.providerId);
             return deps.mdbx2NativeClient.vaultTiga(vaultHandle);
         },
-        "MDBX2_VAULT_LOCK": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_VAULT_LOCK": async (request, sender) => {
             assertManagerPage(sender);
             void deps.mdbx2LocalFileExports.clear();
             const account = await deps.service.getProvider(request.providerId);

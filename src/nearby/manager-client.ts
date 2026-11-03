@@ -27,14 +27,16 @@ export class NearbyManagerClient {
     } catch { this.close('connection-failed'); }
   }
   private disconnect = () => { void chrome.runtime.lastError; this.close('connection-closed'); };
-  private message = (value: any) => {
-    if (!value || this.dead) return;
-    if (value.type === 'ready') { clearTimeout(this.readyTimer); this.resolveReady(); return; }
-    if (value.type === 'closed') { this.close(typeof value.reason === 'string' ? value.reason : 'connection-closed'); return; }
-    const request = this.pending.get(value.id); if (!request) return;
-    clearTimeout(request.timer); this.pending.delete(value.id);
-    if (value.ok === true) request.resolve(value.data);
-    else request.reject(new NearbyManagerClientError(typeof value.error === 'string' ? value.error : 'operation-failed'));
+  private message = (value: unknown) => {
+    if (!value || typeof value !== "object" || this.dead) return;
+    const reply = value as { type?: unknown; id?: unknown; ok?: unknown; data?: unknown; error?: unknown; reason?: unknown };
+    if (reply.type === 'ready') { clearTimeout(this.readyTimer); this.resolveReady(); return; }
+    if (reply.type === 'closed') { this.close(typeof reply.reason === 'string' ? reply.reason : 'connection-closed'); return; }
+    if (typeof reply.id !== 'number') return;
+    const request = this.pending.get(reply.id); if (!request) return;
+    clearTimeout(request.timer); this.pending.delete(reply.id);
+    if (reply.ok === true) request.resolve(reply.data);
+    else request.reject(new NearbyManagerClientError(typeof reply.error === 'string' ? reply.error : 'operation-failed'));
   };
   async request<T>(command: NearbyManagerCommand): Promise<T> {
     await this.ready;

@@ -86,7 +86,7 @@ describe("KeePass group lifecycle", () => {
 
   it("creates renames moves deletes and restores nested groups without losing native subtree data", async () => {
     const { fixture, provider, target } = await openProvider();
-    let active = listAll(provider, target, false);
+    const active = listAll(provider, target, false);
     const work = active.find((group) => group.name === "Work")!;
     const archive = active.find((group) => group.name === "Archive")!;
 

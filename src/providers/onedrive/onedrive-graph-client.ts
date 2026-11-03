@@ -106,7 +106,7 @@ export class OneDriveGraphClient {
   }
 
   /** Streams /content through Graph's redirect for drives that never return the capability annotation. */
-  async downloadContent(identity: OneDriveItemIdentity, signal?: AbortSignal): Promise<Uint8Array> {
+  async downloadContent(identity: OneDriveItemIdentity): Promise<Uint8Array> {
     const target = normalizeOneDriveIdentity(identity);
     return this.requestScoped(`${itemUrl(target)}/content`, { method: "GET", redirect: "follow" }, "OneDrive 文件下载", async (response, requestSignal) => {
       if (!response.ok) throw providerHttpError("OneDrive 文件下载失败", response);
@@ -187,7 +187,7 @@ export class OneDriveKeePassFileClient {
     if (!before) throw missingFile();
     const bytes = before.downloadUrl
       ? await this.graph.download(before.downloadUrl, signal)
-      : await this.graph.downloadContent(this.identity, signal);
+      : await this.graph.downloadContent(this.identity);
     try {
       // The preauthenticated URL need not use Graph's ETag. Bind downloaded bytes to
       // stable metadata before and after the GET instead of inventing an If-Match token.

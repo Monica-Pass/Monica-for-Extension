@@ -244,56 +244,56 @@ export function createTransferRuntime(deps: Dependencies) {
     function clearTransferSessions(): void { localTransfers.clear(); keePassTransfers.clear(); bitwardenBatchTransfers.clear(); }
     function clearTransferStatuses(): void { mdbx2BatchTransferStatuses.clear(); }
     const handlers: CommandHandlers<TransferRuntimeRequest> = {
-        "MDBX2_TRANSFER_BEGIN": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_TRANSFER_BEGIN": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2NativeClient.beginInboundTransfer(request.sizeBytes, request.sha256);
         },
-        "MDBX2_TRANSFER_CHUNK": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_TRANSFER_CHUNK": async (request, sender) => {
             assertManagerPage(sender);
             if (typeof request.dataBase64 !== "string" || request.dataBase64.length > deps.MDBX2_MAX_BASE64_CHUNK_LENGTH)
                 throw new Error("MDBX2 文件分块超出允许范围。");
             return deps.mdbx2NativeClient.sendInboundChunk(request.transferId, request.offset, base64ToBytes(request.dataBase64));
         },
-        "MDBX2_TRANSFER_FINISH": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_TRANSFER_FINISH": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2NativeClient.finishInboundTransfer(request.transferId);
         },
-        "MDBX2_TRANSFER_ABORT": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_TRANSFER_ABORT": async (request, sender) => {
             assertManagerPage(sender);
             return deps.mdbx2NativeClient.abortInboundTransfer(request.transferId);
         },
-        "LOCAL_TRANSFER_FOLDERS": async (request, sender, nativeWriteLocked) => {
+        "LOCAL_TRANSFER_FOLDERS": async (request, sender) => {
             assertManagerPage(sender);
             return localTransferFolders(await deps.service.readState(false));
         },
-        "MDBX2_BATCH_TRANSFER_PLAN": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_BATCH_TRANSFER_PLAN": async (request, sender) => {
             assertManagerPage(sender);
             return (await deps.service.getProvider(request.input.targetProviderId))?.kind === 'local'
                 ? localTransfers.plan(request.input) : (await deps.service.getProvider(request.input.targetProviderId))?.kind === 'keepass'
                 ? keePassTransfers.plan(request.input) : (await deps.service.getProvider(request.input.targetProviderId))?.kind === 'bitwarden'
                 ? bitwardenBatchTransfers.plan(request.input) : mdbx2BatchTransferCoordinator.plan(request.input);
         },
-        "BITWARDEN_PENDING_TRANSFERS": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_PENDING_TRANSFERS": async (request, sender) => {
             assertManagerPage(sender);
             return bitwardenBatchTransfers.pending(request.providerId);
         },
-        "BITWARDEN_CANCEL_UNWRITTEN_TRANSFER": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_CANCEL_UNWRITTEN_TRANSFER": async (request, sender) => {
             assertManagerPage(sender);
             return bitwardenBatchTransfers.cancel(request.providerId, request.operationId);
         },
-        "BITWARDEN_KEEP_BOTH_TRANSFER": async (request, sender, nativeWriteLocked) => {
+        "BITWARDEN_KEEP_BOTH_TRANSFER": async (request, sender) => {
             assertManagerPage(sender);
             return bitwardenBatchTransfers.keepBoth(request.providerId, request.operationId, request.confirmed);
         },
-        "KEEPASS_PENDING_TRANSFERS": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_PENDING_TRANSFERS": async (request, sender) => {
             assertManagerPage(sender);
             return keePassTransfers.pending(request.providerId);
         },
-        "KEEPASS_CANCEL_UNWRITTEN_TRANSFER": async (request, sender, nativeWriteLocked) => {
+        "KEEPASS_CANCEL_UNWRITTEN_TRANSFER": async (request, sender) => {
             assertManagerPage(sender);
             return keePassTransfers.cancel(request.providerId, request.operationId);
         },
-        "MDBX2_PENDING_MOVES": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_PENDING_MOVES": async (request, sender) => {
             assertManagerPage(sender);
             return mdbx2BatchTransferCoordinator.pendingMoves();
         },
@@ -337,7 +337,7 @@ export function createTransferRuntime(deps: Dependencies) {
                 throw error;
             }
         },
-        "MDBX2_BATCH_TRANSFER_STATUS": async (request, sender, nativeWriteLocked) => {
+        "MDBX2_BATCH_TRANSFER_STATUS": async (request, sender) => {
             assertManagerPage(sender);
             pruneMdbx2BatchTransferStatuses();
             return mdbx2BatchTransferStatuses.get(assertMdbx2TransferOperationId(request.operationId));

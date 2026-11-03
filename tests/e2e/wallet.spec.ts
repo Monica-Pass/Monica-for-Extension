@@ -1,5 +1,5 @@
 import { chooseOption, dialogContent } from "./fixtures/material";
-import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 import { launchEdgeContext } from './fixtures/edge';
 

@@ -125,7 +125,10 @@ async function connectKeePass(revision: number): Promise<void> {
     loginHandle.value = "";
     password.value = ""; keyFile.value = undefined;
     emit("connected", result); emit("close");
-  } finally { encodedKey = undefined; }
+  } finally {
+    // eslint-disable-next-line no-useless-assignment -- deliberate wipe of the key-file bytes to shorten memory retention
+    encodedKey = undefined;
+  }
 }
 
 /** Downloads the portable bootstrap, imports it as the local working copy, then binds OneDrive sync. */

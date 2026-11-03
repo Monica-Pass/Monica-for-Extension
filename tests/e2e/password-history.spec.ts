@@ -120,7 +120,7 @@ test('actual editor saves password history, protects reveal/copy/delete, and sur
 
 test('KDBX sync and same-source encrypted reopen retain local password history', async ({}, info) => {
   const bytes = await buildKeePassFixture({ password: master, entries: [{ title: 'KDBX history fixture', protectedFields: { Password: 'original' } }] });
-  const app = await launch(info); let providerId = '', file = '', expected: LoginItem;
+  const app = await launch(info); let providerId: string, file: string, expected: LoginItem;
   try {
     await send(app.page, { type: 'VAULT_SETUP', masterPassword: master });
     providerId = (await send<{ account: { id: string } }>(app.page, { type: 'KEEPASS_OPEN', input: { name: 'History', fileName: 'history.kdbx', file: Buffer.from(bytes).toString('base64'), password: master } })).account.id;

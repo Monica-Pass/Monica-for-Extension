@@ -1,7 +1,7 @@
 import { launchEdgeContext } from "./fixtures/edge";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
-import { dialogContent, editContentSection } from "./fixtures/material";
+import { editContentSection } from "./fixtures/material";
 import { projectLogins } from './fixtures/project-logins';
 
 const masterPassword = "locked autofill test master password";

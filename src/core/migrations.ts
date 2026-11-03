@@ -1,4 +1,4 @@
-import type { LoginItem, LoginUriMatchType, ProviderMutationReceipt, ProviderSourceRecord, VaultItem, VaultState, WindowsHelloBinding } from "./model";
+import type { LoginItem, LoginUriMatchType, ProviderMutationReceipt, ProviderSourceRecord, VaultState, WindowsHelloBinding } from "./model";
 import { normalizeSitePolicy } from "../autofill/site-policy";
 import { normalizeBlockedFieldSignatures } from "../autofill/field-policy";
 import { normalizeHomePreferences } from "./home-preferences";

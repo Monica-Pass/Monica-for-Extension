@@ -34,7 +34,7 @@ function host() {
       const result = JSON.parse(buffer.subarray(4, length + 4)); buffer = buffer.subarray(length + 4);
       const request = pending.get(result.requestId); assert.ok(request);
       pending.delete(result.requestId); clearTimeout(request.timer);
-      result.ok ? request.resolve(result.result) : request.reject(new Error(JSON.stringify(result.error)));
+      if (result.ok) request.resolve(result.result); else request.reject(new Error(JSON.stringify(result.error)));
     }
   });
   child.on('close', () => { for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error(`Host closed: ${stderr}`)); } pending.clear(); });
@@ -49,7 +49,7 @@ function host() {
       });
     },
     async stop(abrupt = false) {
-      if (child.exitCode === null && child.signalCode === null) abrupt ? child.kill('SIGKILL') : child.stdin.end();
+      if (child.exitCode === null && child.signalCode === null) { if (abrupt) child.kill('SIGKILL'); else child.stdin.end(); }
       await stopped;
     }
   };

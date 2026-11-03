@@ -392,15 +392,6 @@ function stopProgressPolling(): void {
   progressTimer = undefined;
 }
 
-function invalidatePlan(): void {
-  if (planning.value || executing.value) return;
-  planResult.value = null;
-  preparedRequest.value = null;
-  executeResult.value = null;
-  progress.value = null;
-  moveConfirmed.value = false;
-}
-
 function closeDialog(): void {
   if (executing.value) return;
   emit("close");

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { base64ToBytes, bytesToBase64 } from "../../security/encoding";
+import { bytesToBase64 } from "../../security/encoding";
 import {
   decryptBitwardenBytes,
   decryptBitwardenString,
@@ -120,6 +120,38 @@ describe("Bitwarden Send service", () => {
     expect((written?.text as Record<string, unknown>).text).toBe((raw.Text as Record<string, unknown>).Text);
     expect((written?.text as Record<string, unknown>).futureNested).toEqual(["opaque"]);
     expect(written?.futureTopLevel).toEqual({ untouched: true });
+  });
+
+  it("hashes the new password into the PUT body when passwordAction is 'set'", async () => {
+    // Regression: applyPasswordPolicy was fire-and-forget, so the PUT serialized
+    // the request before the async PBKDF2 proof landed and the server received a
+    // body without the password policy applied.
+    const raw = await rawTextSend();
+    let written: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method || "GET";
+      if (method === "GET") return json(raw);
+      if (method === "PUT") {
+        written = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return json({ Id: "send-text", RevisionDate: NEXT_REVISION });
+      }
+      throw new Error(`Unexpected ${method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const service = new BitwardenSendService({ client: new BitwardenClient(fetcher, fastTransport()), now: () => NOW });
+
+    const result = await service.update(activeSession(), "provider-1", {
+      sendId: "send-text",
+      expectedRevision: REVISION,
+      name: "Renamed",
+      passwordAction: "set",
+      password: "S3nd pass!",
+      deletionDate: DELETION_DATE
+    });
+
+    expect(result.send).toMatchObject({ name: "Renamed", authMode: "password", hasPassword: true, revisionDate: NEXT_REVISION });
+    expect(written?.password).toBe("/VgCF7suo+WH22MWp7MlcuE726h8UkCf2+XR9Kx8EiM=");
+    expect(written?.authType).toBe(1);
+    expect(written?.emails).toBeNull();
   });
 
   it("fails closed for a stale revision, email verification, and future Send types before writing", async () => {

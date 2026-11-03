@@ -20,6 +20,7 @@ export function parseLosslessJson(text: string): unknown {
   }); } catch (error) {
     // Native SyntaxErrors can quote decrypted passwords/tokens from the input.
     // Preserve feature-support failures but never propagate source snippets.
+    // eslint-disable-next-line preserve-caught-error -- the original SyntaxError message can quote decrypted secrets; attaching it as cause would defeat the redaction
     if (error instanceof SyntaxError) throw new SyntaxError('JSON 数据无效。');
     throw error;
   }

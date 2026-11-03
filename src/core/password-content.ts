@@ -180,7 +180,7 @@ export function renderQrTemplate(template: string, item: Pick<LoginItem, "userna
       value = fields[0].value;
     } else if (!parameter) value = values[key];
     if (value === undefined) throw new Error(`二维码字段不可读取：${key}`);
-    return wifi ? value.replace(/[\\;,:\"]/g, character => "\\" + character) : value;
+    return wifi ? value.replace(/[\\;,:"]/g, character => "\\" + character) : value;
   });
   checkedBytes(output); return output;
 }

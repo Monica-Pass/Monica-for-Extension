@@ -9,7 +9,6 @@ import { installKdbxCryptoEngine } from "./keepass-crypto";
 import {
   buildKeePassReferenceContext,
   resolveKeePassEntryFields,
-  type KeePassReferenceContext,
   type KeePassReferenceEntry
 } from "./keepass-field-reference";
 import { KeePassOperationError, assertKeePassFileSupported, toKeePassOperationError } from "./keepass-format";
