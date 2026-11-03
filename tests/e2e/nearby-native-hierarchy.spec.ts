@@ -6,7 +6,7 @@ import {launchEdgeContext} from './fixtures/edge';
 import {temporaryNativeHost} from './fixtures/native-host';
 
 const app=(page:Page,method:string,...args:unknown[]):Promise<any>=>page.evaluate(({method,args})=>(window as any).hierarchy[method](...args),{method,args});
-test('native coordinator orders paginated nested folder trash, restart restoration and moves',async(_,info)=>{
+test('native coordinator orders paginated nested folder trash, restart restoration and moves',async({},info)=>{
   test.skip(process.platform!=='win32','Installed Edge and Native Messaging');test.setTimeout(300000);
   const run=path.resolve(info.outputPath('isolated')),extension=path.join(run,'extension');await mkdir(extension,{recursive:true});
   await writeFile(path.join(extension,'manifest.json'),JSON.stringify({manifest_version:3,name:'Synthetic hierarchy',version:'1.0.0',permissions:['nativeMessaging','storage'],content_security_policy:{extension_pages:"script-src 'self' 'wasm-unsafe-eval'; object-src 'none'"},background:{service_worker:'worker.js'}}));

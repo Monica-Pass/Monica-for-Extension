@@ -27,7 +27,7 @@ async function items(page: Page) {
   return Promise.all(rows.map(row => send<LoginItem>(page, { type: 'VAULT_GET_ITEM', itemId: row.id })));
 }
 
-for (const mode of ['normal', 'response-loss', 'writing-resume', 'writing-cancel', 'local-choice', 'automatic-publish', 'recovery-export'] as const) test(`actual Edge project conflict choice publishes and restarts: ${mode}`, async (_, info) => {
+for (const mode of ['normal', 'response-loss', 'writing-resume', 'writing-cancel', 'local-choice', 'automatic-publish', 'recovery-export'] as const) test(`actual Edge project conflict choice publishes and restarts: ${mode}`, async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires isolated Apache WebDAV');
   test.setTimeout(180_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

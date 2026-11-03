@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("generator preferences persist across remounts and reloads", async (_, testInfo) => {
+test("generator preferences persist across remounts and reloads", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

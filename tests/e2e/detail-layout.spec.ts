@@ -27,7 +27,7 @@ const items: VaultItem[] = [
 ];
 
 const test = base.extend<{ manager: Page }>({
-  manager: async (_, use) => {
+  manager: async ({}, use) => {
     const profile = await mkdtemp(path.join(tmpdir(), "monica-details-"));
     const extension = path.resolve("dist");
     const context = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: true, locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1440, height: 1000 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

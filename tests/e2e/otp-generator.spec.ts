@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("OTP transfer and credential generator work in the M3E manager", async (_, testInfo) => {
+test("OTP transfer and credential generator work in the M3E manager", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

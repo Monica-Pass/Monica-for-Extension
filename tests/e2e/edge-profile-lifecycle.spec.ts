@@ -8,7 +8,7 @@ const clean = (...args: string[]) => execFileSync('powershell.exe', [
   '-NoProfile', '-NonInteractive', '-File', path.resolve('scripts/clean-test-profiles.ps1'), ...args
 ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
 
-test('isolated Edge profile keeps state across restarts until run cleanup', async (_, info) => {
+test('isolated Edge profile keeps state across restarts until run cleanup', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Windows Edge');
   const logicalProfile = info.outputPath('profile');
   const first = await launchEdgeContext(logicalProfile);
@@ -27,7 +27,7 @@ test('isolated Edge profile keeps state across restarts until run cleanup', asyn
   } finally { await second.close(); }
 });
 
-test('failed tests also leave profiles for run cleanup', async (_, info) => {
+test('failed tests also leave profiles for run cleanup', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Windows Edge');
   test.fail(true, 'Exercise cleanup after an assertion failure');
   const context = await launchEdgeContext(info.outputPath('profile'));

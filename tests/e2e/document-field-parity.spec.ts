@@ -20,7 +20,7 @@ async function open(page: Page) {
   await page.getByRole('button', { name: `查看${document.title}详情`, exact: true }).click();
 }
 
-for (const scenario of ['detail', 'edit'] as const) test(`document ${scenario} retains complete Android fields and custom occurrences`, async (_, info) => {
+for (const scenario of ['detail', 'edit'] as const) test(`document ${scenario} retains complete Android fields and custom occurrences`, async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', colorScheme: 'dark', reducedMotion: 'reduce',
     viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

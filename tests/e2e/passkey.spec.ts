@@ -27,7 +27,7 @@ async function confirmFirstPasskey(page: import("@playwright/test").Page): Promi
   await page.keyboard.press("Enter");
 }
 
-test("passkey bridge creates an encrypted ES256 credential and signs a later assertion", async (_, testInfo) => {
+test("passkey bridge creates an encrypted ES256 credential and signs a later assertion", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchEdgeContext(testInfo.outputPath("passkey-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -58,7 +58,7 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
   } finally { await context?.close(); }
 });
 
-test("an imported Bitwarden FIDO2 credential completes the page authentication path", async (_, testInfo) => {
+test("an imported Bitwarden FIDO2 credential completes the page authentication path", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   const email = "import@example.com"; const masterPassword = "imported passkey master password";
   const kdf: BitwardenKdfConfig = { type: 0, iterations: 10_000 };
@@ -117,7 +117,7 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
   } finally { await context?.close(); }
 });
 
-test("locking cancels an unconfirmed Passkey prompt without saving", async (_, testInfo) => {
+test("locking cancels an unconfirmed Passkey prompt without saving", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchEdgeContext(testInfo.outputPath("pk-lock-pending"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -139,7 +139,7 @@ test("locking cancels an unconfirmed Passkey prompt without saving", async (_, t
   } finally { await context?.close(); }
 });
 
-test("locking immediately after confirmation keeps the page and vault consistent", async (_, testInfo) => {
+test("locking immediately after confirmation keeps the page and vault consistent", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchEdgeContext(testInfo.outputPath("pk-lock"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -168,7 +168,7 @@ test("locking immediately after confirmation keeps the page and vault consistent
   } finally { await context?.close(); }
 });
 
-test("aborting immediately after confirmation never leaves an orphaned Passkey", async (_, testInfo) => {
+test("aborting immediately after confirmation never leaves an orphaned Passkey", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchEdgeContext(testInfo.outputPath("pk-abort"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -194,7 +194,7 @@ test("aborting immediately after confirmation never leaves an orphaned Passkey",
   } finally { await context?.close(); }
 });
 
-test("Passkey create rechecks excluded credentials", async (_, testInfo) => {
+test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   try {
     context = await launchEdgeContext(testInfo.outputPath("pk-exclude"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
@@ -223,7 +223,7 @@ test("Passkey create rechecks excluded credentials", async (_, testInfo) => {
   } finally { await context?.close(); }
 });
 
-test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes only the FIDO2 credential", async (_, testInfo) => {
+test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes only the FIDO2 credential", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
   const email = "joy@example.com"; const masterPassword = "bitwarden e2e master password";
   const kdf: BitwardenKdfConfig = { type: 0, iterations: 10_000 };

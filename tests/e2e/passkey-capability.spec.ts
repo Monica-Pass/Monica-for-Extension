@@ -9,7 +9,7 @@ async function send(page: Page, request: object): Promise<any> {
   expect(result.ok,result.error).toBe(true);return result.data;
 }
 
-test('Passkey list and details distinguish unavailable, original-device and transferable keys without repeated inspection',async (_,info)=>{
+test('Passkey list and details distinguish unavailable, original-device and transferable keys without repeated inspection',async ({},info)=>{
   const extension=path.resolve('dist');
   const context=await launchEdgeContext(info.outputPath('profile'),{locale:'zh-CN',colorScheme:'dark',reducedMotion:'reduce',viewport:{width:1180,height:1000},args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});
   try {

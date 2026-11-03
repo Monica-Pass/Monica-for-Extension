@@ -5,7 +5,7 @@ import { createLoginItem } from '../../src/core/model';
 import { launchEdgeContext } from './fixtures/edge';
 import { temporaryNativeHost } from './fixtures/native-host';
 
-test('missing communication helper keeps pairing input usable and explains setup', async (_, info) => {
+test('missing communication helper keeps pairing input usable and explains setup', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge');
   const extension=path.resolve('dist'), run=info.outputPath('isolated'); await mkdir(run,{recursive:true});
   const context=await launchEdgeContext(path.join(run,'profile'),{locale:'zh-CN',viewport:{width:1000,height:950},args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});
@@ -42,7 +42,7 @@ async function runtime(page: Page, request: unknown): Promise<any> {
   const result = await page.evaluate(request => chrome.runtime.sendMessage(request), request);
   expect(result.ok, result.error).toBe(true); return result.data;
 }
-test('settings UI pairs, discovers, synchronizes and cancels using actual Native Messaging', async (_, info) => {
+test('settings UI pairs, discovers, synchronizes and cancels using actual Native Messaging', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(150000);
   const extension = path.resolve('dist'), run = path.resolve(info.outputPath('isolated')); await mkdir(run, { recursive: true });
   const contexts: BrowserContext[] = [], evidence: Record<string, unknown> = { status: 'failed', productionUi: true, androidApplicationAcceptance: false };

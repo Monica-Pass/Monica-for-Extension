@@ -24,7 +24,7 @@ async function headerGeometry(page: Page) {
   return close!;
 }
 
-test('drawer close stays at the header right edge in sidepanel and full manager layouts', async (_, info) => {
+test('drawer close stays at the header right edge in sidepanel and full manager layouts', async ({}, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', colorScheme: 'dark', reducedMotion: 'reduce', viewport: { width: 560, height: 900 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

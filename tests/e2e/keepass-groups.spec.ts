@@ -43,7 +43,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   return { context, manager };
 }
 
-test("KeePass groups preserve nested KDBX data through create rename move recycle and restore", async (_, testInfo) => {
+test("KeePass groups preserve nested KDBX data through create rename move recycle and restore", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);

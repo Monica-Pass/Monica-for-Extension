@@ -21,7 +21,7 @@ interface SshServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fallback Ciphers", async (_, testInfo) => {
+test("Bitwarden SSH keeps native Type 5 data and creates Android-compatible fallback Ciphers", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createSshServer();
   try {

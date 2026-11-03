@@ -40,7 +40,7 @@ async function cancel(page: Page) {
 }
 
 
-test('production Wi-Fi coordinator receives into bundled MDBX and returns native edits', async (_, info) => {
+test('production Wi-Fi coordinator receives into bundled MDBX and returns native edits', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(240000);
   const extension=path.resolve('dist'),run=path.resolve(info.outputPath('isolated'));await mkdir(run,{recursive:true});
   const contexts:BrowserContext[]=[], evidence:Record<string,any>={status:'failed',productionCoordinator:true,bundledMdbx:true,androidApplicationAcceptance:false};

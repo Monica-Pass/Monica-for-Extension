@@ -2,7 +2,7 @@ import { launchEdgeContext } from "./fixtures/edge";
 import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("popup blocks and restores the focused field through the encrypted background policy", async (_, testInfo) => {
+test("popup blocks and restores the focused field through the encrypted background policy", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

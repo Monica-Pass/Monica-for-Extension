@@ -11,7 +11,7 @@ import { nearbyNativeIntent } from '../../src/nearby/native-journal';
 import type { Mdbx2ContentWriteAnchor } from '../../src/providers/mdbx2/content-write-anchor';
 import { encryptVaultState, importVaultKey } from '../../src/security/vault-crypto';
 
-test('local Canvas renders the editable receive recovery design', async (_,info)=>{
+test('local Canvas renders the editable receive recovery design', async ({},info)=>{
   test.skip(process.platform!=='win32','Installed Edge');
   const run=info.outputPath('isolated');await mkdir(run,{recursive:true});
   const context=await launchEdgeContext(path.join(run,'profile'),{viewport:{width:1400,height:1050}});
@@ -24,7 +24,7 @@ test('local Canvas renders the editable receive recovery design', async (_,info)
   }finally{await context.close();}
 });
 
-test('production settings show retained conflict and legacy recovery without exposing inputs', async (_,info)=>{
+test('production settings show retained conflict and legacy recovery without exposing inputs', async ({},info)=>{
   test.skip(process.platform!=='win32','Installed Edge');test.setTimeout(90000);
   const run=info.outputPath('isolated');await mkdir(run,{recursive:true});
   const storage=new MemoryVaultStorage(),sessions=new MemoryVaultSessionStore();

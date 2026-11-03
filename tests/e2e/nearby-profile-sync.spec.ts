@@ -14,7 +14,7 @@ import {NearbyDataError,type NearbyWireData} from '../../src/nearby/wire-shape';
 import {groupNearbyPending} from '../../src/nearby/pending';
 import {scheduleNearbyNativeGroups} from '../../src/nearby/native-schedule';
 
-test('native profiles survive local forwarding, atomic restoration and independent foreign root archives',async(_,info)=>{
+test('native profiles survive local forwarding, atomic restoration and independent foreign root archives',async({},info)=>{
   test.skip(process.platform!=='win32','Installed Edge');test.setTimeout(240000);
   const run=path.resolve(info.outputPath('isolated')),extension=path.join(run,'extension'),database=`synthetic-profile-sync-${randomUUID()}`;
   await mkdir(extension,{recursive:true});

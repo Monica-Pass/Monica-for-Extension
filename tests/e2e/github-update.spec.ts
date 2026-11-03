@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 const currentVersion: string = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const nextVersion = currentVersion.replace(/\d+$/, patch => String(Number(patch) + 1));
 
-test('GitHub updates in settings: manual check, release notice, safe link, failures and narrow layout', async (_, info) => {
+test('GitHub updates in settings: manual check, release notice, safe link, failures and narrow layout', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', colorScheme: 'dark', reducedMotion: 'reduce', viewport: { width: 1200, height: 950 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

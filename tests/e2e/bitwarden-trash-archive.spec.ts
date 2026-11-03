@@ -15,7 +15,7 @@ const VAULT_HOST = "https://bw-empty.example.test";
 const EMAIL = "empty@example.test";
 const MASTER_PASSWORD = "empty vault server password";
 
-test("manager archive and recycle-bin views keep records recoverable and privileged", async (_, testInfo) => {
+test("manager archive and recycle-bin views keep records recoverable and privileged", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const extensionPath = path.resolve("dist");
@@ -79,7 +79,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
   }
 });
 
-test("manager requires explicit confirmation before adopting an authenticated empty Bitwarden vault", async (_, testInfo) => {
+test("manager requires explicit confirmation before adopting an authenticated empty Bitwarden vault", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createEmptyVaultServer();
   try {

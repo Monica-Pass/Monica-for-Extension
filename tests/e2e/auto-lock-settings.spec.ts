@@ -28,7 +28,7 @@ async function unlock(page: Page) {
   await expect(page.getByRole('button', { name: '立即锁定', exact: true })).toBeVisible();
 }
 
-test('custom lock minutes validate and persist through real UI lock, browser restart and narrow layout', async (_, info) => {
+test('custom lock minutes validate and persist through real UI lock, browser restart and narrow layout', async ({}, info) => {
   test.setTimeout(180_000);
   const profile = info.outputPath('profile'), errors: string[] = []; let context: BrowserContext | undefined;
   try {
@@ -60,7 +60,7 @@ test('custom lock minutes validate and persist through real UI lock, browser res
   } finally { await context?.close(); }
 });
 
-test('one-minute custom inactivity timeout locks the actual background session without read keepalive', async (_, info) => {
+test('one-minute custom inactivity timeout locks the actual background session without read keepalive', async ({}, info) => {
   test.setTimeout(150_000);
   const errors: string[] = [];
   const context = await launchEdgeContext(info.outputPath('profile'), options);
@@ -79,7 +79,7 @@ test('one-minute custom inactivity timeout locks the actual background session w
   } finally { await context.close(); }
 });
 
-test('English auto-lock control supports keyboard saving in a device-key vault', async (_, info) => {
+test('English auto-lock control supports keyboard saving in a device-key vault', async ({}, info) => {
   const errors: string[] = [], context = await launchEdgeContext(info.outputPath('profile'), { ...options, locale: 'en-US' });
   try {
     const page = await open(context, errors); await send(page, { type: 'VAULT_SETUP', masterPassword: '' }); await page.reload();

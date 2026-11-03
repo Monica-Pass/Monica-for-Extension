@@ -22,7 +22,7 @@ function expectedCode(counter: number, algorithm = "sha1", digits = 6): string {
 }
 
 const test = base.extend<{ manager: Page }>({
-  manager: async (_, use, info) => {
+  manager: async ({}, use, info) => {
     const profile = info.outputPath('p');
     const extension = path.resolve("dist");
     const context = await launchEdgeContext(profile, {

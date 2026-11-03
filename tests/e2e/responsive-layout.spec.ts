@@ -72,7 +72,7 @@ async function expectUsableControls(root: Locator) {
 }
 
 for (const [width, height, scale] of sizes) {
-  test(`populated pages and actions fit ${width}x${height} at ${scale}% text`, async (_, testInfo) => {
+  test(`populated pages and actions fit ${width}x${height} at ${scale}% text`, async ({}, testInfo) => {
     const { context, page } = await launch(testInfo, width, height, scale);
     try {
       await expect(page.getByRole("heading", { name: "All items", exact: true })).toBeVisible();
@@ -98,7 +98,7 @@ for (const [width, height, scale] of sizes) {
   });
 }
 
-test("narrow navigation closes, traps focus, and survives a desktop resize", async (_, testInfo) => {
+test("narrow navigation closes, traps focus, and survives a desktop resize", async ({}, testInfo) => {
   const { context, page } = await launch(testInfo, 390, 640, 200);
   try {
     const menu = page.getByRole("button", { name: "Open navigation", exact: true });
@@ -144,7 +144,7 @@ test("narrow navigation closes, traps focus, and survives a desktop resize", asy
 });
 
 for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 600, 200], [1366, 768, 100]]) {
-  test(`editor actions stay reachable while fields scroll at ${width}x${height}/${scale}%`, async (_, testInfo) => {
+  test(`editor actions stay reachable while fields scroll at ${width}x${height}/${scale}%`, async ({}, testInfo) => {
     const { context, page } = await launch(testInfo, width, height, scale, "zh-CN");
     try {
       await navigate(page, "登录项", "打开导航");
@@ -185,7 +185,7 @@ for (const [width, height, scale] of [[320, 480, 200], [560, 320, 100], [768, 60
   });
 }
 
-test("short popup keeps marked autofill and the unlock form operable", async (_, testInfo) => {
+test("short popup keeps marked autofill and the unlock form operable", async ({}, testInfo) => {
   const { context, page: manager, extensionId } = await launch(testInfo, 320, 360, 200, "zh-CN");
   try {
     expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_SET_LOCKED_AUTOFILL", itemId: "responsive-login", enabled: true }))).toMatchObject({ ok: true });

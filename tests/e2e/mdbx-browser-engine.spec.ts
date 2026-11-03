@@ -18,7 +18,7 @@ const rpc = async (page: Page, method: string, params: Record<string, unknown> =
   expect(result.ok, `${method}: ${result.error?.code || ''}`).toBe(true); return result.result;
 };
 
-test('production browser MDBX engine durably commits blocks, keys and attachments without Native Messaging', async (_, info) => {
+test('production browser MDBX engine durably commits blocks, keys and attachments without Native Messaging', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge acceptance');
   test.setTimeout(240_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension');

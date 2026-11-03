@@ -14,7 +14,7 @@ async function send(page: Page, input: Record<string, unknown>) {
   return response.data;
 }
 
-test("local imported positive Passkey history advances before signing and survives Edge restart", async (_, info) => {
+test("local imported positive Passkey history advances before signing and survives Edge restart", async ({}, info) => {
   test.setTimeout(180_000);
   const records = ([-7, -257] as const).map((algorithm, index) => {
     const pair = algorithm === -7 ? generateKeyPairSync("ec", { namedCurve: "prime256v1" }) : generateKeyPairSync("rsa", { modulusLength: 2048 });

@@ -45,7 +45,7 @@ interface AttachmentServer {
   routeObjects(route: Route): Promise<void>;
 }
 
-test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover interrupted deletes", async (_, testInfo) => {
+test("Bitwarden attachments are manager-only, encrypted end-to-end, and recover interrupted deletes", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createAttachmentServer();
   try {

@@ -34,7 +34,7 @@ interface SendServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden Send text and file operations are encrypted, manager-only, and responsive", async (_, testInfo) => {
+test("Bitwarden Send text and file operations are encrypted, manager-only, and responsive", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createSendServer();
   try {

@@ -5,7 +5,7 @@ import path from "node:path";
 
 const PROVIDER_ID = "shared-webdav-provider";
 
-test("shared provider and Windows Hello actions use secret-free retry-safe M3E confirmations", async (_, testInfo) => {
+test("shared provider and Windows Hello actions use secret-free retry-safe M3E confirmations", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   const nativeDialogs: string[] = [];

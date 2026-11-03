@@ -5,7 +5,7 @@ import path from "node:path";
 
 const extensionPath = path.resolve("dist");
 
-test("browser language initializes the UI, system appearance follows changes, and language sync preserves vault data", async (_, testInfo) => {
+test("browser language initializes the UI, system appearance follows changes, and language sync preserves vault data", async ({}, testInfo) => {
   const context = await launchTestContext(testInfo.outputPath("language-profile"), {
     channel: "chromium", headless: true, locale: "en-US", colorScheme: "light",
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`]
@@ -67,7 +67,7 @@ test("browser language initializes the UI, system appearance follows changes, an
 });
 
 for (const colorScheme of ["light", "dark"] as const) {
-  test(`English pages and controls fit a narrow window at 200% text in ${colorScheme} mode`, async (_, testInfo) => {
+  test(`English pages and controls fit a narrow window at 200% text in ${colorScheme} mode`, async ({}, testInfo) => {
     let context: BrowserContext | undefined;
     try {
       context = await launchTestContext(testInfo.outputPath("english-layout-profile"), {

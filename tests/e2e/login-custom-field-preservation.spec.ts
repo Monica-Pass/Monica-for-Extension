@@ -10,7 +10,7 @@ async function send<T = unknown>(page: Page, request: Record<string, unknown>): 
   return response.data as T;
 }
 
-test('editing project custom fields preserves empty source occurrences and independent passwords', async (_, info) => {
+test('editing project custom fields preserves empty source occurrences and independent passwords', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', colorScheme: 'dark', reducedMotion: 'reduce',
     viewport: { width: 1180, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

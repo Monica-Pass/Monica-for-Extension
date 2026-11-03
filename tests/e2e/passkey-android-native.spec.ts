@@ -62,7 +62,7 @@ function verifyAssertion(assertion: any, record: Expected) {
     independentSignatureVerified: true, counterAcceptedForRecordedHistory: previousCount === 0 && count === 0 || count > previousCount };
 }
 
-test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and restart: ${returning ? 'Android return' : 'RSA creation'}`, async (_, info) => {
+test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and restart: ${returning ? 'Android return' : 'RSA creation'}`, async ({}, info) => {
   test.skip(!fixture, "Explicit actual Android instrumentation artifact directory required");
   test.setTimeout(240_000);
   const input = path.resolve(fixture!);

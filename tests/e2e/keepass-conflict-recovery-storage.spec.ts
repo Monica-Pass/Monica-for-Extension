@@ -5,7 +5,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('actual Edge recovery storage retains authenticated snapshots across abort, concurrent retry and restart', async (_, info) => {
+test('actual Edge recovery storage retains authenticated snapshots across abort, concurrent retry and restart', async ({}, info) => {
   test.setTimeout(90_000);
   const helper = info.outputPath('recovery.js');
   await build({ stdin: { contents: "export * from './src/providers/keepass/keepass-conflict-recovery'; export * from './src/providers/keepass/keepass-conflict-recovery-store';", resolveDir: process.cwd() },

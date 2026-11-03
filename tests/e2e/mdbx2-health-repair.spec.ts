@@ -67,7 +67,7 @@ async function openMdbx2Manager(page: Page): Promise<Locator> {
   return dialog;
 }
 
-test("MDBX2 health repair reviews conflicts sequentially and safely recovers a lost response", async (_, testInfo) => {
+test("MDBX2 health repair reviews conflicts sequentially and safely recovers a lost response", async ({}, testInfo) => {
   test.setTimeout(90_000);
   let context: BrowserContext | undefined;
   try {
@@ -249,7 +249,7 @@ test("MDBX2 health repair reviews conflicts sequentially and safely recovers a l
   }
 });
 
-test("MDBX2 health repair presents blockers and fails closed for stale or unknown outcomes", async (_, testInfo) => {
+test("MDBX2 health repair presents blockers and fails closed for stale or unknown outcomes", async ({}, testInfo) => {
   test.setTimeout(90_000);
   let context: BrowserContext | undefined;
   try {

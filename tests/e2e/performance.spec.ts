@@ -6,7 +6,7 @@ import path from "node:path";
 
 const extension = path.resolve("dist");
 
-test("large lists remain searchable, pageable and usable for filling", async (_, testInfo) => {
+test("large lists remain searchable, pageable and usable for filling", async ({}, testInfo) => {
   const context = await launchTestContext(testInfo.outputPath("profile"), {
     channel: "chromium", headless: true, locale: "en-US", reducedMotion: "reduce", viewport: { width: 1366, height: 900 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
@@ -99,7 +99,7 @@ test("large lists remain searchable, pageable and usable for filling", async (_,
   } finally { await context.close(); }
 });
 
-test("removed website components do not retain shadow trees or capture listeners", async (_, testInfo) => {
+test("removed website components do not retain shadow trees or capture listeners", async ({}, testInfo) => {
   const context = await launchTestContext(testInfo.outputPath("profile"), {
     channel: "chromium", headless: true, locale: "de-DE",
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
@@ -136,7 +136,7 @@ test("removed website components do not retain shadow trees or capture listeners
   } finally { await context.close(); }
 });
 
-test("every bundled icon renders as a complete glyph", async (_, testInfo) => {
+test("every bundled icon renders as a complete glyph", async ({}, testInfo) => {
   const context = await launchTestContext(testInfo.outputPath("profile"), {
     channel: "chromium", headless: true, locale: "en-US",
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]

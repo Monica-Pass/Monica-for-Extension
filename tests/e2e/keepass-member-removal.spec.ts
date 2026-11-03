@@ -36,7 +36,7 @@ async function editor(page: Page) {
   return dialog;
 }
 
-for (const mode of ['ack-loss', 'remote-edit', 'stale-draft', 'staged-cancel', 'writing-resume'] as const) test(`actual Edge KeePass owner removal preserves data after restart: ${mode}`, async (_, info) => {
+for (const mode of ['ack-loss', 'remote-edit', 'stale-draft', 'staged-cancel', 'writing-resume'] as const) test(`actual Edge KeePass owner removal preserves data after restart: ${mode}`, async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires isolated Apache WebDAV');
   test.setTimeout(180_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

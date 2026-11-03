@@ -74,7 +74,7 @@ async function send(page: Page, request: object): Promise<any> {
   expect(response.ok, response.error).toBe(true); return response.data;
 }
 
-for (const mode of ['copy-reply', 'lost-reply', 'unknown-then-found'] as const) test(`Bitwarden preparation recovery keeps edits and reconciles ${mode} without deleting sources`, async (_, info) => {
+for (const mode of ['copy-reply', 'lost-reply', 'unknown-then-found'] as const) test(`Bitwarden preparation recovery keeps edits and reconciles ${mode} without deleting sources`, async ({}, info) => {
   const mock = await server(mode !== 'copy-reply', true), extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), {locale: 'zh-CN', reducedMotion: 'reduce', viewport: {width: 1180, height: 950},
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]});
@@ -158,7 +158,7 @@ for (const mode of ['copy-reply', 'lost-reply', 'unknown-then-found'] as const) 
   } finally { await context.close(); }
 });
 
-for (const resolution of ['keep-local', 'use-remote'] as const) test(`Bitwarden removal preserves a concurrent edit and resolves ${resolution} through the real manager`, async (_, info) => {
+for (const resolution of ['keep-local', 'use-remote'] as const) test(`Bitwarden removal preserves a concurrent edit and resolves ${resolution} through the real manager`, async ({}, info) => {
   const mock = await server(false), extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), {locale: 'zh-CN', reducedMotion: 'reduce', viewport: {width: 1180, height: 950},
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]});
@@ -227,7 +227,7 @@ for (const resolution of ['keep-local', 'use-remote'] as const) test(`Bitwarden 
   } finally {await context.close();}
 });
 
-for (const mode of ['complete', 'resume', 'cancel', 'editor'] as const) test(`Bitwarden project removal MV3 ${mode}`, async (_, info) => {
+for (const mode of ['complete', 'resume', 'cancel', 'editor'] as const) test(`Bitwarden project removal MV3 ${mode}`, async ({}, info) => {
   const mock = await server(mode === 'resume' || mode === 'cancel', mode === 'cancel'), extension = path.resolve('dist');
   const options = { locale: 'zh-CN', reducedMotion: 'reduce' as const, viewport: {width: 1180, height: 950},
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] };

@@ -14,7 +14,7 @@ async function send(page: Page, op: string, params: Record<string, unknown> = {}
 }
 const rpc = (page: Page, method: string, params: Record<string, unknown> = {}) => send(page, 'rpc', params, method);
 
-test('MDBX routes legacy Native Host and bundled browser vaults across restart without changing keys', async (_, info) => {
+test('MDBX routes legacy Native Host and bundled browser vaults across restart without changing keys', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge'); test.setTimeout(180_000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'), engine = path.join(extension, 'mdbx-browser');
   await mkdir(engine, { recursive: true });

@@ -4,7 +4,7 @@ import { mkdir,writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('real IndexedDB commits primary and recovery atomically and drops checkpoints on injected quota failure',async(_,info)=>{
+test('real IndexedDB commits primary and recovery atomically and drops checkpoints on injected quota failure',async({},info)=>{
   const root=info.outputPath('storage-fixture');await mkdir(root,{recursive:true});
   await writeFile(path.join(root,'manifest.json'),JSON.stringify({manifest_version:3,name:'Synthetic storage acceptance',version:'1.0.0',background:{service_worker:'background.js'}}));
   await writeFile(path.join(root,'background.js'),'chrome.runtime.onMessage.addListener(()=>false);');

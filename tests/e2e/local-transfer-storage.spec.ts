@@ -62,7 +62,7 @@ export async function restart(saved) {
 }
 `;
 
-test('local transfer survives actual IndexedDB abort, lost reply and Edge restart', async (_, info) => {
+test('local transfer survives actual IndexedDB abort, lost reply and Edge restart', async ({}, info) => {
   test.setTimeout(90_000);
   const result = await build({ stdin: { contents: harness, resolveDir: process.cwd(), loader: 'ts' }, bundle: true,
     platform: 'browser', format: 'iife', globalName: 'localTransferTest', write: false, logLevel: 'silent',

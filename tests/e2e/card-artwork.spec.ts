@@ -9,7 +9,7 @@ async function send(page: Page, input: unknown): Promise<any> {
 // A complete synthetic PNG, never a real user's card or attachment.
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
 
-test('card gallery reads all Android-style local images across navigation, updates and lock', async (_, info) => {
+test('card gallery reads all Android-style local images across navigation, updates and lock', async ({}, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale:'zh-CN', viewport:{width:1800,height:1500},

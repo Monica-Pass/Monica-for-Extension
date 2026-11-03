@@ -8,7 +8,7 @@ async function openLoginEditor(manager: Page): Promise<void> {
   await manager.getByRole("button", { name: "新建", exact: true }).click();
 }
 
-test("manager edits Android Wi-Fi SSH key and barcode records with local QR operations", async (_, testInfo) => {
+test("manager edits Android Wi-Fi SSH key and barcode records with local QR operations", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

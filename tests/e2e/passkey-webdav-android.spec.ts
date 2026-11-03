@@ -47,7 +47,7 @@ function verifyAssertion(value: any, key: any) {
     createPublicKey({ format: "der", type: "spki", key: Buffer.from(key.spki, "base64") }), Buffer.from(value.response.signature, "base64url"))).toBe(true);
 }
 
-test("real WebDAV Edge registration and actual Android return", async (_, info) => {
+test("real WebDAV Edge registration and actual Android return", async ({}, info) => {
   test.skip(phase !== "prepare" && phase !== "return", "Requires isolated running Apache and an explicit interop phase");
   test.setTimeout(120_000);
   await mkdir(directory, { recursive: true });

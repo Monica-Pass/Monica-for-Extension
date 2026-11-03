@@ -120,7 +120,7 @@ function verifyAssertion(assertion: any, publicKeySpki: string, credentialId: st
   expect(verify("sha256", Buffer.concat([authData, createHash("sha256").update(clientData).digest()]), publicKey, Buffer.from(assertion.response.signature, "base64url"))).toBe(true);
 }
 
-test("GitHub-shaped UV requests use imported KDBX Passkeys across two offline clients", async (_, testInfo) => {
+test("GitHub-shaped UV requests use imported KDBX Passkeys across two offline clients", async ({}, testInfo) => {
   test.setTimeout(120_000);
   const { bytes, credential } = await fixture();
   const clients: Client[] = [];
@@ -168,7 +168,7 @@ test("GitHub-shaped UV requests use imported KDBX Passkeys across two offline cl
 });
 
 for (const action of ["close", "abort", "lock", "navigate", "key-change"] as const) {
-  test(`Passkey verification fails closed on ${action}`, async (_, testInfo) => {
+  test(`Passkey verification fails closed on ${action}`, async ({}, testInfo) => {
     const { bytes } = await fixture();
     const client = await launch(testInfo, action, bytes);
     try {
@@ -193,7 +193,7 @@ for (const action of ["close", "abort", "lock", "navigate", "key-change"] as con
   });
 }
 
-test("early page requests wait for the content bridge and UV registration verifies in Monica", async (_, testInfo) => {
+test("early page requests wait for the content bridge and UV registration verifies in Monica", async ({}, testInfo) => {
   const { bytes, credential } = await fixture();
   const client = await launch(testInfo, "early", bytes, true);
   try {

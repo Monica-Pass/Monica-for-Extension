@@ -17,7 +17,7 @@ async function launchExtension(testInfo: TestInfo, profileName: string): Promise
   return { context, extensionId, manager };
 }
 
-test('popup rejects synchronous field replacement, then retries without filling internal project carriers', async (_, testInfo) => {
+test('popup rejects synchronous field replacement, then retries without filling internal project carriers', async ({}, testInfo) => {
   const { context, extensionId, manager } = await launchExtension(testInfo, 'synchronous-fill');
   try {
     const now = new Date().toISOString();
@@ -48,7 +48,7 @@ test('popup rejects synchronous field replacement, then retries without filling 
   } finally { await context.close(); }
 });
 
-test("popup explicitly fills a login inserted later inside an open shadow root", async (_, testInfo) => {
+test("popup explicitly fills a login inserted later inside an open shadow root", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "dynamic-shadow-fill-profile");
@@ -103,7 +103,7 @@ test("popup explicitly fills a login inserted later inside an open shadow root",
   }
 });
 
-test("popup fills the login form that was focused before opening the popup", async (_, testInfo) => {
+test("popup fills the login form that was focused before opening the popup", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "focused-form-fill-profile");
@@ -133,7 +133,7 @@ test("popup fills the login form that was focused before opening the popup", asy
   }
 });
 
-test("two-step SPA login in a late open shadow root offers one save prompt with its username", async (_, testInfo) => {
+test("two-step SPA login in a late open shadow root offers one save prompt with its username", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "dynamic-shadow-save-profile");
@@ -179,7 +179,7 @@ test("two-step SPA login in a late open shadow root offers one save prompt with 
   }
 });
 
-test("navigation carries username to the next password page", async (_, testInfo) => {
+test("navigation carries username to the next password page", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "nav-user");

@@ -26,7 +26,7 @@ async function launch(info: TestInfo, name = 'profile') {
   return { context, page };
 }
 
-test('real Apache response loss preserves a new grouped project and edits made before a full Edge restart', async (_, info) => {
+test('real Apache response loss preserves a new grouped project and edits made before a full Edge restart', async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires the isolated actual Apache service');
   test.setTimeout(180_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

@@ -13,7 +13,7 @@ async function send(page: Page, request: Record<string, unknown>) {
   expect(response.ok, response.error).toBe(true); return response.data;
 }
 
-test("OneDrive UI cancels login, selects a KDBX, automatically publishes and restores after restart", async (_, info) => {
+test("OneDrive UI cancels login, selects a KDBX, automatically publishes and restores after restart", async ({}, info) => {
   test.setTimeout(180_000);
   const cloud = new SyntheticOneDrive(await buildKeePassFixture({ password: dbPassword, entries: [{ title: "Original cloud login", fields: { UserName: "synthetic-user", Password: "synthetic-password" } }] }));
   const profile = info.outputPath("profile");

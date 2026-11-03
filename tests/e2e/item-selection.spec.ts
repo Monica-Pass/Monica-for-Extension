@@ -10,7 +10,7 @@ async function send(page: Page, request: unknown): Promise<any> {
   return response.data;
 }
 
-test('bottom selection actions stay fixed while scrolling and reserve space after lists and pagination', async (_, info) => {
+test('bottom selection actions stay fixed while scrolling and reserve space after lists and pagination', async ({}, info) => {
   test.setTimeout(180_000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', colorScheme: 'dark', reducedMotion: 'reduce', viewport: { width: 1200, height: 900 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -64,7 +64,7 @@ test('bottom selection actions stay fixed while scrolling and reserve space afte
   } finally { await context.close(); }
 });
 
-test('Edge item selection: gestures, keyboard, complete projects, cancel, stale changes, transfer and layout', async (_, info) => {
+test('Edge item selection: gestures, keyboard, complete projects, cancel, stale changes, transfer and layout', async ({}, info) => {
   test.setTimeout(180_000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), {

@@ -28,7 +28,7 @@ async function managerPage(context: BrowserContext) {
 }
 const options = { locale: 'zh-CN', args: ['--disable-extensions-except=' + path.resolve('dist'), '--load-extension=' + path.resolve('dist')] };
 
-test('original Edge32 credential survives repaired Android sync and system authentication', async (_, info) => {
+test('original Edge32 credential survives repaired Android sync and system authentication', async ({}, info) => {
   test.skip(!['prepare', 'return'].includes(phase || ''), 'Explicit isolated acceptance phase required');
   test.setTimeout(180_000);
   await mkdir(directory, { recursive: true });

@@ -8,7 +8,7 @@ const masterPassword = "locked autofill test master password";
 const site = "https://selected.example.test/login";
 const extensionPath = path.resolve("dist");
 
-test('project labels remain identifiable in popup search, locked grant subsets and a real browser restart', async (_, info) => {
+test('project labels remain identifiable in popup search, locked grant subsets and a real browser restart', async ({}, info) => {
   const profile = info.outputPath('project-profile');
   let fixture = await launch(profile);
   try {
@@ -96,7 +96,7 @@ async function openPopup(context: BrowserContext, extensionId: string, target: P
   return popup;
 }
 
-test("locking discards delayed unlocked matches in an already open popup", async (_, testInfo) => {
+test("locking discards delayed unlocked matches in an already open popup", async ({}, testInfo) => {
   const { context, manager, extensionId } = await launch(testInfo.outputPath("delayed-match-profile"));
   try {
     await seed(manager);
@@ -133,7 +133,7 @@ test("locking discards delayed unlocked matches in an already open popup", async
   } finally { await context.close(); }
 });
 
-test("editor opt-in fills only the selected password while locked, survives browser restart and can be revoked", async (_, testInfo) => {
+test("editor opt-in fills only the selected password while locked, survives browser restart and can be revoked", async ({}, testInfo) => {
   test.setTimeout(90_000);
   const profile = testInfo.outputPath("locked-fill-profile");
   let context: BrowserContext | undefined;
@@ -195,7 +195,7 @@ test("editor opt-in fills only the selected password while locked, survives brow
   } finally { await context?.close(); }
 });
 
-test("locked fills enforce matching, document identity, secure origins and website and field exclusions", async (_, testInfo) => {
+test("locked fills enforce matching, document identity, secure origins and website and field exclusions", async ({}, testInfo) => {
   const fixture = await launch(testInfo.outputPath("locked-policy-profile"));
   const { context, manager } = fixture;
   try {

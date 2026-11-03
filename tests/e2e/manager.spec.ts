@@ -4,7 +4,7 @@ import { expect, test, type BrowserContext, type Page, type TestInfo } from "@pl
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 
-test("manager UI creates edits imports and deletes non-login vault records", async (_, testInfo) => {
+test("manager UI creates edits imports and deletes non-login vault records", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -124,7 +124,7 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
   }
 });
 
-test("manager rotates the master password and atomically restores an encrypted full backup", async (_, testInfo) => {
+test("manager rotates the master password and atomically restores an encrypted full backup", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -220,7 +220,7 @@ async function launchManager(testInfo: TestInfo, profileName: string): Promise<{
   return { context, manager };
 }
 
-test("encrypted backup dialog rejects mismatched password and produces no download", async (_, testInfo) => {
+test("encrypted backup dialog rejects mismatched password and produces no download", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchManager(testInfo, "export-mismatch-profile");
@@ -249,7 +249,7 @@ test("encrypted backup dialog rejects mismatched password and produces no downlo
   }
 });
 
-test("encrypted backup dialog cancels without exporting", async (_, testInfo) => {
+test("encrypted backup dialog cancels without exporting", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchManager(testInfo, "export-cancel-profile");
@@ -276,7 +276,7 @@ test("encrypted backup dialog cancels without exporting", async (_, testInfo) =>
   }
 });
 
-test("device-key vault restores an encrypted backup while leaving the current password empty", async (_, testInfo) => {
+test("device-key vault restores an encrypted backup while leaving the current password empty", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchManager(testInfo, "device-key-restore-profile");

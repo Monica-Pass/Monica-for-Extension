@@ -23,7 +23,7 @@ interface FolderServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route Cipher siblings", async (_, testInfo) => {
+test("Bitwarden folders are encrypted, manager-only, conflict-aware, and route Cipher siblings", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createFolderServer();
   try {

@@ -19,7 +19,7 @@ async function command(page:Page,request:unknown):Promise<any>{
   }),request);
 }
 
-test('installed Android provider exchanges passwords and signs a browser Passkey over authenticated LAN',async(_,info)=>{
+test('installed Android provider exchanges passwords and signs a browser Passkey over authenticated LAN',async({},info)=>{
   test.skip(process.env.MONICA_ANDROID_INTEROP!=='1','Explicit shared-AVD acceptance only');test.setTimeout(240000);
   const adb='D:/AndroidSDK/platform-tools/adb.exe',serial=process.env.MONICA_ANDROID_SERIAL||'emulator-5554';
   const run=path.resolve(info.outputPath('isolated')),extension=path.resolve('dist');await mkdir(run,{recursive:true});

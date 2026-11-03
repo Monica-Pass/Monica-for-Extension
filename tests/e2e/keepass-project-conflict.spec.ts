@@ -29,7 +29,7 @@ async function items(page: Page) {
   return Promise.all(summaries.map(row => send<LoginItem>(page, { type: 'VAULT_GET_ITEM', itemId: row.id })));
 }
 
-test('real Edge keeps a conflicting KDBX password project intact through restart and a fresh peer can save it together', async (_, info) => {
+test('real Edge keeps a conflicting KDBX password project intact through restart and a fresh peer can save it together', async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires isolated actual Apache');
   test.setTimeout(150_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

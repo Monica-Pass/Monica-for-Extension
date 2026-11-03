@@ -18,7 +18,7 @@ async function send(page: Page, message: Record<string, unknown>) {
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-test("real Edge complete MDBX backup restores password projects, external attachments and original Passkeys", async (_, info) => {
+test("real Edge complete MDBX backup restores password projects, external attachments and original Passkeys", async ({}, info) => {
   test.skip(!sourceFixture, 'Requires an explicit verified Android MDBX fixture and Windows Native Host');
   test.setTimeout(240_000);
   const evidence: Record<string, any> = { status: "failed", androidApplicationAcceptance: false, phases: [], errors: [] };

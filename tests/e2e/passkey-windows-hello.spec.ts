@@ -59,7 +59,7 @@ function relyingPartyHtml(host: string): string {
   </script>`;
 }
 
-test("UV-required Passkey create/get uses Windows Hello and fails closed on cancel or vault lock", async (_, testInfo) => {
+test("UV-required Passkey create/get uses Windows Hello and fails closed on cancel or vault lock", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   const id = await extensionId(extensionPath, testInfo.outputPath("id-profile"));
   const executable = testInfo.outputPath("fake-windows-hello-host.exe");
@@ -147,7 +147,7 @@ test("UV-required Passkey create/get uses Windows Hello and fails closed on canc
   }
 });
 
-test("device-key vault without Windows Hello falls back to the browser platform authenticator", async (_, testInfo) => {
+test("device-key vault without Windows Hello falls back to the browser platform authenticator", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

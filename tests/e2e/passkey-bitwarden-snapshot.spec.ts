@@ -42,7 +42,7 @@ function verifyAssertion(value: any, expected: any) {
     createPublicKey({key: Buffer.from(expected.spki, 'base64'), format: 'der', type: 'spki'}), Buffer.from(value.response.signature, 'base64url'))).toBe(true);
 }
 
-test('current Bitwarden native snapshot Edge registration and Android return', async (_, info) => {
+test('current Bitwarden native snapshot Edge registration and Android return', async ({}, info) => {
   test.skip(!['prepare', 'return'].includes(phase || ''), 'Explicit synthetic snapshot phase required');
   expect(path.resolve(process.env.MONICA_BITWARDEN_SNAPSHOT_DIR || '')).toBe(directory);
   expect(['.tmp/android-bitwarden-copies-runtime-318','.tmp/android-bitwarden-repaired-318'].map(value=>path.resolve(value))).toContain(directory);

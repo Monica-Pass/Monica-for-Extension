@@ -49,7 +49,7 @@ async function launchExtension(testInfo: TestInfo): Promise<{ context: BrowserCo
   return { context, extensionId, manager };
 }
 
-test("remote KeePass restores from Chromium IndexedDB after a new Service Worker starts", async (_, testInfo) => {
+test("remote KeePass restores from Chromium IndexedDB after a new Service Worker starts", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const fixture = await buildKeePassFixture({
@@ -163,7 +163,7 @@ test("remote KeePass restores from Chromium IndexedDB after a new Service Worker
   }
 });
 
-test("remote KeePass group, attachment and history acknowledgements replay after Service Worker restart", async (_, testInfo) => {
+test("remote KeePass group, attachment and history acknowledgements replay after Service Worker restart", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const fixture = await buildDurabilityFixture();

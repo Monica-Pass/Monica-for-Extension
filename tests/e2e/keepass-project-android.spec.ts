@@ -23,7 +23,7 @@ async function launch(info: TestInfo, profile = 'profile') {
   page.setDefaultTimeout(15_000);
   return { context, page };
 }
-test('Android native KDBX project -> Edge grouped edit/add/cancel -> file and fresh browser', async (_, info) => {
+test('Android native KDBX project -> Edge grouped edit/add/cancel -> file and fresh browser', async ({}, info) => {
   test.skip(!root, 'Requires an exact Android writer fixture and source/APK proof');
   test.setTimeout(120_000);
   const fixture = path.resolve(root!), bytes = await readFile(path.join(fixture, 'android-keepass-project.kdbx'));

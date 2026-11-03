@@ -59,7 +59,7 @@ async function fillLogin(manager: Page, itemId: string, tabId: number): Promise<
   });
 }
 
-test("privileged provider and MDBX2 commands are restricted to the manager page", async (_, testInfo) => {
+test("privileged provider and MDBX2 commands are restricted to the manager page", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   let cdp: CDPSession | undefined;
   try {
@@ -306,7 +306,7 @@ async function sendFromExtensionContentWorld(cdp: CDPSession, message: Record<st
   throw new Error("未找到可调用 chrome.runtime.sendMessage 的 Monica 内容脚本执行上下文。");
 }
 
-test("non-loopback HTTP login submissions are rejected without retaining a password", async (_, testInfo) => {
+test("non-loopback HTTP login submissions are rejected without retaining a password", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -334,7 +334,7 @@ test("non-loopback HTTP login submissions are rejected without retaining a passw
   }
 });
 
-test("login filling is rejected for a non-loopback HTTP target", async (_, testInfo) => {
+test("login filling is rejected for a non-loopback HTTP target", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -361,7 +361,7 @@ test("login filling is rejected for a non-loopback HTTP target", async (_, testI
   }
 });
 
-test("login filling is rejected when the target tab is not active", async (_, testInfo) => {
+test("login filling is rejected when the target tab is not active", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -391,7 +391,7 @@ test("login filling is rejected when the target tab is not active", async (_, te
   }
 });
 
-test("login filling is rejected after the reviewed document navigates", async (_, testInfo) => {
+test("login filling is rejected after the reviewed document navigates", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);
@@ -416,7 +416,7 @@ test("login filling is rejected after the reviewed document navigates", async (_
   }
 });
 
-test("a top-page match is not reused for a cross-origin iframe", async (_, testInfo) => {
+test("a top-page match is not reused for a cross-origin iframe", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo);

@@ -34,7 +34,7 @@ async function launchExtension(testInfo: TestInfo, profileName: string, options:
   return { context, extensionId, manager };
 }
 
-test("MDBX2 item attachments support download upload replace delete and narrow M3E layout", async (_, testInfo) => {
+test("MDBX2 item attachments support download upload replace delete and narrow M3E layout", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "mdbx2-attachment-manager", { dark: true, viewport: { width: 375, height: 1000 } });
@@ -109,7 +109,7 @@ test("MDBX2 item attachments support download upload replace delete and narrow M
   }
 });
 
-test("MDBX2 and KeePass attachment transfer is retry-safe", async (_, testInfo) => {
+test("MDBX2 and KeePass attachment transfer is retry-safe", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const launched = await launchExtension(testInfo, "p", {
@@ -203,7 +203,7 @@ test("MDBX2 and KeePass attachment transfer is retry-safe", async (_, testInfo) 
   }
 });
 
-test("attachment commands reject popup and isolated content-script callers", async (_, testInfo) => {
+test("attachment commands reject popup and isolated content-script callers", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   let cdp: CDPSession | undefined;
   try {

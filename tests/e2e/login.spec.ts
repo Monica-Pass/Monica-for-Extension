@@ -3,7 +3,7 @@ import { chooseOption, editContentSection } from "./fixtures/material";
 import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("login popup fills username, password, and TOTP through the MV3 background boundary", async (_, testInfo) => {
+test("login popup fills username, password, and TOTP through the MV3 background boundary", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -69,7 +69,7 @@ test("login popup fills username, password, and TOTP through the MV3 background 
   }
 });
 
-test("manager saves a metadata-only SSO login with empty username, password, and URI", async (_, testInfo) => {
+test("manager saves a metadata-only SSO login with empty username, password, and URI", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -104,7 +104,7 @@ test("manager saves a metadata-only SSO login with empty username, password, and
   }
 });
 
-test("popup shows top-level parent-RP Passkey status without exposing a signing action", async (_, testInfo) => {
+test("popup shows top-level parent-RP Passkey status without exposing a signing action", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {
@@ -164,7 +164,7 @@ test("popup shows top-level parent-RP Passkey status without exposing a signing 
   }
 });
 
-test("login popup discovers and safely fills a cross-origin login frame", async (_, testInfo) => {
+test("login popup discovers and safely fills a cross-origin login frame", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

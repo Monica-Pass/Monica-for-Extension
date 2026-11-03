@@ -8,7 +8,7 @@ async function send(page: Page, request: object): Promise<any> {
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-test('supplemental content uses one entry style and isolated editors that retain drafts', async (_, info) => {
+test('supplemental content uses one entry style and isolated editors that retain drafts', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale:'zh-CN', colorScheme:'dark', reducedMotion:'reduce', viewport:{width:1180,height:1000},
     args:[`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -78,7 +78,7 @@ test('supplemental content uses one entry style and isolated editors that retain
   } finally { await context.close(); }
 });
 
-test('API keys, notes and authenticators share supplemental entry navigation', async (_, info) => {
+test('API keys, notes and authenticators share supplemental entry navigation', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale:'zh-CN', reducedMotion:'reduce', viewport:{width:1000,height:900},
     args:[`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });

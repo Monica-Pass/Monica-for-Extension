@@ -26,7 +26,7 @@ async function launch(info: TestInfo, name = 'profile') {
   return { context, page };
 }
 
-test('real Apache deleted project and Passkey restore after response loss, restart and actual Edge signing', async (_, info) => {
+test('real Apache deleted project and Passkey restore after response loss, restart and actual Edge signing', async ({}, info) => {
   test.skip(!process.env.MONICA_315_REAL_SERVICES_CONFIG, 'Requires the isolated actual Apache service');
   test.setTimeout(180_000);
   const config = JSON.parse(await readFile(process.env.MONICA_315_REAL_SERVICES_CONFIG!, 'utf8')).webdav;

@@ -6,7 +6,7 @@ import { launchEdgeContext } from './fixtures/edge';
 async function send(page: Page, input: object) {
   return page.evaluate(request => chrome.runtime.sendMessage(request), input);
 }
-test('fresh export authentication and optional clipboard expiry use production Edge paths', async (_, info) => {
+test('fresh export authentication and optional clipboard expiry use production Edge paths', async ({}, info) => {
   test.setTimeout(120000);
   // Explicit permission-granted test fixture; production JavaScript is unchanged.
   // The real optional permission bubble remains a manual acceptance item.
@@ -89,7 +89,7 @@ test('fresh export authentication and optional clipboard expiry use production E
   }
 });
 
-test('encrypted checkpoints survive reopening, require authentication, and diagnostics stay redacted', async (_, info) => {
+test('encrypted checkpoints survive reopening, require authentication, and diagnostics stay redacted', async ({}, info) => {
   const extension=path.resolve('dist');
   const context=await launchEdgeContext(info.outputPath('profile'),{locale:'zh-CN',viewport:{width:1100,height:900},args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});
   try {

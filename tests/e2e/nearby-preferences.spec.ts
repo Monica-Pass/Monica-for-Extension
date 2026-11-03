@@ -8,7 +8,7 @@ import { temporaryNativeHost } from './fixtures/native-host';
 const app = (page: Page, method: string, args: unknown[] = []): Promise<any> => page.evaluate(({ method, args }) => (window as any).nearbyApp[method](...args), { method, args });
 const rpc = (page: Page, method: string, input: object = {}) => app(page, 'call', [method, input]);
 
-test('encrypted nearby identity and real pairing trust survive browser restart and reject stale resurrection', async (_, info) => {
+test('encrypted nearby identity and real pairing trust survive browser restart and reject stale resurrection', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(120000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'); await mkdir(extension, { recursive: true });
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Synthetic Monica nearby preferences', version: '1.0.0',

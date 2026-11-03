@@ -14,7 +14,7 @@ async function send(page: Page, request: Record<string, unknown>): Promise<any> 
   expect(result.ok, result.error).toBe(true); return result.data;
 }
 
-for (const interrupt of [false, true]) test(`KeePass destination UI copies a complete project and ${interrupt ? 'recovers an aborted adoption after full Edge restart' : 'exports exact KDBX and replays after restart'}`, async (_, info) => {
+for (const interrupt of [false, true]) test(`KeePass destination UI copies a complete project and ${interrupt ? 'recovers an aborted adoption after full Edge restart' : 'exports exact KDBX and replays after restart'}`, async ({}, info) => {
   test.setTimeout(120_000);
   const helper = info.outputPath('keepass-fixture.cjs');
   await build({ stdin: { contents: "export {buildKeePassFixture} from './src/providers/keepass/keepass-fixture'; export {openKeePassVault} from './src/providers/keepass/keepass-vault';", resolveDir: process.cwd() },

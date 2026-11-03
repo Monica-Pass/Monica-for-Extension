@@ -3,7 +3,7 @@ import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 import { chooseOption } from './fixtures/material';
 
-test('wallet nested editor preserves secrets, ordering, cancel and keyboard boundaries', async (_, info) => {
+test('wallet nested editor preserves secrets, ordering, cancel and keyboard boundaries', async ({}, info) => {
   test.setTimeout(150_000);
   const extension = path.resolve('dist');
   const profile = info.outputPath('profile');

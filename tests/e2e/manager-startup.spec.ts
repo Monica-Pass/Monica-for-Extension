@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('manager remains usable while native Windows Hello status is delayed', async (_, info) => {
+test('manager remains usable while native Windows Hello status is delayed', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), {
     locale: 'zh-CN', reducedMotion: 'reduce', args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],

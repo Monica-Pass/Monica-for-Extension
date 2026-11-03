@@ -7,7 +7,7 @@ import { temporaryNativeHost } from './fixtures/native-host';
 
 const app = (page: Page, method: string, args: unknown[] = []): Promise<any> => page.evaluate(({ method, args }) => (window as any).nearbyApp[method](...args), { method, args });
 
-for (const history of ['retained', 'legacy-purge', 'historical-tombstone', 'explicit-include'] as const) test(`incremental nearby deletion policy after ${history}`, async (_, info) => {
+for (const history of ['retained', 'legacy-purge', 'historical-tombstone', 'explicit-include'] as const) test(`incremental nearby deletion policy after ${history}`, async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(120000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'); await mkdir(extension, { recursive: true });
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Synthetic nearby deletion regression', version: '1.0.0', permissions: ['nativeMessaging', 'storage'], content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" }, background: { service_worker: 'worker.js' } }));
@@ -64,7 +64,7 @@ for (const history of ['retained', 'legacy-purge', 'historical-tombstone', 'expl
   } finally { for (const context of contexts) await context.close(); await registration?.restore(); }
 });
 
-for (const paged of [false, true]) test(`production nearby coordinator ${paged ? 'recovers paginated partial adoption' : 'pairs without source content and recovers reciprocal local adoption'}`, async (_, info) => {
+for (const paged of [false, true]) test(`production nearby coordinator ${paged ? 'recovers paginated partial adoption' : 'pairs without source content and recovers reciprocal local adoption'}`, async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(180000);
   const run = path.resolve(info.outputPath('isolated')), extension = path.join(run, 'extension'); await mkdir(extension, { recursive: true });
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Synthetic Monica nearby coordinator', version: '1.0.0',

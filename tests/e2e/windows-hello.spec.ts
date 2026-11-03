@@ -2,7 +2,7 @@ import { launchTestContext } from './fixtures/edge';
 import { expect, test, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 
-test("Windows Hello remains manager-only and exposes a truthful device-key recovery UI", async (_, testInfo) => {
+test("Windows Hello remains manager-only and exposes a truthful device-key recovery UI", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   let context: BrowserContext | undefined;
   try {

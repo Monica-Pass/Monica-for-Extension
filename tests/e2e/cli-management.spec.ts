@@ -7,7 +7,7 @@ import { launchEdgeContext } from './fixtures/edge';
 import { temporaryNativeHost } from './fixtures/native-host';
 const expect = baseExpect.configure({timeout:30000});
 
-test('CLI integration defaults off, persists opt-in and closes an active view when disabled', async (_, info) => {
+test('CLI integration defaults off, persists opt-in and closes an active view when disabled', async ({}, info) => {
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('cli-opt-in-profile'), {
     locale: 'zh-CN', viewport: { width: 1200, height: 1000 },
@@ -76,7 +76,7 @@ test('CLI integration defaults off, persists opt-in and closes an active view wh
   } finally { await context.close(); }
 });
 
-test('Edge graphically manages an actual CLI database through Native Messaging',async(_,info)=>{
+test('Edge graphically manages an actual CLI database through Native Messaging',async({},info)=>{
   test.skip(process.env.MONICA_CLI_INTEROP!=='1','Opt in with MONICA_CLI_INTEROP=1 after building both CLI binaries.');
   test.setTimeout(480000);
   const root=await mkdtemp(path.join(os.tmpdir(),'monica-cli-edge-'));

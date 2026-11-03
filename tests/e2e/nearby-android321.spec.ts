@@ -19,7 +19,7 @@ async function command(page:Page,request:unknown):Promise<any>{
   }),request);
 }
 
-test('Android 321 exchanges URL rules, independent notes, wallet templates and Passkey over authenticated LAN',async(_,info)=>{
+test('Android 321 exchanges URL rules, independent notes, wallet templates and Passkey over authenticated LAN',async({},info)=>{
   test.skip(process.env.MONICA_ANDROID_INTEROP!=='1','Explicit shared-AVD acceptance only');
   const stress = process.env.MONICA_SYNC_STRESS === '1'; test.setTimeout(stress ? 900000 : 240000);
   const adb='D:/AndroidSDK/platform-tools/adb.exe',serial=process.env.MONICA_ANDROID_SERIAL||'emulator-5554';

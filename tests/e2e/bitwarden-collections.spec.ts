@@ -31,7 +31,7 @@ interface CollectionServer {
   route(route: Route): Promise<void>;
 }
 
-test("Bitwarden organization Collections are permission-aware, manager-only, and routed without gradients", async (_, testInfo) => {
+test("Bitwarden organization Collections are permission-aware, manager-only, and routed without gradients", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   const server = await createCollectionServer();
   try {

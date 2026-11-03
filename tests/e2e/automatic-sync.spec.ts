@@ -152,7 +152,7 @@ async function openFixture(testInfo: TestInfo) {
   } catch (error) { await context.close(); await mock.close(); throw error; }
 }
 
-test("phone notification updates the open list and detail using one Cipher request", async (_, testInfo) => {
+test("phone notification updates the open list and detail using one Cipher request", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     await f.manager.getByRole("button", { name: "查看Phone account详情", exact: true }).click();
@@ -177,7 +177,7 @@ test("phone notification updates the open list and detail using one Cipher reque
   } finally { await f.close(); }
 });
 
-test("remote edits preserve an open draft and a normal local save uploads automatically", async (_, testInfo) => {
+test("remote edits preserve an open draft and a normal local save uploads automatically", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     await f.manager.getByRole("button", { name: "查看Phone account详情", exact: true }).click();
@@ -202,7 +202,7 @@ test("remote edits preserve an open draft and a normal local save uploads automa
   } finally { await f.close(); }
 });
 
-test("notification startup refreshes a revoked token before the WebSocket handshake", async (_, testInfo) => {
+test("notification startup refreshes a revoked token before the WebSocket handshake", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     await f.manager.evaluate(() => chrome.storage.local.set({ 'monica.sync.preferences.v1': { enabled: false } }));
@@ -218,7 +218,7 @@ test("notification startup refreshes a revoked token before the WebSocket handsh
   } finally { await f.close(); }
 });
 
-test("reconnect and token refresh recover edits while the automatic-sync switch and lock stop work", async (_, testInfo) => {
+test("reconnect and token refresh recover edits while the automatic-sync switch and lock stop work", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     f.mock.expireToken();
@@ -258,7 +258,7 @@ test("reconnect and token refresh recover edits while the automatic-sync switch 
   } finally { await f.close(); }
 });
 
-test("a restarted MV3 worker rebuilds its baseline and reconnects the visible vault", async (_, testInfo) => {
+test("a restarted MV3 worker rebuilds its baseline and reconnects the visible vault", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     const cdp = await f.context.newCDPSession(f.manager);
@@ -278,7 +278,7 @@ test("a restarted MV3 worker rebuilds its baseline and reconnects the visible va
   } finally { await f.close(); }
 });
 
-test("an open popup receives a phone edit and fills the new credentials", async (_, testInfo) => {
+test("an open popup receives a phone edit and fills the new credentials", async ({}, testInfo) => {
   const f = await openFixture(testInfo);
   try {
     await f.context.route("https://sync.example.test/**", route => route.fulfill({ contentType: "text/html", body: '<!doctype html><title>Synthetic login</title><form><label>Username<input id="username" autocomplete="username"></label><label>Password<input id="password" type="password" autocomplete="current-password"></label><button type="submit">Sign in</button></form>' }));

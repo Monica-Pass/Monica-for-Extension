@@ -17,7 +17,7 @@ const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="v
 
 interface App { context: BrowserContext; manager: Page; worker: Worker; extensionId: string; }
 const test = base.extend<{ app: App }>({
-  app: async (_, use, info) => {
+  app: async ({}, use, info) => {
     const extension = path.resolve("dist");
     const context = await launchEdgeContext(info.outputPath("p"), {
       channel: "chromium", headless: true, locale: "zh-CN", viewport: { width: 1100, height: 1000 },

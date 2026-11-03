@@ -3,7 +3,7 @@ import { chromium, expect, test, type BrowserContext } from "@playwright/test";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import path from "node:path";
 
-test("Android generator history stays compact masked and deletable", async (_, testInfo) => {
+test("Android generator history stays compact masked and deletable", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist");
   const historyPath = "Monica_20260824_120000_generated_history.json";
   const history = [

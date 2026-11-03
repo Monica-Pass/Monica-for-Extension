@@ -10,7 +10,7 @@ import { launchEdgeContext } from './fixtures/edge';
 type StorageApi = typeof import('../../src/providers/keepass/keepass-working-copy-store');
 declare global { interface Window { ReceiptStorage: StorageApi } }
 
-test('actual Edge upgrades existing KeePass receipts and atomically retains spent operation identities across restart', async (_, info) => {
+test('actual Edge upgrades existing KeePass receipts and atomically retains spent operation identities across restart', async ({}, info) => {
   test.setTimeout(90_000);
   const helper = info.outputPath('receipts.js');
   await build({ stdin: { contents: "export * from './src/providers/keepass/keepass-working-copy-store';", resolveDir: process.cwd() },
@@ -117,7 +117,7 @@ test('actual Edge upgrades existing KeePass receipts and atomically retains spen
   }
 });
 
-test('installed extension refuses an expired group creation after 257 real mutations and full browser restart', async (_, info) => {
+test('installed extension refuses an expired group creation after 257 real mutations and full browser restart', async ({}, info) => {
   test.setTimeout(120_000);
   const helper = info.outputPath('fixture.cjs');
   await build({ stdin: { contents: "export {buildKeePassFixture} from './src/providers/keepass/keepass-fixture';", resolveDir: process.cwd() },

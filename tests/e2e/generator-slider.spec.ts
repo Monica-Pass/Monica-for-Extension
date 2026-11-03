@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('generator track clicks update the value and persisted preferences', async (_, testInfo) => {
+test('generator track clicks update the value and persisted preferences', async ({}, testInfo) => {
   const extensionPath = path.resolve('dist');
   const context = await launchEdgeContext(testInfo.outputPath('profile'), {
     locale: 'zh-CN', viewport: { width: 1100, height: 900 },

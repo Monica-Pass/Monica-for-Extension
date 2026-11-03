@@ -18,7 +18,7 @@ async function send(page: Page, input: Record<string, unknown>) {
   return result.data;
 }
 
-test("encrypted Android-format portable keys sign in Edge after import and restart", async (_, info) => {
+test("encrypted Android-format portable keys sign in Edge after import and restart", async ({}, info) => {
   test.setTimeout(150_000);
   // Synthetic keys in the production Android backup format; not Android device evidence.
   const entries: Record<string, Uint8Array> = {};

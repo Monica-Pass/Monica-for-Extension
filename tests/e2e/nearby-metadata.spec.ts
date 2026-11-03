@@ -36,7 +36,7 @@ async function state(page: Page) {
   return decryptVaultState(backup.envelope, (await deriveVaultKey(master, backup.envelope.kdf)).key);
 }
 
-test('production nearby transfers Android-shaped folders root tags and original Passkeys across restarts', async (_, info) => {
+test('production nearby transfers Android-shaped folders root tags and original Passkeys across restarts', async ({}, info) => {
   test.skip(process.platform !== 'win32', 'Installed Edge and Native Messaging'); test.setTimeout(180000);
   const extension = path.resolve('dist'), run = path.resolve(info.outputPath('isolated')); await mkdir(run, { recursive: true });
   const contexts = new Map<string, BrowserContext>(), evidence: Record<string, any> = { status: 'failed', productionBackground: true, managerUi: false, androidApplicationAcceptance: false, phases: [] };

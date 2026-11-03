@@ -6,7 +6,7 @@ import type * as Harness from './fixtures/keepass-source-removal-harness';
 
 declare global { interface Window { keepassSourceRemovalTest: typeof Harness } }
 
-for (const mode of ['local-file', 'webdav', 'onedrive'] as const) test(`KeePass ${mode} source file removal survives IndexedDB abort, lost reply and full Edge restart`, async (_, info) => {
+for (const mode of ['local-file', 'webdav', 'onedrive'] as const) test(`KeePass ${mode} source file removal survives IndexedDB abort, lost reply and full Edge restart`, async ({}, info) => {
   test.setTimeout(90_000);
   const bundle = await build({ entryPoints: ['tests/e2e/fixtures/keepass-source-removal-harness.ts'], bundle: true,
     platform: 'browser', format: 'iife', globalName: 'keepassSourceRemovalTest', write: false, logLevel: 'silent',

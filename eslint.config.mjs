@@ -130,6 +130,16 @@ export default [
     }
   },
   {
+    // Playwright validates test callbacks at load time and requires the first
+    // argument to be a destructuring pattern, so `async ({}, testInfo)` is the
+    // framework-canonical signature when only testInfo is needed. no-empty-pattern
+    // fights that contract in e2e specs.
+    files: ["tests/**/*.ts"],
+    rules: {
+      "no-empty-pattern": "off"
+    }
+  },
+  {
     files: ["scripts/**/*.mjs", "scripts/**/*.cjs", "*.mjs"],
     languageOptions: {
       // Probe/acceptance scripts drive real browsers via Playwright and evaluate

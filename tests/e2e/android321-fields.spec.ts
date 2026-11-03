@@ -12,7 +12,7 @@ async function send(page: Page, request: unknown): Promise<any> {
 }
 const base = { favorite: false, notes: 'Project note', createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z', providerRefs: [] };
 
-test('Android 321 credential notes and URL edits persist across groups and restart', async (_, info) => {
+test('Android 321 credential notes and URL edits persist across groups and restart', async ({}, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist'), options = { locale: 'zh-CN', reducedMotion: 'reduce' as const,
     viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] };
@@ -58,7 +58,7 @@ test('Android 321 credential notes and URL edits persist across groups and resta
   } finally { await context.close(); }
 });
 
-test('Android 321 wallet templates edit known fields and retain unknown templates and raw strings', async (_, info) => {
+test('Android 321 wallet templates edit known fields and retain unknown templates and raw strings', async ({}, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist'), context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', reducedMotion: 'reduce', viewport: { width: 1200, height: 950 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
@@ -104,7 +104,7 @@ test('Android 321 wallet templates edit known fields and retain unknown template
   } finally { await context.close(); }
 });
 
-test('unknown URL rule carriers remain intact on a title-only edit', async (_, info) => {
+test('unknown URL rule carriers remain intact on a title-only edit', async ({}, info) => {
   const extension = path.resolve('dist'), context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', viewport: { width: 1200, height: 950 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker'), page = await context.newPage();

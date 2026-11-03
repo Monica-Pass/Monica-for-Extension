@@ -15,7 +15,7 @@ const otp: TotpItem = { ...common, id: "tile-otp", kind: "totp", title: "Studio 
 const wallet = homeItems.filter(item => ["card", "identity", "billing-address", "payment-account"].includes(item.kind)).map(item => ({ ...item, providerRefs: [] }));
 
 const test = base.extend<{ manager: Page }>({
-  manager: async (_, use) => {
+  manager: async ({}, use) => {
     // Short, isolated profiles avoid Windows IndexedDB path limits.
     const profile = await mkdtemp(path.join(tmpdir(), "mtile-"));
     const extension = path.resolve("dist");

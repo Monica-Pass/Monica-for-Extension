@@ -14,7 +14,7 @@ function expectedCode(now: number) {
   return result;
 }
 
-test('Bitwarden standard maFile recovers after download failure and generates Steam codes without session tokens', async (_, info) => {
+test('Bitwarden standard maFile recovers after download failure and generates Steam codes without session tokens', async ({}, info) => {
   const fixture = await bitwardenSteamFixture({ raw: `{"account_name":"synthetic","steamid":${STEAM_ID},"shared_secret":"${STEAM_SECRET}"}` });
   const host = String(fixture.account.config.vaultUrl), email = String(fixture.account.config.email), password = 'Synthetic Steam test password';
   const key = { encKey: new Uint8Array(Buffer.from(String(fixture.account.config.vaultKeyEnc), 'base64')), macKey: new Uint8Array(Buffer.from(String(fixture.account.config.vaultKeyMac), 'base64')) };

@@ -54,7 +54,7 @@ async function fill(app: Awaited<ReturnType<typeof launch>>, body: string) {
   return { page, popup };
 }
 
-test('real Edge fills typed custom controls in the selected shadow form and after full restart', async (_, info) => {
+test('real Edge fills typed custom controls in the selected shadow form and after full restart', async ({}, info) => {
   const item = { ...createLoginItem({ title: 'Custom control account', username: 'control-user', password: 'control-secret', uris: [url] }), customFields };
   let app = await launch(info, true);
   try {
@@ -84,7 +84,7 @@ test('real Edge fills typed custom controls in the selected shadow form and afte
   } finally { await app.context.close(); }
 });
 
-test('a later custom-control failure still consumes the HOTP actually filled before an explicit retry', async (_, info) => {
+test('a later custom-control failure still consumes the HOTP actually filled before an explicit retry', async ({}, info) => {
   const app = await launch(info, true);
   const totpSecret = 'otpauth://hotp/Controls?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&counter=7';
   try {
@@ -105,7 +105,7 @@ test('a later custom-control failure still consumes the HOTP actually filled bef
   } finally { await app.context.close(); }
 });
 
-test('real Edge refuses changed dropdown choices and retries from the current form', async (_, info) => {
+test('real Edge refuses changed dropdown choices and retries from the current form', async ({}, info) => {
   const app = await launch(info, true);
   try {
     await send(app.manager, { type: 'VAULT_UPSERT_ITEM', item: { ...createLoginItem({ title: 'Custom control account', username: 'control-user', password: 'control-secret', uris: [url] }),

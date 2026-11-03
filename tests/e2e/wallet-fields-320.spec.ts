@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 
-test('independent profile editors persist and production autofill respects semantic scopes', async (_, info) => {
+test('independent profile editors persist and production autofill respects semantic scopes', async ({}, info) => {
   test.setTimeout(120000);
   const extension = path.resolve('dist');
   const context = await launchEdgeContext(info.outputPath('profile'), { locale: 'zh-CN', viewport: { width: 1200, height: 950 },
