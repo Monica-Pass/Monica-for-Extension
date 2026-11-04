@@ -1,9 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Download, type Page } from '@playwright/test';
 import path from 'node:path';
 import { launchEdgeContext } from './fixtures/edge';
 import { GITHUB_LATEST_API, GITHUB_RELEASES_URL } from '../../src/runtime/github-update';
 import { readFileSync } from 'node:fs';
 import { createLoginItem } from '../../src/core/model';
+import { strToU8, zipSync } from 'fflate';
 
 const currentVersion: string = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const nextVersion = currentVersion.replace(/\d+$/, patch => String(Number(patch) + 1));
@@ -64,13 +65,20 @@ test('GitHub updates in settings: manual check, release notice, safe link, failu
     const zipUrl = `${GITHUB_RELEASES_URL}/download/v${nextVersion}/monica-extension-${nextVersion}.zip`;
     const downloadLink = panel.getByRole('link', { name: '下载扩展 ZIP', exact: true });
     await expect(downloadLink).toHaveAttribute('href', zipUrl);
-    const zipBytes = Buffer.from('PK\u0003\u0004synthetic update download');
+    const zipBytes = Buffer.from(zipSync({ 'fixture.txt': strToU8('Synthetic update download') }));
     await context.route(zipUrl, route => route.fulfill({ body: zipBytes, contentType: 'application/zip', headers: {
       'Content-Disposition': `attachment; filename="monica-extension-${nextVersion}.zip"`
     } }));
-    const downloading = page.waitForEvent('download');
+    const downloads: Download[] = [];
+    const recordDownload = (download: Download) => { if (download.url() === zipUrl) downloads.push(download); };
+    const captureDownloads = (surface: Page) => surface.on('download', recordDownload);
+    context.pages().forEach(captureDownloads);
+    context.on('page', captureDownloads);
     await downloadLink.click();
-    const download = await downloading;
+    await expect.poll(() => downloads.length, { timeout: 20_000 }).toBe(1);
+    context.off('page', captureDownloads);
+    context.pages().forEach(surface => surface.off('download', recordDownload));
+    const download = downloads[0];
     expect(download.suggestedFilename()).toBe(`monica-extension-${nextVersion}.zip`);
     await download.saveAs(info.outputPath('synthetic-update.zip'));
     expect(readFileSync(info.outputPath('synthetic-update.zip'))).toEqual(zipBytes);

@@ -26,6 +26,8 @@ Wi-Fi 同步等本机能力使用**可选** Windows x64 助手 `monica-mdbx2-hos
 
 支持 Chrome/Edge 128+。Firefox 未签名构建保留在 CI artifact，永久安装需 Mozilla 签名，详见 [Firefox 说明](https://github.com/Monica-Pass/Monica-for-Extension/blob/v1.0.104/docs/FIREFOX.md)。本次公开附件不含未签名 XPI。
 
+现有 Rust ZIP 依赖告警尚未通过升级消除；当前调用未使用相关的 AES 解密、通用解压或流式解压路径，具体适用范围见 [ZIP 依赖审查](https://github.com/Monica-Pass/Monica-for-Extension/blob/v1.0.104/docs/verification/zip-advisory-scope-20261104.md)。
+
 ### 维护说明
 
 目前我的主要开发精力仍放在 **Android 版**，浏览器插件的维护与功能跟进可能有所延迟。欢迎大家通过 [Issue](https://github.com/Monica-Pass/Monica-for-Extension/issues) 反馈问题、提出建议，也欢迎提交 [PR](https://github.com/Monica-Pass/Monica-for-Extension/pulls) 一起改进。感谢大家的理解和参与！
@@ -53,6 +55,8 @@ Reloading requires unlocking with the existing **Monica master password**, which
 Wi-Fi synchronization and other native capabilities use the **optional** Windows x64 helper `monica-mdbx2-host-windows-x64-0.1.6.zip`; follow its included README. Ordinary MDBX creation, import, reads, editing and saves require no external component. Existing Native Host working copies retain their backend. Each ZIP has a SHA-256 sidecar.
 
 Chrome/Edge 128+ are supported. The unsigned Firefox build remains a CI artifact; permanent installation requires Mozilla signing. See [Firefox instructions](https://github.com/Monica-Pass/Monica-for-Extension/blob/v1.0.104/docs/FIREFOX.md). No unsigned XPI is attached to this release.
+
+Existing Rust ZIP dependency advisories remain open. Current callers do not use the affected AES decryption, general-purpose extraction or streaming extraction paths. See the [ZIP applicability review](https://github.com/Monica-Pass/Monica-for-Extension/blob/v1.0.104/docs/verification/zip-advisory-scope-20261104.md) for the scope and limits of that assessment.
 
 ### Maintenance note
 
