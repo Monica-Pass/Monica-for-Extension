@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "monica-mdbx2-host"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64",
  "chacha20poly1305",

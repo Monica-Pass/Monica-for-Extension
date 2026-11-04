@@ -97,7 +97,7 @@ jobs:
           npm run build:mdbx2-browser
       - run: npm run build
       - name: Required Edge core acceptance (not Android, CLI or hardware acceptance)
-        run: node scripts/e2e-edge.mjs tests/e2e/export-clipboard.spec.ts tests/e2e/vault-storage.spec.ts tests/e2e/runtime-startup.spec.ts tests/e2e/settings-pages.spec.ts tests/e2e/auto-lock-settings.spec.ts tests/e2e/card-artwork.spec.ts tests/e2e/editor-groups.spec.ts tests/e2e/wallet-create.spec.ts tests/e2e/navigation-drawer.spec.ts --workers=1
+        run: node scripts/e2e-edge.mjs tests/e2e/export-clipboard.spec.ts tests/e2e/vault-storage.spec.ts tests/e2e/runtime-startup.spec.ts tests/e2e/settings-pages.spec.ts tests/e2e/auto-lock-settings.spec.ts tests/e2e/auto-lock-diagnosis.spec.ts tests/e2e/bitwarden-totp-list.spec.ts tests/e2e/github-update.spec.ts tests/e2e/card-artwork.spec.ts tests/e2e/editor-groups.spec.ts tests/e2e/wallet-create.spec.ts tests/e2e/navigation-drawer.spec.ts --workers=1
       - run: npx playwright test tests/e2e/passkey-windows-hello.spec.ts
       - run: npm run package:mdbx2-host
       - run: npm run package:verify:mdbx2-host

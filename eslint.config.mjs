@@ -49,9 +49,12 @@ export default [
   {
     ignores: [
       "dist/**",
+      "dist-firefox/**",
       "release/**",
       ".artifacts/**",
       ".tmp/**",
+      ".codex-tmp/**",
+      ".codex-tasks/**",
       "coverage/**",
       "playwright-report/**",
       "test-results/**",

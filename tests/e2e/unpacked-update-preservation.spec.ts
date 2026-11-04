@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { cp, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import assert from 'node:assert/strict';
 import { launchEdgeContext } from './fixtures/edge';
 import { createEmptyVaultState, createLoginItem } from '../../src/core/model';
 import { decryptVaultState, deriveVaultKey, encryptVaultState } from '../../src/security/vault-crypto';
@@ -98,7 +99,8 @@ test('real stable files can be overwritten and relocated without resetting the v
   } finally {
     await context?.close();
     const resolved = await realpath(fixture);
-    if (path.dirname(resolved).toLowerCase() !== (await realpath(root)).toLowerCase() || !path.basename(resolved).startsWith('unpacked-update-')) throw new Error('Unexpected fixture path');
+    assert.equal(path.dirname(resolved).toLowerCase(), (await realpath(root)).toLowerCase(), 'Unexpected fixture parent');
+    assert(path.basename(resolved).startsWith('unpacked-update-'), 'Unexpected fixture name');
     await rm(resolved, { recursive: true, force: true, maxRetries: 3 });
   }
 });
