@@ -4070,5 +4070,18 @@
   "锁定时间已保存。": "Đã lưu thời gian khóa.",
   "未能读取锁定时间，请重试。": "Không thể đọc thời gian khóa. Vui lòng thử lại.",
   "未能保存锁定时间，请重试。": "Không thể lưu thời gian khóa. Vui lòng thử lại.",
-  "锁定时间已保存，请重新解锁。": "Đã lưu thời gian khóa. Vui lòng mở khóa lại."
+  "锁定时间已保存，请重新解锁。": "Đã lưu thời gian khóa. Vui lòng mở khóa lại.",
+  "构建标识：{0}": "Bản dựng: {0}",
+  "扩展 ID：{0}": "ID tiện ích: {0}",
+  "下载扩展 ZIP": "Tải ZIP tiện ích",
+  "更新已解压的扩展": "Cập nhật tiện ích đã giải nén",
+  "把新版 ZIP 解压到临时目录，找到包含 manifest.json 的文件夹。": "Giải nén ZIP mới vào thư mục tạm rồi tìm thư mục chứa manifest.json.",
+  "完整覆盖浏览器当前加载的原目录。不要卸载扩展，也不要清除浏览器数据。": "Ghi đè toàn bộ tệp trong thư mục gốc mà trình duyệt đang tải. Không gỡ tiện ích hoặc xóa dữ liệu trình duyệt.",
+  "保存编辑后重新加载扩展，再用原 Monica 主密码解锁。重新加载不等于退出 Bitwarden。": "Lưu nội dung chỉnh sửa, tải lại tiện ích rồi mở khóa bằng mật khẩu chính Monica hiện tại. Tải lại không đăng xuất Bitwarden.",
+  "如果覆盖后仍显示旧版，请确认没有多套一层文件夹，并核对扩展 ID 和当前构建标识。": "Nếu vẫn thấy phiên bản cũ, hãy kiểm tra xem có thư mục lồng thêm một cấp hay không, rồi đối chiếu ID tiện ích và bản dựng hiện tại.",
+  "打开扩展管理页": "Mở trang quản lý tiện ích",
+  "已覆盖，重新加载扩展": "Đã ghi đè, tải lại tiện ích",
+  "重新加载会关闭所有 Monica 页面，未保存的编辑会丢失。确认已完成原目录覆盖并保存编辑后继续？": "Tải lại sẽ đóng mọi trang Monica và làm mất nội dung chỉnh sửa chưa lưu. Bạn đã ghi đè tệp trong thư mục gốc và lưu nội dung chỉnh sửa chưa?",
+  "无法打开扩展管理页，请从浏览器菜单打开扩展。": "Không thể mở trang quản lý tiện ích. Hãy mở Tiện ích từ menu trình duyệt.",
+  "未能重新加载扩展，请打开扩展管理页重试。": "Không thể tải lại tiện ích. Hãy thử lại từ trang quản lý tiện ích."
 }

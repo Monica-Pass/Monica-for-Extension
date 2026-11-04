@@ -4070,5 +4070,18 @@
   "锁定时间已保存。": "Lock time saved.",
   "未能读取锁定时间，请重试。": "Could not read the lock time. Please try again.",
   "未能保存锁定时间，请重试。": "Could not save the lock time. Please try again.",
-  "锁定时间已保存，请重新解锁。": "Lock time saved. Please unlock again."
+  "锁定时间已保存，请重新解锁。": "Lock time saved. Please unlock again.",
+  "构建标识：{0}": "Build: {0}",
+  "扩展 ID：{0}": "Extension ID: {0}",
+  "下载扩展 ZIP": "Download extension ZIP",
+  "更新已解压的扩展": "Update an unpacked extension",
+  "把新版 ZIP 解压到临时目录，找到包含 manifest.json 的文件夹。": "Extract the new ZIP to a temporary folder and locate the folder containing manifest.json.",
+  "完整覆盖浏览器当前加载的原目录。不要卸载扩展，也不要清除浏览器数据。": "Replace all files in the original folder currently loaded by the browser. Do not uninstall the extension or clear browser data.",
+  "保存编辑后重新加载扩展，再用原 Monica 主密码解锁。重新加载不等于退出 Bitwarden。": "Save your edits, reload the extension, then unlock with your existing Monica master password. Reloading does not sign you out of Bitwarden.",
+  "如果覆盖后仍显示旧版，请确认没有多套一层文件夹，并核对扩展 ID 和当前构建标识。": "If the old version still appears, check for an extra nested folder and compare the extension ID and current build.",
+  "打开扩展管理页": "Open extension management",
+  "已覆盖，重新加载扩展": "Files replaced — reload extension",
+  "重新加载会关闭所有 Monica 页面，未保存的编辑会丢失。确认已完成原目录覆盖并保存编辑后继续？": "Reloading closes all Monica pages and discards unsaved edits. Have you replaced the files in the original folder and saved your edits?",
+  "无法打开扩展管理页，请从浏览器菜单打开扩展。": "Could not open extension management. Open Extensions from the browser menu.",
+  "未能重新加载扩展，请打开扩展管理页重试。": "Could not reload the extension. Try again from extension management."
 }

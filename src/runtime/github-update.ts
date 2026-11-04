@@ -5,7 +5,18 @@ export type UpdateFailure = 'network' | 'timeout' | 'rate-limit' | 'invalid';
 export class GitHubUpdateError extends Error {
   constructor(readonly code: UpdateFailure) { super(code); }
 }
-export type GitHubUpdateResult = { kind: 'none' } | { kind: 'available' | 'current'; version: string; url: string };
+export type GitHubUpdateResult = { kind: 'none' } | { kind: 'available' | 'current'; version: string; url: string; downloadUrl?: string };
+
+function extensionDownloadUrl(assets: unknown, tag: string, version: string): string | undefined {
+  if (!Array.isArray(assets)) return;
+  const name = `monica-extension-${version}.zip`;
+  const candidates = assets.filter(asset => asset && typeof asset === 'object' && asset.name === name);
+  if (candidates.length !== 1) return;
+  const asset = candidates[0];
+  const url = `${GITHUB_RELEASES_URL}/download/${tag}/${name}`;
+  return asset.state === 'uploaded' && Number.isSafeInteger(asset.size) && asset.size > 0
+    && asset.size <= 128 * 1024 * 1024 && asset.browser_download_url === url ? url : undefined;
+}
 
 /** Tags and browser versions share a numeric X.Y.Z scheme, never lexical ordering. */
 export function parseReleaseVersion(value: string): number[] | undefined {
@@ -59,11 +70,12 @@ export async function checkGitHubUpdate(currentVersion: string, signal?: AbortSi
     if (response.status === 403 || response.status === 429) throw new GitHubUpdateError('rate-limit');
     if (response.status === 404) return { kind: 'none' };
     if (!response.ok) throw new GitHubUpdateError('network');
-    const release = await releaseJson(response) as { tag_name?: unknown; draft?: unknown; prerelease?: unknown } | null;
+    const release = await releaseJson(response) as { tag_name?: unknown; draft?: unknown; prerelease?: unknown; assets?: unknown } | null;
     if (!release || typeof release.tag_name !== 'string' || release.draft !== false || release.prerelease !== false || !parseReleaseVersion(release.tag_name)) throw new GitHubUpdateError('invalid');
     const version = release.tag_name.replace(/^v/, '');
+    const downloadUrl = extensionDownloadUrl(release.assets, release.tag_name, version);
     return { kind: compareReleaseVersions(version, currentVersion) > 0 ? 'available' : 'current', version,
-      url: `${GITHUB_RELEASES_URL}/tag/${release.tag_name}` };
+      url: `${GITHUB_RELEASES_URL}/tag/${release.tag_name}`, ...(downloadUrl ? { downloadUrl } : {}) };
   } catch (error) {
     if (signal?.aborted) throw error;
     if (timedOut) throw new GitHubUpdateError('timeout');

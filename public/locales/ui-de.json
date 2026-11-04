@@ -4070,5 +4070,18 @@
   "锁定时间已保存。": "Sperrzeit gespeichert.",
   "未能读取锁定时间，请重试。": "Die Sperrzeit konnte nicht gelesen werden. Bitte erneut versuchen.",
   "未能保存锁定时间，请重试。": "Die Sperrzeit konnte nicht gespeichert werden. Bitte erneut versuchen.",
-  "锁定时间已保存，请重新解锁。": "Sperrzeit gespeichert. Bitte erneut entsperren."
+  "锁定时间已保存，请重新解锁。": "Sperrzeit gespeichert. Bitte erneut entsperren.",
+  "构建标识：{0}": "Build: {0}",
+  "扩展 ID：{0}": "Erweiterungs-ID: {0}",
+  "下载扩展 ZIP": "Erweiterung als ZIP herunterladen",
+  "更新已解压的扩展": "Entpackte Erweiterung aktualisieren",
+  "把新版 ZIP 解压到临时目录，找到包含 manifest.json 的文件夹。": "Entpacke die neue ZIP-Datei in einen temporären Ordner und suche den Ordner mit manifest.json.",
+  "完整覆盖浏览器当前加载的原目录。不要卸载扩展，也不要清除浏览器数据。": "Ersetze alle Dateien im ursprünglichen Ordner, den der Browser derzeit lädt. Deinstalliere die Erweiterung nicht und lösche keine Browserdaten.",
+  "保存编辑后重新加载扩展，再用原 Monica 主密码解锁。重新加载不等于退出 Bitwarden。": "Speichere deine Änderungen, lade die Erweiterung neu und entsperre sie mit deinem bisherigen Monica-Masterpasswort. Das Neuladen meldet dich nicht bei Bitwarden ab.",
+  "如果覆盖后仍显示旧版，请确认没有多套一层文件夹，并核对扩展 ID 和当前构建标识。": "Wird weiterhin die alte Version angezeigt, prüfe auf einen zusätzlichen Unterordner und vergleiche die Erweiterungs-ID und den aktuellen Build.",
+  "打开扩展管理页": "Erweiterungsverwaltung öffnen",
+  "已覆盖，重新加载扩展": "Dateien ersetzt – Erweiterung neu laden",
+  "重新加载会关闭所有 Monica 页面，未保存的编辑会丢失。确认已完成原目录覆盖并保存编辑后继续？": "Beim Neuladen werden alle Monica-Seiten geschlossen und ungespeicherte Änderungen verworfen. Hast du die Dateien im ursprünglichen Ordner ersetzt und deine Änderungen gespeichert?",
+  "无法打开扩展管理页，请从浏览器菜单打开扩展。": "Die Erweiterungsverwaltung konnte nicht geöffnet werden. Öffne die Erweiterungen über das Browsermenü.",
+  "未能重新加载扩展，请打开扩展管理页重试。": "Die Erweiterung konnte nicht neu geladen werden. Versuche es über die Erweiterungsverwaltung erneut."
 }

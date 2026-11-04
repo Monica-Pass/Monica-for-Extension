@@ -60,6 +60,7 @@ import PasskeyStatus from './components/PasskeyStatus.vue';
 import { managerPasskeyInspector } from './manager/passkey-capability';
 import OtpTileCountdown from "./components/OtpTileCountdown.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
+import { selectAuthenticatorItems } from './manager/authenticator-items';
 import VaultItemDetail from "./components/VaultItemDetail.vue";
 import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
 import LoginEditorFields from "./components/LoginEditorFields.vue";
@@ -393,7 +394,7 @@ const credentialGroupSize = (item: LoginItem) => credentialGroupSizes.value.get(
 const walletItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "wallet"));
 const noteItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "notes"));
 const totpItems = vaultDerived(() => vaultItems.value.filter((item): item is TotpItem => item.kind === "totp"));
-const authenticatorCount = vaultDerived(() => vaultItems.value.filter(itemCarriesAuthenticator).length);
+const authenticatorCount = vaultDerived(() => selectAuthenticatorItems(vaultItems.value, providers.value).length);
 const steamItems = vaultDerived(() => vaultItems.value.flatMap((item) => {
   const projected = item.kind === "login" ? projectSteamItem(item) : undefined;
   return projected ? [projected] : item.kind === "totp" && item.otpType === "STEAM" ? [item] : [];
@@ -432,6 +433,7 @@ const restoreCohortLeaders = vaultDerived(() => {
 const filteredSectionItems = vaultDerived(() => {
   if (!["vault", "passwords", "wallet", "notes", "totp", "api-tokens", "passkeys"].includes(activeSection.value)) return [];
   const matching = vaultItems.value.filter((item) => itemMatchesManagerSection(item, activeSection.value) && matchesManagerFilters(item));
+  if (activeSection.value === 'totp') return selectAuthenticatorItems(matching, providers.value);
   if (activeSection.value !== "vault" && activeSection.value !== "passwords") return matching;
   const ids = new Set(matching.map(item => item.id));
   const representatives = new Map(allCredentialGroups.value.filter(group => group.some(item => ids.has(item.id))).map(group => [group[0].id, group[0]]));

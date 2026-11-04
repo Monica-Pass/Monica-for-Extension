@@ -4070,5 +4070,18 @@
   "锁定时间已保存。": "Tiempo de bloqueo guardado.",
   "未能读取锁定时间，请重试。": "No se pudo leer el tiempo de bloqueo. Inténtalo de nuevo.",
   "未能保存锁定时间，请重试。": "No se pudo guardar el tiempo de bloqueo. Inténtalo de nuevo.",
-  "锁定时间已保存，请重新解锁。": "Tiempo de bloqueo guardado. Desbloquea de nuevo."
+  "锁定时间已保存，请重新解锁。": "Tiempo de bloqueo guardado. Desbloquea de nuevo.",
+  "构建标识：{0}": "Compilación: {0}",
+  "扩展 ID：{0}": "ID de la extensión: {0}",
+  "下载扩展 ZIP": "Descargar ZIP de la extensión",
+  "更新已解压的扩展": "Actualizar una extensión descomprimida",
+  "把新版 ZIP 解压到临时目录，找到包含 manifest.json 的文件夹。": "Extrae el nuevo ZIP en una carpeta temporal y busca la carpeta que contiene manifest.json.",
+  "完整覆盖浏览器当前加载的原目录。不要卸载扩展，也不要清除浏览器数据。": "Reemplaza todos los archivos de la carpeta original que el navegador tiene cargada. No desinstales la extensión ni borres los datos del navegador.",
+  "保存编辑后重新加载扩展，再用原 Monica 主密码解锁。重新加载不等于退出 Bitwarden。": "Guarda los cambios, recarga la extensión y desbloquéala con tu contraseña maestra habitual de Monica. Recargar no cierra la sesión de Bitwarden.",
+  "如果覆盖后仍显示旧版，请确认没有多套一层文件夹，并核对扩展 ID 和当前构建标识。": "Si aún aparece la versión anterior, comprueba que no haya una carpeta anidada adicional y compara el ID de la extensión y la compilación actual.",
+  "打开扩展管理页": "Abrir gestión de extensiones",
+  "已覆盖，重新加载扩展": "Archivos reemplazados: recargar extensión",
+  "重新加载会关闭所有 Monica 页面，未保存的编辑会丢失。确认已完成原目录覆盖并保存编辑后继续？": "La recarga cierra todas las páginas de Monica y descarta los cambios sin guardar. ¿Has reemplazado los archivos de la carpeta original y guardado los cambios?",
+  "无法打开扩展管理页，请从浏览器菜单打开扩展。": "No se pudo abrir la gestión de extensiones. Abre Extensiones desde el menú del navegador.",
+  "未能重新加载扩展，请打开扩展管理页重试。": "No se pudo recargar la extensión. Inténtalo de nuevo desde la gestión de extensiones."
 }

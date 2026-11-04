@@ -7,6 +7,23 @@ const release = (tag = 'v1.0.102', extra = {}) => new Response(JSON.stringify({ 
 afterEach(() => vi.useRealTimers());
 
 describe('GitHub update detection', () => {
+  const asset = { name: 'monica-extension-1.0.104.zip', state: 'uploaded', size: 14001977,
+    browser_download_url: `${GITHUB_RELEASES_URL}/download/v1.0.104/monica-extension-1.0.104.zip` };
+  it('offers the exact official extension ZIP when it exists in the release', async () => {
+    const fetcher = vi.fn().mockResolvedValue(release('v1.0.104', { assets: [asset] }));
+    expect(await checkGitHubUpdate('1.0.103', undefined, fetcher)).toMatchObject({ kind: 'available', downloadUrl: asset.browser_download_url });
+  });
+  it.each([
+    undefined, [], [asset, asset], [{ ...asset, state: 'new' }], [{ ...asset, size: 0 }],
+    [{ ...asset, size: 128 * 1024 * 1024 + 1 }], [{ ...asset, size: '14001977' }],
+    [{ ...asset, name: 'monica-mdbx2-host-windows-x64.zip' }],
+    [{ ...asset, browser_download_url: 'https://evil.example.test/extension.zip' }],
+    [{ ...asset, browser_download_url: asset.browser_download_url + '?redirect=elsewhere' }],
+    [{ ...asset, browser_download_url: asset.browser_download_url.replace('v1.0.104', 'v1.0.103') }]
+  ])('leaves a release-page fallback for absent or untrusted assets (%j)', async assets => {
+    const fetcher = vi.fn().mockResolvedValue(release('v1.0.104', { assets }));
+    expect(await checkGitHubUpdate('1.0.103', undefined, fetcher)).toEqual({ kind: 'available', version: '1.0.104', url: `${GITHUB_RELEASES_URL}/tag/v1.0.104` });
+  });
   it.each([
     ['1.0.101', '0.1.48', 1], ['1.0.101', '1.0.99', 1], ['v1.0.101', '1.0.101', 0],
     ['1.0.102', '1.0.101', 1], ['1.0.9', '1.0.101', -1], ['1.1.0', '1.0.65535', 1],
