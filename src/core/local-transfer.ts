@@ -12,7 +12,7 @@ import { inspectPasskeyKey } from '../passkey/capability';
 import { normalizeCredentialId, passkeyAvailability } from '../passkey/source-policy';
 import { assertPasskeyCounterNotRegressed } from '../passkey/ownership-policy';
 import { normalizeRpId } from '../passkey/webauthn-core';
-import { isPasswordProjectRemovalPending, readPasswordProjectRemovalJournal } from './password-project-removal-journal';
+import { pendingRemovalTouches, readPasswordProjectRemovalJournal } from './password-project-removal-journal';
 import { readMdbx2MoveJournal } from './mdbx2-move-journal';
 
 const MAX_ITEMS = 200;
@@ -131,8 +131,7 @@ function selectedItems(state: VaultState, request: LocalTransferRequest): VaultI
     || request.action === 'move' && state.mutationQueue.some(row => ids.has(row.itemId))
     || state.providerConflicts.some(row => ids.has(row.itemId))
     || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed' && row.entries.some(entry => ids.has(entry.expected.id)))
-    || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-      && [...row.retained, ...row.removed].some(item => ids.has(item.id)))) throw new Error('所选项目仍有冲突、移除或移动操作，请先完成恢复。');
+    || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids)) throw new Error('所选项目仍有冲突、移除或移动操作，请先完成恢复。');
   return items;
 }
 
