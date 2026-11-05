@@ -60,6 +60,7 @@ const otpQrDataUrl = ref("");
 const otpTransferStatus = ref("");
 const revealSecret = ref(false);
 const fields = reactive(emptyFields());
+type EditorFields = ReturnType<typeof emptyFields>;
 const isPass = computed(() => kind.value === 'identity' && Boolean(fields.walletTemplate.trim()));
 const unknownPass = computed(() => isPass.value && !WALLET_TEMPLATE_FIELDS[fields.walletTemplate]);
 const canSwitchWallet = !props.item && ['card', 'identity', 'billing-address', 'payment-account'].includes(props.initialKind);
@@ -860,7 +861,7 @@ function exportMaFile() {
             "
             >{{ tr('Bitwarden 不支持该独立记录类型，因此不会显示为目标。') }}</small
           ></m3e-form-field></div></section><section v-if="kind === 'card'" class="editor-section"><h3>{{ tr('银行卡信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
-            ><label slot="label">{{ tr('卡类型') }}</label><component :is="materialSelectTag" @input="fields.cardType = ($event.target as HTMLElement &amp; { value: string }).value" >
+            ><label slot="label">{{ tr('卡类型') }}</label><component :is="materialSelectTag" @input="fields.cardType = ($event.target as HTMLElement &amp; { value: EditorFields['cardType'] }).value" >
 
               <component :is="materialOptionTag" :selected.prop="String(fields.cardType ?? '') === String('DEBIT')" value="DEBIT">{{ tr('借记卡') }}</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.cardType ?? '') === String('CREDIT')" value="CREDIT">{{ tr('信用卡') }}</component>
@@ -895,7 +896,7 @@ function exportMaFile() {
 <section v-if="item && kind === 'identity'" class="editor-section" data-wallet-template><m3e-form-field v-field-label variant="filled" class="field"><label slot="label">{{ tr('卡包模板') }}</label><component :is="materialSelectTag" :disabled.prop="unknownPass" @input="fields.walletTemplate = ($event.target as any).value"><component :is="materialOptionTag" value="" :selected.prop="!fields.walletTemplate">{{ tr('证件') }}</component><component :is="materialOptionTag" v-for="template in WALLET_TEMPLATES" :key="template" :value="template" :selected.prop="fields.walletTemplate === template">{{ tr(WALLET_TEMPLATE_LABELS[template]) }}</component><component v-if="unknownPass" :is="materialOptionTag" :value="fields.walletTemplate" :selected.prop="true">{{ fields.walletTemplate }}</component></component></m3e-form-field><p v-if="unknownPass" class="editor-hint">{{ tr('此卡包模板暂不支持，原始字段已保留。') }}</p></section>
 <section v-if="isPass" class="editor-section" data-wallet-pass-common><h3>{{ tr(WALLET_TEMPLATE_LABELS[fields.walletTemplate] || '卡包') }}</h3><div class="wallet-pass-common-grid"><m3e-form-field v-field-label variant="filled" hide-subscript="always" class="field"><label slot="label">{{ tr('卡号或票号') }}</label><input v-model="fields.documentNumber" autocomplete="off" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-subscript="always" class="field"><label slot="label">{{ tr('持有人') }}</label><input v-model="fields.fullName" autocomplete="off" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-subscript="always" class="field"><label slot="label">{{ tr('发行方') }}</label><input v-model="fields.issuedBy" /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-subscript="always" class="field"><label slot="label">{{ tr('有效期至') }}</label><input v-model="fields.expiryDate" /></m3e-form-field></div><WalletPassFields v-model="fields.walletFields" :template="fields.walletTemplate" /></section>
 <section v-if="kind === 'identity' && !isPass" class="editor-section"><h3>{{ tr('身份信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
-            ><label slot="label">{{ tr('证件类型') }}</label><component :is="materialSelectTag" @input="fields.documentType = ($event.target as HTMLElement &amp; { value: string }).value" >
+            ><label slot="label">{{ tr('证件类型') }}</label><component :is="materialSelectTag" @input="fields.documentType = ($event.target as HTMLElement &amp; { value: EditorFields['documentType'] }).value" >
               <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('ID_CARD')" value="ID_CARD">{{ tr('身份证') }}</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('PASSPORT')" value="PASSPORT">{{ tr('护照') }}</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.documentType ?? '') === String('DRIVER_LICENSE')" value="DRIVER_LICENSE">{{ tr('驾驶证') }}</component>
@@ -1027,7 +1028,7 @@ function exportMaFile() {
             ></label
           ></div></section>
 <section v-if="kind === 'totp'" class="editor-section"><h3>{{ tr('验证器信息') }}</h3><div class="editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker class="field"
-            ><label slot="label">{{ tr('验证码类型') }}</label><component :is="materialSelectTag" @input="fields.otpType = ($event.target as HTMLElement &amp; { value: string }).value" >
+            ><label slot="label">{{ tr('验证码类型') }}</label><component :is="materialSelectTag" @input="fields.otpType = ($event.target as HTMLElement &amp; { value: EditorFields['otpType'] }).value" >
               <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('TOTP')" value="TOTP">TOTP</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('HOTP')" value="HOTP">HOTP</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('STEAM')" value="STEAM">Steam Guard</component>
@@ -1035,7 +1036,7 @@ function exportMaFile() {
               <component :is="materialOptionTag" :selected.prop="String(fields.otpType ?? '') === String('MOTP')" value="MOTP">mOTP</component>
             </component></m3e-form-field>
 <m3e-form-field v-field-label variant="filled" hide-required-marker v-if="fields.otpType === 'STEAM'" class="field"
-            ><label slot="label">{{ tr('Steam 密钥编码') }}</label><component :is="materialSelectTag" @input="fields.steamSecretEncoding = ($event.target as HTMLElement &amp; { value: string }).value" >
+            ><label slot="label">{{ tr('Steam 密钥编码') }}</label><component :is="materialSelectTag" @input="fields.steamSecretEncoding = ($event.target as HTMLElement &amp; { value: EditorFields['steamSecretEncoding'] }).value" >
               <component :is="materialOptionTag" :selected.prop="String(fields.steamSecretEncoding ?? '') === String('base64')" value="base64">Base64（maFile / Android）</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.steamSecretEncoding ?? '') === String('base32')" value="base32">Base32（OTP URI）</component>
             </component></m3e-form-field>
@@ -1112,7 +1113,7 @@ function exportMaFile() {
           </fieldset></div></m3e-expansion-panel><m3e-expansion-panel class="editor-disclosure field-wide" :open="false"><span slot="header"><span>{{ tr('验证器高级设置') }}</span></span><div class="editor-disclosure-body editor-field-grid"><m3e-form-field v-field-label variant="filled" hide-required-marker
             v-if="fields.otpType !== 'STEAM' && fields.otpType !== 'MOTP'"
             class="field"
-            ><label slot="label">{{ tr('算法') }}</label><component :is="materialSelectTag" @input="fields.algorithm = ($event.target as HTMLElement &amp; { value: string }).value" >
+            ><label slot="label">{{ tr('算法') }}</label><component :is="materialSelectTag" @input="fields.algorithm = ($event.target as HTMLElement &amp; { value: EditorFields['algorithm'] }).value" >
               <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA1')">SHA1</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA256')">SHA256</component>
               <component :is="materialOptionTag" :selected.prop="String(fields.algorithm ?? '') === String('SHA512')">SHA512</component>
@@ -1285,7 +1286,7 @@ function exportMaFile() {
                 :type="custom.fieldType === 'HIDDEN' ? 'password' : 'text'"
                 :aria-label="tr('自定义字段 {0} 值', { 0: index + 1 })"
                 :placeholder="tr('字段值')"
-              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 类型', { 0: index + 1 }) }}</label><component :is="materialSelectTag" @input="custom.fieldType = ($event.target as HTMLElement &amp; { value: string }).value"
+              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 类型', { 0: index + 1 }) }}</label><component :is="materialSelectTag" @input="custom.fieldType = ($event.target as HTMLElement &amp; { value: EditorFields['customFields'][number]['fieldType'] }).value"
 
                 :aria-label="tr('自定义字段 {0} 类型', { 0: index + 1 })"
               >
@@ -1328,7 +1329,7 @@ function exportMaFile() {
                 :type="custom.fieldType === 'HIDDEN' ? 'password' : 'text'"
                 :aria-label="tr('自定义字段 {0} 值', { 0: index + 1 })"
                 :placeholder="tr('字段值')"
-              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 类型', { 0: index + 1 }) }}</label><component :is="materialSelectTag" @input="custom.fieldType = ($event.target as HTMLElement &amp; { value: string }).value"
+              /></m3e-form-field><m3e-form-field v-field-label variant="filled" hide-required-marker><label slot="label">{{ tr('自定义字段 {0} 类型', { 0: index + 1 }) }}</label><component :is="materialSelectTag" @input="custom.fieldType = ($event.target as HTMLElement &amp; { value: EditorFields['customFields'][number]['fieldType'] }).value"
 
                 :aria-label="tr('自定义字段 {0} 类型', { 0: index + 1 })"
               >

@@ -1,5 +1,5 @@
 import { tr } from '../i18n';
-import type { IdentityItem, LoginItem, VaultItem, VaultItemKind } from "../core/model";
+import type { IdentityItem, LoginItem, TotpItem, VaultItem, VaultItemKind } from "../core/model";
 import { parseSshKeyMetadata, parseWifiMetadata } from "../core/special-login";
 import { isWalletPass, WALLET_TEMPLATE_LABELS } from '../core/wallet-pass';
 
@@ -24,7 +24,7 @@ export function itemSection(item: VaultItem): VaultManagerSection { return KIND_
 export function itemKindSection(kind: VaultItemKind): VaultManagerSection { return KIND_META[kind].section; }
 
 /** KeePass stores many authenticators on the login (`otp` / `totpSecret`), not as a standalone totp item. */
-export function itemCarriesAuthenticator(item: VaultItem): boolean {
+export function itemCarriesAuthenticator(item: VaultItem): item is TotpItem | (LoginItem & { totpSecret: string }) {
   return item.kind === "totp" || (item.kind === "login" && Boolean(item.totpSecret));
 }
 

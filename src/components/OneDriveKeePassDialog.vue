@@ -77,7 +77,7 @@ async function browse(path: Array<{ id: string; name: string }>) {
   const revision = generation;
   busy.value = "browse"; error.value = "";
   try {
-    const result = await vaultClient.browseOneDrive({ loginId: login.value.loginId, parentId: path.at(-1)?.id, extensions: [".kdbx", ".mdbx"] });
+    const result = await vaultClient.browseOneDrive({ loginId: login.value.loginId, parentId: path[path.length - 1]?.id, extensions: [".kdbx", ".mdbx"] });
     if (revision !== generation) return;
     page.value = result; folders.value = path; query.value = "";
   } catch (cause) {
@@ -167,7 +167,7 @@ async function connectMdbx2(revision: number): Promise<void> {
         </section>
 
         <section v-if="login && !provider" class="onedrive-browser" :aria-label="tr('选择 OneDrive 数据库')" :aria-busy="busy === 'browse'">
-          <div class="onedrive-path"><m3e-icon-button :aria-label="tr('上一级文件夹')" :disabled="Boolean(busy) || !folders.length" @click="browse(folders.slice(0, -1))"><m3e-icon name="arrow_back" /></m3e-icon-button><strong>{{ folders.at(-1)?.name || tr('我的文件') }}</strong><m3e-icon-button :aria-label="tr('刷新文件列表')" :disabled="Boolean(busy)" @click="browse(folders)"><m3e-icon name="refresh" /></m3e-icon-button></div>
+          <div class="onedrive-path"><m3e-icon-button :aria-label="tr('上一级文件夹')" :disabled="Boolean(busy) || !folders.length" @click="browse(folders.slice(0, -1))"><m3e-icon name="arrow_back" /></m3e-icon-button><strong>{{ folders[folders.length - 1]?.name || tr('我的文件') }}</strong><m3e-icon-button :aria-label="tr('刷新文件列表')" :disabled="Boolean(busy)" @click="browse(folders)"><m3e-icon name="refresh" /></m3e-icon-button></div>
           <m3e-form-field v-field-label variant="filled" hide-subscript="always"><label slot="label">{{ tr('搜索当前文件夹') }}</label><m3e-icon slot="leading-icon" name="search" /><input v-model="query" type="search" :disabled="Boolean(busy)" /></m3e-form-field>
           <p v-if="busy === 'browse'" role="status">{{ tr('正在读取文件…') }}</p>
           <div v-else class="onedrive-files" role="group" :aria-label="tr('文件夹与 KDBX/MDBX 文件')">

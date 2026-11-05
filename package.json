@@ -16,7 +16,7 @@
   "scripts": {
     "clean:test-profiles": "powershell.exe -NoProfile -NonInteractive -File scripts/clean-test-profiles.ps1 -AllInactive",
     "dev": "vite --host 127.0.0.1",
-    "check": "tsc -b --pretty false && tsc -p tsconfig.interop.json --pretty false",
+    "check": "vue-tsc -b --pretty false && tsc -p tsconfig.interop.json --pretty false",
     "test": "vitest run",
     "test:webdav": "vitest run src/providers/webdav",
     "test:bitwarden": "vitest run src/providers/bitwarden",
@@ -98,7 +98,8 @@
     "typescript": "^5.6.3",
     "typescript-eslint": "8.72.1",
     "vite": "8.1.6",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "vue-tsc": "3.3.14"
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.15",

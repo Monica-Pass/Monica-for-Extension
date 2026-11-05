@@ -198,7 +198,7 @@ const currentCreateType = computed<CreateItemType | undefined>(() => {
       ? kindFilter.value as CreateItemType : "card";
     case "vault": return kindFilter.value === "login" ? "PASSWORD"
       : kindFilter.value === "payment-account" ? "card"
-      : kindFilter.value && kindFilter.value !== "passkey" ? kindFilter.value : undefined;
+      : kindFilter.value && kindFilter.value !== "passkey" && kindFilter.value !== "opaque" ? kindFilter.value : undefined;
     default: return undefined;
   }
 });
@@ -1442,7 +1442,7 @@ function openEdit(item: LoginItem) {
 function openVaultCreate(section: "wallet" | "notes" | "totp") {
   vaultEditorItem.value = undefined;
   vaultEditorTemplate.value = undefined;
-  vaultEditorKind.value = kindFilter.value && kindFilter.value !== "login" && kindFilter.value !== "passkey" && kindFilter.value !== "api-token" && kindFilter.value !== "payment-account"
+  vaultEditorKind.value = kindFilter.value && kindFilter.value !== "login" && kindFilter.value !== "passkey" && kindFilter.value !== "api-token" && kindFilter.value !== "payment-account" && kindFilter.value !== "opaque"
     ? kindFilter.value : section === "wallet" ? "card" : section === "totp" ? "totp" : "secure-note";
   vaultEditorOpen.value = true;
 }
@@ -2693,7 +2693,7 @@ async function connectBitwarden() {
       }
       bitwardenTwoFactorProviders.value = supported;
       bitwardenTwoFactorProviderData.value = result.providerData;
-      bitwardenForm.twoFactorProvider = supported.includes(previousProvider) ? previousProvider : supported.includes(0) ? 0 : supported[0];
+      bitwardenForm.twoFactorProvider = supported.find(provider => provider === previousProvider) ?? (supported.includes(0) ? 0 : supported[0]);
       if (submittedCode) bitwardenError.value = tr('Bitwarden 两步验证码错误或已过期，请获取新验证码后重试。');
       else showNotice(bitwardenForm.twoFactorProvider === 5 ? tr('Bitwarden 需要 WebAuthn 验证，请继续完成硬件密钥或 Passkey 验证。') : bitwardenForm.twoFactorProvider === 2 || bitwardenForm.twoFactorProvider === 4 ? tr('Bitwarden 需要 Duo 验证，请在安全窗口中批准登录。') : tr('Bitwarden 需要两步验证，请输入代码后继续。'));
       return;
@@ -3077,7 +3077,7 @@ function errorCode(error: unknown): string | undefined {
                 <div v-else class="item-card-actions" @click.stop><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="tr('查看 {0} 的 KeePass 历史', { 0: item.title })" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="tr('管理 {0} 的附件', { 0: item.title })" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="item.kind === 'login' || isEditableVaultItem(item)" :aria-label="item.kind === 'login' ? tr('编辑登录项') : tr('编辑{0}', { 0: itemKindLabel(item.kind) })" @click="item.kind === 'login' ? openEdit(item) : openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="item.kind !== 'opaque' || isLocalOnlyVaultItem(item, providers)" :aria-label="item.kind === 'login' ? tr('删除登录项') : tr('删除{0}', { 0: itemKindLabel(item.kind) })" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
               </article>
             </div>
-            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'vault' ? tr('还没有保存的项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'notes' ? 'note_stack' : 'key_vertical'"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'vault' ? tr('还没有保存的项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
           </m3e-card>
         </section>
 
