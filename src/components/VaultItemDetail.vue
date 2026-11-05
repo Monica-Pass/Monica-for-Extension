@@ -4,6 +4,7 @@ import { CARD_NAMES, PROFILE_NAMES, PROFILE_EXTRAS, ADDRESS_EXTRAS, PROFILE_LABE
 import { BILLING_ADDRESS_FIELDS, readBillingAddress, type BillingAddressField } from "../core/billing-address";
 import PasskeyBindings from "./PasskeyBindings.vue";
 import { tr, locale } from '../i18n';
+import { translateRuntimeError } from '../i18n/runtime';
 
 import { computed, reactive, ref, useId } from "vue";
 import type { LoginItem, ProviderAccount, TotpItem, VaultItem } from "../core/model";
@@ -76,9 +77,12 @@ const nestedTitleId = `vault-detail-title-${useId()}`;
 const titleId = computed(() => props.readOnly ? nestedTitleId : "vault-detail-title");
 const rank = (token: string) => props.item.kind === "login" ? contentRank(props.item.customFields, token) : 0;
 const safeHref = (href: string) => { try { return /^https?:$/.test(new URL(href).protocol); } catch { return false; } };
-const providerName = computed(() => props.providers.find((provider) => provider.id === props.item.providerRefs[0]?.providerId)?.name || tr('Monica 本地库'));
+const providerName = computed(() => {
+  const provider = props.providers.find((candidate) => candidate.id === props.item.providerRefs[0]?.providerId);
+  return provider && provider.kind !== 'local' ? provider.name || tr('Monica 本地库') : tr('Monica 本地库');
+});
 const stateLabel = computed(() => props.item.deletedAt ? tr('在回收站') : props.item.archivedAt ? tr('已归档') : props.item.favorite ? tr('已收藏') : '');
-const detailType = computed(() => props.item.kind === 'identity' && isWalletPass(props.item) ? tr(WALLET_TEMPLATE_LABELS[props.item.walletTemplate!] ?? '卡包') : props.item.kind === "login" ? ({ WIFI: "Wi-Fi", SSH_KEY: tr('SSH 密钥'), GPG_KEY: "GPG 密钥", API_KEY: "API Key", BARCODE: tr('条码') } as Record<string, string>)[props.item.loginType || ""] || itemKindLabel(props.item.kind) : itemKindLabel(props.item.kind));
+const detailType = computed(() => props.item.kind === 'identity' && isWalletPass(props.item) ? tr(WALLET_TEMPLATE_LABELS[props.item.walletTemplate!] ?? '卡包') : props.item.kind === "login" ? ({ WIFI: "Wi-Fi", SSH_KEY: tr('SSH 密钥'), GPG_KEY: tr('GPG 密钥'), API_KEY: "API Key", BARCODE: tr('条码') } as Record<string, string>)[props.item.loginType || ""] || itemKindLabel(props.item.kind) : itemKindLabel(props.item.kind));
 const detailIcon = computed(() => props.item.kind === "login" ? ({ WIFI: "wifi", SSH_KEY: "terminal", BARCODE: "qr_code_2" } as Record<string, string>)[props.item.loginType || ""] || itemIcon(props.item.kind) : itemIcon(props.item.kind));
 const otpSource = computed(() => props.item.kind === "totp" ? props.item : props.item.kind === "login" ? findBoundTotpItem(props.item, props.items) || props.item : undefined);
 
@@ -142,7 +146,7 @@ const fields = computed<DetailField[]>(() => {
         if (wifi) rows.push(...wifiAdvancedDetailFields(wifi).map(field => ({ ...field, label: tr(field.label), secondary: true })));
       }
       if (item.loginType !== "BARCODE" && item.loginType !== "SSH_KEY" && item.username) rows.push({ label: tr('用户名'), value: item.username });
-      if (item.password) rows.push({ label: item.loginType === "WIFI" ? tr('Wi-Fi 密码') : item.loginType === "BARCODE" ? tr('条码内容') : item.loginType === "GPG_KEY" ? "GPG 私钥" : item.loginType === "API_KEY" ? "API Key" : tr('密码'), value: item.password, secret: true, mono: item.loginType === "BARCODE" });
+      if (item.password) rows.push({ label: item.loginType === "WIFI" ? tr('Wi-Fi 密码') : item.loginType === "BARCODE" ? tr('条码内容') : item.loginType === "GPG_KEY" ? tr('GPG 私钥') : item.loginType === "API_KEY" ? "API Key" : tr('密码'), value: item.password, secret: true, mono: item.loginType === "BARCODE" });
       if (item.loginType === "SSH_KEY") {
         if (ssh?.algorithm) rows.push({ secondary: true, label: tr('算法'), value: ssh.algorithm });
         if (ssh?.keySize) rows.push({ secondary: true, label: tr('密钥位数'), value: String(ssh.keySize) });
@@ -161,9 +165,9 @@ const fields = computed<DetailField[]>(() => {
       const credentialNote = readProjectCredential(item.customFields)?.note;
       if (credentialNote?.trim()) rows.push({ label: tr('凭据备注'), value: credentialNote });
       if (item.totpSecret || item.boundTotpItemId || otpSource.value?.kind === "totp") rows.push({ label: tr('动态验证码'), value: "", otp: true, section: "AUTHENTICATOR" });
-      if (item.loginType === "GPG_KEY") { try { const gpg = readGpgFields(item.customFields); rows.push({label:"GPG 公钥",value:gpg.publicKey,mono:true},{label:"指纹",value:gpg.fingerprint},{label:"用户身份",value:gpg.userId}); } catch { rows.push({label:"GPG 公钥状态",value:"分段或版本不受支持；原始字段完整保留。"}); } }
+      if (item.loginType === "GPG_KEY") { try { const gpg = readGpgFields(item.customFields); rows.push({label:tr('GPG 公钥'),value:gpg.publicKey,mono:true},{label:tr('指纹'),value:gpg.fingerprint},{label:tr('用户身份'),value:gpg.userId}); } catch { rows.push({label:tr('GPG 公钥状态'),value:tr('分段或版本不受支持；原始字段完整保留。')}); } }
       if (item.loginType === "API_KEY") rows.push({label:"API 地址",value:item.customFields.find(field=>field.name==="monica_api_key_url")?.value||""});
-      for (const [key,label,section] of [["email","邮箱","CONTACT"],["phone","电话","CONTACT"],["addressLine","街道地址","ADDRESS"],["city","城市","ADDRESS"],["state","州 / 省","ADDRESS"],["zipCode","邮编","ADDRESS"],["country","国家","ADDRESS"],["creditCardNumber","卡号","PAYMENT"],["creditCardHolder","持卡人","PAYMENT"],["creditCardExpiry","有效期","PAYMENT"],["creditCardCVV","安全码","PAYMENT"]]) { const value = item[key as keyof LoginItem]; if(typeof value === "string" && value) rows.push({label,value,section,secret:key==="creditCardNumber"||key==="creditCardCVV"}); }
+      for (const [key,label,section] of [["email","邮箱","CONTACT"],["phone","电话","CONTACT"],["addressLine","街道地址","ADDRESS"],["city","城市","ADDRESS"],["state","州 / 省","ADDRESS"],["zipCode","邮编","ADDRESS"],["country","国家","ADDRESS"],["creditCardNumber","卡号","PAYMENT"],["creditCardHolder","持卡人","PAYMENT"],["creditCardExpiry","有效期","PAYMENT"],["creditCardCVV","安全码","PAYMENT"]]) { const value = item[key as keyof LoginItem]; if(typeof value === "string" && value) rows.push({label:tr(label),value,section,secret:key==="creditCardNumber"||key==="creditCardCVV"}); }
       for (const rule of effectiveLoginUriRules(item)) rows.push({ label: tr('网址'), value: rule.uri, ...(rule.matchType === 'regex' || rule.matchType === 'never' ? {} : { href: rule.uri }), section: "WEBSITES" });
       if (item.appName) rows.push({ secondary: true, label: tr('应用名称'), value: item.appName });
       if (item.appPackageName) rows.push({ secondary: true, label: tr('应用包名'), value: item.appPackageName, mono: true });
@@ -331,7 +335,7 @@ const fieldSections = computed(() => {
   }));
   return [
     { id: "primary", order: -2, title: selectedPasswordLabel.value, collapsible: false, fields: indexed.filter(field => !field.custom && !field.secondary && !field.section) },
-    { id: "websites", order: -1, title: tr('匹配网站（可选）'), collapsible: false, fields: indexed.filter(field => field.section === "WEBSITES") },
+    { id: "websites", order: -1, title: tr('匹配网站'), collapsible: false, fields: indexed.filter(field => field.section === "WEBSITES") },
     { id: "secondary", order: -1, title: tr('更多信息'), collapsible: true, fields: indexed.filter(field => !field.custom && field.secondary && !field.section) },
     { id: "custom", order: rank("CUSTOM_FIELDS"), title: tr('自定义字段'), collapsible: true, fields: indexed.filter(field => field.custom) },
     ...[["AUTHENTICATOR","验证码"],["PAYMENT","支付信息"],["CONTACT","个人信息"],["ADDRESS","地址"]].map(([id,title])=>({id,title:tr(title),order:rank(id),collapsible:false,fields:indexed.filter(field=>field.section===id)}))
@@ -369,17 +373,17 @@ const fieldSections = computed(() => {
         <div class="detail-body">
           <div class="detail-main" style="display:flex;flex-direction:column">
             <PasskeyStatus v-if="item.kind === 'passkey'" :item="item" :providers="providers" detail />
-            <section v-if="item.kind==='opaque'" class="detail-section"><h3>只读保护</h3><p>{{item.readOnlyReason}}</p><p>类型 {{item.nativeType}} · 版本 {{item.payloadSchemaVersion}}</p><ProtectedValue v-if="item.originalPayload!==undefined" label="完整原始内容" :value="item.originalPayload" secret /></section>
+            <section v-if="item.kind==='opaque'" class="detail-section"><h3>{{ tr('只读保护') }}</h3><p>{{ translateRuntimeError(item.readOnlyReason) }}</p><p>{{ tr('类型 {0} · 版本 {1}', { 0: item.nativeType, 1: item.payloadSchemaVersion }) }}</p><ProtectedValue v-if="item.originalPayload!==undefined" :label="tr('完整原始内容')" :value="item.originalPayload" secret /></section>
             <ProjectCredentialNavigation v-if="members.length > 1 || projectGroups" :item-id="item.id" :members="members" @open="member => emit('open', member)"><m3e-button v-if="canDetach && item.kind==='login'" type="button" variant="text" @click="emit('detach',item)">{{ tr('拆分为独立密码') }}</m3e-button></ProjectCredentialNavigation>
             <section v-if="item.kind === 'login' && (item.boundNoteEntryId || item.boundNoteId != null)" class="detail-section" :style="{order:rank('NOTES')}">
               <h3>{{ tr('关联笔记') }}</h3>
               <template v-if="linkedNote"><p>{{ linkedNote.title }}</p><m3e-button type="button" variant="tonal" @click="noteOpen = true"><m3e-icon slot="icon" name="note"/>{{ tr('查看关联笔记') }}</m3e-button></template>
               <p v-else>{{ tr('暂时找不到关联笔记，原有关联已保留。') }}</p>
             </section>
-            <section v-if="['card','identity','billing-address'].includes(item.kind)" class="detail-section detail-card-face" style="order:-3"><WalletCardFace :item="item" :owner="attachmentOwner"/><AttachmentPreview v-if="cardFace?.imageAttachmentName" :owner="attachmentOwner||item" :name="cardFace.imageAttachmentName" label="打开卡面图片"/></section>
+            <section v-if="['card','identity','billing-address'].includes(item.kind)" class="detail-section detail-card-face" style="order:-3"><WalletCardFace :item="item" :owner="attachmentOwner"/><AttachmentPreview v-if="cardFace?.imageAttachmentName" :owner="attachmentOwner||item" :name="cardFace.imageAttachmentName" :label="tr('打开卡面图片')"/></section>
             <PasswordContentDetail v-if="item.kind==='login'" :item="item" :items="items" :providers="providers" />
-            <section v-if="item.kind==='login' &amp;&amp; item.passkeyBindings" class="detail-section" :style="{order:rank('AUTHENTICATOR')}"><h3>Passkey 绑定</h3><PasskeyBindings :raw="item.passkeyBindings" /></section>
-            <m3e-expansion-panel v-if="item.kind==='login' &amp;&amp; item.customFields.some(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name))" class="detail-section" :style="{order:rank('CUSTOM_FIELDS')}"><span slot="header">受保护的内部字段与未来数据</span><ProtectedValue label="内部字段" :value="JSON.stringify(item.customFields.filter(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name)),null,2)" secret /></m3e-expansion-panel>
+            <section v-if="item.kind==='login' &amp;&amp; item.passkeyBindings" class="detail-section" :style="{order:rank('AUTHENTICATOR')}"><h3>{{ tr('Passkey 绑定') }}</h3><PasskeyBindings :raw="item.passkeyBindings" /></section>
+            <m3e-expansion-panel v-if="item.kind==='login' &amp;&amp; item.customFields.some(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name))" class="detail-section" :style="{order:rank('CUSTOM_FIELDS')}"><span slot="header">{{ tr('受保护的内部字段与未来数据') }}</span><ProtectedValue :label="tr('内部字段')" :value="JSON.stringify(item.customFields.filter(field=>isContentMetadata(field.name)||isCredentialMetadata(field.name)),null,2)" secret /></m3e-expansion-panel>
             <section v-if="item.kind === 'secure-note'" class="detail-section detail-note" aria-labelledby="detail-content-title">
               <div class="detail-section-heading"><h3 id="detail-content-title" class="detail-section-title">{{ tr('内容') }}</h3><m3e-icon-button v-if="noteContent" :aria-label="tr('复制{0}', { 0: tr('内容') })" @click="copyField({ label: tr('内容'), value: noteContent })"><m3e-icon name="content_copy"></m3e-icon></m3e-icon-button></div>
               <pre v-if="noteContent">{{ noteContent }}</pre>

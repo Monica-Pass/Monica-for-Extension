@@ -115,7 +115,7 @@ watch(kind, () => {
 initialize();
 let initialProjection: VaultItem | undefined;
 try { initialProjection = props.item ? buildCandidate(fields.title) : undefined; }
-catch (cause) { error.value = cause instanceof Error ? cause.message : "原始数据暂不支持编辑，已保留。"; }
+catch (cause) { error.value = cause instanceof Error ? cause.message : tr("原始数据暂不支持编辑，已保留。"); }
 
 function initialize() {
   Object.assign(fields, emptyFields());
@@ -1173,7 +1173,7 @@ function exportMaFile() {
                 >{{ tr('未知字段保持原样，用于 Monica Android 与 maFile 写回。') }}</small
               ></m3e-form-field></template
           ></div></m3e-expansion-panel></section>
-<section v-if="['card','identity','billing-address'].includes(kind)" class="editor-section"><h3>卡面与附件</h3><WalletCardFace :item="buildCandidate(fields.title)" :owner="props.item" /><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceEnabled" @input="fields.cardFaceEnabled=($event.target as any).checked"/><span>使用卡面图片</span></label><template v-if="fields.cardFaceEnabled"><CardFaceImagePicker v-model="fields.cardFaceName" :owner="props.item" :providers="props.providers" /><m3e-form-field v-field-label variant="filled"><label slot="label">卡面显示模式</label><component :is="materialSelectTag" @input="fields.cardFaceMode=($event.target as any).value"><component :is="materialOptionTag" v-for="mode in ['ALL','CARD_NUMBER_ONLY','HIDDEN']" :key="mode" :value="mode" :selected.prop="fields.cardFaceMode===mode">{{({ALL:'显示全部',CARD_NUMBER_ONLY:'只显示卡号',HIDDEN:'隐藏信息'} as any)[mode]}}</component></component></m3e-form-field><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceBrand" @input="fields.cardFaceBrand=($event.target as any).checked"/><span>显示卡组织图标</span></label></template></section>
+<section v-if="['card','identity','billing-address'].includes(kind)" class="editor-section"><h3>{{ tr('卡面与附件') }}</h3><WalletCardFace :item="buildCandidate(fields.title)" :owner="props.item" /><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceEnabled" @input="fields.cardFaceEnabled=($event.target as any).checked"/><span>{{ tr('使用卡面图片') }}</span></label><template v-if="fields.cardFaceEnabled"><CardFaceImagePicker v-model="fields.cardFaceName" :owner="props.item" :providers="props.providers" /><m3e-form-field v-field-label variant="filled"><label slot="label">{{ tr('卡面显示模式') }}</label><component :is="materialSelectTag" @input="fields.cardFaceMode=($event.target as any).value"><component :is="materialOptionTag" v-for="mode in ['ALL','CARD_NUMBER_ONLY','HIDDEN']" :key="mode" :value="mode" :selected.prop="fields.cardFaceMode===mode">{{({ALL:tr('显示全部'),CARD_NUMBER_ONLY:tr('只显示卡号'),HIDDEN:tr('隐藏信息')} as Record<string, string>)[mode]}}</component></component></m3e-form-field><label v-choice-label><m3e-checkbox :checked.prop="fields.cardFaceBrand" @input="fields.cardFaceBrand=($event.target as any).checked"/><span>{{ tr('显示卡组织图标') }}</span></label></template></section>
 
 
 <WalletContentEditor v-if="isOrderedWallet" :key="kind" v-model="walletContentOrder" :sections="walletSections" :disabled="saving">

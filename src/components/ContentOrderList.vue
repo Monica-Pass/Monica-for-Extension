@@ -69,8 +69,8 @@ onBeforeUnmount(cancel);
     <div v-for="(token,index) in tokens" :key="token" :data-order-token="token" class="content-order-row" :class="{ 'order-source': source===token, 'order-before': target===token && source!==token && !after, 'order-after': target===token && source!==token && after }">
       <button type="button" class="content-drag-handle" :aria-label="tr('拖动排序：{0}', {0:label(token)})" @pointerdown.prevent="begin($event,token)" @pointermove="drag" @pointerup="end" @pointercancel="cancel" @lostpointercapture="cancel" @keydown.up.prevent="step(token,-1)" @keydown.down.prevent="step(token,1)" @keydown.esc.stop.prevent="cancel"><m3e-icon name="drag_indicator" /></button>
       <span>{{ label(token) }}</span>
-      <m3e-icon-button type="button" :disabled="index===0" :aria-label="`上移${label(token)}`" @click="step(token,-1)"><m3e-icon name="expand_less" /></m3e-icon-button>
-      <m3e-icon-button type="button" :disabled="index===tokens.length-1" :aria-label="`下移${label(token)}`" @click="step(token,1)"><m3e-icon name="expand_more" /></m3e-icon-button>
+      <m3e-icon-button type="button" :disabled="index===0" :aria-label="tr('上移{0}', { 0: label(token) })" @click="step(token,-1)"><m3e-icon name="expand_less" /></m3e-icon-button>
+      <m3e-icon-button type="button" :disabled="index===tokens.length-1" :aria-label="tr('下移{0}', { 0: label(token) })" @click="step(token,1)"><m3e-icon name="expand_more" /></m3e-icon-button>
     </div>
   </div>
   <span class="order-status" role="status" aria-live="polite">{{ status }}</span>

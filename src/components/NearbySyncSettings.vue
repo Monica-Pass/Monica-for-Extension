@@ -219,7 +219,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); window.removeEventList
 </script>
 
 <template>
-  <section class="nearby-settings" aria-label="Wi-Fi 同步" data-nearby-settings>
+  <section class="nearby-settings" :aria-label="tr('Wi-Fi 同步')" data-nearby-settings>
     <p class="supporting">{{ tr('附近设备自动同步需要保持本页打开并连接本机通信组件。离开页面、锁库或断开组件后暂停；再次打开后恢复检查。') }}</p>
     <p class="supporting">{{ tr('通过同一 Wi-Fi 或局域网加密同步选定密码库。云端密码源仍使用各自的同步设置。') }}</p>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>

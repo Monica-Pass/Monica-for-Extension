@@ -8,7 +8,7 @@ const address = computed(() => readBillingAddress(props.modelValue));
 const error = ref("");
 function edit(key: BillingAddressField, event: Event) {
   try { emit("update:modelValue", editBillingAddressField(props.modelValue, key, (event.target as HTMLInputElement).value)); error.value = ""; }
-  catch (cause) { error.value = String(cause); }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
 }
 </script>
 <template>
