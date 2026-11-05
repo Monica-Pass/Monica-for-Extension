@@ -34,7 +34,7 @@ async function refresh() {
     const [rows, keepass] = await Promise.all([vaultClient.listPasswordProjectRemovals(), vaultClient.listKeePassProjectRemovals()]);
     if (!disposed && token === loadToken) operations.value = [...rows, ...keepass.map(row => ({
       operationId: row.operationId, providerId: row.providerId, title: row.title, backend: 'keepass' as const,
-      status: row.status === 'staged' ? 'preparing' as const : row.status === 'writing' ? 'deleting' as const : row.status,
+      status: row.phase,
       removedItemIds: row.removedItemIds, retainedItemIds: [], pendingRestoreItemIds: [], canCancel: row.canCancel, supported: true
     }))];
   }
@@ -45,9 +45,11 @@ async function run(row: RemovalRow, cancel: boolean) {
   if (busy.value || !row.supported || cancel && !row.canCancel || !cancel && locked(row)) return;
   busy.value = row.operationId; error.value = ''; notice.value = '';
   try {
-    const result = row.backend === 'keepass'
-      ? cancel ? await vaultClient.cancelKeePassProjectRemoval(row.operationId) : await vaultClient.resumeKeePassProjectRemoval(row.operationId)
-      : cancel ? await vaultClient.cancelPasswordProjectRemoval(row.operationId) : await vaultClient.resumePasswordProjectRemoval(row.operationId);
+    // Lazy thunks keep method-call form (this-binding) and call exactly one client method, as before.
+    const calls = row.backend === 'keepass'
+      ? { cancel: () => vaultClient.cancelKeePassProjectRemoval(row.operationId), resume: () => vaultClient.resumeKeePassProjectRemoval(row.operationId) }
+      : { cancel: () => vaultClient.cancelPasswordProjectRemoval(row.operationId), resume: () => vaultClient.resumePasswordProjectRemoval(row.operationId) };
+    const result = await (cancel ? calls.cancel : calls.resume)();
     if (disposed) return;
     notice.value = result.status === 'cancelled' ? tr('已取消这次移除，其他编辑已保留。') : result.status === 'completed' ? tr('密码移除已完成。') : tr('操作尚未完成，可以继续重试。');
     const copies = 'passkeyPreservation' in result ? result.passkeyPreservation : undefined;

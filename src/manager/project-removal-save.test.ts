@@ -25,7 +25,8 @@ it('preserves the original failure if receipt lookup is also unavailable', async
 const keepassRequest: KeePassProjectRemovalRequest = { operationId: crypto.randomUUID(), sourceToken: 'old-editor-token',
   draft: { providerId: 'kp', anchorItemId: 'anchor', originals: [], items: [], removedItemIds: ['anchor'] } };
 const keepassReceipt = (status: KeePassProjectRemovalStatus['status']): KeePassProjectRemovalStatus => ({ operationId: keepassRequest.operationId,
-  providerId: 'kp', title: 'Synthetic', status, canCancel: status === 'staged', localAdoptionCompleted: status === 'completed', removedItemIds: ['anchor'] });
+  providerId: 'kp', title: 'Synthetic', status, phase: status === 'staged' ? 'preparing' : status === 'writing' ? 'deleting' : status,
+  canCancel: status === 'staged', localAdoptionCompleted: status === 'completed', removedItemIds: ['anchor'] });
 it.each(['staged', 'writing'] as const)('resumes an existing KeePass %s operation without submitting the expired editor token', async status => {
   const client = { listKeePassProjectRemovals: vi.fn().mockResolvedValue([keepassReceipt(status)]),
     resumeKeePassProjectRemoval: vi.fn().mockResolvedValue(keepassReceipt('completed')), removeKeePassProjectMembers: vi.fn() };

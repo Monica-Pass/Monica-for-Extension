@@ -20,6 +20,9 @@ export interface KeePassProjectRemovalStatus {
   providerId: string;
   title: string;
   status: KeePassProjectRemovalIntent['status'];
+  /** Generic UI phase derived from the journal status: staged is still preparing,
+   * writing is already deleting; terminal statuses surface unchanged. */
+  phase: 'preparing' | 'deleting' | 'completed' | 'cancelled';
   canCancel: boolean;
   localAdoptionCompleted: boolean;
   removedItemIds: string[];
@@ -111,13 +114,13 @@ export class KeePassProjectRemovalWorkflow {
     return this.queue.run(intent.source.id, () => this.runMutation(intent.source.id, async () => {
       await this.vault.cancelKeePassProjectRemovalIntent(operationId);
       this.changed();
-      return describe(await this.record(operationId));
+      return describeKeePassProjectRemovalStatus(await this.record(operationId));
     }));
   }
 
   async pending(operationId?: string): Promise<KeePassProjectRemovalStatus[]> {
     return (await this.vault.readKeePassProjectRemovalIntents())
-      .filter(row => operationId ? row.operationId === operationId : row.status === 'staged' || row.status === 'writing').map(describe);
+      .filter(row => operationId ? row.operationId === operationId : row.status === 'staged' || row.status === 'writing').map(describeKeePassProjectRemovalStatus);
   }
 
   /** Called only while the outer provider-operation queue is already held. */
@@ -142,7 +145,7 @@ export class KeePassProjectRemovalWorkflow {
 
   private async resumeLocked(operationId: string): Promise<KeePassProjectRemovalStatus> {
     let intent = await this.record(operationId);
-    if (intent.status === 'completed' || intent.status === 'cancelled') return describe(intent);
+    if (intent.status === 'completed' || intent.status === 'cancelled') return describeKeePassProjectRemovalStatus(intent);
     let source = await this.currentSource(intent);
     if (intent.status === 'staged') {
       await this.lifecycle?.beforeCapture(source);
@@ -172,7 +175,7 @@ export class KeePassProjectRemovalWorkflow {
     await this.currentSource(intent);
     const completed = await this.vault.completeKeePassProjectRemoval(operationId, receipt);
     this.changed();
-    return describe(completed);
+    return describeKeePassProjectRemovalStatus(completed);
   }
 
   private async record(operationId: string): Promise<KeePassProjectRemovalIntent> {
@@ -194,8 +197,15 @@ export class KeePassProjectRemovalWorkflow {
   }
 }
 
-function describe(intent: KeePassProjectRemovalIntent): KeePassProjectRemovalStatus {
+export function describeKeePassProjectRemovalStatus(intent: KeePassProjectRemovalIntent): KeePassProjectRemovalStatus {
   return { operationId: intent.operationId, providerId: intent.source.id, title: intent.draft.originals[0]?.title || '',
-    status: intent.status, canCancel: intent.status === 'staged', localAdoptionCompleted: intent.status === 'completed',
-    removedItemIds: [...intent.draft.removedItemIds] };
+    status: intent.status, phase: keepassRemovalPhase(intent.status), canCancel: intent.status === 'staged',
+    localAdoptionCompleted: intent.status === 'completed', removedItemIds: [...intent.draft.removedItemIds] };
+}
+
+/** Journals speak KeePass-specific stages; pending-removal lists speak the generic
+ * preparing/deleting vocabulary shared with the password-project removal UI.
+ */
+export function keepassRemovalPhase(status: KeePassProjectRemovalIntent['status']): KeePassProjectRemovalStatus['phase'] {
+  return status === 'staged' ? 'preparing' : status === 'writing' ? 'deleting' : status;
 }
