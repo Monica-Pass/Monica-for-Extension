@@ -56,7 +56,10 @@ pub(crate) fn restore_archive(source: &Path, imports: &Path, handle: &str) -> Re
     let mut total = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|_| failure())?;
-        let name = entry.name().to_string();
+        // The browser engine compiles this file against a newer zip release whose name()
+        // returns a Result. The raw central-directory name reads the same in both, and the
+        // whitelist below only accepts ASCII names, so strict UTF-8 rejects nothing valid.
+        let name = std::str::from_utf8(entry.name_raw()).map_err(|_| failure())?.to_owned();
         let blob_id = backup_blob_id(&name);
         if (name != "vault.mdbx" && blob_id.is_none()) || !names.insert(name.clone()) ||
             entry.is_dir() || entry.unix_mode().is_some_and(|mode| mode & 0o170000 != 0 && mode & 0o170000 != 0o100000) ||
