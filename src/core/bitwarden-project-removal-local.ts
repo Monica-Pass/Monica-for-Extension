@@ -1,5 +1,6 @@
 import type { VaultItem } from './model';
 import type { PasswordProjectRemovalRecord } from './password-project-removal-journal';
+import { canonicalJson, sha256Hex } from './digest';
 
 export interface BitwardenProjectLocalChild {
   itemId: string;
@@ -50,8 +51,5 @@ export async function snapshotBitwardenProjectChildren(record: PasswordProjectRe
 }
 
 export async function bitwardenProjectLocalSha256(value: unknown): Promise<string> {
-  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable)
-    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, stable(entry)])) : value;
-  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(stable(value)))))]
-    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return sha256Hex(canonicalJson(value));
 }

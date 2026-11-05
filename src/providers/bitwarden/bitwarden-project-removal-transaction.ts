@@ -1,5 +1,6 @@
 import type { BitwardenProjectDeletionJournal } from '../../core/bitwarden-project-removal-journal';
 import { BitwardenProjectLocalChange } from '../../core/bitwarden-project-removal-local';
+import { sha256Hex } from '../../core/digest';
 import { readPasswordProjectRemovalJournal, type PasswordProjectRemovalRecord } from '../../core/password-project-removal-journal';
 import { assertKnownBitwardenCipher } from './bitwarden-cipher-codec';
 import type { SecureVaultService } from '../../security/secure-vault-service';
@@ -65,6 +66,9 @@ export async function bitwardenRemovalSnapshotSha256(raw: Record<string, unknown
   assertKnownBitwardenCipher(raw);
   if (typeof text(raw, 'id') !== 'string' || !text(raw, 'id') || typeof text(raw, 'revisionDate') !== 'string'
     || !Number.isFinite(Date.parse(String(text(raw, 'revisionDate'))))) throw new Error('Bitwarden 原始项目缺少身份或修订。');
+  // The RawJSON passthrough must be re-checked at every recursion level:
+  // rebuilding an object through Object.entries destroys the rawJSON marker,
+  // so this recursion is intentionally NOT the shared canonical kernel.
   const stable = (value: unknown): unknown => (JSON as typeof JSON & { isRawJSON?: (value: unknown) => boolean }).isRawJSON?.(value) ? value
     : Array.isArray(value) ? value.map(stable)
       : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, stable(entry)])) : value;
@@ -75,8 +79,7 @@ export async function bitwardenRemovalSnapshotSha256(raw: Record<string, unknown
       return Object.fromEntries(Object.entries(row).filter(([name]) => name.toLowerCase() !== 'url'));
     }).sort((a, b) => String(text(a, 'id')).localeCompare(String(text(b, 'id'))))];
   }));
-  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(stable(canonical)))))]
-    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return sha256Hex(JSON.stringify(stable(canonical)));
 }
 
 /** Dedicated journaled transaction. Ordinary sync remains forbidden while the

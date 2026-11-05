@@ -2,6 +2,7 @@ import type { LoginItem, ProviderAccount } from '../../core/model';
 import { readPasswordProjectRemovalJournal, type PasswordProjectRemovalProof, type PasswordProjectRemovalRecord } from '../../core/password-project-removal-journal';
 import type { ProviderAttachmentPage, ProviderAttachmentSummary } from './attachment-contract';
 import { hashProviderAttachment, ProviderAttachmentTransferCoordinator, type ProviderAttachmentTransferBackend } from './attachment-transfer';
+import { digestUuid } from '../../core/digest';
 
 export interface PasswordProjectAttachmentBackend extends ProviderAttachmentTransferBackend {
   listAttachments(providerId: string, itemId: string, cursor?: string): Promise<ProviderAttachmentPage>;
@@ -51,7 +52,7 @@ export async function preparePasswordProjectRemovalAttachments(
           // Never overwrite or rename a user's same-name file. A matching copy
           // found above also recovers an upload committed before a worker crash.
           if (collisions.length) throw new Error('保留密码存在内容不同或重复占用的同名附件，原密码尚未移除。');
-          const copyId = await operationUuid([operationId, account.id, sourceItemId, targetItemId, source.attachmentId, digest]);
+          const copyId = await digestUuid([operationId, account.id, sourceItemId, targetItemId, source.attachmentId, digest]);
           const copied = await new ProviderAttachmentTransferCoordinator().execute({ operationId: copyId,
             sourceProviderId: account.id, sourceItemId, sourceAttachmentId: source.attachmentId,
             targetProviderId: account.id, targetItemId, mode: 'copy', confirmedMove: false }, backend);
@@ -121,9 +122,3 @@ async function listAll(backend: PasswordProjectAttachmentReader, account: Provid
   return result.sort((left, right) => left.attachmentId.localeCompare(right.attachmentId));
 }
 
-async function operationUuid(parts: string[]): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(parts)))).slice(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50; bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
