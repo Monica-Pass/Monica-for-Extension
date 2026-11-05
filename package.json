@@ -103,6 +103,7 @@
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.15",
+    "minimatch": "11.0.4",
     "nanoid": ">=3.3.18"
   }
 }
