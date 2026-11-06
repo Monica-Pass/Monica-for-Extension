@@ -5,6 +5,9 @@
 ## 项目入口
 
 - 先读 [贡献指南](CONTRIBUTING.md)；发布前读 [发布流程](docs/RELEASE.md)，安全问题遵循 [安全政策](SECURITY.md)。文档中的历史版本示例不替代实际配置。
+- `docs/` 全部文档有分类索引（`docs/README.md`）：常青参考、各主题过程记录、发布与验证归档，实现或排查前可按主题查找。新增 `docs/` 文档时同步登记索引分组，覆盖完整性由 `src/docs-index-coverage.test.ts` 检查。
+- `docs/solutions/` 按类别收录过往问题的解决记录（bug、实践、工作流等），带 YAML frontmatter（module、tags、problem_type），在文档覆盖的领域实现或排查时可参考。
+- `CONCEPTS.md` 记录项目共享领域词汇（实体、命名流程、状态概念），理解代码库或讨论领域概念时参考。
 - 技术栈为 Vue 3、TypeScript、Vite 和 Manifest V3。`src/manager/`、`src/popup/`、`src/components/` 管理界面；`src/background/`、`src/runtime/` 处理后台和消息；`src/content/` 处理网页交互；`src/security/`、`src/providers/`、`src/passkey/` 管理安全与密码源。
 - 单元测试与源码相邻，真实浏览器测试在 `tests/e2e/`。`native/mdbx2-browser/` 是内置浏览器引擎，`native/mdbx2-host/` 是可选本机助手，两者工具链分别固定，不能互相代替。
 - Chrome/Edge 输出为 `dist/`；Firefox 使用独立构建，输出为 `dist-firefox/`，兼容性及签名要求见 [Firefox 说明](docs/FIREFOX.md)。

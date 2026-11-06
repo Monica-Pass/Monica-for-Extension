@@ -78,7 +78,7 @@ python scripts/generate-icon-font.py --tools-dir .artifacts/font-tools
 npm run build
 ```
 
-完整验证范围及安装方式见 [0.1.27 验证记录](VALIDATION-0.1.27.md)。
+完整验证范围及安装方式见 [0.1.27 验证记录](verification/VALIDATION-0.1.27.md)。
 
 ## 0.1.32 首页搜索测量（2026-09-13）
 
@@ -116,7 +116,7 @@ npm run build
 node scripts/performance-probe.mjs --items 2000 --output .artifacts/performance/current.json
 ```
 
-旧探针默认测量 10,000 和 50,000 条；当时可用 `--items 50000` 单独测量一种数据量。完整功能验证及交付见 [0.1.32 验证记录](VALIDATION-0.1.32.md)。
+旧探针默认测量 10,000 和 50,000 条；当时可用 `--items 50000` 单独测量一种数据量。完整功能验证及交付见 [0.1.32 验证记录](verification/VALIDATION-0.1.32.md)。
 
 ## 0.1.42 UI 资源调整（2026-09-15）
 

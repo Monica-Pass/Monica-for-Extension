@@ -170,7 +170,7 @@ Release 0.1.37 includes the counter policy from local development build 0.1.39 a
 
 The inspected Android `PasskeyAuthActivity.kt` still unconditionally signs and stores 0. Its encrypted full-backup restore drops live provider bindings and restores usable keys as local (`NONE`) or missing keys as references (`REFERENCE`). This is distinct from the extension's own full-vault backup, which intentionally includes provider settings. The Android historical-positive Bitwarden branch is not yet aligned with the official client; this extension update does not change Android production code. See [source policies and evidence](PASSKEY_COMPATIBILITY.md).
 
-Optional `backupEligible` and `backupState` metadata round-trips through the extension's KeePass, MDBX2 and encrypted Android codecs. Explicit imported values are retained. Older native Monica payloads default to BE/BS true, matching Monica's registration/authentication flags; KPEX-only imports use their recorded flags. Android's current `KeePassPasskeySyncCodec` ignores these additive JSON fields and continues to read the credential and key. See [0.1.38 verification](VALIDATION-0.1.38.md) for the JVM and browser test boundaries.
+Optional `backupEligible` and `backupState` metadata round-trips through the extension's KeePass, MDBX2 and encrypted Android codecs. Explicit imported values are retained. Older native Monica payloads default to BE/BS true, matching Monica's registration/authentication flags; KPEX-only imports use their recorded flags. Android's current `KeePassPasskeySyncCodec` ignores these additive JSON fields and continues to read the credential and key. See [0.1.38 verification](verification/VALIDATION-0.1.38.md) for the JVM and browser test boundaries.
 
 ### Generator history
 
