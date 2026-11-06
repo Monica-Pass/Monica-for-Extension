@@ -3,6 +3,8 @@
 `docs/` 全部 317 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
 
 > 机器可检索的解决方案库位于 `docs/solutions/`（YAML frontmatter：`module`、`tags`、`problem_type`）；共享领域词汇见仓库根 `CONCEPTS.md`。
+>
+> 新增 `docs/` 文档时同步登记到对应分组；分组计数与全覆盖由 `src/docs-index-coverage.test.ts` 守护。
 
 ## 常青参考（24）
 
@@ -279,8 +281,8 @@ docs/design/ 的 M3E 布局草图与设计证据。
 docs/releases/ 的发行说明、changelog 与历史阶段记录。
 
 - [Monica-Extension-0.1.38-changelog.md](releases/Monica-Extension-0.1.38-changelog.md) — 0.1.38 预览版累计改动记录
-- [Monica-Extension-0.1.38.md](releases/Monica-Extension-0.1.38.md) — 0.1.38 Preview 发行说明
-- [Monica-Extension-0.1.39.md](releases/Monica-Extension-0.1.39.md) — 0.1.39 Preview 发行说明
+- [Monica-Extension-0.1.38.md](releases/Monica-Extension-0.1.38.md) — 0.1.38 Preview 发行说明（同版本另有本地阶段记录与发布验证）
+- [Monica-Extension-0.1.39.md](releases/Monica-Extension-0.1.39.md) — 0.1.39 Preview 发行说明（同版本另有本地阶段记录与发布验证）
 - [Monica-Extension-0.1.46.md](releases/Monica-Extension-0.1.46.md) — 0.1.46 Beta 发行说明（仅 Chrome）
 - [Monica-Extension-0.1.47.md](releases/Monica-Extension-0.1.47.md) — 0.1.47 preview-beta 发行说明
 - [Monica-Extension-0.1.48.md](releases/Monica-Extension-0.1.48.md) — 0.1.48 preview-beta 发行说明
@@ -291,8 +293,8 @@ docs/releases/ 的发行说明、changelog 与历史阶段记录。
 - [Monica-Extension-next-changelog.md](releases/Monica-Extension-next-changelog.md) — 下一版未发布改动记录（changelog）
 - [RELEASE-0.1.36.md](releases/RELEASE-0.1.36.md) — 0.1.36 发行说明：概览、自动填充、多语言
 - [RELEASE-0.1.37.md](releases/RELEASE-0.1.37.md) — 0.1.37 公开预览版发行说明
-- [RELEASE-0.1.38.md](releases/RELEASE-0.1.38.md) — 0.1.38 本地开发阶段记录：Passkey 登录与跨端修复
-- [RELEASE-0.1.39.md](releases/RELEASE-0.1.39.md) — 0.1.39 本地开发阶段记录：按来源处理 Passkey 计数
+- [RELEASE-0.1.38.md](releases/RELEASE-0.1.38.md) — 0.1.38 本地开发阶段记录：Passkey 登录与跨端修复（同版本另有 Preview 发行说明与发布验证）
+- [RELEASE-0.1.39.md](releases/RELEASE-0.1.39.md) — 0.1.39 本地开发阶段记录：按来源处理 Passkey 计数（同版本另有 Preview 发行说明与发布验证）
 - [RELEASE-0.1.40.md](releases/RELEASE-0.1.40.md) — 0.1.40 本地开发阶段记录：自动与增量同步
 - [RELEASE-0.1.41.md](releases/RELEASE-0.1.41.md) — 0.1.41 本地开发阶段记录：密码库界面整理
 - [RELEASE-0.1.42.md](releases/RELEASE-0.1.42.md) — 0.1.42 本地开发阶段记录：M3 Expressive 主题
@@ -358,8 +360,8 @@ docs/verification/ 的功能验证、排查与发布就绪检查。
 - [pr13-integration-2026-10-17.md](verification/pr13-integration-2026-10-17.md) — PR 13 集成与 Wi-Fi 结果验证
 - [preview-ci-20261101.md](verification/preview-ci-20261101.md) — 自动 Preview 发布门禁修复验证
 - [provider-settings-20261021.md](verification/provider-settings-20261021.md) — 密码源分组列表与开关布局验证
-- [release-0.1.38.md](verification/release-0.1.38.md) — 0.1.38 阶段发布验证
-- [release-0.1.39.md](verification/release-0.1.39.md) — 0.1.39 Preview 发布验证
+- [release-0.1.38.md](verification/release-0.1.38.md) — 0.1.38 阶段发布验证（同版本另有 Preview 发行说明与本地阶段记录）
+- [release-0.1.39.md](verification/release-0.1.39.md) — 0.1.39 Preview 发布验证（同版本另有 Preview 发行说明与本地阶段记录）
 - [release-0.1.46.md](verification/release-0.1.46.md) — 0.1.46 Chrome 测试版发布验证
 - [release-0.1.47.md](verification/release-0.1.47.md) — 0.1.47 preview-beta 发布验证
 - [release-0.1.48.md](verification/release-0.1.48.md) — 0.1.48 preview-beta 发布验证
@@ -385,3 +387,12 @@ docs/verification/ 的功能验证、排查与发布就绪检查。
 docs/solutions/ 带结构化 frontmatter 的可检索解决方案。
 
 - [refresh-build-id-json-after-source-changes.md](solutions/build-errors/refresh-build-id-json-after-source-changes.md) — 方案：源码变更后刷新 build-id.json 修复 CI 打包拒绝
+
+## 非文档资产
+
+`docs/` 下与文档相伴的数据资产，不参与上文的文档计数。
+
+- `docs/design/*.m3e.json` — 各阶段 m3e-canvas 设计布局稿（历史草图，实际界面以 `src/` 实现为准）
+- [brand-icons-provenance.json](brand-icons-provenance.json) — Android 内置品牌图标导入的来源与许可记录
+- [import-export-20261023-results.json](import-export-20261023-results.json) — 独立导入导出页的验收结果数据
+- [nearby-android324-20261101.json](verification/nearby-android324-20261101.json) — 附近同步对齐 Android 1.0.324 的验证数据
