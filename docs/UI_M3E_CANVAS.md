@@ -69,13 +69,13 @@ Monica 正式版 0.1.37 以 Material 3 Expressive 统一组件、形状、字体
 
 主要实现位于 `src/material.css`、`src/material-manager.css`、`src/detail-layout.css`、`src/components/CreateSplitButton.vue`、`src/manager/create-items.ts` 和三个编辑器组件。共享主题与管理页覆盖分开加载，避免 Vite 共享 CSS 的顺序破坏详情和编辑器布局。
 
-本轮验证范围与本地安装包见 [0.1.43 验证记录](VALIDATION-0.1.43.md)。0.1.42 的布局调整记录保留在[上一版验证记录](VALIDATION-0.1.42.md)。
+本轮验证范围与本地安装包见 [0.1.43 验证记录](verification/VALIDATION-0.1.43.md)。0.1.42 的布局调整记录保留在[上一版验证记录](verification/VALIDATION-0.1.42.md)。
 
 ## 0.1.44 网站图标
 
 登录项在原有 M3E 前导图标位置显示网站 favicon，图片固定为 24 × 24，不改变列表行高；收藏状态使用独立小星标。加载中、无网站或失败时显示本地 Material Symbols，Wi-Fi、SSH 与条码保留类型图标。详情、列表及 Popup 共用同一组件，Monica 官方应用图标与配色不变。
 
-图标按可见范围加载，复用浏览器缓存和有容量上限的内存缓存；加载失败不增加弹窗或打断填充操作。验证与交付见 [0.1.44 验证记录](VALIDATION-0.1.44.md)。
+图标按可见范围加载，复用浏览器缓存和有容量上限的内存缓存；加载失败不增加弹窗或打断填充操作。验证与交付见 [0.1.44 验证记录](verification/VALIDATION-0.1.44.md)。
 
 ## 2026-09-15 Android 磁贴布局
 
@@ -88,4 +88,4 @@ Monica 正式版 0.1.37 以 Material 3 Expressive 统一组件、形状、字体
 
 页面沿用现有数据库筛选、搜索和每页 50 项的分页。验证码复用单个前台时钟，每个磁贴仅缓存当前及下一时间窗，后台清理计时预览；新菜单文案覆盖现有八种离线语言。Nothing 仍只提供配色。
 
-实现位于 `VaultItemTile.vue`、`OtpTileCountdown.vue`、`SteamAccountDialog.vue` 和 `tile-layout.css`；数据与同步协议保持原有格式。验证记录见 [0.1.37 验证记录](VALIDATION-0.1.37.md)。
+实现位于 `VaultItemTile.vue`、`OtpTileCountdown.vue`、`SteamAccountDialog.vue` 和 `tile-layout.css`；数据与同步协议保持原有格式。验证记录见 [0.1.37 验证记录](verification/VALIDATION-0.1.37.md)。

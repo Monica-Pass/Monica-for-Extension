@@ -51,12 +51,12 @@ node .artifacts/inline-autofill-0.1.35/capture.mjs
 
 ## 交付
 
-- [0.1.35 ZIP](../release/monica-extension-0.1.35.zip)
-- [解压目录](../release/monica-extension-unpacked)
-- [浅色菜单预览](../.artifacts/inline-autofill-0.1.35/inline-light.png) · [深色菜单预览](../.artifacts/inline-autofill-0.1.35/inline-dark.png)
-- [设置开关](../.artifacts/inline-autofill-0.1.35/settings-light.png) · [窄屏／200% 字号](../.artifacts/inline-autofill-0.1.35/settings-dark-zh-CN-320-200.png)
-- [最终安装包布局检查与原图哈希](../.artifacts/inline-autofill-0.1.35/checks.json)
-- [预览与检查脚本](../.artifacts/inline-autofill-0.1.35/capture.mjs)
+- [0.1.35 ZIP](../../release/monica-extension-0.1.35.zip)
+- [解压目录](../../release/monica-extension-unpacked)
+- [浅色菜单预览](../../.artifacts/inline-autofill-0.1.35/inline-light.png) · [深色菜单预览](../../.artifacts/inline-autofill-0.1.35/inline-dark.png)
+- [设置开关](../../.artifacts/inline-autofill-0.1.35/settings-light.png) · [窄屏／200% 字号](../../.artifacts/inline-autofill-0.1.35/settings-dark-zh-CN-320-200.png)
+- [最终安装包布局检查与原图哈希](../../.artifacts/inline-autofill-0.1.35/checks.json)
+- [预览与检查脚本](../../.artifacts/inline-autofill-0.1.35/capture.mjs)
 
 ZIP SHA-256：`47451607200a543a8c4d1c843fa941277853740ba4839c62531207a1dc47594c`
 

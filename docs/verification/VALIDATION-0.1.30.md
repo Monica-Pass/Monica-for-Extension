@@ -40,7 +40,7 @@ Windows 系统剪贴板会将多行文本转换为 CRLF；复制回归仅对这�
 - ZIP：`release/monica-extension-0.1.30.zip`，1,865,783 字节。
 - SHA-256：`6a78026f1cd54b7bab6a8da486bd84e0153cb013327d3b5402d692b753401651`。
 - 可加载目录：`release/monica-extension-unpacked`；开发构建：`dist`。二者均为 0.1.30。
-- [详情预览索引](../.artifacts/detail-layout-0.1.30/README.md)：包含各类条目的深色、浅色和手机截图，以及附件、历史和安全发送预览。
+- [详情预览索引](../../.artifacts/detail-layout-0.1.30/README.md)：包含各类条目的深色、浅色和手机截图，以及附件、历史和安全发送预览。
 
 已有安装请完整更新到原加载目录，然后在 Chrome/Edge 扩展管理页点击 Monica 的“重新加载”，关闭旧管理页并重新打开。沿用原绝对路径，以保持开发者模式扩展身份及已有本地数据。如果原本加载的就是本项目的 `dist` 或上述解压目录，直接重新加载即可使用本轮更新。
 

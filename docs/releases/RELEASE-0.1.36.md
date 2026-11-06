@@ -20,4 +20,4 @@
 
 Release 提供安装 ZIP、SHA-256 校验文件、依赖 SBOM、许可证清单和构建来源记录。安装包只包含扩展程序与发布元数据；已有账号、主密码、验证码密钥、浏览器配置及导出的密码库不属于发布文件。
 
-截图和自动化验证均使用虚构账号与隔离浏览器。数据库及密码源的实际兼容范围见 [Android 互通记录](VALIDATION-0.1.33.md)，新增菜单与品牌修正见 [自动填充验证](VALIDATION-0.1.35.md) 和 [图标验证](VALIDATION-0.1.36.md)。
+截图和自动化验证均使用虚构账号与隔离浏览器。数据库及密码源的实际兼容范围见 [Android 互通记录](../verification/VALIDATION-0.1.33.md)，新增菜单与品牌修正见 [自动填充验证](../verification/VALIDATION-0.1.35.md) 和 [图标验证](../verification/VALIDATION-0.1.36.md)。

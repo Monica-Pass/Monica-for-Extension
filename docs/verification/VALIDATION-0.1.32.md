@@ -36,7 +36,7 @@
 | 扩展权限 | 相对 0.1.31，权限、内容脚本注入范围、内容安全策略及对外资源边界均保持不变 |
 | 安装包 | 50 个文件的清单、哈希、解压内容与 dist 一致性，以及两次独立打包的字节一致性通过 |
 
-浏览器覆盖文件为 `accessibility`、`bitwarden-folders`、`detail-layout`、`item-detail`、`keepass-groups`、`localization`、`locked-autofill`、`login-otp-detail`、`manager`、`multilingual`、`passkey`、`performance`、`responsive-layout`、`runtime-upgrade`、`security-boundaries`、`vault-home`、`visual-polish`、`wallet` 和 `home-usability`，均位于 `tests/e2e/`。最终结果保存在 [浏览器回归记录](../.artifacts/home-0.1.32/e2e-results.json)；版本、权限及包体检查见 [交付核对记录](../.artifacts/home-0.1.32/release-checks.json)。
+浏览器覆盖文件为 `accessibility`、`bitwarden-folders`、`detail-layout`、`item-detail`、`keepass-groups`、`localization`、`locked-autofill`、`login-otp-detail`、`manager`、`multilingual`、`passkey`、`performance`、`responsive-layout`、`runtime-upgrade`、`security-boundaries`、`vault-home`、`visual-polish`、`wallet` 和 `home-usability`，均位于 `tests/e2e/`。最终结果保存在 [浏览器回归记录](../../.artifacts/home-0.1.32/e2e-results.json)；版本、权限及包体检查见 [交付核对记录](../../.artifacts/home-0.1.32/release-checks.json)。
 
 本轮未重跑全部 E2E、Native Host 硬件验收或整套跨平台互操作验收。构建仍有原有的大体积代码块提示。最终生产构建后仅整理辅助验证脚本、预览和文档，未再修改生产代码。产物使用 `--allow-dirty` 从既有工作区生成，属于本地开发包，并非签名或公开发布版本。
 
@@ -46,15 +46,15 @@
 
 该结果不表示整体启动提速。5 万条时，已解锁页面的一次冷重载采样分别为 6.68 秒和 8.01 秒；返回首页后的保留 V8 堆分别为 34.31 MiB 和 40.77 MiB。本轮新增交互和缓存有空间开销，全库读取及搜索仍随数据量增长。数据库切换测量不包括随后异步保存偏好的时间；保留 V8 堆也不等于浏览器总内存。
 
-完整指标、测量条件、原始记录及复现命令见 [性能测量与维护](PERFORMANCE.md#0132-首页搜索测量2026-09-13)。这些是本地小样本观测，不是延迟或内存上限保证。
+完整指标、测量条件、原始记录及复现命令见 [性能测量与维护](../PERFORMANCE.md#0132-首页搜索测量2026-09-13)。这些是本地小样本观测，不是延迟或内存上限保证。
 
 ## 交付
 
 - ZIP：`release/monica-extension-0.1.32.zip`，1,960,142 字节、50 个文件。
 - SHA-256：`d701d25307b043d93cb9be71047626034afb439f92e0eddab42248823c2dcdef`。
 - 可加载目录：`release/monica-extension-unpacked`；开发构建：`dist`。二者均为 0.1.32。
-- [预览索引](../.artifacts/home-0.1.32/README.md)：27 张原始截图与四张裁切预览，包含首页快捷操作、密度对比、卡片管理、自定义首页、八语言深浅主题窄屏及实际工具栏 Popup。
-- [浅色桌面](../.artifacts/home-0.1.32/home-light-desktop.png) · [深色桌面](../.artifacts/home-0.1.32/home-dark-desktop.png) · [自定义首页](../.artifacts/home-0.1.32/customize-home.png) · [卡片管理](../.artifacts/home-0.1.32/manage-cards.png)。
+- [预览索引](../../.artifacts/home-0.1.32/README.md)：27 张原始截图与四张裁切预览，包含首页快捷操作、密度对比、卡片管理、自定义首页、八语言深浅主题窄屏及实际工具栏 Popup。
+- [浅色桌面](../../.artifacts/home-0.1.32/home-light-desktop.png) · [深色桌面](../../.artifacts/home-0.1.32/home-dark-desktop.png) · [自定义首页](../../.artifacts/home-0.1.32/customize-home.png) · [卡片管理](../../.artifacts/home-0.1.32/manage-cards.png)。
 
 已有安装请完整更新到原加载目录，然后在 Chrome/Edge 扩展管理页点击 Monica 的“重新加载”，关闭旧管理页并重新打开。沿用原绝对路径，以保持开发者模式扩展身份及已有本地数据。如果原本加载的就是本项目的 `dist` 或上述解压目录，直接重新加载即可使用本轮更新。
 

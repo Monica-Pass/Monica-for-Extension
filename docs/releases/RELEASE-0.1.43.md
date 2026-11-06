@@ -15,4 +15,4 @@
 
 本次为 UI 迁移，没有改变 Android 数据格式、加密、WebDAV / Bitwarden 同步协议或 Passkey 策略。复杂来源管理与附件流程保留既有弹窗容器及确认逻辑。
 
-参见[设计与组件说明](UI_M3E_CANVAS.md)及[验证记录](VALIDATION-0.1.43.md)。本地包仅包含程序资源，不包含密码库、浏览器配置或测试工件。
+参见[设计与组件说明](../UI_M3E_CANVAS.md)及[验证记录](../verification/VALIDATION-0.1.43.md)。本地包仅包含程序资源，不包含密码库、浏览器配置或测试工件。

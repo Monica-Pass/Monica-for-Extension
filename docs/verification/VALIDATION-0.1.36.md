@@ -32,17 +32,17 @@
 
 正式包从干净 Git 提交生成，不使用 `--allow-dirty`。ZIP、解压目录及发布附件通过文件清单与 SHA-256 检查；校验工具还在两个独立目录中重新打包并比较字节。五份官方 PNG 保留原始内容。
 
-完整发布流程见 [发布说明](RELEASE.md)。正式 Release 的校验值由随附 `.zip.sha256` 提供，源提交记录在安装包内的 `SECURITY-EVIDENCE.json` 中。
+完整发布流程见 [发布说明](../RELEASE.md)。正式 Release 的校验值由随附 `.zip.sha256` 提供，源提交记录在安装包内的 `SECURITY-EVIDENCE.json` 中。
 
 ## 更新后的截图
 
-- [概览](../store-assets/01-vault-overview.png)
-- [登录项](../store-assets/02-login-items.png)
-- [密码源](../store-assets/03-password-sources.png)
-- [工具栏](../store-assets/04-explicit-autofill-popup.png)
-- [保存密码](../store-assets/05-save-password-prompt.png)
-- [表单旁自动填充](../store-assets/06-form-autofill.png)
-- [创建 Passkey](../store-assets/07-passkey-create.png)
-- [Passkey 登录](../store-assets/08-passkey-sign-in.png)
+- [概览](../../store-assets/01-vault-overview.png)
+- [登录项](../../store-assets/02-login-items.png)
+- [密码源](../../store-assets/03-password-sources.png)
+- [工具栏](../../store-assets/04-explicit-autofill-popup.png)
+- [保存密码](../../store-assets/05-save-password-prompt.png)
+- [表单旁自动填充](../../store-assets/06-form-autofill.png)
+- [创建 Passkey](../../store-assets/07-passkey-create.png)
+- [Passkey 登录](../../store-assets/08-passkey-sign-in.png)
 
 此次图标修正未改变密码库模型、同步协议或浏览器权限。之前的自动填充验证见 [0.1.35 记录](VALIDATION-0.1.35.md)，Android 数据互通范围见 [0.1.33 记录](VALIDATION-0.1.33.md)。

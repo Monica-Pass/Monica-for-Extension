@@ -48,7 +48,7 @@ MDBX2 和 Monica Windows Hello 需要 Windows 连接组件：解压 `release/mon
 .\install-host.ps1 -EdgeExtensionId <Edge扩展ID>
 ```
 
-组件只注册传入的精确扩展 ID。详细说明见 [Native Host 文档](../native/mdbx2-host/README.md)。本次未在日常浏览器中运行安装或重新注册操作。
+组件只注册传入的精确扩展 ID。详细说明见 [Native Host 文档](../../native/mdbx2-host/README.md)。本次未在日常浏览器中运行安装或重新注册操作。
 
 ## 验证边界
 

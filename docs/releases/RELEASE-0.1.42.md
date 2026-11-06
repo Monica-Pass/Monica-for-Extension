@@ -12,4 +12,4 @@ Monica 插件的布局、控件、字体与动效统一采用 M3 Expressive。No
 
 继续使用现有 Vue / M3E 组件，没有增加运行时依赖。Android 数据格式、WebDAV / Bitwarden 同步与 Passkey 策略沿用现有实现。旧浏览器的菜单和表单下拉保留兼容回退。
 
-附带六页 [m3e-canvas 布局稿](design/monica-vault.m3e.json)，全部示例为虚构数据。参考方式见 [设计说明](UI_M3E_CANVAS.md)，检查结果与本地包见 [验证记录](VALIDATION-0.1.42.md)。
+附带六页 [m3e-canvas 布局稿](../design/monica-vault.m3e.json)，全部示例为虚构数据。参考方式见 [设计说明](../UI_M3E_CANVAS.md)，检查结果与本地包见 [验证记录](../verification/VALIDATION-0.1.42.md)。

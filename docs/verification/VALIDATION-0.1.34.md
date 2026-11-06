@@ -20,11 +20,11 @@
 
 ## 交付
 
-- [0.1.34 ZIP](../release/monica-extension-0.1.34.zip)
-- [解压目录](../release/monica-extension-unpacked)
-- [浅色概览](../.artifacts/brand-0.1.34/home-light.png) · [深色概览](../.artifacts/brand-0.1.34/home-dark.png)
-- [显示检查与原图哈希](../.artifacts/brand-0.1.34/checks.json)
-- [预览生成脚本](../.artifacts/brand-0.1.34/capture.mjs)
+- [0.1.34 ZIP](../../release/monica-extension-0.1.34.zip)
+- [解压目录](../../release/monica-extension-unpacked)
+- [浅色概览](../../.artifacts/brand-0.1.34/home-light.png) · [深色概览](../../.artifacts/brand-0.1.34/home-dark.png)
+- [显示检查与原图哈希](../../.artifacts/brand-0.1.34/checks.json)
+- [预览生成脚本](../../.artifacts/brand-0.1.34/capture.mjs)
 
 ZIP SHA-256：`d0403a1263af69212510500d6380e0023956f793bd25d210a7706786a33cd52a`
 

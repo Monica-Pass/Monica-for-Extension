@@ -11,4 +11,4 @@
 
 没有新增运行时依赖或修改密码库格式。Android 兼容、自动同步和 Passkey 策略沿用 0.1.40。
 
-附带可用 m3e-canvas 打开的 [布局稿](design/monica-vault.m3e.json)，全部示例为虚构数据。参考方式见 [设计说明](UI_M3E_CANVAS.md)，检查结果见 [验证记录](VALIDATION-0.1.41.md)。
+附带可用 m3e-canvas 打开的 [布局稿](../design/monica-vault.m3e.json)，全部示例为虚构数据。参考方式见 [设计说明](../UI_M3E_CANVAS.md)，检查结果见 [验证记录](../verification/VALIDATION-0.1.41.md)。

@@ -1,6 +1,6 @@
 # 0.1.40 自动同步验证
 
-> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](RELEASE-0.1.37.md)。
+> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](../releases/RELEASE-0.1.37.md)。
 
 日期：2026-09-14。所有账户、密码、令牌、数据库、HTTP / WebSocket 服务和浏览器配置均为本轮创建的合成夹具。没有读取用户真实密码库，也没有使用真实 Bitwarden 云账户。
 
@@ -67,4 +67,4 @@ node scripts/verify-release.mjs --allow-dirty
 - `release/monica-extension-unpacked` 已更新为 0.1.40，旧 ZIP 保留。本机助手仍沿用 0.1.1。
 - 这是本地开发构建，继承工作区中尚未提交的既有 UI、API 密钥和 Passkey 改动，构建证据如实标记 `trackedWorktreeClean: false`。本轮未提交或上传 GitHub。
 
-协议与手机上传条件见 [同步兼容说明](SYNC_COMPATIBILITY.md)。本轮未进行真实云账户、Android 真机网络或 Windows Hello 硬件验收，不承诺网络不可达、浏览器关闭或手机尚未上传时仍即时同步。
+协议与手机上传条件见 [同步兼容说明](../SYNC_COMPATIBILITY.md)。本轮未进行真实云账户、Android 真机网络或 Windows Hello 硬件验收，不承诺网络不可达、浏览器关闭或手机尚未上传时仍即时同步。

@@ -13,4 +13,4 @@
 
 本轮不改变密码库持久化格式、Android 数据兼容、WebDAV / Bitwarden 同步或 Passkey 签名策略。
 
-本地包与验证范围见 [0.1.45 验证记录](VALIDATION-0.1.45.md)。
+本地包与验证范围见 [0.1.45 验证记录](../verification/VALIDATION-0.1.45.md)。

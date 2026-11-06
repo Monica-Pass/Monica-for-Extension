@@ -48,8 +48,8 @@
 - ZIP：`release/monica-extension-0.1.31.zip`，1,884,263 字节、50 个文件。
 - SHA-256：`609f1ebffe8270d13e63081717d66a4da48e3b8ad124019561fe2f7520cb2684`。
 - 可加载目录：`release/monica-extension-unpacked`；开发构建：`dist`。二者均为 0.1.31。
-- [概览预览索引](../.artifacts/home-0.1.31/README.md)：23 张原始截图与四张裁切预览，包含八语言深浅主题窄屏、自定义首页和卡片管理。
-- [浅色桌面预览](../.artifacts/home-0.1.31/home-light-desktop.png) · [深色桌面预览](../.artifacts/home-0.1.31/home-dark-desktop.png) · [自定义首页](../.artifacts/home-0.1.31/customize-home.png)。
+- [概览预览索引](../../.artifacts/home-0.1.31/README.md)：23 张原始截图与四张裁切预览，包含八语言深浅主题窄屏、自定义首页和卡片管理。
+- [浅色桌面预览](../../.artifacts/home-0.1.31/home-light-desktop.png) · [深色桌面预览](../../.artifacts/home-0.1.31/home-dark-desktop.png) · [自定义首页](../../.artifacts/home-0.1.31/customize-home.png)。
 
 已有安装请完整更新到原加载目录，然后在 Chrome/Edge 扩展管理页点击 Monica 的“重新加载”，关闭旧管理页并重新打开。沿用原绝对路径，以保持开发者模式扩展身份及已有本地数据。如果原本加载的就是本项目的 `dist` 或上述解压目录，直接重新加载即可使用本轮更新。
 

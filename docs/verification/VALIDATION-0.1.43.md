@@ -1,6 +1,6 @@
 # 0.1.43 M3E 组件迁移验证
 
-> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](RELEASE-0.1.37.md)。
+> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](../releases/RELEASE-0.1.37.md)。
 
 验证日期：2026-09-15。环境为 Windows、Node.js 22.14.0、npm 10.9.2 和 Playwright Chromium。`package.json`、锁文件、构建产物及扩展清单均为 0.1.43，`@m3e/web` 固定为 2.6.1。
 

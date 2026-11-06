@@ -13,4 +13,4 @@
 
 新增 `favicon` 权限用于浏览器图标缓存；未扩大网页可访问资源。网站图标只在页面内存中缓存，不改变 Android 数据格式、加密、WebDAV / Bitwarden 同步协议或 Passkey 策略。Monica 应用标识继续使用官方图标。
 
-验证范围和本地安装包见 [0.1.44 验证记录](VALIDATION-0.1.44.md)。
+验证范围和本地安装包见 [0.1.44 验证记录](../verification/VALIDATION-0.1.44.md)。

@@ -11,4 +11,4 @@
 
 非零计数固定不变同样可能被网站拒绝。旧独立副本若需迁移为零计数，应在网站重新注册。Android 当前历史非零 Bitwarden 路径仍与官方有差异，本版没有修改 Android 应用。
 
-详见 [兼容策略](PASSKEY_COMPATIBILITY.md) 和 [验证记录](VALIDATION-0.1.39.md)。更新时替换原扩展加载目录并重新加载，再刷新登录网页。
+详见 [兼容策略](../PASSKEY_COMPATIBILITY.md) 和 [验证记录](../verification/VALIDATION-0.1.39.md)。更新时替换原扩展加载目录并重新加载，再刷新登录网页。

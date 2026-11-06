@@ -41,7 +41,7 @@
 - ZIP：`release/monica-extension-0.1.29.zip`，1,863,191 字节。
 - SHA-256：`a445674764526d7578244f3b4ec679e46304237261744f79511034ed85089340`。
 - 可加载目录：`release/monica-extension-unpacked`；开发构建：`dist`。两个目录均已更新为 0.1.29。
-- 合成数据预览：[桌面](../.artifacts/login-otp-detail/desktop.png)、[窄屏](../.artifacts/login-otp-detail/mobile.png)。
+- 合成数据预览：[桌面](../../.artifacts/login-otp-detail/desktop.png)、[窄屏](../../.artifacts/login-otp-detail/mobile.png)。
 
 已有安装请完整更新到原加载目录，然后在 Chrome/Edge 扩展管理页点击 Monica 的“重新加载”，关闭旧管理页并重新打开。沿用原绝对路径，以保持开发者模式扩展身份及已有本地数据。若原本加载的就是本项目的 dist 或解压目录，重新加载即可使用本轮更新。
 

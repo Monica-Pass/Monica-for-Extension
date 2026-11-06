@@ -1,6 +1,6 @@
 # 0.1.39 Passkey 来源策略验证
 
-> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](RELEASE-0.1.37.md)。
+> 本地开发阶段记录：文中的版本号未作为 GitHub Release 发布，相关改动已汇总到[正式版 0.1.37](../releases/RELEASE-0.1.37.md)。
 
 验证日期：2026-09-14。全部凭据、服务器响应、浏览器配置及数据库均为合成夹具；没有读取用户密码库或使用真实网站账户。
 
@@ -65,8 +65,8 @@ npm run test:keepass-interop
 
 ## 范围与限制
 
-2026-09-14 独立审查后另有源码修补：保留历史计数、阻止远端回退，并用 1 秒容差模型验证并发限制。原 ZIP、哈希和本页此前测试记录保持原义，不能用来证明后续源码已重新打包。后续验证见 [审查后修补记录](PASSKEY_COUNTER_REVIEW_FOLLOWUP.md)。
+2026-09-14 独立审查后另有源码修补：保留历史计数、阻止远端回退，并用 1 秒容差模型验证并发限制。原 ZIP、哈希和本页此前测试记录保持原义，不能用来证明后续源码已重新打包。后续验证见 [审查后修补记录](../PASSKEY_COUNTER_REVIEW_FOLLOWUP.md)。
 
-Bitwarden 官方计数规则的固定源码引用及三类来源区别见 [兼容策略](PASSKEY_COMPATIBILITY.md)。本轮没有进行真实 Bitwarden 服务、真实网站账户、Android 真机 Credential Manager 或 Windows Hello 硬件验收。Android 现有认证代码仍统一归零，历史非零 Bitwarden 分支需要单独对齐；不能将本轮插件验证视为该 Android 路径已经修复。
+Bitwarden 官方计数规则的固定源码引用及三类来源区别见 [兼容策略](../PASSKEY_COMPATIBILITY.md)。本轮没有进行真实 Bitwarden 服务、真实网站账户、Android 真机 Credential Manager 或 Windows Hello 硬件验收。Android 现有认证代码仍统一归零，历史非零 Bitwarden 分支需要单独对齐；不能将本轮插件验证视为该 Android 路径已经修复。
 
 已经在网站保存的非零计数，不能靠归零或固定不动可靠地迁移。需要零计数的历史独立副本可能必须在网站重新注册。MDBX1 仍需先升级，浏览器签名仍限 ES256。

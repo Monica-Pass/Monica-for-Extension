@@ -43,21 +43,21 @@ Android 参考源码位于 `Monica-main/Monica for Android`，包括 `VaultOverv
 | 安全与依赖 | 安全审计、工具链、锁文件、工作流和 Native Host 固定版本校验通过；生产依赖审计 0 个漏洞 |
 | 权限与包体 | Manifest 相对 0.1.32 仅版本号改变，生产 SBOM 组件相同；ZIP、解压目录、dist 及两次独立打包校验通过 |
 
-首次 117 项浏览器合并运行中 114 项通过，3 项失败来自测试准备或旧布局假设：测试使用不存在的固定本地源 ID／不合适的选择器、仍寻找旧“添加登录项”入口、以及仍要求每个类型按钮单独圆角。相应测试改用实际源 ID、当前入口和分组容器断言后通过专项复跑；两种主题的八语言概览用例也完成最终截图复核。原始失败报告保留，没有将它改写为一次全绿运行。最终逐项汇总见 [浏览器结果汇总](../.artifacts/home-0.1.33/e2e-summary.json)。
+首次 117 项浏览器合并运行中 114 项通过，3 项失败来自测试准备或旧布局假设：测试使用不存在的固定本地源 ID／不合适的选择器、仍寻找旧“添加登录项”入口、以及仍要求每个类型按钮单独圆角。相应测试改用实际源 ID、当前入口和分组容器断言后通过专项复跑；两种主题的八语言概览用例也完成最终截图复核。原始失败报告保留，没有将它改写为一次全绿运行。最终逐项汇总见 [浏览器结果汇总](../../.artifacts/home-0.1.33/e2e-summary.json)。
 
 证据：
 
-- [全量单测输出摘要](../.artifacts/home-0.1.33/unit-summary.json) · [专项单测原始报告](../.artifacts/home-0.1.33/home-webdav-unit-results.json)
-- [浏览器原始合并运行](../.artifacts/home-0.1.33/e2e-results.json) · [登录用例复跑](../.artifacts/home-0.1.33/e2e-corrected-fixtures.json) · [视觉用例复跑](../.artifacts/home-0.1.33/e2e-visual-review.json)
-- [MDBX2 Android 测试](../.artifacts/home-0.1.33/mdbx2-android-results.json) · [对象／Blob 证据](../.artifacts/home-0.1.33/android-mdbx2-evidence.json)
-- [KeePass Android 测试](../.artifacts/home-0.1.33/keepass-android-results.json) · [密码算法／字段证据](../.artifacts/home-0.1.33/android-keepass-evidence.json)
-- [版本、权限及安装包核对](../.artifacts/home-0.1.33/release-checks.json) · [截图索引](../.artifacts/home-0.1.33/README.md)
+- [全量单测输出摘要](../../.artifacts/home-0.1.33/unit-summary.json) · [专项单测原始报告](../../.artifacts/home-0.1.33/home-webdav-unit-results.json)
+- [浏览器原始合并运行](../../.artifacts/home-0.1.33/e2e-results.json) · [登录用例复跑](../../.artifacts/home-0.1.33/e2e-corrected-fixtures.json) · [视觉用例复跑](../../.artifacts/home-0.1.33/e2e-visual-review.json)
+- [MDBX2 Android 测试](../../.artifacts/home-0.1.33/mdbx2-android-results.json) · [对象／Blob 证据](../../.artifacts/home-0.1.33/android-mdbx2-evidence.json)
+- [KeePass Android 测试](../../.artifacts/home-0.1.33/keepass-android-results.json) · [密码算法／字段证据](../../.artifacts/home-0.1.33/android-keepass-evidence.json)
+- [版本、权限及安装包核对](../../.artifacts/home-0.1.33/release-checks.json) · [截图索引](../../.artifacts/home-0.1.33/README.md)
 
 本轮没有重跑全部 E2E、Native Host 硬件验收或所有第三方服务器。保留原有大体积代码块构建提示。格式整理后再次完成生产构建，浏览器回归与出包之间没有功能修改。安装包从既有脏工作区使用 `--allow-dirty` 生成，是本地开发包，不是签名或公开发布版本。
 
 ## 交付与更新
 
-- 安装包：[`release/monica-extension-0.1.33.zip`](../release/monica-extension-0.1.33.zip)，1,963,267 字节，50 个文件。
+- 安装包：[`release/monica-extension-0.1.33.zip`](../../release/monica-extension-0.1.33.zip)，1,963,267 字节，50 个文件。
 - SHA-256：`4074bdc0074c3e84039bf74e651f7089bb3e3eb406d4a6b40b0a41a85720998e`。
 - 可加载目录：`release/monica-extension-unpacked`；开发构建：`dist`，均为 0.1.33。旧 0.1.32 ZIP 与预览保留。
 - 打包：`node scripts/package-release.mjs --allow-dirty`；校验：`node scripts/verify-release.mjs --allow-dirty`。
