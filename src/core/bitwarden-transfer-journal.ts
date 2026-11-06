@@ -1,7 +1,7 @@
 import type { ProviderAccount, VaultItem, VaultState } from './model';
 import { validateLocalAttachments, type LocalItemAttachment } from './local-transfer';
 import { readMdbx2MoveJournal } from './mdbx2-move-journal';
-import { readPasswordProjectRemovalJournal, isPasswordProjectRemovalPending } from './password-project-removal-journal';
+import { pendingRemovalTouches, readPasswordProjectRemovalJournal } from './password-project-removal-journal';
 import { bitwardenProjectCipherId } from './bitwarden-project-removal-local';
 import { assertWritableBitwardenPasskey } from '../providers/bitwarden/bitwarden-cipher-codec';
 import { inspectPasskeyKey } from '../passkey/capability';
@@ -111,8 +111,7 @@ export async function bitwardenCopySourceHash(state: VaultState, ids: string[], 
     || new Set(items.map(row => row.id)).size !== ids.length
     || state.mutationQueue.some(row => ids.includes(row.itemId)) || state.providerConflicts.some(row => ids.includes(row.itemId))
     || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed' && row.entries.some(entry => ids.includes(entry.expected.id)))
-    || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-      && [...row.retained, ...row.removed].some(item => ids.includes(item.id))))
+    || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set(ids)))
     throw new Error('迁移来源已变化或仍有未完成修改，请重新预览。');
   for (const item of items) if (item.kind === 'passkey') {
     assertWritableBitwardenPasskey(item);

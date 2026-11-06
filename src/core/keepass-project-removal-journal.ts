@@ -1,5 +1,6 @@
 import type { ProviderAccount } from './model';
 import { planKeePassProjectRemoval, type KeePassProjectRemovalDraft } from './keepass-project-removal';
+import { canonicalJson, sha256Hex } from './digest';
 
 export interface KeePassProjectRemovalIntent {
   version: 1;
@@ -13,20 +14,16 @@ export interface KeePassProjectRemovalIntent {
   draft: KeePassProjectRemovalDraft;
 }
 export function keePassRemovalRequestKey(source: ProviderAccount, draft: KeePassProjectRemovalDraft): string {
-  return JSON.stringify({ source, draft }, (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
+  return canonicalJson({ source, draft });
 }
 export async function keePassRemovalFileRequestHash(source: ProviderAccount, request: {
   operationId: string; expectedWorkingSha256: string; draft: KeePassProjectRemovalDraft;
 }): Promise<string> {
   const keys = ['sourceMode', 'databaseId', 'webDavBaseUrl', 'webDavUsername', 'remotePath', 'oneDriveDriveId', 'oneDriveItemId',
     ...(source.config.sourceMode === 'local-file' ? ['localFileSourceSha256'] : [])];
-  const text = JSON.stringify({ request, source: { id: source.id,
+  return sha256Hex(canonicalJson({ request, source: { id: source.id,
     config: Object.fromEntries(keys.map(key => [key, source.config[key]])),
-    oneDriveConnectionId: (source.config.oneDriveConnection as { id?: unknown } | undefined)?.id } },
-  (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
-  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    oneDriveConnectionId: (source.config.oneDriveConnection as { id?: unknown } | undefined)?.id } }));
 }
 export function readKeePassProjectRemovalIntents(value: unknown): KeePassProjectRemovalIntent[] {
   if (value === undefined) return [];
