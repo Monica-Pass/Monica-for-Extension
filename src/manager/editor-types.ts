@@ -9,7 +9,7 @@ export function credentialCreateOptions() {
     { value: 'PASSWORD', label: tr('密码') }, { value: 'API_KEY', label: 'API Key' },
     { value: 'WIFI', label: 'Wi-Fi' }, { value: 'SSH_KEY', label: tr('SSH 密钥') },
     { value: 'BARCODE', label: tr('条码') }, { value: 'api-token', label: tr('API 令牌') },
-    { value: 'GPG_KEY', label: 'GPG 密钥' }
+    { value: 'GPG_KEY', label: tr('GPG 密钥') }
   ] satisfies { value: CredentialCreateType; label: string }[];
 }
 // Legacy payment accounts remain readable/editable but have no create action.
