@@ -94,7 +94,10 @@ export function serializeApiTokenPayload(item: Pick<ApiTokenItem, "provider" | "
 export function serializeApiTokenMetadata(item: Pick<ApiTokenItem, "notes" | "customFields" | "apiTokenMetadata" | "archivedAt">): string {
   const original = item.apiTokenMetadata ? decodeApiTokenMetadata(item.apiTokenMetadata) : undefined;
   if (item.apiTokenMetadata && !original) throw new Error("API 密钥补充字段无法识别，请保留原件后重新导入。");
-  const previous = new Map(((original?.custom_fields || []) as JsonObject[]).map((field, index) => [originalFieldId(field, index), field]));
+  // Only wire fields with an explicit ID have a stable identity. Synthetic IDs projected for
+  // id-less wire fields can be re-allocated to a newly added field after a delete, and inheriting
+  // then would resurrect the deleted field's unknown extension keys onto that new field.
+  const previous = new Map(((original?.custom_fields || []) as JsonObject[]).filter(field => field.id !== undefined).map(field => [fieldIdText(field.id)!, field]));
   const occupied = new Set<string>();
   for (const field of item.customFields) {
     if (field.id === undefined) continue;
@@ -104,7 +107,7 @@ export function serializeApiTokenMetadata(item: Pick<ApiTokenItem, "notes" | "cu
   }
   let nextId = -1;
   const fields = item.customFields.map(field => {
-    while (occupied.has(String(nextId))) nextId--;
+    while (occupied.has(String(nextId)) || previous.has(String(nextId))) nextId--;
     const id = field.id === undefined ? String(nextId--) : fieldIdText(field.id, true)!;
     occupied.add(id);
     return { ...previous.get(id), id: jsonNumber(id), title: field.name, value: field.value, protected: field.protected };

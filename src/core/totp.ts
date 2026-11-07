@@ -191,7 +191,7 @@ function parseOtpAuthUri(input: string): OtpParseResult {
   const authority = url.hostname.toLowerCase();
   if (authority !== "totp" && authority !== "hotp" && authority !== "yaotp") throw new Error("不支持的 OTP URI 类型。");
   const secret = url.searchParams.get("secret")?.trim() || "";
-  const label = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  const label = decodeUriComponent(url.pathname.replace(/^\//, ""), "OTP URI 标签百分号编码无效。");
   const accountName = label.includes(":") ? label.slice(label.indexOf(":") + 1) : label;
   const issuer = url.searchParams.get("issuer")?.trim() || (label.includes(":") ? label.slice(0, label.indexOf(":")).trim() : "");
   const encoder = url.searchParams.get("encoder")?.toLowerCase();
@@ -272,12 +272,21 @@ function decodeSteamComponent(value: string): string {
   }
 }
 
+/** Invalid percent escapes must surface as the module's domain errors, not a raw URIError. */
+function decodeUriComponent(value: string, message: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error(message);
+  }
+}
+
 function parseMotpUri(input: string): OtpParseResult {
-  const match = decodeURIComponent(input).match(/^motp:\/\/(.*?):(.*?)\?(.*)$/i);
+  const match = decodeUriComponent(input, "mOTP URI 百分号编码无效。").match(/^motp:\/\/(.*?):(.*?)\?(.*)$/i);
   if (!match) throw new Error("mOTP URI 无效。");
   const query = new URLSearchParams(match[3]);
-  const issuer = decodeURIComponent(match[1]).trim();
-  const accountName = decodeURIComponent(match[2]).trim();
+  const issuer = decodeUriComponent(match[1], "mOTP URI 百分号编码无效。").trim();
+  const accountName = decodeUriComponent(match[2], "mOTP URI 百分号编码无效。").trim();
   const label = accountName ? `${issuer || accountName}:${accountName}` : issuer || "mOTP";
   const parameters = normalizeParameters({ secret: query.get("secret") || "", algorithm: "SHA1", digits: 6, period: 10, otpType: "MOTP", issuer: issuer || accountName || "mOTP", accountName, label, pin: query.get("pin") || "" });
   return { parameters, label, accountName };
