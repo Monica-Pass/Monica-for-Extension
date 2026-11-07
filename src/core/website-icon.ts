@@ -58,7 +58,7 @@ export function loginWebsiteOrigin(item: WebsiteIconItem): string {
   const regexUris = new Set(item.uriRules?.filter(rule => rule.matchType === "regex").map(rule => rule.uri.trim()));
   const candidates = [
     ...(item.uris || []).filter(uri => !regexUris.has(uri.trim())),
-    ...(item.uriRules || []).filter(rule => rule.matchType !== "regex").map(rule => rule.uri)
+    ...(item.uriRules || []).filter(rule => rule.matchType !== "regex" && rule.matchType !== "never").map(rule => rule.uri)
   ];
   for (const candidate of candidates) {
     const origin = websiteOrigin(candidate);

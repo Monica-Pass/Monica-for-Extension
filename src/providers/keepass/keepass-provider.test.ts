@@ -198,6 +198,31 @@ describe("KeePassProvider", () => {
     const payload = JSON.parse(keePassFieldText(entry.fields.get("MonicaPasskeyData")));
     expect(payload).toMatchObject({ signCount: 4, useCount: 2 });
   });
+  it("keeps favorite and archive overlays local without rewriting the KDBX or adding entry history, including old baselines", async () => {
+    const provider = new KeePassProvider();
+    const { target } = await unlock(provider, []);
+    const created = await provider.create(target, newLogin()) as LoginItem;
+    await provider.exportFile(target.id);
+    const reference = created.providerRefs[0];
+    const baseline = JSON.parse(reference.etag!);
+    baseline.favorite = false;
+    baseline.archivedAt = "2026-09-30T00:00:00.000Z";
+    const oldEtag = JSON.stringify(baseline, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) : value);
+    const overlaid = { ...created, favorite: true, archivedAt: "2026-10-06T00:00:00.000Z", providerRefs: [{ ...reference, etag: oldEtag }] };
+    const result = await provider.sync(target, {
+      now: "2026-07-26T12:00:00.000Z",
+      localItems: [overlaid],
+      pendingMutations: [mutation(created.id, "update")]
+    });
+    expect(result.conflicts).toEqual([]);
+    expect(result.items[0]).toMatchObject({ favorite: true, archivedAt: "2026-10-06T00:00:00.000Z" });
+    expect(provider.summarize(target.id).dirty).toBe(false);
+    const database = await reopen(provider, target);
+    const entry = database.getDefaultGroup().entries[0];
+    expect(entry.history).toHaveLength(0);
+    expect(keePassFieldText(entry.fields.get("UserName"))).toBe("hopper");
+  });
   it("summarizes the file without handing the UI the database or its entries", async () => {
     const provider = new KeePassProvider();
     const { summary } = await unlock(provider);

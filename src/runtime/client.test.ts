@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { version } from "../../package.json";
 import { runtimeInfo } from './version';
 
+type VaultClient = typeof import('./client')['vaultClient'];
+
 const compatible = { ok: true, data: runtimeInfo };
 const unsupported = { ok: false, error: "不支持的 Monica 运行时命令。" };
 
@@ -139,6 +141,42 @@ describe("UI and background compatibility", () => {
       : vaultClient.openKeePass({ name: 'Synthetic', fileName: 'synthetic.kdbx', file: '', password: 'synthetic secret' });
     await expect(result).rejects.toMatchObject({ code: 'RUNTIME_RELOAD_REQUIRED' });
     expect(sendMessage.mock.calls.map(([request]) => request.type)).toEqual(['RUNTIME_INFO', 'VAULT_STATUS', 'RUNTIME_INFO']);
+  });
+
+  it.each([
+    ['VAULT_CHANGE_MASTER_PASSWORD', (client: VaultClient) => client.changeMasterPassword('synthetic old', 'synthetic new')],
+    ['VAULT_RESTORE_ENCRYPTED', (client: VaultClient) => client.restoreEncryptedBackup({} as never, 'synthetic secret')],
+    ['VAULT_KEEPASS_PROJECT_RECOVERY_EXPORT_BEGIN', (client: VaultClient) => client.beginKeePassRecoveryExport('provider', 'operation', 'tag', 'synthetic secret', 'request')],
+    ['STEAM_REVOKE_AUTHORIZED_DEVICE', (client: VaultClient) => client.revokeSteamAuthorizedDevice('item', { tokenId: 'token', accountName: 'account', password: 'synthetic secret' })],
+    ['WEBDAV_TEST', (client: VaultClient) => client.testWebDav({ password: 'synthetic secret' } as never)],
+    ['KEEPASS_WEBDAV_TEST', (client: VaultClient) => client.testKeePassWebDav({ webDavPassword: 'synthetic secret' } as never)],
+    ['KEEPASS_WEBDAV_OPEN', (client: VaultClient) => client.openKeePassWebDav({ webDavPassword: 'synthetic secret', databasePassword: 'synthetic secret' } as never)],
+    ['KEEPASS_ONEDRIVE_OPEN', (client: VaultClient) => client.openKeePassOneDrive({ databasePassword: 'synthetic secret' } as never)],
+    ['MDBX2_VAULT_CREATE', (client: VaultClient) => client.createMdbx2Vault({ name: 'Synthetic', password: 'synthetic secret' })],
+    ['MDBX2_VAULT_OPEN', (client: VaultClient) => client.openMdbx2Vault({ credential: { method: 'security-key', keyMaterialBase64: 'synthetic key' } } as never)],
+    ['VAULT_IMPORT_ITEMS', (client: VaultClient) => client.importItems([{ password: 'synthetic secret' } as never])],
+    ['VAULT_UNLOCK_HELLO', (client: VaultClient) => client.unlockWithWindowsHello()],
+    ['PASSKEY_VERIFY_PASSWORD', (client: VaultClient) => client.verifyPasskeyPassword('synthetic-verification', 'synthetic secret')],
+    ['PASSKEY_VERIFY_HELLO', (client: VaultClient) => client.verifyPasskeyHello('synthetic-verification')]
+  ])('rechecks the build before the sensitive command %s after a cached status check', async (_command, action) => {
+    let info = runtimeInfo;
+    const sendMessage = vi.fn(async (request: { type: string }) => ({ ok: true, data: request.type === 'RUNTIME_INFO' ? info : 'locked' }));
+    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    const { vaultClient } = await import('./client');
+    await vaultClient.status();
+    info = { ...runtimeInfo, buildId: 'different-build-same-version' };
+    await expect(action(vaultClient)).rejects.toMatchObject({ code: 'RUNTIME_RELOAD_REQUIRED' });
+    expect(sendMessage.mock.calls.map(([request]) => request.type)).toEqual(['RUNTIME_INFO', 'VAULT_STATUS', 'RUNTIME_INFO']);
+  });
+
+  it('does not recheck before commands that carry no secret material', async () => {
+    const sendMessage = vi.fn(async (request: { type: string }) => request.type === 'RUNTIME_INFO' ? compatible : { ok: true, data: [] });
+    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    const { vaultClient } = await import('./client');
+    await vaultClient.status();
+    await vaultClient.listItems();
+    await vaultClient.getItem('synthetic-id');
+    expect(sendMessage.mock.calls.filter(([request]) => request.type === 'RUNTIME_INFO')).toHaveLength(1);
   });
 
   it("preserves a real authentication failure instead of treating it as an upgrade", async () => {

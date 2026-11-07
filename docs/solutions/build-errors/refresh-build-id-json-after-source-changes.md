@@ -62,4 +62,4 @@ git commit -m "chore: refresh build identity after <改动概述>"
 ## Related Issues
 
 - 上游 PR #28（已合并）的附加提交即本次修复
-- 文档库首篇，无相关 learning 可交叉引用
+- [修改 mdbx2-host 源码后 npm run build 报 "Browser engine artifact is stale"](rebuild-mdbx2-browser-engine-after-host-src-changes.md)——同属"源码变更导致派生产物过期"家族：那边是引擎 provenance 校验报 stale、需用 pinned 工具链重建引擎，这边是构建标识写脏工作树、需重算并提交；其 provenance 报错同样不提示修复命令，属同一类机制缺口

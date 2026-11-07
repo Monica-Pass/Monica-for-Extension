@@ -333,7 +333,8 @@ export class NearbyLocalCoordinator {
       if (record.deleted) shadowed.set(record.local_id, record.guard);
       else kept.push(record);
     }
-    for (const id of source.retained ?? []) if (!shadowed.has(id) && !kept.some(row => row.local_id === id)) shadowed.set(id, '');
+    const keptIds = new Set(kept.map(row => row.local_id));
+    for (const id of source.retained ?? []) if (!shadowed.has(id) && !keptIds.has(id)) shadowed.set(id, '');
     if (!shadowed.size) return records;
     for (const part of chunks([...shadowed.keys()])) {
       const result = await this.call('replica_local', { handle: this.replica, local_ids: part, include_data: true });
@@ -480,7 +481,9 @@ export class NearbyLocalCoordinator {
       const begun = await this.call('discover', { targets: peer.address ? [peer.address] : [], multicast: true });
       const discovery = token(begun.handle);
       let result: Record<string, unknown> | undefined;
-      for (let wait = 0; wait < 40 && !result; wait++) {
+      // ready:false only means background discovery is still running, so keep
+      // polling within the same bounded window instead of aborting the run().
+      while (!result && Date.now() < this.connectionDeadline) {
         await this.pause(200);
         const polled = await this.call('discovery_result', { handle: discovery });
         if (polled.ready === true) result = wireObject(polled.result);
@@ -588,7 +591,7 @@ export class NearbyLocalCoordinator {
       try {
         if (bytes.length !== asset.size || await nearbySha256(bytes) !== asset.id) failure('asset-integrity');
         await this.guard(true); return bytes;
-      } catch (failure) { bytes.fill(0); throw failure; }
+      } catch (error) { bytes.fill(0); throw error; }
     }
   }
   private async adopt(policy: 'omit' | 'include' = 'include', revision?: string): Promise<void> {

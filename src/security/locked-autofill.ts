@@ -128,10 +128,23 @@ export class IndexedDbLockedAutofillStorage implements LockedAutofillStorage {
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction("cache", mode);
       let result: T;
-      const request = action(tx.objectStore("cache"));
-      request.onsuccess = () => { result = (request.result ?? null) as T; };
-      tx.oncomplete = () => { db.close(); resolve(result); };
-      tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error("Locked autofill storage failed")); };
+      let failed = false;
+      const fail = (reason?: unknown) => {
+        if (failed) return;
+        failed = true;
+        db.close();
+        reject(reason);
+      };
+      try {
+        const request = action(tx.objectStore("cache"));
+        request.onsuccess = () => { result = (request.result ?? null) as T; };
+      } catch (error) {
+        try { tx.abort(); } catch { /* transaction may already be inactive */ }
+        fail(error);
+      }
+      tx.oncomplete = () => { db.close(); if (!failed) resolve(result); };
+      tx.onerror = () => fail(tx.error);
+      tx.onabort = () => fail(tx.error || new Error("Locked autofill storage failed"));
     });
   }
 }

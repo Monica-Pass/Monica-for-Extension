@@ -486,7 +486,7 @@ export class BitwardenProvider implements ProviderAdapter {
         }
       } catch (error) {
         for (const local of changes) conflicts.push({ itemId: local.id, reason: errorMessage(error), local, remote: findEquivalent(local, remotes) });
-        merged.push(...workingLocals);
+        merged.push(...workingLocals, ...remotes.filter((remote) => !workingLocals.some((local) => Boolean(findEquivalent(local, [remote])))));
       }
     }
 
@@ -567,6 +567,8 @@ export class BitwardenProvider implements ProviderAdapter {
       ? projectTotpIntoLogin(decodedCurrent.items.find((candidate): candidate is LoginItem => candidate.kind === "login") || createLoginFromTotp(item), item)
       : item;
     const payload = payloadItem.kind === "passkey" ? await encodeBitwardenPasskeyCipher(payloadItem, cipherKey, raw) : await encodeBitwardenCipher(payloadItem, cipherKey, raw);
+    // Enforce the server's optimistic concurrency check, matching the sync write path.
+    payload.lastKnownRevisionDate = stringValue(raw, "RevisionDate", "revisionDate");
     const response = await this.client.updateCipher(session, cipherId, payload, signal);
     const decoded = await decodeBitwardenCipher(response.payload, account.id, ownerKey);
     const result = item.kind === "passkey"
@@ -593,7 +595,10 @@ export class BitwardenProvider implements ProviderAdapter {
     const organizations = await resolveBitwardenOrganizationKeys(current.payload, vaultKey);
     const ownerKey = requireCipherOwnerKey(raw, vaultKey, organizations.keys);
     const cipherKey = await resolveBitwardenCipherKey(raw, ownerKey);
-    await this.client.updateCipher(current.session, cipherId, await encodeBitwardenPasskeyCipher(item, cipherKey, raw, "delete"), signal);
+    const payload = await encodeBitwardenPasskeyCipher(item, cipherKey, raw, "delete");
+    // Enforce the server's optimistic concurrency check, matching the sync write path.
+    payload.lastKnownRevisionDate = stringValue(raw, "RevisionDate", "revisionDate");
+    await this.client.updateCipher(current.session, cipherId, payload, signal);
   }
 
   private async restoreCipher(

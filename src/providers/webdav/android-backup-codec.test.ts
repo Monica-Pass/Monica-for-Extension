@@ -1019,6 +1019,33 @@ describe("Android backup ZIP codec", () => {
     expect(JSON.parse(strFromU8(output[newPath]))).toMatchObject({ categoryName: "Personal Vault", password: "old-password" });
   });
 
+  it("keeps two new records created in the same millisecond whose Android numeric ids collide", () => {
+    const createdAt = "2026-01-02T03:04:05.678Z";
+    // Mirror numericId's name hash so two vault ids land in the same 0-999 bucket.
+    const bucket = (id: string) => { let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0; return hash % 1000; };
+    const byBucket = new Map<number, string>();
+    let firstId = "", secondId = "";
+    for (let index = 0; index < 5000 && !(firstId && secondId); index += 1) {
+      const candidate = `same-milli-${index}`;
+      const seen = byBucket.get(bucket(candidate));
+      if (seen !== undefined) { firstId = seen; secondId = candidate; }
+      else byBucket.set(bucket(candidate), candidate);
+    }
+    expect(firstId && secondId).toBeTruthy();
+    const login = (id: string, title: string): LoginItem => ({
+      id, kind: "login", title, username: "joy", password: "secret", uris: [], notes: "", favorite: false,
+      customFields: [], providerRefs: [], createdAt, updatedAt: createdAt
+    });
+    const document = readAndroidBackup(zipSync({}), "provider-collision");
+    const output = unzipSync(writeAndroidBackup(document, [login(firstId, "Collision A"), login(secondId, "Collision B")], "provider-collision"));
+    const paths = Object.keys(output).filter((path) => /^folders\/_root\/passwords\//i.test(path));
+    expect(paths).toHaveLength(2);
+    const rawIds = paths.map((path) => String((JSON.parse(strFromU8(output[path])) as { id: unknown }).id));
+    expect(new Set(rawIds).size).toBe(2);
+    const written = readAndroidBackup(zipSync(output), "provider-collision");
+    expect(written.items.filter((item) => item.kind === "login").map((item) => item.title).sort()).toEqual(["Collision A", "Collision B"]);
+  });
+
   it("reads Android password history and appends the previous password on change", () => {
     const loginPath = "folders/_root/passwords/password_42_1700000000000.json";
     const loginRaw = { id: 42, title: "Account", username: "joy", password: "current", website: "https://example.com", notes: "", isFavorite: false, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_001_000 };

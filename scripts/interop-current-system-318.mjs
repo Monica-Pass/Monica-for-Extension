@@ -69,7 +69,7 @@ if (process.argv[2] === 'capture') {
   assert.equal(hash(await readFile(baseline.compileApi)), baseline.compileApiSha256);
   const classes = join(build, 'app/intermediates/compile_app_classes_jar/debug/bundleDebugClassesToCompileJar/classes.jar');
   await mkdir(resolve(classes, '..'), { recursive: true }); await copyFile(baseline.compileApi, classes);
-  const env = { ...process.env, JAVA_HOME: 'C:/jdk-17.0.1', GRADLE_USER_HOME: 'D:/GradleRepository',
+  const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME || 'C:/jdk-17.0.1', GRADLE_USER_HOME: process.env.GRADLE_USER_HOME || 'D:/GradleRepository',
     MONICA_APP_INTEROP_BUILD_DIR: build, MONICA_APP_INTEROP_SOURCE_DIR: join(output, 'sources'),
     MONICA_APP_INTEROP_REPLACE_TEST_SOURCES: '1', MONICA_APP_INTEROP_REUSE_VERIFIED_APPLICATION: '1',
     MONICA_APP_INTEROP_TEST_MANIFEST: join(root, 'tests/interop/android-app/passkey-signatures-AndroidManifest.xml') };

@@ -149,6 +149,23 @@ describe('atomic native metadata adoption planning', () => {
     expect(commands[0]).toEqual({ kind: 'collection-restore', collectionId: f.folder.collectionId, parentId: f.root });
     expect(commands.some(row => 'labelId' in row && row.labelId === future.labelId)).toBe(false);
   });
+  it('purges a trashed folder holding a marker through label-update without a restore round trip',async()=>{
+    const f=fixture();f.folder.deleted=true;
+    f.label(f.folder.collectionId,NATIVE_FOLDER_DATA,{kind:NATIVE_FOLDER_DATA,data:f.folderData(f.folder.collectionId,f.folder.title)});
+    const commands=await planNearbyNativeMetadata(f.source,randomUUID(),[await f.change(f.folder.collectionId,{},'folder',true)]);
+    expect(commands.some(row=>row.kind==='collection-restore'||row.kind==='collection-trash')).toBe(false);
+    const updated=commands.find(row=>row.kind==='label-update');
+    expect(updated).toMatchObject({kind:'label-update',name:NATIVE_FOLDER_DATA});
+    if(updated?.kind!=='label-update')throw new Error('Missing marker update');
+    expect(JSON.parse(updated.payloadJson)).toMatchObject({purged:true});
+  });
+  it('still restores a markerless trashed folder so the purged marker can be created',async()=>{
+    const f=fixture();f.folder.deleted=true;
+    const commands=await planNearbyNativeMetadata(f.source,randomUUID(),[await f.change(f.folder.collectionId,{},'folder',true)]);
+    expect(commands[0]).toEqual({ kind: 'collection-restore', collectionId: f.folder.collectionId, parentId: f.root });
+    expect(commands[commands.length-1]).toEqual({ kind: 'collection-trash', collectionId: f.folder.collectionId });
+    expect(commands.some(row=>row.kind==='label-create'&&row.name===NATIVE_FOLDER_DATA)).toBe(true);
+  });
   it('refuses a stale local metadata guard before planning writes', async () => {
     const f = fixture(), change = await f.change(f.folder.collectionId, f.folderData(f.folder.collectionId, 'Rename'));
     f.label(f.folder.collectionId, 'Changed after capture', '{}'); await expect(planNearbyNativeMetadata(f.source, randomUUID(), [change])).rejects.toMatchObject({ code: 'native-metadata-stale' });

@@ -221,7 +221,9 @@ function setControlValue(element: WalletControl, requestedValue: string, name: W
     value = value.replace(/\r?\n/g, ', ');
     prototype = view.HTMLInputElement.prototype;
   }
-  Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(element, value);
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  if (!descriptor?.set) return false;
+  try { descriptor.set.call(element, value); } catch { return false; }
   element.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   element.dispatchEvent(new view.Event("change", { bubbles: true }));
   return true;

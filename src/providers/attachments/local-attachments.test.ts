@@ -4,6 +4,7 @@ import { MemoryVaultStorage } from '../../security/vault-storage';
 import { MemoryVaultSessionStore } from '../../security/vault-session';
 import { createLoginItem } from '../../core/model';
 import { bytesToBase64 } from '../../security/encoding';
+import { PROVIDER_ATTACHMENT_UPLOAD_TTL_MS } from './attachment-contract';
 import { LocalAttachmentService } from './local-attachments';
 import type { LocalAttachmentMutation } from '../../core/local-attachments';
 
@@ -83,5 +84,19 @@ describe('local encrypted attachments', () => {
       vi.spyOn(service, 'readLocalAttachmentSnapshot').mockImplementation(async (...args) => { const result = await original(...args); files.clear(); return result; });
       await expect(files.begin(input.providerId, input.itemId, input.attachmentId)).rejects.toThrow('已取消');
     } finally { files.clear(); }
+  });
+  it('renews the read session on every served chunk and expires only when idle', async () => {
+    const { service, input, sessionId, files } = await fixture();
+    await service.mutateLocalAttachment(input, sessionId);
+    vi.useFakeTimers();
+    try {
+      const begun = await files.begin(input.providerId, input.itemId, input.attachmentId);
+      vi.advanceTimersByTime(PROVIDER_ATTACHMENT_UPLOAD_TTL_MS - 1);
+      expect((await files.chunk(input.providerId, begun.readHandle, 0)).dataBase64).toBe(input.attachment!.dataBase64);
+      vi.advanceTimersByTime(PROVIDER_ATTACHMENT_UPLOAD_TTL_MS - 1);
+      expect((await files.chunk(input.providerId, begun.readHandle, 0)).eof).toBe(true);
+      vi.advanceTimersByTime(PROVIDER_ATTACHMENT_UPLOAD_TTL_MS + 1);
+      await expect(files.chunk(input.providerId, begun.readHandle, 0)).rejects.toThrow('已过期');
+    } finally { vi.useRealTimers(); files.clear(); }
   });
 });

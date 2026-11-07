@@ -14,8 +14,11 @@ const api = join(sdk, 'platforms/android-35/android.jar');
 for (const dir of [output, join(output, 'classes'), join(output, 'dex')]) await mkdir(dir, { recursive: true });
 const log = [];
 function run(file, args) {
-  const result = spawnSync(file, args, { cwd: output, windowsHide: true, shell: file.endsWith('.bat'), encoding: 'utf8', maxBuffer: 8e6 });
-  log.push({ file, args, status: result.status, stdout: result.stdout, stderr: result.stderr });
+  const shell = file.endsWith('.bat');
+  // .bat must run through cmd.exe (plain spawn rejects batch files on Windows); quote spaced arguments so paths survive the shell command line.
+  const commandArgs = shell ? args.map(argument => /\s/.test(argument) ? `"${argument}"` : argument) : args;
+  const result = spawnSync(file, commandArgs, { cwd: output, windowsHide: true, shell, encoding: 'utf8', maxBuffer: 8e6 });
+  log.push({ file, args: commandArgs, status: result.status, stdout: result.stdout, stderr: result.stderr });
   if (result.status !== 0) throw new Error(`${file} failed: ${result.stderr || result.stdout}`);
   return result.stdout;
 }

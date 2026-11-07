@@ -579,9 +579,9 @@ async function pollForNewMarketConfirmations(item: TotpItem, existingIds: Set<st
 }
 
 function isSteamMarketConfirmation(confirmation: SteamConfirmation): boolean {
-  const normalized = confirmation.type.trim().toLowerCase();
-  const text = `${confirmation.headline} ${confirmation.summary}`.toLowerCase();
-  return normalized === "3" || normalized.includes("market") || normalized.includes("sell") || text.includes("market listing") || text.includes("市场挂单");
+  // listSteamConfirmations always resolves conf.type; headline/summary text must
+  // not auto-approve unrelated confirmations that merely mention market words.
+  return confirmation.type.trim() === "3";
 }
 
 function toValidSteamMarketPrice(price: number, wallet: SteamWalletInfo): number {

@@ -116,7 +116,9 @@ function bridge(request: Record<string, unknown>, timeoutMs = 120_000, signal?: 
         return;
       }
       if (settled) return; settled = true; cleanup();
-      if (event.data.error) reject(new DOMException(event.data.error, event.data.name || "NotAllowedError")); else resolve(event.data.result);
+      if (event.data.error) reject(new DOMException(event.data.error, event.data.name || "NotAllowedError"));
+      else if (cancellationRequested) reject(new DOMException(cancellationMessage, cancellationName));
+      else resolve(event.data.result);
     };
     const abort = () => requestCancellation("Passkey 请求已中止。", "AbortError");
     if (signal?.aborted) return fail("Passkey 请求已中止。", "AbortError");

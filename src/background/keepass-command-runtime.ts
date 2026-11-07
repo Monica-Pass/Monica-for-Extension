@@ -425,7 +425,20 @@ export function createKeePassCommandRuntime(deps: Dependencies) {
                     }
                 });
             }
-            return { fileName, file: bytesToBase64(await deps.keePassProvider.exportFile(account.id)) };
+            return deps.runKeePassMutationExclusive(account.id, async () => {
+                await deps.keePassProjectRemovals.assertProviderReady(account.id);
+                await deps.flushKeePassPendingMutations(account);
+                const state = await deps.service.readState(false);
+                if (state.mutationQueue.some(row => row.providerId === account.id) || state.providerConflicts.some(row => row.providerId === account.id))
+                    throw new Error("请先同步所有待写入修改并处理冲突，再导出 KeePass 数据库。");
+                const bytes = await deps.keePassProvider.exportFile(account.id);
+                try {
+                    return { fileName, file: bytesToBase64(bytes) };
+                }
+                finally {
+                    bytes.fill(0);
+                }
+            });
         },
         "KEEPASS_LOCK": async (request, sender) => {
             assertManagerPage(sender);

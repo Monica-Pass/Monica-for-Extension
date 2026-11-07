@@ -192,7 +192,7 @@ function restoreAndroidNoteBindings(items: VaultItem[], records: Map<string, And
   }
 }
 
-function synchronizeAndroidNoteBindings(document: AndroidBackupDocument, items: VaultItem[]): void {
+function synchronizeAndroidNoteBindings(document: AndroidBackupDocument, items: VaultItem[], fallbackIds: Map<string, number>): void {
   for (const owner of items) {
     if (owner.kind !== "login" || owner.deletedAt) continue;
     const previous = document.records.get(owner.id)?.item;
@@ -201,7 +201,7 @@ function synchronizeAndroidNoteBindings(document: AndroidBackupDocument, items: 
     if (!note) throw new Error("关联笔记不在此备份中、已删除或标识重复，无法同步关联。");
     const exportId = (item: VaultItem) => {
       const rawId = document.records.get(item.id)?.raw.id;
-      return rawId === undefined ? numericId(item) : typeof rawId === "number" || typeof rawId === "string" ? Number(rawId) : NaN;
+      return rawId === undefined ? fallbackIds.get(item.id) ?? numericId(item) : typeof rawId === "number" || typeof rawId === "string" ? Number(rawId) : NaN;
     };
     const id = exportId(note);
     if (!Number.isSafeInteger(id) || items.filter(item => !item.deletedAt && item.kind !== "login" && exportId(item) === id).length !== 1) {
@@ -232,7 +232,7 @@ function restoreAndroidOtpBindings(items: VaultItem[]): void {
 }
 
 /** Android stores the link on the authenticator; the extension edits it on the login. */
-function synchronizeAndroidOtpBindings(document: AndroidBackupDocument, items: VaultItem[]): void {
+function synchronizeAndroidOtpBindings(document: AndroidBackupDocument, items: VaultItem[], fallbackIds: Map<string, number>): void {
   const logins = items.filter((item): item is LoginItem => item.kind === "login" && !item.deletedAt);
   const edits = logins.filter(login => {
     const original = document.records.get(login.id)?.item;
@@ -252,7 +252,7 @@ function synchronizeAndroidOtpBindings(document: AndroidBackupDocument, items: V
   }
   const ids = new Map(logins.map(login => {
     const original = document.records.get(login.id)?.raw.id;
-    return [login.id, original === undefined ? numericId(login) : typeof original === "number" || typeof original === "string" ? Number(original) : NaN];
+    return [login.id, original === undefined ? fallbackIds.get(login.id) ?? numericId(login) : typeof original === "number" || typeof original === "string" ? Number(original) : NaN];
   }));
   const idCounts = new Map<number, number>();
   const owners = new Map<string, number>();
@@ -297,8 +297,14 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
   const originalItems = items;
   items = items.map(cloneVaultItem);
   const entries = { ...document.entries };
-  synchronizeAndroidOtpBindings(document, items);
-  synchronizeAndroidNoteBindings(document, items);
+  // Android numeric fallback ids derive from the creation millisecond plus a small
+  // hash, so two new records created in the same millisecond can collide and would
+  // silently overwrite each other's file. Allocate unique ids once and share the
+  // allocation with the record writer, the binding synchronizers, and the
+  // password-history writer.
+  const fallbackIds = allocateAndroidNumericIds(document, items);
+  synchronizeAndroidOtpBindings(document, items, fallbackIds);
+  synchronizeAndroidNoteBindings(document, items, fallbackIds);
   synchronizeAndroidCategories(document, items, entries);
   for (const item of items) {
     const existing = document.records.get(item.id);
@@ -309,7 +315,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
     if (item.deletedAt) {
       if (!existing) continue;
       if (sameWritableItem(item, existing.item)) continue;
-      const target = serializeAndroidItem(item, existing.raw, existing.item, options);
+      const target = serializeAndroidItem(item, existing.raw, existing.item, options, fallbackIds);
       if (!target) continue;
       if (existing.container === "json-array") {
         updateAndroidArrayEntry(entries, existing.path, target.id, target.raw);
@@ -320,7 +326,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
       continue;
     }
     if (existing && sameWritableItem(item, existing.item)) continue;
-    const target = serializeAndroidItem(item, existing?.raw, existing?.item, options);
+    const target = serializeAndroidItem(item, existing?.raw, existing?.item, options, fallbackIds);
     if (!target) continue;
     if (existing?.container === "json-array") {
       updateAndroidArrayEntry(entries, existing.path, target.id, undefined);
@@ -336,7 +342,7 @@ export function writeAndroidBackup(document: AndroidBackupDocument, items: Vault
     entries[remotePath] = strToU8(JSON.stringify(target.raw));
     ensureProviderReference(item, providerId, remotePath);
   }
-  writeAndroidPasswordHistory(document, items, entries);
+  writeAndroidPasswordHistory(document, items, entries, fallbackIds);
   validateUncompressedZipEntries(entries);
   const output = zipSync(entries, { level: 6 });
   inspectZipArchive(output);
@@ -1009,13 +1015,13 @@ function readAndroidGeneratorHistory(entries: Record<string, Uint8Array>, warnin
   return records;
 }
 
-function writeAndroidPasswordHistory(document: AndroidBackupDocument, items: VaultItem[], entries: Record<string, Uint8Array>): void {
+function writeAndroidPasswordHistory(document: AndroidBackupDocument, items: VaultItem[], entries: Record<string, Uint8Array>, fallbackIds: Map<string, number>): void {
   const original = document.passwordHistoryRaw || [];
   const replacements = new Map<string, { entryId: unknown; previous: NonNullable<LoginItem['passwordHistory']>; next: NonNullable<LoginItem['passwordHistory']> }>();
   for (const item of items) {
     if (item.kind !== "login") continue;
     const record = document.records.get(item.id);
-    const entryId = record ? record.raw.id : numericId(item);
+    const entryId = record ? record.raw.id : fallbackIds.get(item.id) ?? numericId(item);
     if (!record) assertPortablePasswordHistory(item);
     const owner = passwordHistoryOwner(entryId);
     if (owner === undefined) continue;
@@ -1105,11 +1111,11 @@ function baseFields(path: string, raw: Record<string, unknown>, providerId: stri
   };
 }
 
-function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem, options: AndroidBackupCodecOptions = {}): { id: number | string; raw: Record<string, unknown> } | null {
+function serializeAndroidItem(item: VaultItem, original?: Record<string, unknown>, originalItem?: VaultItem, options: AndroidBackupCodecOptions = {}, fallbackIds?: Map<string, number>): { id: number | string; raw: Record<string, unknown> } | null {
   // Android API tokens are native MDBX2 objects, not Room password backup rows.
   if (item.kind === "api-token" || item.kind === "opaque") throw new Error(`Android JSON 备份没有 ${item.kind} 的无损写入格式，请保留原数据库或使用 MDBX 同步。`);
   const originalId = original?.id;
-  const id: number | string = originalId === undefined ? numericId(item) : typeof originalId === "number" ? originalId : jsonScalarText(originalId);
+  const id: number | string = originalId === undefined ? fallbackIds?.get(item.id) ?? numericId(item) : typeof originalId === "number" ? originalId : jsonScalarText(originalId);
   const raw: Record<string, unknown> = { ...(original || {}) };
   const isNew = !original || !originalItem;
   const setChanged = (key: string, value: unknown, current: unknown, previous: unknown) => {
@@ -1445,6 +1451,33 @@ function numericId(item: VaultItem): number {
   let hash = 0;
   for (const char of item.id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return Date.parse(item.createdAt) * 1000 + (hash % 1000);
+}
+
+/**
+ * numericId derives the fallback Android id from the creation millisecond plus a
+ * small name hash, so two new records created in the same millisecond can receive
+ * the same number and overwrite each other's remote file. Assign every record
+ * without a stored Android id a unique number up front: the non-colliding value
+ * stays identical to numericId, collisions increment, and existing Android ids
+ * are never reused. Shared by the record writer, the binding synchronizers, and
+ * the password-history writer so every reference in one batch agrees.
+ */
+function allocateAndroidNumericIds(document: AndroidBackupDocument, items: VaultItem[]): Map<string, number> {
+  const used = new Set<number>();
+  for (const record of document.records.values()) {
+    if (typeof record.raw.id === "number") used.add(record.raw.id);
+  }
+  const allocated = new Map<string, number>();
+  for (const item of items) {
+    if (document.records.get(item.id)?.raw.id !== undefined) continue;
+    let id = numericId(item);
+    // An unusable creation timestamp yields NaN; keep it so the existing
+    // safe-integer validation keeps rejecting the record instead of looping.
+    if (Number.isSafeInteger(id)) while (used.has(id)) id += 1;
+    used.add(id);
+    allocated.set(item.id, id);
+  }
+  return allocated;
 }
 
 function splitUris(value: string): string[] {

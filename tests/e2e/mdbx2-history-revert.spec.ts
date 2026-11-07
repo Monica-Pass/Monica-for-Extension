@@ -2,13 +2,7 @@ import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  expect(await locator.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }))).toEqual(
-    expect.objectContaining({ clientWidth: expect.any(Number), scrollWidth: expect.any(Number) })
-  );
-  expect(await locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-}
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 async function expectCentered(container: Locator, icon: Locator): Promise<void> {
   const [containerBox, iconBox] = await Promise.all([container.boundingBox(), icon.boundingBox()]);

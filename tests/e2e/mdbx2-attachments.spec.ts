@@ -1,9 +1,11 @@
 import { launchTestContext } from './fixtures/edge';
 import { chooseOption, dialogContent } from "./fixtures/material";
+import { sendFromExtensionContentWorld } from "./fixtures/cdp";
 import { expect, test, type BrowserContext, type CDPSession, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 interface RuntimeResponse<T = unknown> {
   ok: boolean;
@@ -451,70 +453,6 @@ async function transferRequests(page: Page): Promise<Array<Record<string, unknow
   return page.evaluate(() =>
     (globalThis as unknown as { __monicaAttachmentTransferRequests: Array<Record<string, unknown>> }).__monicaAttachmentTransferRequests
   );
-}
-
-async function sendFromExtensionContentWorld(cdp: CDPSession, message: Record<string, unknown>): Promise<RuntimeResponse> {
-  const contexts: Array<{ id: number }> = [];
-  cdp.on("Runtime.executionContextCreated", (event) => contexts.push({ id: event.context.id }));
-  await cdp.send("Runtime.enable");
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  for (const context of contexts) {
-    try {
-      const probe = await cdp.send("Runtime.evaluate", {
-        contextId: context.id,
-        expression: "typeof globalThis.chrome?.runtime?.sendMessage === 'function'",
-        returnByValue: true
-      });
-      if (probe.result.value !== true) continue;
-      const evaluated = await cdp.send("Runtime.evaluate", {
-        contextId: context.id,
-        expression: `globalThis.chrome.runtime.sendMessage(${JSON.stringify(message)})`,
-        awaitPromise: true,
-        returnByValue: true
-      });
-      if (evaluated.exceptionDetails) continue;
-      const value = evaluated.result.value as RuntimeResponse | undefined;
-      if (value && typeof value.ok === "boolean") return value;
-    } catch {
-      // Main-world and destroyed contexts are skipped; only the isolated extension world is useful here.
-    }
-  }
-  throw new Error("未找到可调用 chrome.runtime.sendMessage 的 Monica 内容脚本执行上下文。");
-}
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const report = await locator.evaluate((element) => {
-    const root = element.getBoundingClientRect();
-    const descendants: HTMLElement[] = [];
-    const visit = (node: ParentNode) => {
-      for (const child of node.querySelectorAll<HTMLElement>(":scope > *")) {
-        descendants.push(child);
-        visit(child);
-        if (child.shadowRoot) visit(child.shadowRoot);
-      }
-    };
-    visit(element);
-    const offenders = descendants.flatMap((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      const boundaryOverflow = Math.max(0, root.left - rect.left, rect.right - root.right);
-      const contentOverflow = Math.max(0, candidate.scrollWidth - candidate.clientWidth);
-      const overflow = Math.max(boundaryOverflow, contentOverflow);
-      return overflow > 1 ? [{ tag: candidate.tagName.toLowerCase(), className: candidate.className, overflow: Math.round(overflow * 10) / 10, width: Math.round(rect.width * 10) / 10, contentOverflow }] : [];
-    }).slice(0, 12);
-    const style = getComputedStyle(element);
-    const borders = parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    const verticalScrollbar = Math.max(0, element.offsetWidth - element.clientWidth - borders);
-    return {
-      overflow: Math.max(0, element.scrollWidth - element.clientWidth - verticalScrollbar),
-      rawOverflow: element.scrollWidth - element.clientWidth,
-      verticalScrollbar,
-      clientWidth: element.clientWidth,
-      offsetWidth: element.offsetWidth,
-      scrollWidth: element.scrollWidth,
-      offenders
-    };
-  });
-  expect(report.overflow, JSON.stringify(report)).toBeLessThanOrEqual(1);
 }
 
 async function expectMinimumTarget(locator: Locator): Promise<void> {

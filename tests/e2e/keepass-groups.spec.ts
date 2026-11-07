@@ -4,6 +4,7 @@ import { expect, test, type BrowserContext, type Download, type Locator, type Pa
 import * as kdbxweb from "kdbxweb";
 import path from "node:path";
 import { buildKeePassFixture, keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 const kdbxRuntime = ((kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb);
 const DATABASE_PASSWORD = "keepass group fixture password";
@@ -250,22 +251,6 @@ async function expectIconsRemainFixedSize(locator: Locator): Promise<void> {
     return fontSize > 24.1 || glyphSize > Math.min(rect.width, rect.height) + 1 || cropped ? [{ glyph: glyph?.textContent, fontSize, glyphSize, width: rect.width, height: rect.height, glyphRect }] : [];
   }));
   expect(issues).toEqual([]);
-}
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const report = await locator.evaluate((element) => {
-    const root = element.getBoundingClientRect();
-    const offenders = [...element.querySelectorAll<HTMLElement>("*")].flatMap((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      const overflow = Math.max(0, root.left - rect.left, rect.right - root.right, candidate.scrollWidth - candidate.clientWidth);
-      return overflow > 1 ? [{ tag: candidate.tagName.toLowerCase(), className: candidate.className, overflow }] : [];
-    }).slice(0, 10);
-    const style = getComputedStyle(element);
-    const borders = parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    const verticalScrollbar = Math.max(0, element.offsetWidth - element.clientWidth - borders);
-    return { overflow: Math.max(0, element.scrollWidth - element.clientWidth - verticalScrollbar), offenders };
-  });
-  expect(report.overflow, JSON.stringify(report)).toBeLessThanOrEqual(1);
 }
 
 async function expectMinimumTarget(locator: Locator): Promise<void> {

@@ -106,6 +106,24 @@ describe("wallet DOM filling", () => {
     expect(fillWallet({ kind: "card", fields: { cardNumber: "4111111111111111", cardSecurityCode: "123" } }, dom.window.document)).toMatchObject({ ok: false, filledCount: 0 });
   });
 
+  it("does not report success or throw when a hostile page breaks the native value setter", () => {
+    // jsdom pages live in a separate vm realm: defineProperty on a cross-realm object
+    // merges a partial accessor descriptor with the existing one instead of replacing it,
+    // so both halves must be spelled out for the hostile override to take effect.
+    for (const descriptor of [
+      { configurable: true, get: () => "", set: undefined },
+      { configurable: true, get: undefined, set: () => { throw new Error("hostile"); } }
+    ]) {
+      const dom = page('<form><input autocomplete="name"></form>');
+      Object.defineProperty(dom.window.HTMLInputElement.prototype, "value", descriptor);
+      let events = 0;
+      dom.window.document.querySelector("input")!.addEventListener("input", () => { events += 1; });
+      dom.window.document.querySelector("input")!.addEventListener("change", () => { events += 1; });
+      expect(fillWallet({ kind: "identity", fields: { fullName: "Hostile" } }, dom.window.document)).toMatchObject({ ok: false, filledCount: 0 });
+      expect(events).toBe(0);
+    }
+  });
+
   it("recognizes Android-derived Chinese card labels", () => {
     const dom = page('<label>持卡人姓名<input></label><label>银行卡号<input></label><label>信用卡有效期<input></label><label>信用卡安全码<input></label>');
     expect(scanWalletKinds(dom.window.document)).toEqual(["card"]);

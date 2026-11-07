@@ -359,9 +359,8 @@ fn write_record(path: &Path, record: &HelloCredentialRecord) -> Result<(), RpcFa
             .map_err(|_| ())?;
         file.write_all(&bytes).map_err(|_| ())?;
         file.sync_all().map_err(|_| ())?;
-        if path.exists() {
-            fs::remove_file(path).map_err(|_| ())?;
-        }
+        // On Windows rename maps to MoveFileEx with MOVEFILE_REPLACE_EXISTING,
+        // so replacing the record stays atomic without a remove/rename window.
         fs::rename(&temp, path).map_err(|_| ())?;
         Ok::<(), ()>(())
     })();

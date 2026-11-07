@@ -15,6 +15,17 @@ describe("Steam maFile codec", () => {
     expect(() => parseSteamMaFile("not-json")).toThrow("解密");
   });
 
+  it("keeps a padded base64 shared secret that fits the base32 alphabet as base64", () => {
+    const secret = "2qEgSyGElJCqqeqjiX5GzHtVTYlD7kiTireq5jFLu4g=";
+    const parsed = parseSteamMaFile(JSON.stringify({ account_name: "alice", shared_secret: secret }));
+    expect(parsed.sharedSecretBase64).toBe(secret);
+  });
+
+  it("still decodes a padless base32 shared secret as base32", () => {
+    const parsed = parseSteamMaFile(JSON.stringify({ account_name: "alice", shared_secret: "IFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2U" }));
+    expect(parsed.sharedSecretBase64).toBe("QUJDREVGR0hJSktMTU5PUFFSU1Q=");
+  });
+
   it("decrypts Android manifest.json AES-CBC maFiles", async () => {
     const plaintext = JSON.stringify({ account_name: "alice", steamid: "76561198000000000", shared_secret: "MTIzNDU2Nzg=" });
     const password = "test-password";

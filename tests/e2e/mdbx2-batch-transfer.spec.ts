@@ -1,26 +1,10 @@
 import { dialogContent } from "./fixtures/material";
 import { expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import { launchEdgeContext } from './fixtures/edge';
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 import path from "node:path";
 
 const OPERATION_ID = "66666666-6666-4666-8666-666666666666";
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const measurements = await locator.evaluate((element) => {
-    const root = element.getBoundingClientRect();
-    const offenders = [...element.querySelectorAll<HTMLElement>("*")]
-      .map((child) => ({
-        tag: child.tagName.toLowerCase(),
-        className: child.className,
-        right: Math.round(child.getBoundingClientRect().right - root.right),
-        scrollOverflow: child.scrollWidth - child.clientWidth
-      }))
-      .filter((entry) => entry.right > 1 || entry.scrollOverflow > 1)
-      .slice(0, 12);
-    return { clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, offenders };
-  });
-  expect(measurements.scrollWidth, JSON.stringify(measurements, null, 2)).toBeLessThanOrEqual(measurements.clientWidth + 1);
-}
 
 async function expectCentered(container: Locator, icon: Locator): Promise<void> {
   const [containerBox, iconBox] = await Promise.all([container.boundingBox(), icon.boundingBox()]);

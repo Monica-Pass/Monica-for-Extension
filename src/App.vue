@@ -484,13 +484,15 @@ const listTotal = computed(() => {
     default: return 0;
   }
 });
-const listPagination = useListPagination(() => listTotal.value, () => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, kindFilter.value]));
+// Shared by pagination reset and selection clearing so new filter dimensions only extend one key.
+const managerFilterKey = () => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, kindFilter.value]);
+const listPagination = useListPagination(() => listTotal.value, managerFilterKey);
 const visibleTileItems = computed(() => listPagination.slice(activeSection.value === "steam" ? filteredSteamItems.value : filteredSectionItems.value));
 const selectionAvailable = computed(() => ['vault', 'passwords', 'wallet', 'notes', 'totp', 'api-tokens', 'steam', 'passkeys'].includes(activeSection.value));
 const selectionViewItems = computed(() => activeSection.value === 'steam' ? filteredSteamItems.value : filteredSectionItems.value);
 const selectablePageItems = computed(() => listPagination.slice(selectionViewItems.value).filter(item => item.kind !== 'opaque'));
 const allSelectionPageItems = computed(() => selectablePageItems.value.length > 0 && selectablePageItems.value.every(item => selectedItemIds.value.has(item.id)));
-watch(() => JSON.stringify([activeSection.value, query.value, databaseSourceFilter.value, folderFilter.value, activeQuickFilters.value, kindFilter.value]), () => clearItemSelection(), { flush: 'sync' });
+watch(managerFilterKey, () => clearItemSelection(), { flush: 'sync' });
 watch(vaultItems, items => {
   const available = new Set(items.filter(item => item.kind !== 'opaque').map(item => item.id));
   selectedItemIds.value = new Set([...selectedItemIds.value].filter(id => available.has(id)));
@@ -804,7 +806,12 @@ async function lockVault() {
     session.dirty && !isRemoteKeePassSource(providers.value.find((provider) => provider.id === providerId)?.config.sourceMode)
       && !hasLocalKeePassWorkingCopy(providers.value.find((provider) => provider.id === providerId)?.config || {}));
   if (hasLocalKeePassChanges && !window.confirm(tr('KeePass 数据库还有未导出的修改。现在锁定会丢失这些内存中的 KDBX 改动，仍要继续吗？'))) return;
-  await vaultClient.lock();
+  try {
+    await vaultClient.lock();
+  } catch (error) {
+    showNotice(errorMessage(error));
+    return;
+  }
   clearVaultView();
   void refreshWindowsHelloStatus();
 }
@@ -1254,9 +1261,13 @@ async function removeVaultItem(item: VaultItem) {
   if (item.kind === "login") return removeCredential(item);
   if (item.kind === "opaque" && !isLocalOnlyVaultItem(item, providers.value)) { showNotice(item.readOnlyReason); return; }
   if (!window.confirm(tr('确定删除“{0}”吗？{1}', { 0: item.title, 1: item.providerRefs.length ? tr('此操作会进入同步删除队列。') : "" }))) return;
-  await vaultClient.deleteItem(item.id);
-  await refreshItems();
-  showNotice(tr('{0}已删除。', { 0: itemKindLabel(item.kind) }));
+  try {
+    await vaultClient.deleteItem(item.id);
+    await refreshItems();
+    showNotice(tr('{0}已删除。', { 0: itemKindLabel(item.kind) }));
+  } catch (error) {
+    showNotice(errorMessage(error));
+  }
 }
 
 async function deletePasswordHistory(item: LoginItem, index: number) {
@@ -1829,9 +1840,13 @@ async function removeCredential(item: LoginItem) {
     return;
   }
   if (!window.confirm(tr('确定删除“{0}”吗？此操作会进入同步删除队列。', { 0: item.title }))) return;
-  await vaultClient.deleteItem(item.id);
-  await refreshItems();
-  showNotice(tr('登录项已删除。'));
+  try {
+    await vaultClient.deleteItem(item.id);
+    await refreshItems();
+    showNotice(tr('登录项已删除。'));
+  } catch (error) {
+    showNotice(errorMessage(error));
+  }
 }
 
 function openMdbx2Dialog(provider?: ProviderAccount, mode: "create" | "local" | "remote" = "create") {
@@ -1930,7 +1945,9 @@ async function exportMdbx2(provider: ProviderAccount) {
   const abort = new AbortController(); mdbxExportAbort = abort;
   try {
     // Flush the existing mutation queue through its normal CAS/retry path first.
-    if (!await syncProvider(provider) || abort.signal.aborted) return;
+    const synced = await syncProvider(provider);
+    if (!synced && !abort.signal.aborted) showNotice(webDavError.value || tr('操作失败，请重试。'));
+    if (!synced || abort.signal.aborted) return;
     const exported = await readVerifiedMdbxExport(vaultClient, provider.id, abort.signal);
     if (abort.signal.aborted || lifecycle.value !== "unlocked") return;
     const url = URL.createObjectURL(new Blob([exported.bytes], { type: exported.format === "zip" ? "application/zip" : "application/octet-stream" }));
@@ -2067,7 +2084,7 @@ async function syncAllBitwarden(): Promise<void> {
     if (conflicts) parts.push(tr('{0} 个冲突', { 0: conflicts }));
     showNotice(parts.join(" · "));
   } catch (error) {
-    webDavError.value = errorMessage(error);
+    showNotice(errorMessage(error));
   } finally {
     syncingAllBitwarden.value = false;
   }
@@ -2178,7 +2195,7 @@ async function exportProviderDiagnostics() {
     downloadJsonFile(`monica-provider-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, diagnostics);
     showNotice(tr('已导出 {0} 条脱敏诊断；文件不包含凭据或密码库内容。', { 0: diagnostics.summary.total }));
   } catch (error) {
-    webDavError.value = errorMessage(error);
+    showNotice(errorMessage(error));
   } finally {
     diagnosticBusy.value = false;
   }

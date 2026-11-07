@@ -139,7 +139,18 @@ export class WebDavClient {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Basic ${bytesToBase64(new TextEncoder().encode(`${this.credentials.username}:${this.credentials.password}`))}`);
     headers.set("Accept", "*/*");
-    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, { ...this.transportPolicy, operation, fetcher: this.fetcher, idempotent: init.method !== "PUT" }, consume);
+    return resilientFetch(url, { ...init, headers, cache: "no-store", credentials: "omit", redirect: "error" }, {
+      ...this.transportPolicy,
+      operation,
+      fetcher: this.fetcher,
+      idempotent: init.method !== "PUT",
+      // The deadline spans sending the request body and reading the response
+      // body; archive-sized GET/PUT transfers cannot fit the 15s default, while
+      // metadata calls (PROPFIND/MKCOL) keep it.
+      ...(init.method === "GET" || init.method === "PUT"
+        ? { timeoutMs: this.transportPolicy.timeoutMs ?? (init.method === "GET" ? 600_000 : 300_000) }
+        : {})
+    }, consume);
   }
 
   private limits(): WebDavClientLimits {

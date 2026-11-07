@@ -70,8 +70,12 @@ function synchronizeTheme(event: StorageEvent) {
 }
 
 watch([schemePreference, paletteId, activeScheme], applyTheme);
-watch(schemePreference, (value) => localStorage.setItem(schemeKey, value));
-watch(paletteId, (value) => localStorage.setItem(paletteKey, value));
+watch(schemePreference, (value) => {
+  try { localStorage.setItem(schemeKey, value); } catch { /* Preference stays usable in memory. */ }
+});
+watch(paletteId, (value) => {
+  try { localStorage.setItem(paletteKey, value); } catch { /* Preference stays usable in memory. */ }
+});
 
 function applyTheme() {
   const root = document.documentElement;
@@ -91,13 +95,19 @@ function updatePreferredScheme(event: MediaQueryListEvent) {
 }
 
 function readScheme(): SchemePreference {
-  const value = localStorage.getItem(schemeKey);
-  return value === "auto" || value === "light" || value === "dark" ? value : "auto";
+  try {
+    const value = localStorage.getItem(schemeKey);
+    if (value === "auto" || value === "light" || value === "dark") return value;
+  } catch { /* Fall back to the default scheme. */ }
+  return "auto";
 }
 
 function readPalette(): ThemePaletteId {
-  const value = localStorage.getItem(paletteKey);
-  return palettes.some((item) => item.id === value) ? (value as ThemePaletteId) : "monica";
+  try {
+    const value = localStorage.getItem(paletteKey);
+    if (palettes.some((item) => item.id === value)) return value as ThemePaletteId;
+  } catch { /* Fall back to the default palette. */ }
+  return "monica";
 }
 
 function palette(id: ThemePaletteId, color: string, darkColor: string, accent: string, light: string[], dark: string[]): ThemePalette {

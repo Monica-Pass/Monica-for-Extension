@@ -4,8 +4,10 @@ import { resolve, join } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 
 const out = process.env.MONICA_CM_EVIDENCE_DIR ? resolve(process.env.MONICA_CM_EVIDENCE_DIR) : resolve(import.meta.dirname, process.env.MONICA_CM_BACKENDS === '1' ? '../.tmp/android-cm-backends-317' : '../.tmp/android-credential-manager-317');
+const adbExecutable = `${process.env.ANDROID_SDK_ROOT || 'D:/AndroidSDK'}/platform-tools/adb.exe`;
+const adbSerial = process.env.ANDROID_SERIAL || 'emulator-5560';
 function adb(args) {
-  const r = spawnSync('D:/AndroidSDK/platform-tools/adb.exe', ['-s', 'emulator-5560', ...args], { windowsHide: true, timeout: 30000, maxBuffer: 32e6 });
+  const r = spawnSync(adbExecutable, ['-s', adbSerial, ...args], { windowsHide: true, timeout: 30000, maxBuffer: 32e6 });
   if (r.status !== 0) throw new Error(`ADB failed: ${r.error || r.stderr}`);
   return r.stdout;
 }

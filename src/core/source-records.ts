@@ -64,7 +64,8 @@ export function sourceRecordsBudgetError(records: ProviderSourceRecord[]): strin
 }
 
 function payloadByteLength(record: ProviderSourceRecord): number {
-  if (record.encoding !== "base64") return record.payload.length;
+  // Budget against UTF-8 bytes like the vault ciphertext cap, not UTF-16 code units.
+  if (record.encoding !== "base64") return new TextEncoder().encode(record.payload).length;
   const padding = record.payload.endsWith("==") ? 2 : record.payload.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(record.payload.length * 3 / 4) - padding);
 }

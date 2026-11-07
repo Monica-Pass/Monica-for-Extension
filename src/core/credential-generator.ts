@@ -151,7 +151,7 @@ function secureRandomIndex(upperExclusive: number): number {
   return values[0] % upperExclusive;
 }
 
-function pick(value: string | string[], randomIndex: RandomIndex): string { return value[randomIndex(value.length)]; }
+function pick(value: string | string[], randomIndex: RandomIndex): string { const chars = typeof value === "string" ? [...value] : value; return chars[randomIndex(chars.length)]; }
 function minimum(value: unknown): number { return integer(value ?? 0, 0, 256, "字符最小数量无效。"); }
 function integer(value: unknown, min: number, max: number, message: string): number { const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) throw new Error(message); return parsed; }
 
