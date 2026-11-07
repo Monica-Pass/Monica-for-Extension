@@ -1,6 +1,7 @@
 import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import path from "node:path";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 const PROVIDER_ID = "bitwarden-ui-demo";
 
@@ -207,34 +208,6 @@ test("Bitwarden status conflict permission and recovery UI is truthful responsiv
     await context?.close();
   }
 });
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const overflow = await locator.evaluate((element) => {
-    const root = element.getBoundingClientRect();
-    const offenders = [element, ...element.querySelectorAll<HTMLElement>("*")].flatMap((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      if (rect.right <= root.right + 1 && candidate.scrollWidth <= candidate.clientWidth + 1) return [];
-      const style = getComputedStyle(candidate);
-      return [{
-        tag: candidate.tagName,
-        className: String(candidate.className),
-        text: candidate.textContent?.trim().replace(/\s+/g, " ").slice(0, 80),
-        clientWidth: candidate.clientWidth,
-        scrollWidth: candidate.scrollWidth,
-        left: Math.round(rect.left),
-        right: Math.round(rect.right),
-        width: style.width,
-        minWidth: style.minWidth,
-        maxWidth: style.maxWidth,
-        boxSizing: style.boxSizing,
-        display: style.display,
-        position: style.position
-      }];
-    }).slice(0, 12);
-    return { clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, offenders };
-  });
-  expect(overflow.scrollWidth, JSON.stringify(overflow.offenders, null, 2)).toBeLessThanOrEqual(overflow.clientWidth + 1);
-}
 
 async function expectNoGradients(locator: Locator): Promise<void> {
   const offenders = await locator.evaluate((root) => [root, ...root.querySelectorAll<HTMLElement>("*")]

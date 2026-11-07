@@ -3,34 +3,12 @@ import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect, test, type BrowserContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 const PROVIDER_ID = "mdbx2-health-repair-demo";
 const PLAN_HANDLE = "11111111-1111-4111-8111-111111111111";
 const FIRST_ITEM_HANDLE = "22222222-2222-4222-8222-222222222222";
 const SECOND_ITEM_HANDLE = "33333333-3333-4333-8333-333333333333";
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const result = await locator.evaluate((element) => {
-    const root = element.getBoundingClientRect();
-    const offenders = [element, ...element.querySelectorAll<HTMLElement>("*")]
-      .map((child) => {
-        const rect = child.getBoundingClientRect();
-        return {
-          tag: child.tagName.toLowerCase(),
-          className: typeof child.className === "string" ? child.className : "",
-          text: child.textContent?.trim().replace(/\s+/g, " ").slice(0, 80) || "",
-          clientWidth: child.clientWidth,
-          scrollWidth: child.scrollWidth,
-          rightOverflow: Math.round((rect.right - root.right) * 10) / 10
-        };
-      })
-      .filter((item) => item.scrollWidth > item.clientWidth + 1 || item.rightOverflow > 1)
-      .sort((left, right) => Math.max(right.scrollWidth - right.clientWidth, right.rightOverflow) - Math.max(left.scrollWidth - left.clientWidth, left.rightOverflow))
-      .slice(0, 8);
-    return { clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, offenders };
-  });
-  expect(result.scrollWidth, JSON.stringify(result.offenders, null, 2)).toBeLessThanOrEqual(result.clientWidth + 1);
-}
 
 async function launchManager(testInfo: TestInfo, profileName: string): Promise<{ context: BrowserContext; page: Page }> {
   const extensionPath = path.resolve("dist");

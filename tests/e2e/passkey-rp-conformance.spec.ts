@@ -89,8 +89,7 @@ test("assertions satisfy RP-side verification per userVerification mode", async 
     // Registration exactly as most RPs call it: userVerification omitted, which defaults to "preferred".
     const registerChallenge = Buffer.alloc(32, 1).toString("base64url");
     const createCall = page.evaluate((challenge) => (window as any).__create(challenge, null), registerChallenge);
-    await confirmPrompt(page, true);
-    expect(await completeUserVerification(context, MASTER_PASSWORD), "registration verified the user").toBe(true);
+    expect(await completeUserVerification(context, MASTER_PASSWORD, undefined, () => confirmPrompt(page, true)), "registration verified the user").toBe(true);
     const created = JSON.parse(await createCall as string);
     expect(created.ok, JSON.stringify(created)).toBe(true);
     const createdFlags = Buffer.from(created.authData, "base64url")[32];
@@ -100,8 +99,7 @@ test("assertions satisfy RP-side verification per userVerification mode", async 
     // A credential registered without verification is the only shape on which an RP may skip it later.
     const lenientChallenge = Buffer.alloc(32, 30).toString("base64url");
     const lenientCall = page.evaluate(({ challenge, extra }) => (window as any).__create(challenge, extra), { challenge: lenientChallenge, extra: { publicKey: { authenticatorSelection: { userVerification: "discouraged" } } } });
-    await confirmPrompt(page, true);
-    expect(await completeUserVerification(context, MASTER_PASSWORD, 3_000), "discouraged registration stayed popup-free").toBe(false);
+    expect(await completeUserVerification(context, MASTER_PASSWORD, 3_000, () => confirmPrompt(page, true)), "discouraged registration stayed popup-free").toBe(false);
     const lenient = JSON.parse(await lenientCall as string);
     expect(lenient.ok, JSON.stringify(lenient)).toBe(true);
     const lenientFlags = Buffer.from(lenient.authData, "base64url")[32];
@@ -118,8 +116,7 @@ test("assertions satisfy RP-side verification per userVerification mode", async 
       const extra = mode === "omitted" ? {} : { publicKey: { userVerification: mode } };
       const challenge = Buffer.alloc(32, index + 2).toString("base64url");
       const getCall = page.evaluate(({ challenge, extra }) => (window as any).__get(challenge, extra), { challenge, extra });
-      await confirmPrompt(page, false);
-      await completeUserVerification(context, MASTER_PASSWORD);
+      await completeUserVerification(context, MASTER_PASSWORD, undefined, () => confirmPrompt(page, false));
       const payload = JSON.parse(await getCall as string);
       expect(payload.ok, `${mode}: ${JSON.stringify(payload)}`).toBe(true);
       const checks = verifyAssertion(publicKey, challenge, payload);
@@ -167,8 +164,7 @@ test("unsupported Passkey requests stay native and locked requests offer Monica 
     await page.goto(`${ORIGIN}/`);
     // Seed one credential so a declined request is not confounded with an empty vault.
     const seedCall = page.evaluate((challenge) => (window as any).__create(challenge, {}), Buffer.alloc(32, 9).toString("base64url"));
-    await confirmPrompt(page, true);
-    await completeUserVerification(context, MASTER_PASSWORD);
+    await completeUserVerification(context, MASTER_PASSWORD, undefined, () => confirmPrompt(page, true));
     expect(JSON.parse(await seedCall as string).ok).toBe(true);
 
     for (const variant of variants) {

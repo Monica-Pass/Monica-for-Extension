@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type CDPSession, type Page, type TestInfo } from "@playwright/test";
 import { launchTestContext } from './fixtures/edge';
+import { sendFromExtensionContentWorld } from './fixtures/cdp';
 import path from "node:path";
 
 interface RuntimeResponse<T = unknown> {
@@ -276,35 +277,6 @@ test("privileged provider and MDBX2 commands are restricted to the manager page"
     await context?.close();
   }
 });
-
-async function sendFromExtensionContentWorld(cdp: CDPSession, message: Record<string, unknown>): Promise<RuntimeResponse> {
-  const contexts: Array<{ id: number }> = [];
-  cdp.on("Runtime.executionContextCreated", (event) => contexts.push({ id: event.context.id }));
-  await cdp.send("Runtime.enable");
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  for (const context of contexts) {
-    try {
-      const probe = await cdp.send("Runtime.evaluate", {
-        contextId: context.id,
-        expression: "typeof globalThis.chrome?.runtime?.sendMessage === 'function'",
-        returnByValue: true
-      });
-      if (probe.result.value !== true) continue;
-      const evaluated = await cdp.send("Runtime.evaluate", {
-        contextId: context.id,
-        expression: `globalThis.chrome.runtime.sendMessage(${JSON.stringify(message)})`,
-        awaitPromise: true,
-        returnByValue: true
-      });
-      if (evaluated.exceptionDetails) continue;
-      const value = evaluated.result.value as RuntimeResponse | undefined;
-      if (value && typeof value.ok === "boolean") return value;
-    } catch {
-      // Ignore page worlds and stale contexts; the extension isolated world is the target.
-    }
-  }
-  throw new Error("未找到可调用 chrome.runtime.sendMessage 的 Monica 内容脚本执行上下文。");
-}
 
 test("non-loopback HTTP login submissions are rejected without retaining a password", async ({}, testInfo) => {
   let context: BrowserContext | undefined;

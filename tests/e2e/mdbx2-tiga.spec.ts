@@ -1,10 +1,7 @@
 import { dialogContent } from "./fixtures/material";
 import { chromium, expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  expect(await locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-}
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 async function expectCentered(container: Locator, icon: Locator): Promise<void> {
   const [containerBox, iconBox] = await Promise.all([container.boundingBox(), icon.boundingBox()]);

@@ -3,6 +3,7 @@ import { chooseOption, dialogContent } from "./fixtures/material";
 import { expect, test, type BrowserContext, type Locator } from "@playwright/test";
 import path from "node:path";
 import { installMdbx2TigaMock } from "./fixtures/mdbx2";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 test("auth card omits the decorative avatar", async ({}, testInfo) => {
   const extensionPath = path.resolve("dist"); let context: BrowserContext | undefined;
@@ -814,11 +815,6 @@ async function expectRoundedAndClipped(card: Locator): Promise<void> {
   expect(styles.hostRadius).toBe(styles.expectedRadius);
   expect(styles.hostRadius).toBe(styles.baseRadius);
   expect(["hidden", "clip"]).toContain(styles.overflow);
-}
-
-async function expectNoHorizontalOverflow(root: Locator): Promise<void> {
-  const dimensions = await root.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(dimensions.scrollWidth, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.clientWidth + 1);
 }
 
 async function expectDirectChildrenSeparated(root: Locator): Promise<void> {

@@ -1,5 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { dialogContent } from "./fixtures/material";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { BitwardenClient } from "../../src/providers/bitwarden/bitwarden-client";
@@ -74,11 +75,11 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     await expect(manager.getByText("Initial text content", { exact: true })).toBeVisible();
     await expect(manager.locator(".send-workspace")).toHaveCSS("border-radius", "8px");
     await expectNoGradients(manager.locator(".send-panel"));
-    await expectNoHorizontalOverflow(manager);
+    await expectNoHorizontalOverflow(manager.locator("html"));
 
     await manager.screenshot({ path: testInfo.outputPath("send-detail-mobile.png") });
     await manager.setViewportSize({ width: 1440, height: 1000 });
-    await expectNoHorizontalOverflow(manager);
+    await expectNoHorizontalOverflow(manager.locator("html"));
     await manager.screenshot({ path: testInfo.outputPath("send-detail-desktop.png") });
     await manager.setViewportSize({ width: 375, height: 1100 });
 
@@ -140,7 +141,7 @@ test("Bitwarden Send text and file operations are encrypted, manager-only, and r
     await expect(manager.getByRole("button", { name: "编辑" })).toBeDisabled();
 
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-    await expectNoHorizontalOverflow(manager);
+    await expectNoHorizontalOverflow(manager.locator("html"));
     await expectNoGradients(manager.locator(".send-panel"));
 
     const popup = await context.newPage();
@@ -322,9 +323,4 @@ async function expectNoGradients(locator: import("@playwright/test").Locator): P
   const offenders = await locator.evaluate((root) => [root, ...root.querySelectorAll<HTMLElement>("*")]
     .flatMap((candidate) => /gradient\(/i.test(getComputedStyle(candidate).backgroundImage) ? [candidate.className] : []));
   expect(offenders).toEqual([]);
-}
-
-async function expectNoHorizontalOverflow(page: Page): Promise<void> {
-  const overflow = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
-  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);
 }

@@ -5,6 +5,7 @@ import * as kdbxweb from "kdbxweb";
 import path from "node:path";
 import { buildKeePassFixture, keePassCredentials } from "../../src/providers/keepass/keepass-fixture";
 import { completeUserVerification } from "./fixtures/passkey-verification";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 
 const kdbxRuntime = ((kdbxweb as unknown as { default?: typeof kdbxweb }).default ?? kdbxweb);
 const VAULT_PASSWORD = "keepass webdav manager vault password";
@@ -216,13 +217,14 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     // The prompt lives in a closed shadow root: focus starts on 创建 Passkey;
     // Shift+Tab twice reaches the 保存位置 select, ArrowDown picks the KeePass target.
     await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
-    await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Enter");
-    await completeUserVerification(context, VAULT_PASSWORD);
+    await completeUserVerification(context, VAULT_PASSWORD, undefined, async () => {
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+    });
     await expect(page.locator("#result")).toContainText("registered:");
     await expect(page.locator("#result")).not.toContainText("error:");
 
@@ -242,10 +244,11 @@ test("KeePass passkey saves into the KDBX and signs a later assertion", async ({
     const prompt = page.locator("#monica-passkey-prompt-host");
     await expect(prompt).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Enter");
-    await completeUserVerification(context, VAULT_PASSWORD);
+    await completeUserVerification(context, VAULT_PASSWORD, undefined, async () => {
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+    });
     await expect(page.locator("#result")).toContainText("authenticated:");
     await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await vaultPasskeys(launched.manager);
@@ -464,11 +467,6 @@ async function expectNoGradients(locator: Locator): Promise<void> {
     return /gradient\(/i.test(image) ? [image] : [];
   }).slice(0, 10));
   expect(offenders).toEqual([]);
-}
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const overflow = await locator.evaluate((element) => Math.max(0, element.scrollWidth - element.clientWidth));
-  expect(overflow).toBeLessThanOrEqual(1);
 }
 
 async function expectVisibleTargetsAtLeast44(locator: Locator): Promise<void> {
