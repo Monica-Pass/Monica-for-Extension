@@ -1,5 +1,5 @@
 import { type ProviderAccount, type VaultItem } from "../core/model";
-import { BITWARDEN_ATTACHMENT_MAX_BYTES, KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError, type ProviderAttachmentMutationResult, type ProviderAttachmentReadBeginResult, type ProviderAttachmentReadChunk, type ProviderAttachmentUploadBeginResult, type ProviderAttachmentUploadChunkResult } from "../providers/attachments/attachment-contract";
+import { BITWARDEN_ATTACHMENT_MAX_BYTES, KEEPASS_ATTACHMENT_MAX_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS, PROVIDER_ATTACHMENT_READ_CACHE_MAX_BYTES, PROVIDER_ATTACHMENT_READ_CACHE_TOTAL_MAX_BYTES, PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, ProviderAttachmentError, type ProviderAttachmentMutationResult, type ProviderAttachmentReadBeginResult, type ProviderAttachmentReadChunk, type ProviderAttachmentUploadBeginResult, type ProviderAttachmentUploadChunkResult } from "../providers/attachments/attachment-contract";
 import { paginateProviderAttachments } from "../providers/attachments/attachment-pagination";
 import { ProviderAttachmentTransferCoordinator, type ProviderAttachmentTransferBackend } from "../providers/attachments/attachment-transfer";
 import { ProviderAttachmentUploadStore } from "../providers/attachments/attachment-upload-store";
@@ -63,7 +63,9 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
 
   const providerAttachmentTransfers = new ProviderAttachmentTransferCoordinator();
 
-  const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
+  /** Read routes carry decrypted bytes only for providers without offset
+   * reads (monica-webdav); every removal path must zero them first. */
+  const providerAttachmentReads = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number; cached?: { fileName: string; sizeBytes: number; bytes: Uint8Array } }>();
 
   const bitwardenAttachmentReadRoutes = new Map<string, { providerId: string; itemId: string; attachmentId: string; expiresAt: number }>();
 
@@ -113,10 +115,23 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
     };
   }
 
+  function deleteProviderAttachmentRead(readHandle: string): boolean {
+    const route = providerAttachmentReads.get(readHandle);
+    if (!route) return false;
+    if (route.cached) route.cached.bytes.fill(0);
+    return providerAttachmentReads.delete(readHandle);
+  }
+
+  function providerAttachmentCachedReadBytes(): number {
+    let total = 0;
+    for (const route of providerAttachmentReads.values()) total += route.cached?.bytes.byteLength ?? 0;
+    return total;
+  }
+
   function pruneProviderAttachmentReads(): void {
     const now = Date.now();
     for (const [readHandle, route] of providerAttachmentReads) {
-      if (route.expiresAt <= now) providerAttachmentReads.delete(readHandle);
+      if (route.expiresAt <= now) deleteProviderAttachmentRead(readHandle);
     }
     for (const [readHandle, route] of bitwardenAttachmentReadRoutes) {
       if (route.expiresAt <= now) {
@@ -215,8 +230,14 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
         if (providerAttachmentReads.size >= PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS) throw new ProviderAttachmentError("attachment-read-limit", "同时进行的附件下载过多，请完成或取消现有下载。");
         const result = await monicaWebDavProvider.readAttachment(account, item, request.attachmentId);
         const readHandle = crypto.randomUUID();
-        providerAttachmentReads.set(readHandle, { providerId: account.id, itemId: item.id, attachmentId: request.attachmentId, expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS });
-        result.bytes.fill(0);
+        // Cache decrypted bytes only within the read-cache budget; reads above
+        // it keep the legacy per-chunk download path in READ_CHUNK.
+        const cacheBytes = result.bytes.byteLength <= PROVIDER_ATTACHMENT_READ_CACHE_MAX_BYTES
+          && providerAttachmentCachedReadBytes() + result.bytes.byteLength <= PROVIDER_ATTACHMENT_READ_CACHE_TOTAL_MAX_BYTES
+          ? { fileName: result.fileName, sizeBytes: result.sizeBytes, bytes: result.bytes }
+          : undefined;
+        providerAttachmentReads.set(readHandle, { providerId: account.id, itemId: item.id, attachmentId: request.attachmentId, expiresAt: Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS, cached: cacheBytes });
+        if (!cacheBytes) result.bytes.fill(0);
         return { attachmentId: result.attachmentId, providerKind: result.providerKind, fileName: result.fileName, sizeBytes: result.sizeBytes, protected: result.protected, mediaType: result.mediaType, readHandle, maxChunkBytes: PROVIDER_ATTACHMENT_CHUNK_BYTES };
       }
       if (account.kind === "mdbx2") {
@@ -283,15 +304,22 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
         const route = providerAttachmentReads.get(request.readHandle);
         if (!route || route.providerId !== account.id) throw new ProviderAttachmentError("attachment-read-not-found", "附件下载已过期，请重新开始。");
         const { item } = await requireAttachmentTarget(route.providerId, route.itemId);
-        const result = await monicaWebDavProvider.readAttachment(account, item, route.attachmentId);
         route.expiresAt = Date.now() + PROVIDER_ATTACHMENT_UPLOAD_TTL_MS;
         const offset = request.offset;
         const maxBytes = Math.min(request.maxBytes ?? PROVIDER_ATTACHMENT_CHUNK_BYTES, PROVIDER_ATTACHMENT_CHUNK_BYTES);
-        if (!Number.isSafeInteger(offset) || offset < 0 || offset > result.bytes.byteLength) throw new ProviderAttachmentError("attachment-read-offset-invalid", "附件读取位置无效。");
-        const bytes = result.bytes.slice(offset, Math.min(offset + maxBytes, result.bytes.byteLength));
+        if (!Number.isSafeInteger(offset) || offset < 0) throw new ProviderAttachmentError("attachment-read-offset-invalid", "附件读取位置无效。");
+        // Uncached routes (attachment above the read-cache budget) re-download
+        // the whole attachment per chunk and zero it right after slicing.
+        const source = route.cached ?? await monicaWebDavProvider.readAttachment(account, item, route.attachmentId);
+        let bytes: Uint8Array | undefined;
         try {
-          return { readHandle: request.readHandle, attachmentId: result.attachmentId, fileName: result.fileName, sizeBytes: result.sizeBytes, offset, nextOffset: offset + bytes.byteLength, dataBase64: bytesToBase64(bytes), eof: offset + bytes.byteLength === result.sizeBytes };
-        } finally { bytes.fill(0); result.bytes.fill(0); }
+          if (offset > source.bytes.byteLength) throw new ProviderAttachmentError("attachment-read-offset-invalid", "附件读取位置无效。");
+          bytes = source.bytes.slice(offset, Math.min(offset + maxBytes, source.bytes.byteLength));
+          return { readHandle: request.readHandle, attachmentId: route.attachmentId, fileName: source.fileName, sizeBytes: source.sizeBytes, offset, nextOffset: offset + bytes.byteLength, dataBase64: bytesToBase64(bytes), eof: offset + bytes.byteLength === source.sizeBytes };
+        } finally {
+          bytes?.fill(0);
+          if (!route.cached) source.bytes.fill(0);
+        }
       }
       if (account.kind === "bitwarden") {
         pruneProviderAttachmentReads();
@@ -320,15 +348,15 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
     "PROVIDER_ATTACHMENT_READ_RELEASE": async (request, sender) => {
       assertManagerPage(sender);
       const account = await service.getProvider(request.providerId);
-      if (!account) return providerAttachmentReads.delete(request.readHandle);
+      if (!account) return deleteProviderAttachmentRead(request.readHandle);
       if (account.kind === 'local') return localAttachments.release(account.id, request.readHandle);
-      if (account.kind === "keepass") return providerAttachmentReads.delete(request.readHandle);
+      if (account.kind === "keepass") return deleteProviderAttachmentRead(request.readHandle);
       if (account.kind === "mdbx2") return mdbx2NativeClient.releaseAttachmentRead(request.readHandle);
       if (account.kind === "bitwarden") {
         bitwardenAttachmentReadRoutes.delete(request.readHandle);
         return bitwardenAttachmentDownloads.release(account.id, request.readHandle);
       }
-      if (account.kind === "monica-webdav") return providerAttachmentReads.delete(request.readHandle);
+      if (account.kind === "monica-webdav") return deleteProviderAttachmentRead(request.readHandle);
       throw unsupportedAttachmentProvider(account.kind);
     },
     "PROVIDER_ATTACHMENT_UPLOAD_BEGIN": async (request, sender) => {
@@ -655,7 +683,7 @@ export function createAttachmentRuntime(dependencies: AttachmentDependencies) {
       providerAttachmentUploads.clear(providerId);
       if (providerId === undefined) localAttachments.clear();
       for (const [handle, route] of providerAttachmentReads) {
-        if (providerId === undefined || route.providerId === providerId) providerAttachmentReads.delete(handle);
+        if (providerId === undefined || route.providerId === providerId) deleteProviderAttachmentRead(handle);
       }
       clearBitwardenAttachmentSessions(providerId);
     }

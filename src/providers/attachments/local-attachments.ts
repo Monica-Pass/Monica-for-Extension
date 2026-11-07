@@ -51,6 +51,10 @@ export class LocalAttachmentService implements TransferAttachmentSource {
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > route.bytes.length || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > PROVIDER_ATTACHMENT_CHUNK_BYTES)
         throw new Error('附件读取范围无效。');
       const bytes = route.bytes.subarray(offset, Math.min(offset + maxBytes, route.bytes.length));
+      // Slow consumers must not lose an active download to the idle TTL; renew on
+      // every served chunk the way the upload store renews writes.
+      clearTimeout(route.timer);
+      route.timer = setTimeout(() => this.release(providerId, readHandle), PROVIDER_ATTACHMENT_UPLOAD_TTL_MS);
       return { readHandle, attachmentId: route.attachment.attachmentId, fileName: route.attachment.fileName, sizeBytes: route.bytes.length,
         offset, nextOffset: offset + bytes.length, dataBase64: bytesToBase64(bytes), eof: offset + bytes.length === route.bytes.length };
     } catch (error) { this.release(providerId, readHandle); throw error; }

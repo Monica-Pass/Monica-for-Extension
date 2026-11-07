@@ -98,7 +98,10 @@ export class OneDriveGraphClient {
     const url = safeDownloadUrl(capabilityUrl);
     // No bearer, cookies, referrer, or automatic redirect on this capability request.
     return this.withScope(signal, activeSignal => resilientFetch(url, { method: "GET", signal: activeSignal, credentials: "omit", redirect: "error", cache: "no-store", referrerPolicy: "no-referrer" }, {
-      ...this.policy, operation: "OneDrive 文件下载", fetcher: this.fetcher, idempotent: true
+      ...this.policy, operation: "OneDrive 文件下载", fetcher: this.fetcher, idempotent: true,
+      // The deadline spans reading the whole database body; a max-size download
+      // cannot fit the 15s default whole-attempt deadline.
+      timeoutMs: this.policy.timeoutMs ?? 600_000
     }, async (response, requestSignal) => {
       if (response.status !== 200) throw providerHttpError("OneDrive 文件下载失败", response);
       return readBoundedResponseBytes(response, this.maxDatabaseBytes, "OneDrive 文件下载", requestSignal);
@@ -111,7 +114,7 @@ export class OneDriveGraphClient {
     return this.requestScoped(`${itemUrl(target)}/content`, { method: "GET", redirect: "follow" }, "OneDrive 文件下载", async (response, requestSignal) => {
       if (!response.ok) throw providerHttpError("OneDrive 文件下载失败", response);
       return readBoundedResponseBytes(response, this.maxDatabaseBytes, "OneDrive 文件下载", requestSignal);
-    });
+    }, this.policy.timeoutMs ?? 600_000);
   }
 
   async replace(identity: OneDriveItemIdentity, bytes: Uint8Array, etag: string, signal?: AbortSignal): Promise<void> {
@@ -138,7 +141,7 @@ export class OneDriveGraphClient {
     return this.withScope(init.signal || undefined, signal => this.requestScoped(url, { ...init, signal }, operation, consume));
   }
 
-  private async requestScoped<T>(url: string, init: RequestInit, operation: string, consume: ProviderResponseConsumer<T>): Promise<T> {
+  private async requestScoped<T>(url: string, init: RequestInit, operation: string, consume: ProviderResponseConsumer<T>, timeoutMs?: number): Promise<T> {
     assertGraphUrl(url);
     init.signal?.throwIfAborted();
     const token = await this.accessToken(init.signal || undefined);
@@ -151,7 +154,11 @@ export class OneDriveGraphClient {
     return resilientFetch(url, { ...init, headers, credentials: "omit", redirect: init.redirect ?? "error", cache: "no-store", referrerPolicy: "no-referrer" }, {
       ...this.policy, operation, fetcher: this.fetcher, idempotent: isRead,
       // Never replay a PUT after an ambiguous result; the file client reconciles actual bytes.
-      ...(!isRead ? { maxAttempts: 1, timeoutMs: this.policy.timeoutMs ?? 120000 } : {})
+      // Non-read requests default to the same 300s deadline as the WebDAV transport:
+      // a large database upload cannot fit a short whole-attempt deadline.
+      ...(!isRead ? { maxAttempts: 1, timeoutMs: this.policy.timeoutMs ?? 300_000 } : {}),
+      // Whole-body downloads override the default deadline for this request only.
+      ...(timeoutMs !== undefined ? { timeoutMs } : {})
     }, consume);
   }
 
