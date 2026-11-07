@@ -1,3 +1,4 @@
+import { UNSUPPORTED_COMMAND_ERROR } from '../runtime/messages';
 import type { ExtensionRequest } from '../runtime/messages';
 import type { SecureVaultService } from '../security/secure-vault-service';
 import type { ProviderOperationQueue } from './provider-operation-queue';
@@ -20,7 +21,7 @@ export function commandHandler<R extends ExtensionRequest>(handlers: CommandHand
 export function createCommandDispatcher(handlers: CommandHandlers<ExtensionRequest>) {
   return function routeRequest(request: ExtensionRequest, sender: chrome.runtime.MessageSender, nativeWriteLocked: boolean): unknown {
     const handler = commandHandler(handlers, request);
-    if (!handler) throw new Error('不支持的 Monica 运行时命令。');
+    if (!handler) throw new Error(UNSUPPORTED_COMMAND_ERROR);
     return handler(request, sender, nativeWriteLocked);
   };
 }

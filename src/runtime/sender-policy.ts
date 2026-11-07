@@ -23,7 +23,12 @@ export function assertTrustedManagerPage(
   managerPath = "/index.html"
 ): void {
   assertTrustedExtensionPage(sender, runtimeId, extensionRoot);
-  const actual = new URL(sender.url || "");
+  let actual: URL;
+  try {
+    actual = new URL(sender.url || "");
+  } catch {
+    throw new Error("此命令只允许 Monica 管理页调用。");
+  }
   const manager = new URL(`${extensionRoot}${managerPath.replace(/^\//, "")}`);
   if (actual.origin !== manager.origin || actual.pathname !== manager.pathname) {
     throw new Error("此命令只允许 Monica 管理页调用。");
@@ -31,8 +36,12 @@ export function assertTrustedManagerPage(
 }
 
 export function requireTrustedWebPageSender(sender: chrome.runtime.MessageSender, runtimeId: string): WebPageSenderContext {
-  const url = sender.url || "";
-  const parsed = new URL(url);
+  let parsed: URL;
+  try {
+    parsed = new URL(sender.url || "");
+  } catch {
+    throw new Error("此命令只允许 Monica 网页内容脚本调用。");
+  }
   const frameId = sender.frameId ?? 0;
   const documentId = sender.documentId || "";
   if (

@@ -21,6 +21,9 @@ import type { EncryptedVaultBackup, VaultLifecycleStatus } from "../security/sec
 import type { AutofillSitePolicy } from "../autofill/site-policy";
 import type { AutofillCredentialIdentity } from "../autofill/credential-identity";
 
+/** Verbatim error thrown by the background router for unknown commands; the client matches it to trigger the reload flow. */
+export const UNSUPPORTED_COMMAND_ERROR = "不支持的 Monica 运行时命令。";
+
 export interface LoginMatchSummary {
   credentialIdentity?: AutofillCredentialIdentity;
   customIconType?: string;

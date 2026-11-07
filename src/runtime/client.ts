@@ -1,6 +1,7 @@
 import { translateRuntimeError } from "../i18n/runtime";
 import type { BitwardenPendingTransfer } from '../core/bitwarden-batch-transfer';
 import type { Mdbx2FileExportBegin, Mdbx2FileExportChunk } from "./messages";
+import { UNSUPPORTED_COMMAND_ERROR } from "./messages";
 import { runtimeInfo, type RuntimeInfo } from "./version";
 import type { ProviderAccount, ProviderConflictResolution, ProviderConflictSummary, ProviderDiagnosticExport } from "../core/model";
 import type { MonicaWebDavConfig } from "../providers/webdav/monica-webdav-provider";
@@ -8,7 +9,7 @@ import { bytesToBase64 } from "../security/encoding";
 import type { EncryptedVaultBackup } from "../security/secure-vault-service";
 import type { AutofillSitePolicy } from "../autofill/site-policy";
 import type { BlockedFieldSignatureRecord } from "../autofill/field-policy";
-import type { AndroidGeneratorHistoryEntry, BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassGroupMutationResult, KeePassGroupPage, KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult, KeePassOpenInput, KeePassRemoteManagerStatus, KeePassRemoteOpenInput, KeePassRemoteProbeResult, KeePassSessionSummary, KeePassWebDavTestInput, LoginMatchSummary, Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus, Mdbx2BootstrapDownloadInput, Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2OneDriveSettingsInput, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, Mdbx2WebDavSettingsInput, MdbxImportCommitResult, MdbxImportDetectResult, MdbxImportOperation, MdbxImportPrepareResult, PasskeyMatchSummary, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, VaultWindowsHelloStatus, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
+import type { AndroidGeneratorHistoryEntry, BitwardenConnectResult, ExtensionRequest, ExtensionResponse, KeePassFileExport, KeePassGroupMutationResult, KeePassGroupPage, KeePassHistoryDetail, KeePassHistoryFieldValue, KeePassHistoryPage, KeePassHistoryRestoreResult, KeePassOpenInput, KeePassRemoteManagerStatus, KeePassRemoteOpenInput, KeePassRemoteProbeResult, KeePassSessionSummary, KeePassWebDavTestInput, LoginMatchSummary, Mdbx2BatchTransferExecuteResult, Mdbx2BatchTransferPlanResult, Mdbx2BatchTransferRequest, Mdbx2BatchTransferStatus, Mdbx2BootstrapDownloadInput, Mdbx2CollectionMutationResult, Mdbx2CollectionSummaryPage, Mdbx2CommitDiffResult, Mdbx2CommitHistoryPage, Mdbx2CommitRevertResult, Mdbx2ConflictResolutionChoice, Mdbx2ConflictResolutionResult, Mdbx2ConflictSummaryPage, Mdbx2HealthRepairApplyResult, Mdbx2HealthRepairDecision, Mdbx2HealthRepairPlan, Mdbx2HostStatus, Mdbx2ManagedSnapshotPage, Mdbx2ManagerSyncStatus, Mdbx2ObjectDeleteResult, Mdbx2ObjectRecord, Mdbx2ObjectSummaryPage, Mdbx2ObjectUpsertInput, Mdbx2ObjectWriteResult, Mdbx2OneDriveSettingsInput, Mdbx2SnapshotCreateResult, Mdbx2SnapshotDeleteResult, Mdbx2SnapshotPrunePlan, Mdbx2SnapshotPruneResult, Mdbx2SnapshotRestoreResult, Mdbx2SnapshotStructurePage, Mdbx2SnapshotStructureSide, Mdbx2TransferBeginResult, Mdbx2TransferChunkResult, Mdbx2TransferFinishResult, Mdbx2VaultCredential, Mdbx2VaultDiagnosticsReport, Mdbx2VaultInspection, Mdbx2VaultOpenInput, Mdbx2VaultRuntimeStatus, Mdbx2VaultSessionSummary, Mdbx2VaultSource, Mdbx2VaultTigaPosture, Mdbx2WebDavSettingsInput, MdbxImportCommitResult, MdbxImportDetectResult, MdbxImportOperation, MdbxImportPrepareResult, PasskeyMatchSummary, PasskeyVerificationContext, SteamAuthorizedDevice, SteamConfirmation, SteamInventoryOverview, SteamInventoryPage, SteamMarketListingsPage, SteamMarketQuote, SteamMarketSellBatchResult, SteamMarketSellEntry, SteamMiniProfileBackground, SteamPendingLogin, VaultItem, VaultStatusResponse, VaultWindowsHelloStatus, WalletFillKind, WalletFillResult, WalletMatchSummary } from "./messages";
 import type { ProviderAttachmentMutationResult, ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentRecoveryStatus, ProviderAttachmentTransferRequest, ProviderAttachmentTransferResult, ProviderAttachmentUploadBeginResult, ProviderAttachmentUploadChunkResult } from "./messages";
 
 import type { BitwardenCollectionMutationResult, BitwardenCollectionPage, BitwardenFolderMutationResult, BitwardenFolderPage, BitwardenSendDetail, BitwardenSendFileUploadInput, BitwardenSendPage, BitwardenSendTextInput, BitwardenSendUpdateInput } from "./messages";
@@ -58,7 +59,7 @@ function reloadRequired(): ExtensionRuntimeError {
 
 function checkResponse<T>(response: ExtensionResponse<T> | undefined): T {
   if (!response?.ok) {
-    if (response?.error === "不支持的 Monica 运行时命令。") throw reloadRequired();
+    if (response?.error === UNSUPPORTED_COMMAND_ERROR) throw reloadRequired();
     throw new ExtensionRuntimeError(translateRuntimeError(response?.error || "插件后台没有返回有效响应。"), response?.code);
   }
   return response.data;
@@ -78,11 +79,23 @@ async function checkRuntime(force: boolean): Promise<void> {
   return runtimeCheck;
 }
 
+// Requests carrying passwords or key material force a fresh runtime check, so newly added
+// password-bearing commands stay covered without extending a per-command allowlist.
+const secretKeyPattern = /password$/i;
+const secretKeys = new Set(["keyFile", "keyMaterialBase64"]);
+
+function carriesSecretMaterial(value: unknown, depth = 3): boolean {
+  if (depth === 0 || !value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(item => carriesSecretMaterial(item, depth - 1));
+  return Object.entries(value).some(([key, item]) => secretKeys.has(key) || secretKeyPattern.test(key) || carriesSecretMaterial(item, depth - 1));
+}
+
 async function send<T>(request: ExtensionRequest): Promise<T> {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) throw new Error("请在已安装的 Monica 浏览器插件中打开此页面。");
   // Share one initial check across UI reads; recheck before sending a password.
-  await checkRuntime(request.type === "VAULT_SETUP" || request.type === "VAULT_UNLOCK" || request.type === "VAULT_UNLOCK_HELLO" || request.type === 'VAULT_AUTHENTICATED_EXPORT'
-    || request.type === 'BITWARDEN_LOGIN' || request.type === 'BITWARDEN_SEND_EMAIL_CODE' || request.type === 'MDBX2_IMPORT_COMMIT' || request.type === 'MDBX2_IMPORT_PREPARE' || request.type === 'KEEPASS_OPEN');
+  // VAULT_UNLOCK_HELLO and PASSKEY_VERIFY_HELLO carry no password in their payload yet still
+  // verify the user against the vault, so they recheck like password-bearing commands.
+  await checkRuntime(request.type === "VAULT_UNLOCK_HELLO" || request.type === "PASSKEY_VERIFY_HELLO" || carriesSecretMaterial(request));
   let response: ExtensionResponse<T>;
   try { response = await chrome.runtime.sendMessage(request); }
   catch (error) {
@@ -181,6 +194,10 @@ export const vaultClient = {
   listLoginSummaries: () => send<LoginMatchSummary[]>({ type: "VAULT_LIST_LOGIN_SUMMARIES" }),
   loginSecret: (itemId: string, field: "username" | "password") => send<{ value: string }>({ type: "VAULT_LOGIN_SECRET", itemId, field }),
   matchPasskeys: (pageUrl: string) => send<PasskeyMatchSummary[]>({ type: "VAULT_MATCH_PASSKEYS", pageUrl }),
+  passkeyVerificationContext: (verificationId: string) => send<PasskeyVerificationContext>({ type: "PASSKEY_VERIFICATION_CONTEXT", verificationId }),
+  verifyPasskeyPassword: (verificationId: string, masterPassword: string) => send<{ verified: true }>({ type: "PASSKEY_VERIFY_PASSWORD", verificationId, masterPassword }),
+  verifyPasskeyHello: (verificationId: string) => send<{ verified: true }>({ type: "PASSKEY_VERIFY_HELLO", verificationId }),
+  cancelPasskeyVerification: (verificationId: string) => send<{ cancelled: true }>({ type: "PASSKEY_CANCEL_VERIFICATION", verificationId }),
   fillLogin: (itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) => send<{ filledUsername: boolean; filledPassword: boolean; filledTotp: boolean; filledCustomFields: number }>({ type: "VAULT_FILL_LOGIN", itemId, tabId, frameId, documentId, expectedOrigin }),
   listWalletItems: (kinds: WalletFillKind[], pageUrl: string, fieldSignature?: string) => send<WalletMatchSummary[]>({ type: "VAULT_LIST_WALLET_ITEMS", kinds, pageUrl, fieldSignature }),
   fillWallet: (itemId: string, tabId: number, frameId?: number, documentId?: string, expectedOrigin?: string) => send<WalletFillResult>({ type: "VAULT_FILL_WALLET", itemId, tabId, frameId, documentId, expectedOrigin }),
