@@ -4,7 +4,7 @@ Firefox 桌面版使用独立的 `build:firefox` / `package:firefox`，输出 `d
 
 ## 环境
 
-扩展从 `1.0.101` 起采用 `1.0.<递增修订号>`，当前版本为 `1.0.103`，常规下一版为 `1.0.104`。浏览器清单、`package.json`、`package-lock.json` 根版本必须相同，GitHub 正式发布标签使用 `v1.0.103` 形式。更新检测按三段数字比较，查询该仓库的最新正式 Release；不把预发布标签、草稿或旧版本视为可更新版本。`0.1.x` 已发布记录保持原样。此处记录命名规则，不代表已创建标签或发布。
+扩展从 `1.0.101` 起采用 `1.0.<递增修订号>`，当前版本为 `1.0.104`，常规下一版为 `1.0.105`。浏览器清单、`package.json`、`package-lock.json` 根版本必须相同，GitHub 正式发布标签使用 `v1.0.104` 形式。更新检测按三段数字比较，查询该仓库的最新正式 Release；不把预发布标签、草稿或旧版本视为可更新版本。`0.1.x` 已发布记录保持原样。此处记录命名规则，不代表已创建标签或发布。
 
 - Node.js 22
 - 使用仓库中的 `package-lock.json` 执行 `npm ci`
@@ -34,7 +34,7 @@ npm run release:check
 
 GitHub Release 的公开下载附件只上传插件 ZIP 与对应 `.zip.sha256`。不要使用 `release/*` 通配符上传到 Release；三个独立 JSON 继续留在本地／CI 审计产物中，并已逐字节嵌入 ZIP，无需重复占用公开下载列表。GitHub 自动生成的两个 Source code 下载项保留。若另行发布可选本机助手，同样只上传它的安装 ZIP 和校验文件。
 
-Windows 完整发行包还需包含 Wi-Fi 设置页可下载的可选通信安装 ZIP。Linux CI 的通用扩展产物不附带此 Windows 文件；制作完整包时使用已验证的 CI 核心文件，并将同次 Windows CI 的 Host 二进制通过 `MONICA_WIFI_HOST_EXECUTABLE` 传给现有 `build-nearby-setup.mjs`。随后重新执行标准打包、独立包验证、安全审计和实际下载入口检查，记录最终 ZIP 哈希及与 CI 文件的差异。CI 原始 ZIP 的来源证明只覆盖原 ZIP，不能当作补充后完整 ZIP 的签名。1.0.103 的具体记录见[发布验证](verification/release-1.0.103.md)。
+Windows 完整发行包还需包含 Wi-Fi 设置页可下载的可选通信安装 ZIP。Linux CI 的通用扩展产物不附带此 Windows 文件；制作完整包时使用已验证的 CI 核心文件，并将同次 Windows CI 的 Host 二进制通过 `MONICA_WIFI_HOST_EXECUTABLE` 传给现有 `build-nearby-setup.mjs`。随后重新执行标准打包、独立包验证、安全审计和实际下载入口检查，记录最终 ZIP 哈希及与 CI 文件的差异。CI 原始 ZIP 的来源证明只覆盖原 ZIP，不能当作补充后完整 ZIP 的签名。最近一次（1.0.104）的具体记录见[发布验证](verification/release-1.0.104.md)。
 
 普通用户只需下载插件 ZIP。此规则自 0.1.39 起执行；2026-10-14 经用户确认已移除该版三个重复 JSON 附件，ZIP、校验文件及发布标签保持不变。后续创建 Release 时显式列出两个文件，例如：
 

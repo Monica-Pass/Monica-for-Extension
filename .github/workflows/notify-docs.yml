@@ -21,35 +21,46 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # github-script does not expose @actions/github to scripts, so a second client cannot be
+      # created in one step. Read this repository's jobs with the default token here and use the
+      # documentation token only for the dispatch below.
+      - name: Select documentation event
+        id: event
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            if (context.eventName !== 'workflow_run') {
+              core.setOutput('type', context.eventName === 'push' ? 'monica-main-updated' : 'monica-release-published');
+              return;
+            }
+            const run = context.payload.workflow_run;
+            const targets = { 'CI': 'Publish rolling Preview' };
+            const jobs = targets[run.name]
+              ? await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  filter: 'latest',
+                  per_page: 100,
+                })
+              : [];
+            if (!jobs.some(job => job.name === targets[run.name] && job.conclusion === 'success')) {
+              core.info('No successful publication job found; notification skipped.');
+              return;
+            }
+            core.setOutput('type', 'monica-release-published');
       - name: Notify documentation repository
+        if: steps.event.outputs.type != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          SOURCE_TOKEN: ${{ github.token }}
+          EVENT_TYPE: ${{ steps.event.outputs.type }}
         with:
           github-token: ${{ secrets.DOCS_REPO_TOKEN }}
           script: |
-            let type = context.eventName === 'push' ? 'monica-main-updated' : 'monica-release-published';
-            if (context.eventName === 'workflow_run') {
-              const run = context.payload.workflow_run;
-              const source = require('@actions/github').getOctokit(process.env.SOURCE_TOKEN);
-              const jobs = await source.paginate(source.rest.actions.listJobsForWorkflowRun, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: run.id,
-                filter: 'latest',
-                per_page: 100,
-              });
-              const targets = { 'CI': 'Publish rolling Preview' };
-              if (!targets[run.name] || !jobs.some(job => job.name === targets[run.name] && job.conclusion === 'success')) {
-                core.info('No successful publication job found; notification skipped.');
-                return;
-              }
-              type = 'monica-release-published';
-            }
             await github.rest.repos.createDispatchEvent({
               owner: 'Monica-Pass',
               repo: 'MonicaDocs',
-              event_type: type,
+              event_type: process.env.EVENT_TYPE,
               client_payload: {
                 source_repository: `${context.repo.owner}/${context.repo.repo}`,
                 source_sha: context.eventName === 'workflow_run' ? context.payload.workflow_run.head_sha : context.sha,

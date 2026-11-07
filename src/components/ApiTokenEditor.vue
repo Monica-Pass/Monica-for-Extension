@@ -29,7 +29,12 @@ const reveal = ref(false);
 const error = ref("");
 const saving = ref(false);
 function addField() {
-  fields.customFields.push({ id: Math.min(0, ...fields.customFields.map(field => field.id || 0)) - 1, name: "", value: "", protected: true });
+  // New fields take the next unused negative ID, as serializeApiTokenMetadata does. Existing IDs
+  // may be 64-bit strings, so compare them as text instead of with Math.min.
+  const used = new Set(fields.customFields.map(field => String(field.id)));
+  let id = -1;
+  while (used.has(String(id))) id--;
+  fields.customFields.push({ id, name: "", value: "", protected: true });
 }
 async function submit() {
   if (saving.value) return;

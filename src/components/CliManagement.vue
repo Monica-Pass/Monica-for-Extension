@@ -195,7 +195,7 @@ const needsAuth=computed(()=>['ssh-new','key-import','grant-new','grant-renew','
 const heading = computed(() => cliTr(({'ssh-new':'生成 SSH 密钥','key-import':'导入 SSH / GPG','grant-new':'创建 AI 授权','grant-renew':'续期 AI 授权','sync':'同步 CLI 数据库','password-new':'新增 CLI 密码','password-edit':'编辑 CLI 密码','category-new':'新建 CLI 目录','category-rename':'重命名目录','category-move':'移动目录','category-delete':'删除目录','move':'移动条目','delete':'删除条目','connection-new':'新增 CLI 连接','connection-rename':'重命名连接','token':'替换 Token','revoke':'撤销 AI 授权'} as Record<string,string>)[action.value] || 'CLI 内容管理'));
 function visibility() { if(document.hidden) lock(); }
 function pagehide() {lock();}
-function activated(info: chrome.tabs.TabActiveInfo) {
+function activated(info: chrome.tabs.OnActivatedInfo) {
   if (ownerTab === undefined || (info.windowId === ownerWindow && info.tabId !== ownerTab)) lock();
 }
 function storageChanged(event:StorageEvent){if(event.key?.startsWith('monica.cli.operation.'))pending.value=recovery.list();}

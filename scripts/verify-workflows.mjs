@@ -29,6 +29,30 @@ if (!secretScan) throw new Error("secret-scan.yml is required.");
 if (/--only-verified\b/.test(secretScan) || /extra_args:\s*[^\n]*\bonly-verified\b/.test(secretScan)) {
   throw new Error("secret-scan.yml must not use --only-verified (drops unverified/unknown credential findings).");
 }
+// Exclusions exist only for reviewed false positives that full-history scans keep finding.
+// Paths must be anchored exact files so every new file is still scanned, and only detectors
+// with a documented collision may be disabled.
+const reviewedExcludedDetectors = new Set(["lob"]);
+for (const match of secretScan.matchAll(/--exclude-detectors[=\s]+([^\s'"]+)/g)) {
+  for (const detector of match[1].split(",")) {
+    if (!reviewedExcludedDetectors.has(detector.toLowerCase())) {
+      throw new Error(`secret-scan.yml excludes the unreviewed detector ${detector}.`);
+    }
+  }
+}
+for (const match of secretScan.matchAll(/--exclude-paths[=\s]+([^\s'"]+)/g)) {
+  if (match[1] !== ".github/secret-scan-exclude-paths.txt") {
+    throw new Error("secret-scan.yml must read path exclusions from .github/secret-scan-exclude-paths.txt.");
+  }
+  const rules = (await readFile(resolve(root, match[1]), "utf8"))
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:#|$)/.test(line));
+  for (const rule of rules) {
+    if (!/^\^(?:[A-Za-z0-9_-]|\\\.|\/)+\$$/.test(rule)) {
+      throw new Error(`Secret-scan exclusion "${rule}" must be an anchored exact path such as ^src/example\\.test\\.ts$.`);
+    }
+  }
+}
 
 // Dependency review must keep the real API on non-forks and a real substitute on forks.
 // Require both job branches in structure (if: conditions near jobs), not prose comments alone.
@@ -51,5 +75,5 @@ if (!hasUpstreamReview || !hasForkSubstitute) {
 }
 
 console.log(
-  `Verified ${workflowNames.length} workflow files: immutable actions, explicit permissions, no unverified download commands, secret-scan without only-verified, fork-aware dependency-review.`,
+  `Verified ${workflowNames.length} workflow files: immutable actions, explicit permissions, no unverified download commands, secret-scan without only-verified and with exact-path exclusions only, fork-aware dependency-review.`,
 );

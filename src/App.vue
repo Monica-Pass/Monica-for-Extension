@@ -198,7 +198,7 @@ const currentCreateType = computed<CreateItemType | undefined>(() => {
       ? kindFilter.value as CreateItemType : "card";
     case "vault": return kindFilter.value === "login" ? "PASSWORD"
       : kindFilter.value === "payment-account" ? "card"
-      : kindFilter.value && kindFilter.value !== "passkey" ? kindFilter.value : undefined;
+      : kindFilter.value && kindFilter.value !== "passkey" && kindFilter.value !== "opaque" ? kindFilter.value : undefined;
     default: return undefined;
   }
 });
@@ -403,7 +403,7 @@ const selectedSteamItem = computed(() => steamItems.value.find(item => item.id =
 watch(selectedSteamItem, item => { if (!item) steamAccountId.value = undefined; });
 const passkeyItems = vaultDerived(() => vaultItems.value.filter((item) => itemSection(item) === "passkeys"));
 const databaseFolders = vaultDerived(() => managerFolders(vaultItems.value, providers.value, databaseSourceFilter.value));
-const sourceNames = computed(() => Object.fromEntries([['local',tr('Monica 本地库')],...providers.value.map(provider=>[provider.id,provider.name])]));
+const sourceNames = computed(() => Object.fromEntries([['local',tr('Monica 本地库')],...providers.value.map(provider=>[provider.id,provider.kind === 'local' ? tr('Monica 本地库') : provider.name])]));
 watch(databaseSourceFilter, () => { folderFilter.value = 'all'; }, {flush:'sync'});
 watch([databaseSourceFilter,folderFilter], ([source,folder]) => {
   if (!managerScopesRestored || !filterableSection.value) return;
@@ -1160,7 +1160,9 @@ function matchesManagerFilters(item: VaultItem): boolean {
 
 function providerName(item: VaultItem): string {
   const reference = item.providerRefs[0];
-  return reference ? providers.value.find((provider) => provider.id === reference.providerId)?.name || tr('外部密码源') : tr('Monica 本地库');
+  if (!reference) return tr('Monica 本地库');
+  const provider = providers.value.find((candidate) => candidate.id === reference.providerId);
+  return provider?.kind === 'local' ? tr('Monica 本地库') : provider?.name || tr('外部密码源');
 }
 
 function providerDisplayName(provider: ProviderAccount): string {
@@ -1442,7 +1444,7 @@ function openEdit(item: LoginItem) {
 function openVaultCreate(section: "wallet" | "notes" | "totp") {
   vaultEditorItem.value = undefined;
   vaultEditorTemplate.value = undefined;
-  vaultEditorKind.value = kindFilter.value && kindFilter.value !== "login" && kindFilter.value !== "passkey" && kindFilter.value !== "api-token" && kindFilter.value !== "payment-account"
+  vaultEditorKind.value = kindFilter.value && kindFilter.value !== "login" && kindFilter.value !== "passkey" && kindFilter.value !== "api-token" && kindFilter.value !== "payment-account" && kindFilter.value !== "opaque"
     ? kindFilter.value : section === "wallet" ? "card" : section === "totp" ? "totp" : "secure-note";
   vaultEditorOpen.value = true;
 }
@@ -1823,7 +1825,7 @@ async function removeCredential(item: LoginItem) {
       await vaultClient.deletePasswordGroup(item.id, Object.fromEntries(members.map(member => [member.id, member.updatedAt])));
       await refreshItems();
       showNotice(tr('已将 {0} 条密码移到回收站。', {0: members.length}));
-    } catch (cause) { showNotice(cause instanceof Error ? cause.message : "删除失败，原账号保留。"); }
+    } catch (cause) { showNotice(cause instanceof Error ? cause.message : tr("删除失败，原账号保留。")); }
     return;
   }
   if (!window.confirm(tr('确定删除“{0}”吗？此操作会进入同步删除队列。', { 0: item.title }))) return;
@@ -2693,7 +2695,7 @@ async function connectBitwarden() {
       }
       bitwardenTwoFactorProviders.value = supported;
       bitwardenTwoFactorProviderData.value = result.providerData;
-      bitwardenForm.twoFactorProvider = supported.includes(previousProvider) ? previousProvider : supported.includes(0) ? 0 : supported[0];
+      bitwardenForm.twoFactorProvider = supported.find(provider => provider === previousProvider) ?? (supported.includes(0) ? 0 : supported[0]);
       if (submittedCode) bitwardenError.value = tr('Bitwarden 两步验证码错误或已过期，请获取新验证码后重试。');
       else showNotice(bitwardenForm.twoFactorProvider === 5 ? tr('Bitwarden 需要 WebAuthn 验证，请继续完成硬件密钥或 Passkey 验证。') : bitwardenForm.twoFactorProvider === 2 || bitwardenForm.twoFactorProvider === 4 ? tr('Bitwarden 需要 Duo 验证，请在安全窗口中批准登录。') : tr('Bitwarden 需要两步验证，请输入代码后继续。'));
       return;
@@ -2892,7 +2894,7 @@ function errorCode(error: unknown): string | undefined {
             <button type="button" role="tab" :aria-selected="authAction === 'restore'" :class="{ selected: authAction === 'restore' }" @click="authAction = 'restore'">{{ tr('恢复插件备份') }}</button>
           </div>
           <template v-if="lifecycle !== 'uninitialized' || authAction === 'create'">
-          <m3e-form-field v-field-label variant="outlined" hide-required-marker class="field auth-password-field"><label slot="label">{{ tr('主密码{0}', { 0: lifecycle === 'uninitialized' || protectionMode === 'device-key' ? tr('（可选）') : '' }) }}</label><input v-model="auth.masterPassword" :aria-label="tr('主密码')" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></m3e-form-field>
+          <m3e-form-field v-field-label variant="outlined" hide-required-marker class="field auth-password-field"><label slot="label">{{ lifecycle === 'uninitialized' || protectionMode === 'device-key' ? tr('主密码（可选）') : tr('主密码') }}</label><input v-model="auth.masterPassword" :aria-label="tr('主密码')" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></m3e-form-field>
           <m3e-form-field v-field-label variant="outlined" hide-required-marker v-if="lifecycle === 'uninitialized'" class="field auth-password-field"><label slot="label">{{ tr('确认主密码') }}</label><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></m3e-form-field>
           <p v-if="lifecycle === 'uninitialized'" class="settings-safety-note">{{ auth.masterPassword ? tr('主密码保护：每次解锁需要主密码。请保存独立加密备份，忘记密码后无法直接找回。') : tr('设备密钥保护：依赖当前浏览器与操作系统，使用此浏览器配置的人可解锁。创建后可绑定 Windows Hello；请保存独立加密备份以便迁移或恢复。') }}</p>
           </template>
@@ -3070,14 +3072,14 @@ function errorCode(error: unknown): string | undefined {
             <div v-if="filteredSectionItems.length" slot="content" class="item-grid">
               <article v-for="item in listPagination.slice(filteredSectionItems)" :key="item.id" v-item-selection="itemSelection(item)" :data-item-id="item.id" class="item-card row-clickable" :class="{ 'item-selection-active': selectingItems, 'item-selected': selectedItemIds.has(item.id) }" @click="openVaultDetail(item)">
                 <m3e-focus-ring :for="vaultRowDomId(item.id)" class="vault-row-focus" inward />
-                <m3e-list-action :id="vaultRowDomId(item.id)" role="presentation" class="item-card-main" v-list-action="selectingItems ? tr('选择或取消选择 {0}', {0: item.title}) : tr('查看{0}详情', { 0: item.title })" @click.stop="openVaultDetail(item)"><WebsiteIcon slot="leading" class="row-icon" :item="item" :fallback="itemIcon(item.kind)" /><strong :title="item.title">{{ item.title }}</strong><small slot="supporting-text">{{ item.kind === 'passkey' ? vaultItemStatus(item) : itemKindLabel(item.kind) }}<template v-if="item.kind === 'login' && credentialGroupSize(item) > 1"> · {{ tr('{0} 条密码', { 0: credentialGroupSize(item) }) }}</template><template v-if="item.favorite">{{ tr('· 已收藏') }}</template></small><span v-if="item.kind === 'login' && lockedAutofillIds.includes(item.id)" slot="supporting-text" class="locked-autofill-badge"><m3e-icon name="lock_open" />{{ tr('免解锁填写') }}</span></m3e-list-action>
+                <m3e-list-action :id="vaultRowDomId(item.id)" role="presentation" class="item-card-main" v-list-action="selectingItems ? tr('选择或取消选择 {0}', {0: item.title}) : tr('查看{0}详情', { 0: item.title })" @click.stop="openVaultDetail(item)"><WebsiteIcon slot="leading" class="row-icon" :item="item" :fallback="itemIcon(item.kind)" /><strong :title="item.title">{{ item.title }}</strong><small slot="supporting-text">{{ item.kind === 'passkey' ? vaultItemStatus(item) : itemKindLabel(item.kind) }}<template v-if="item.kind === 'login' && credentialGroupSize(item) > 1"> · {{ tr('{0} 条密码', { 0: credentialGroupSize(item) }) }}</template><template v-if="item.favorite"> · {{ tr('已收藏') }}</template></small><span v-if="item.kind === 'login' && lockedAutofillIds.includes(item.id)" slot="supporting-text" class="locked-autofill-badge"><m3e-icon name="lock_open" />{{ tr('免解锁填写') }}</span></m3e-list-action>
                 <div class="item-card-summary"><template v-if="itemCarriesAuthenticator(item)"><span class="item-card-otp" data-selection-ignore :inert="selectingItems" @click.stop><TotpCodeCell :item="item" allow-use :consume-code="advanceHotpItem" /></span></template><span v-else class="item-summary-text" :title="homeItemSummary(item)">{{ homeItemSummary(item) }}</span></div>
                 <div class="item-card-meta"><PasskeyStatus v-if="item.kind === 'passkey'" :item="item" :providers="providers" /><span :title="providerName(item)">{{ providerName(item) }}</span><time :datetime="item.updatedAt">{{ new Date(item.updatedAt).toLocaleDateString(locale) }}</time></div>
                 <ItemSelectionCheck v-if="selectingItems" :title="item.title" :selected="selectedItemIds.has(item.id)" :disabled="item.kind === 'opaque' || selectionBusy" />
                 <div v-else class="item-card-actions" @click.stop><m3e-icon-button v-if="keePassHistoryProvidersFor(item).length" :aria-label="tr('查看 {0} 的 KeePass 历史', { 0: item.title })" @click="openKeePassHistory(item)"><m3e-icon name="history"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="attachmentProvidersFor(item).length" :aria-label="tr('管理 {0} 的附件', { 0: item.title })" @click="openAttachmentDialog(item)"><m3e-icon name="attach_file"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="item.kind === 'login' || isEditableVaultItem(item)" :aria-label="item.kind === 'login' ? tr('编辑登录项') : tr('编辑{0}', { 0: itemKindLabel(item.kind) })" @click="item.kind === 'login' ? openEdit(item) : openVaultEdit(item)"><m3e-icon name="edit"></m3e-icon></m3e-icon-button><m3e-icon-button v-if="item.kind !== 'opaque' || isLocalOnlyVaultItem(item, providers)" :aria-label="item.kind === 'login' ? tr('删除登录项') : tr('删除{0}', { 0: itemKindLabel(item.kind) })" @click="removeVaultItem(item)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button></div>
               </article>
             </div>
-            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'wallet' ? 'wallet' : activeSection === 'notes' ? 'note_stack' : activeSection === 'totp' ? 'timer' : 'key_vertical'"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'vault' ? tr('还没有保存的项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
+            <div v-else class="empty-state" slot="content"><m3e-icon :name="activeSection === 'notes' ? 'note_stack' : 'key_vertical'"></m3e-icon><h2>{{ query || hasActiveManagerFilter ? tr('没有匹配项目') : activeSection === 'vault' ? tr('还没有保存的项目') : tr('还没有{0}', { 0: sectionTitle(activeSection) }) }}</h2><p>{{ query ? tr('换一个关键词试试。') : hasActiveManagerFilter ? tr('调整分类或快捷筛选条件。') : tr('从密码源同步，或使用右上角的添加操作。') }}</p></div>
           </m3e-card>
         </section>
 

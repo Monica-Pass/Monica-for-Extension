@@ -137,7 +137,7 @@ for (const language of extraLanguages) {
       const notesTitle = catalog["笔记与恢复备注"] || "笔记与恢复备注";
       await editor.getByRole('button', { name: notesTitle, exact: true }).click();
       const notes = dialogContent(manager, { name: notesTitle, exact: true }).last();
-      await notes.getByLabel("恢复备注与笔记", { exact: true }).fill("保留原文 <>& {0}");
+      await notes.getByLabel(catalog["恢复备注与笔记"], { exact: true }).fill("保留原文 <>& {0}");
       await notes.getByRole('button', { name: catalog['完成'] || '完成', exact: true }).click();
       await expect(notes).toHaveCount(0);
       await usable(editor);
