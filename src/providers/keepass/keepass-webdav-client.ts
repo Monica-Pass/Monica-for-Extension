@@ -212,7 +212,13 @@ export class KeePassWebDavClient {
       fetcher: this.fetcher,
       // A failed PUT can already have committed. Let write() reconcile its exact
       // bytes before any caller retry instead of blindly resending the request.
-      idempotent: init.method !== "PUT"
+      idempotent: init.method !== "PUT",
+      // The deadline spans sending the request body and reading the response
+      // body; database-sized GET/PUT transfers cannot fit the 15s default,
+      // while metadata calls (PROPFIND) keep it.
+      ...(init.method === "GET" || init.method === "PUT"
+        ? { timeoutMs: this.transportPolicy.timeoutMs ?? (init.method === "GET" ? 600_000 : 300_000) }
+        : {})
     }, consume);
   }
 

@@ -484,7 +484,9 @@ export function buildKeePassLoginPatch(input: KeePassLoginWriteInput): KeePassFi
     ...(input.item.customFields ?? []).map((field) => field.name.trim()),
     ...(input.existingFields ? readKeePassCustomFields(input.existingFields).map((field) => field.name) : [])
   ];
-  return createKeePassFieldPatch(replacementFields, (name) => isPasswordEntryOverlayField(name) || Boolean(!input.preserveOtpFields && input.item.totpSecret && isKeePassTotpField(name)), removeFieldNames);
+  // OTP teardown is handled entirely by KEEPASS_OTP_FIELD_NAMES in removeFieldNames above: the
+  // patch gate only removes Monica-owned roles, so a keepass-totp claim here would never fire.
+  return createKeePassFieldPatch(replacementFields, isPasswordEntryOverlayField, removeFieldNames);
 }
 
 /**

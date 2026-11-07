@@ -174,6 +174,12 @@ export class KeePassProvider implements ProviderAdapter {
         const before = this.sessions.get(account.id)?.entries.entriesByUuid.get(handle.entryUuid)?.binaries.get(handle.fileName);
         const after = snapshot.entriesByUuid.get(handle.entryUuid)?.binaries.get(handle.fileName);
         if (!before || !after || binarySize(before) !== binarySize(after)) return false;
+        // KdbxBinaryWithHash carries the content hash kdbxweb computes at load time, so matching
+        // hashes settle equality without walking up to 256 MiB of attachment bytes. A bare
+        // KdbxBinary on either side still falls back to the chunked byte comparison below.
+        const beforeHash = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(before) ? before.hash : undefined;
+        const afterHash = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(after) ? after.hash : undefined;
+        if (beforeHash !== undefined && afterHash !== undefined) return beforeHash === afterHash;
         const size = binarySize(before);
         for (let offset = 0; offset < size; offset += PROVIDER_ATTACHMENT_CHUNK_BYTES) {
           const end = Math.min(size, offset + PROVIDER_ATTACHMENT_CHUNK_BYTES);
@@ -1412,7 +1418,9 @@ function finalize(remote: VaultItem, local: VaultItem | undefined, providerId: s
  * so a differently ordered but equal item does not register as an edit.
  */
 function fingerprint(item: VaultItem): string {
-  const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, ...content } = item;
+  // `favorite`/`archivedAt` are browser-side overlays the KDBX contract never carries; toggling
+  // favorite or archive state must not register as a local content edit against the baseline.
+  const { id: _id, providerRefs: _refs, createdAt: _createdAt, updatedAt: _updatedAt, deletedAt: _deletedAt, favorite: _favorite, archivedAt: _archivedAt, ...content } = item;
   if (content.kind === "passkey") { delete content.useCount; delete content.lastUsedAt; delete content.signCountHighWaterMark; }
   // KDBX project identity is carried by the exact custom-field metadata. Projecting
   // it for display must not make pre-upgrade cached rows look locally edited.
@@ -1431,14 +1439,22 @@ function storedFingerprint(value: string): string {
   const normalized = passkeyContentFingerprint(value);
   try {
     const content = JSON.parse(normalized);
-    if (content?.kind === 'card' && Object.prototype.hasOwnProperty.call(content, 'editorSectionOrder')) {
-      delete content.editorSectionOrder;
-      return JSON.stringify(content);
-    }
-    if (content?.kind === 'login' && (Object.prototype.hasOwnProperty.call(content, 'passwordGroupId') || content.totpSecret === '')) {
-      delete content.passwordGroupId;
-      if (content.totpSecret === '') delete content.totpSecret;
-      return JSON.stringify(content);
+    if (content && typeof content === 'object' && !Array.isArray(content)) {
+      // Baselines recorded before the local overlays were excluded from the fingerprint still
+      // carry `favorite`/`archivedAt`; drop them first so the kind-specific keys below still apply.
+      const overlay = Object.prototype.hasOwnProperty.call(content, 'favorite')
+        || Object.prototype.hasOwnProperty.call(content, 'archivedAt');
+      if (overlay) { delete content.favorite; delete content.archivedAt; }
+      if (content.kind === 'card' && Object.prototype.hasOwnProperty.call(content, 'editorSectionOrder')) {
+        delete content.editorSectionOrder;
+        return JSON.stringify(content);
+      }
+      if (content.kind === 'login' && (Object.prototype.hasOwnProperty.call(content, 'passwordGroupId') || content.totpSecret === '')) {
+        delete content.passwordGroupId;
+        if (content.totpSecret === '') delete content.totpSecret;
+        return JSON.stringify(content);
+      }
+      if (overlay) return JSON.stringify(content);
     }
   } catch { /* Preserve invalid legacy fingerprints so normal conflict handling applies. */ }
   return normalized;
@@ -1474,8 +1490,7 @@ function binaryValue(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): k
 }
 
 function binarySize(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): number {
-  const value = binaryValue(binary);
-  return value instanceof kdbxweb.ProtectedValue ? value.byteLength : value.byteLength;
+  return binaryValue(binary).byteLength;
 }
 
 function binaryProtected(binary: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): boolean {
