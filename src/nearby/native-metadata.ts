@@ -298,13 +298,16 @@ export async function planNearbyNativeMetadata(input: NearbyNativeSource, operat
     if (row.kind === 'folder') {
       const data = row.data as NearbyWireData;
       const purge = row.deleted && !Object.keys(data).length;
-      if (purge && projects.get(row.id)?.deleted) {
+      const extra=contents.get(`folder:${row.id}`);
+      // Native rejects label-create on a trashed collection but accepts
+      // label-update/label-delete: only restore when the purged marker still
+      // needs to be created, otherwise refresh the existing marker in place.
+      if (purge && !extra?.marker && projects.get(row.id)?.deleted) {
         commands.push({kind:'collection-restore',collectionId:row.id,parentId:projects.get(row.id)!.groupId??root});
         projects.get(row.id)!.deleted=false;
       }
       if (purge || wireObject(data.payload).tags !== undefined) await reconcile(row.id, `folder:${row.id}`,
         source.metadata.labels.filter(label => label.collectionId === row.id && kind(label) === NATIVE_PROJECT_TAG), purge?[]:wireObject(data.payload).tags);
-      const extra=contents.get(`folder:${row.id}`);
       if(purge || data.labels!==undefined)await reconcile(row.id,`folder-label:${row.id}`,extra?.labels??[],purge?[]:data.labels,false);
       {
         const text=JSON.stringify({...extra?.saved,kind:NATIVE_FOLDER_DATA,purged:purge,data,...(purge?{device_sync_assets:[],device_sync_images:{}}:{})});

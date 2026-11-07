@@ -101,6 +101,37 @@ it('keeps a manual request while the paired phone is still preparing its listene
   f.coordinator.close();
 });
 
+it('keeps polling a still-running background discovery until it reports the peer', async () => {
+  const f = await fixture();
+  const original = f.transport.call.getMockImplementation()!;
+  let searches = 0;
+  f.transport.call.mockImplementation(async (operation, input) => {
+    if (operation === 'discovery_result') return ++searches < 45 ? { ready: false } : { ready: true, result: { devices: [discovered] } };
+    return original(operation, input);
+  });
+  vi.spyOn(f.coordinator as any, 'pause').mockResolvedValue(undefined);
+  await f.coordinator.prepare(peer.deviceId);
+  const view = await f.coordinator.start();
+  expect(searches).toBe(45);
+  expect(view.phase).toBe('transferring');
+  expect(f.operations.filter(operation => operation === 'connect')).toHaveLength(1);
+  f.coordinator.close();
+});
+
+it('reports discovery-unavailable only after the bounded connection window expires', async () => {
+  const f = await fixture();
+  const original = f.transport.call.getMockImplementation()!;
+  f.transport.call.mockImplementation(async (operation, input) => {
+    if (operation === 'discovery_result') { (f.coordinator as any).connectionDeadline = Date.now() - 1; return { ready: false }; }
+    return original(operation, input);
+  });
+  vi.spyOn(f.coordinator as any, 'pause').mockResolvedValue(undefined);
+  await f.coordinator.prepare(peer.deviceId);
+  await expect(f.coordinator.start()).rejects.toThrow('discovery-unavailable');
+  expect(f.coordinator.status()).toMatchObject({ phase: 'failed', error: 'discovery-unavailable' });
+  expect(f.operations).not.toContain('connect');
+});
+
 it('rediscovers a replaced listener before sending and never retries authentication rejection', async () => {
   for (const code of ['connection_failed', 'authentication_failed']) {
     const f = await fixture();
