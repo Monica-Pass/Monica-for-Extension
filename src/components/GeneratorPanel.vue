@@ -2,7 +2,7 @@
 import { writeSecretClipboard } from '../lib/secret-clipboard';
 import "@m3e/web/slider";
 import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
-import { tr } from '../i18n';
+import { tr, locale } from '../i18n';
 
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { DEFAULT_SYMBOLS, generatePassphrase, generatePassword, generatePin, generateWordPassword, passwordStrengthBits } from "../core/credential-generator";
@@ -188,9 +188,13 @@ function toggleHistorySecret(id: string) {
   revealedHistory.value = next;
 }
 
+function historyEntryKey(entry: GeneratorHistoryRow): string {
+  return `${entry.providerId}:${entry.id}`;
+}
+
 async function deleteHistoryEntry(entry: GeneratorHistoryRow) {
-  if (pendingDelete.value !== entry.id) {
-    pendingDelete.value = entry.id;
+  if (pendingDelete.value !== historyEntryKey(entry)) {
+    pendingDelete.value = historyEntryKey(entry);
     return;
   }
   historyBusy.value = true;
@@ -214,7 +218,7 @@ function historyContext(entry: GeneratorHistoryRow): string {
 }
 
 function historyTime(timestamp: number): string {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp));
 }
 
 onMounted(async () => {
@@ -297,15 +301,15 @@ onMounted(async () => {
         <ul v-else-if="history.length" class="generator-history-list">
           <li v-for="entry in history" :key="`${entry.providerId}:${entry.id}`">
             <div class="generator-history-main">
-              <code :aria-label="revealedHistory.has(entry.id) ? tr('已显示生成值') : tr('生成值已隐藏')">{{ revealedHistory.has(entry.id) ? entry.password : '••••••••' }}</code>
+              <code :aria-label="revealedHistory.has(historyEntryKey(entry)) ? tr('已显示生成值') : tr('生成值已隐藏')">{{ revealedHistory.has(historyEntryKey(entry)) ? entry.password : '••••••••' }}</code>
               <span>{{ historyTypeLabel(entry.type) }}</span>
             </div>
             <div class="generator-history-meta"><span>{{ historyContext(entry) }}</span><time :datetime="new Date(entry.timestamp).toISOString()">{{ historyTime(entry.timestamp) }}</time><span>{{ entry.providerName }}</span></div>
             <div class="generator-history-actions">
-              <m3e-icon-button :aria-label="revealedHistory.has(entry.id) ? tr('隐藏生成值') : tr('显示生成值')" :title="revealedHistory.has(entry.id) ? tr('隐藏') : tr('显示')" @click="toggleHistorySecret(entry.id)"><m3e-icon :name="revealedHistory.has(entry.id) ? 'visibility_off' : 'visibility'"></m3e-icon></m3e-icon-button>
-              <m3e-button variant="text" v-if="pendingDelete === entry.id" type="button" class="generator-history-confirm" @click="deleteHistoryEntry(entry)">{{ tr('确认删除') }}</m3e-button>
+              <m3e-icon-button :aria-label="revealedHistory.has(historyEntryKey(entry)) ? tr('隐藏生成值') : tr('显示生成值')" :title="revealedHistory.has(historyEntryKey(entry)) ? tr('隐藏') : tr('显示')" @click="toggleHistorySecret(historyEntryKey(entry))"><m3e-icon :name="revealedHistory.has(historyEntryKey(entry)) ? 'visibility_off' : 'visibility'"></m3e-icon></m3e-icon-button>
+              <m3e-button variant="text" v-if="pendingDelete === historyEntryKey(entry)" type="button" class="generator-history-confirm" @click="deleteHistoryEntry(entry)">{{ tr('确认删除') }}</m3e-button>
               <m3e-icon-button v-else :aria-label="tr('删除生成历史')" :title="tr('删除')" @click="deleteHistoryEntry(entry)"><m3e-icon name="delete"></m3e-icon></m3e-icon-button>
-              <m3e-icon-button v-if="pendingDelete === entry.id" :aria-label="tr('取消删除')" :title="tr('取消')" @click="pendingDelete = ''"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
+              <m3e-icon-button v-if="pendingDelete === historyEntryKey(entry)" :aria-label="tr('取消删除')" :title="tr('取消')" @click="pendingDelete = ''"><m3e-icon name="close"></m3e-icon></m3e-icon-button>
             </div>
           </li>
         </ul>

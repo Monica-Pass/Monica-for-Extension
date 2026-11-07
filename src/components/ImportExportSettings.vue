@@ -82,7 +82,8 @@ async function finishExport(result: VaultExportResult) {
   try {
     const output = await createTransferExport(result.items, format, secret);
     const lifecycle = await vaultClient.status();
-    if (!active || lifecycle !== 'unlocked') return;
+    if (!active) return;
+    if (lifecycle !== 'unlocked') { error.value = tr('密码库已锁定，请先解锁 Monica。'); return; }
     const url = URL.createObjectURL(new Blob([output.bytes as BlobPart], { type: 'application/octet-stream' }));
     try {
       const anchor = document.createElement('a'); anchor.href = url;

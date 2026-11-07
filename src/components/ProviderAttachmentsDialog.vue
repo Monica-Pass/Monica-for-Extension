@@ -293,7 +293,7 @@ async function downloadAttachment(attachment: ProviderAttachmentSummary) {
     anchor.download = begun.fileName;
     anchor.rel = "noopener";
     anchor.click();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     status.value = tr('{0} 已交给浏览器下载。', { 0: begun.fileName });
   } catch (cause) {
     error.value = errorMessage(cause);

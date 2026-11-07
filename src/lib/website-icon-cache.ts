@@ -104,8 +104,12 @@ export class WebsiteIconCache {
     if (nativeUrl) {
       // Chromium returns a successful generic image for cache misses. Compare it
       // with the local default rather than mistaking it for a website's own icon.
+      // A failed probe settles to "" and must not be retained, or later calls
+      // would keep treating the generic image as a website's own icon.
       this.defaultIcon ??= readImage(browserFaviconUrl("about:blank"), new AbortController().signal);
-      const [icon, fallback] = await Promise.all([readImage(nativeUrl, signal), this.defaultIcon]);
+      const defaultIconPromise = this.defaultIcon;
+      const [icon, fallback] = await Promise.all([readImage(nativeUrl, signal), defaultIconPromise]);
+      if (!fallback && this.defaultIcon === defaultIconPromise) this.defaultIcon = undefined;
       if (signal.aborted) return "";
       if (icon && icon !== fallback) return icon;
     }
