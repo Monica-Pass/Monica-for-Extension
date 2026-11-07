@@ -51,14 +51,21 @@ describe("Steam inventory", () => {
   });
 
   it("requests inventory pages with a temporary market session", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{"assets":[],"descriptions":[],"more_items":false}', { status: 200 }));
+    const jar = installSteamCookieJar({});
+    let staged: Record<string, string> = {};
+    const fetchMock = vi.fn(async () => {
+      staged = Object.fromEntries(jar);
+      return new Response('{"assets":[],"descriptions":[],"more_items":false}', { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     await listSteamInventoryItems(item, { appId: 730, contextId: "2", language: "zh-CN", count: 75 });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const parsed = new URL(url);
     expect(parsed.pathname).toBe(`/inventory/${item.steamId}/730/2`);
     expect(parsed.searchParams.get("l")).toBe("schinese");
-    expect((init.headers as Record<string, string>).Cookie).toMatch(/sessionid=[0-9a-f]{24}/);
+    // Cookie is a fetch-forbidden header; the temporary session rides the cookie store instead.
+    expect((init.headers as Record<string, string>).Cookie).toBeUndefined();
+    expect(staged.sessionid).toMatch(/^[0-9a-f]{24}$/);
   });
 
   it("keeps media on official HTTPS Steam hosts", () => {
@@ -105,11 +112,12 @@ describe("Steam inventory", () => {
   });
 
   it("submits a validated sell request with seller-receive pricing", async () => {
+    installSteamCookieJar({});
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true,"requires_confirmation":false}', { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await sellSteamMarketItems(item, { entries: [{ appId: 730, contextId: "2", assetId: "99", priceReceive: 100 }] });
     expect(result.items).toEqual([{ assetId: "99", success: true, requiresConfirmation: false, message: undefined }]);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(new URL(url).pathname).toBe("/market/sellitem/");
     expect(String(init.body)).toContain("assetid=99");
     expect(String(init.body)).toContain("price=100");
@@ -117,6 +125,7 @@ describe("Steam inventory", () => {
   });
 
   it("auto-confirms only newly created market confirmations", async () => {
+    installSteamCookieJar({});
     const old = { id: "old", nonce: "old-nonce", type: "3", headline: "Market listing", summary: "", creation_time: 1 };
     const market = { id: "market", nonce: "market-nonce", type: "3", headline: "Market listing", summary: "Case", creation_time: 2 };
     const trade = { id: "trade", nonce: "trade-nonce", type: "2", headline: "Trade offer", summary: "Item", creation_time: 2 };
@@ -134,6 +143,7 @@ describe("Steam inventory", () => {
   });
 
   it("cancels numeric listings and rejects path injection", async () => {
+    installSteamCookieJar({});
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(cancelSteamMarketListing(item, "123")).resolves.toBe(true);
@@ -148,6 +158,12 @@ describe("Steam inventory", () => {
       { ...base, id: "trade", type: "2", headline: "Trade offer" },
       { ...base, id: "new", type: "3", headline: "Market listing" }
     ]).map((entry) => entry.id)).toEqual(["new"]);
+    // Auto-approval keys on conf.type only; generic confirmations whose text
+    // mentions market words must never be approved automatically.
+    expect(findNewSteamMarketConfirmations(new Set(), [
+      { ...base, id: "generic", type: "1", headline: "Market listing", summary: "市场挂单" },
+      { ...base, id: "missing", type: "", headline: "market sell" }
+    ]).map((entry) => entry.id)).toEqual([]);
   });
 
   it("accepts mini profile media only from official Steam HTTPS hosts", () => {
@@ -159,4 +175,32 @@ describe("Steam inventory", () => {
 function jwt(exp: number): string {
   const encode = (value: unknown) => btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   return `${encode({ alg: "none" })}.${encode({ exp })}.signature`;
+}
+
+function installSteamCookieJar(initial: Record<string, string>, storeId = "0"): Map<string, string> {
+  const jar = new Map(Object.entries(initial));
+  const cookie = (name: string, value: string) => ({
+    name,
+    value,
+    domain: "steamcommunity.com",
+    hostOnly: true,
+    path: "/",
+    secure: true,
+    httpOnly: false,
+    session: true,
+    sameSite: "no_restriction",
+    storeId
+  }) as unknown as chrome.cookies.Cookie;
+  vi.stubGlobal("chrome", {
+    runtime: { lastError: undefined },
+    cookies: {
+      get: (details: chrome.cookies.CookieDetails, callback: (value: chrome.cookies.Cookie | null) => void) => callback(jar.has(details.name) ? cookie(details.name, jar.get(details.name) || "") : null),
+      set: (details: chrome.cookies.SetDetails, callback?: () => void) => {
+        if (typeof details.name === "string" && typeof details.value === "string") jar.set(details.name, details.value);
+        callback?.();
+      },
+      remove: (details: chrome.cookies.CookieDetails, callback?: () => void) => { jar.delete(details.name); callback?.(); }
+    }
+  });
+  return jar;
 }

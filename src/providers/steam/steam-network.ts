@@ -192,10 +192,7 @@ export async function steamCommunityText(path: string, values: Record<string, st
   if (method === "GET") Object.entries(values).forEach(([key, value]) => query.set(key, value));
   const url = `https://steamcommunity.com${path}${method === "GET" ? `?${query}` : ""}`;
   const body = method === "POST" ? new URLSearchParams(values) : undefined;
-  const response = await withSteamCookies(item, async (cookieHeader) => {
-    if (cookieHeader) headers.Cookie = cookieHeader;
-    return steamFetch(url, { method, headers, body, credentials: "include", referrer: validatedCommunityReferer(options.referer) });
-  }, options.cookies);
+  const response = await withSteamCookies(item, () => steamFetch(url, { method, headers, body, credentials: "include", referrer: validatedCommunityReferer(options.referer) }), options.cookies);
   assertSteamResponseOrigin(response, "steamcommunity.com");
   if (!response.ok) throw new SteamNetworkError(`Steam community 请求失败（HTTP ${response.status}）。`);
   return response.text();
@@ -246,7 +243,7 @@ async function baseConfirmationQuery(item: TotpItem, nowSeconds: number, tag: st
   return { p: item.steamDeviceId || "", a: steamId, k: encodeBase64(signature), t: String(nowSeconds), m: "react", tag };
 }
 
-async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string) => Promise<T>, additional: Record<string, string> = {}): Promise<T> {
+async function withSteamCookies<T>(item: TotpItem, action: () => Promise<T>, additional: Record<string, string> = {}): Promise<T> {
   const steamId = requireSteamId(item).toString();
   const token = item.steamAccessToken || parseSteamRaw(item.steamRawJson).accessToken || "";
   const values: Record<string, string> = {
@@ -258,9 +255,10 @@ async function withSteamCookies<T>(item: TotpItem, action: (cookieHeader: string
   for (const [name, value] of Object.entries(values)) {
     if (!/^[A-Za-z0-9_-]+$/.test(name) || /[;\r\n]/.test(value)) throw new SteamNetworkError("Steam Cookie 参数无效。", false);
   }
-  const cookieHeader = Object.entries(values).map(([name, value]) => `${name}=${value}`).join("; ");
+  // Cookie is a fetch-forbidden header, so a hand-built header is stripped by the
+  // browser and the session can only travel through the chrome.cookies store.
   const cookies = globalThis.chrome?.cookies;
-  if (!cookies?.get || !cookies?.set || !cookies?.remove) return action(cookieHeader);
+  if (!cookies?.get || !cookies?.set || !cookies?.remove) throw new SteamNetworkError("缺少 cookies 权限，无法发送 Steam 会话请求。", false);
   const url = "https://steamcommunity.com/";
   const names = Object.keys(values);
   // A cookie store is shared by all Steam accounts.  Keep the snapshot, temporary
@@ -324,7 +322,7 @@ function steamCookieStoreLock(storeId: string): string {
   return `${STEAM_COOKIE_ORIGIN}:${storeId}`;
 }
 
-async function useSteamCookieStore<T>(cookies: typeof chrome.cookies, url: string, values: Record<string, string>, previous: Array<chrome.cookies.Cookie | null>, action: (cookieHeader: string) => Promise<T>, storeId?: string): Promise<T> {
+async function useSteamCookieStore<T>(cookies: typeof chrome.cookies, url: string, values: Record<string, string>, previous: Array<chrome.cookies.Cookie | null>, action: () => Promise<T>, storeId?: string): Promise<T> {
   let result: T | undefined;
   let actionError: unknown;
   let actionFailed = false;
@@ -332,7 +330,7 @@ async function useSteamCookieStore<T>(cookies: typeof chrome.cookies, url: strin
     const writes = await Promise.allSettled(Object.entries(values).map(([name, value]) => setCookie(cookies, url, name, value, storeId)));
     const failedWrite = writes.find((write): write is PromiseRejectedResult => write.status === "rejected");
     if (failedWrite) throw failedWrite.reason;
-    result = await action("");
+    result = await action();
   } catch (error) {
     actionFailed = true;
     actionError = error;
