@@ -469,6 +469,24 @@ describe("MDBX2 Native Messaging client", () => {
     client.close();
   });
 
+  it("reuses cached host capabilities per owner and re-reads them after the port is replaced", async () => {
+    const handle = "11111111-1111-4111-8111-111111111111";
+    const runtime = new FakeRuntime();
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: HELLO } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    await expect(client.hello(5_000, handle)).resolves.toEqual(HELLO);
+    await expect(client.hello(5_000, handle)).resolves.toEqual(HELLO);
+    expect(runtime.port.messages).toEqual([expect.objectContaining({ method: "host.hello" })]);
+    // A replaced port must re-read capabilities instead of replaying stale ones.
+    runtime.port.onDisconnect.emit();
+    await expect(client.hello(5_000, handle)).resolves.toEqual(HELLO);
+    expect(runtime.port.messages).toHaveLength(2);
+    client.close();
+  });
+
   it.each(["upsert", "delete", "batch"] as const)("blocks API token %s on old helpers before sending credential material", async (method) => {
     const runtime = new FakeRuntime();
     runtime.port.onPost = (message) => {
@@ -888,6 +906,29 @@ describe("MDBX2 Native Messaging client", () => {
       source: { kind: "file", handle },
       credential: { method: "password", password: "" }
     });
+    client.close();
+  });
+
+  it("validates transfer chunk boundaries against the requested offset and length", async () => {
+    const runtime = new FakeRuntime();
+    const handle = "11111111-1111-4111-8111-111111111111";
+    let reply: Record<string, unknown> = { nextOffset: 3, acceptedBytes: 3, repeated: false };
+    runtime.port.onPost = (message) => {
+      const request = message as { requestId: string };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: request.requestId, ok: true, result: reply } as never);
+    };
+    const client = new Mdbx2NativeClient(runtime);
+    await expect(client.sendInboundChunk(handle, 0, new Uint8Array([1, 2, 3]))).resolves.toMatchObject({ nextOffset: 3, acceptedBytes: 3, repeated: false });
+    reply = { nextOffset: 4, acceptedBytes: 3, repeated: false };
+    await expect(client.sendInboundChunk(handle, 0, new Uint8Array([1, 2, 3]))).rejects.toMatchObject({ code: "native-host-incompatible" });
+    reply = { nextOffset: 3, acceptedBytes: 2, repeated: false };
+    await expect(client.sendInboundChunk(handle, 0, new Uint8Array([1, 2, 3]))).rejects.toMatchObject({ code: "native-host-incompatible" });
+    reply = { nextOffset: 6, acceptedBytes: 0, repeated: true };
+    await expect(client.sendInboundChunk(handle, 3, new Uint8Array([4, 5, 6]))).resolves.toMatchObject({ nextOffset: 6, acceptedBytes: 0, repeated: true });
+    reply = { nextOffset: 5, acceptedBytes: 0, repeated: true };
+    await expect(client.sendInboundChunk(handle, 3, new Uint8Array([4, 5, 6]))).rejects.toMatchObject({ code: "native-host-incompatible" });
+    reply = { nextOffset: 6, acceptedBytes: 3, repeated: true };
+    await expect(client.sendInboundChunk(handle, 3, new Uint8Array([4, 5, 6]))).rejects.toMatchObject({ code: "native-host-incompatible" });
     client.close();
   });
 
@@ -1444,7 +1485,7 @@ describe("MDBX2 Native Messaging client", () => {
     client.close();
   });
 
-  it("bounds request time and closes the native port after a timeout", async () => {
+  it("bounds request time without closing the shared native port", async () => {
     vi.useFakeTimers();
     const runtime = new FakeRuntime();
     const client = new Mdbx2NativeClient(runtime, () => "request-3");
@@ -1453,7 +1494,36 @@ describe("MDBX2 Native Messaging client", () => {
     await vi.advanceTimersByTimeAsync(101);
 
     await rejection;
-    expect(runtime.port.disconnected).toBe(true);
+    expect(runtime.port.disconnected).toBe(false);
+    runtime.port.onPost = (message) => {
+      const reply = message as { requestId: string };
+      runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: reply.requestId, ok: true, result: HELLO } as never);
+    };
+    await expect(client.hello()).resolves.toEqual(HELLO);
+    client.close();
+  });
+
+  it("keeps long in-flight requests alive when a concurrent short request times out", async () => {
+    vi.useFakeTimers();
+    const runtime = new FakeRuntime();
+    let nextId = 0;
+    const client = new Mdbx2NativeClient(runtime, () => `request-${++nextId}`);
+    const longOperation = client.hello(5 * 60_000);
+    const shortProbe = client.hello(100);
+    const rejection = expect(shortProbe).rejects.toMatchObject({ code: "native-request-timeout", retryable: true });
+    await vi.advanceTimersByTimeAsync(101);
+
+    await rejection;
+    expect(runtime.port.disconnected).toBe(false);
+    // The host processes frames sequentially: the long reply lands only after
+    // the short probe timed out, and the stale short reply is dropped silently.
+    const longFrame = runtime.port.messages[0] as { requestId: string };
+    const shortFrame = runtime.port.messages[1] as { requestId: string };
+    runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: longFrame.requestId, ok: true, result: HELLO } as never);
+    runtime.port.onMessage.emit({ protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId: shortFrame.requestId, ok: true, result: HELLO } as never);
+    await expect(longOperation).resolves.toEqual(HELLO);
+    expect(runtime.port.disconnected).toBe(false);
+    client.close();
   });
 
   it("reports a missing Host without exposing the browser error text", async () => {

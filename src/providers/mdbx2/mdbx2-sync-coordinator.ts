@@ -202,25 +202,28 @@ export class Mdbx2SyncCoordinator {
         context.remoteBinding
       );
       if (!prepared.hasSegment) return;
-      report.uploadedBlobs += await this.uploadReferencedBlobs(context, signal);
-      if (prepared.commitCount > 0 || prepared.deltaCount > 0) {
-        const body = await this.readOutputBlob(
-          context.input.vaultHandle,
-          context.input.syncStateHandle,
-          context.remoteBinding,
-          prepared.file,
-          signal
-        );
-        const path = mdbx2SegmentPath(
-          context.remotePath,
-          prepared.sourceDeviceId,
-          prepared.transferId,
-          prepared.segmentIndex,
-          prepared.payloadSha256
-        );
-        await context.remote.putImmutable(path, body, prepared.file.sha256, signal);
-        report.uploadedSegments += 1;
+      if (prepared.commitCount === 0 && prepared.deltaCount === 0) {
+        // Committing such a segment would advance the remote sequence without a
+        // file and permanently block every device on the missing segment.
+        throw new Mdbx2NativeHostError("sync-segment-empty", "MDBX2 增量段缺少提交与状态变更，已中止上传以避免远端序号空洞。", false);
       }
+      report.uploadedBlobs += await this.uploadReferencedBlobs(context, signal);
+      const body = await this.readOutputBlob(
+        context.input.vaultHandle,
+        context.input.syncStateHandle,
+        context.remoteBinding,
+        prepared.file,
+        signal
+      );
+      const path = mdbx2SegmentPath(
+        context.remotePath,
+        prepared.sourceDeviceId,
+        prepared.transferId,
+        prepared.segmentIndex,
+        prepared.payloadSha256
+      );
+      await context.remote.putImmutable(path, body, prepared.file.sha256, signal);
+      report.uploadedSegments += 1;
       await this.runtime.commitSyncSegment(
         context.input.vaultHandle,
         context.input.syncStateHandle,
@@ -245,8 +248,8 @@ export class Mdbx2SyncCoordinator {
       );
       for (const reference of page.items) {
         signal?.throwIfAborted();
-        if (reference.state !== "available" || !reference.totalSize) throw new Error(`MDBX2 Blob ${reference.blobId} 在本机不可用。`);
         if (reference.remoteVerified) continue;
+        if (reference.state !== "available" || !reference.totalSize) throw new Error(`MDBX2 Blob ${reference.blobId} 在本机不可用。`);
         const remotePath = mdbx2BlobPath(context.remotePath, reference.blobId);
         const existing = await context.remote.stat(remotePath, signal);
         if (existing) {
