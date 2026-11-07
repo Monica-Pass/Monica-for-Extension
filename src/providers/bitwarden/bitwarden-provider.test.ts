@@ -795,6 +795,33 @@ describe("Bitwarden provider", () => {
     expect(result.items.map((item) => item.kind === "passkey" ? item.credentialId : item.kind)).toEqual(["login", "keep-me"]);
   });
 
+  it("keeps a remotely added Passkey projection when the Cipher write fails", async () => {
+    const remote = await loginCipher("secret", OLD_REVISION, [await fidoCredential("remote-only", 1)]);
+    // One logical Cipher write: the transport classifies an idempotent PUT receiving a
+    // transient 503 as retryable and replays the same request up to its own attempt
+    // limit, so assert a single distinct write payload rather than a physical count.
+    const putBodies = new Set<string>();
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/sync")) return json({ Profile: { Id: "user" }, Ciphers: [remote] });
+      if (init?.method === "PUT") { putBodies.add(String(init.body)); return json({ Message: "synthetic server failure" }, 503); }
+      throw new Error(`Unexpected ${init?.method} ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const provider = new BitwardenProvider(fetcher);
+    const local: LoginItem[] = [{
+      id: "local-login", kind: "login", title: "Example", username: "alice", password: "secret",
+      uris: ["https://example.com"], customFields: [], favorite: false, notes: "pending local edit",
+      createdAt: OLD_REVISION, updatedAt: "2026-07-15T05:01:00.000Z",
+      providerRefs: [{ providerId: "provider-1", remoteId: "cipher-1", revision: OLD_REVISION }]
+    }];
+
+    const result = await provider.sync(account(), { now: "2026-07-15T05:02:00.000Z", localItems: local });
+
+    expect(putBodies.size).toBe(1);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({ itemId: "local-login" });
+    expect(result.items.find((item) => item.kind === "passkey")).toMatchObject({ credentialId: "remote-only", signCount: 1 });
+  });
+
   it("creates a new parent login Cipher for a Bitwarden-targeted Passkey", async () => {
     let postCount = 0;
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
