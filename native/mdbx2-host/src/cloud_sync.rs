@@ -173,6 +173,55 @@ pub(crate) fn supports(method: &str) -> bool {
     )
 }
 
+/// Outbound publications are only readable through a state that still
+/// references them, so at startup delete outputs no state slot references.
+/// Both revision slots of every state are consulted: a torn slot swap must
+/// never reclaim a publication the surviving state still points at.
+/// The shared backup-scratch gate serializes the scan against the
+/// publication window in `sync_bootstrap_prepare` and `sync_segment_prepare`,
+/// where an output already exists on disk before its state reference is
+/// persisted. Failures are ignored and retried on the next start.
+pub(crate) fn scavenge_outbound(root: &Path) {
+    let Ok(_gate) = crate::backup_scratch::gate(root) else {
+        return;
+    };
+    let mut referenced = HashSet::new();
+    let Ok(states) = fs::read_dir(root.join("sync").join("states")) else {
+        return;
+    };
+    for entry in states.flatten() {
+        let Ok(bytes) = read_bounded(&entry.path(), MAX_SYNC_STATE_BYTES) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_slice::<SyncState>(&bytes) else {
+            continue;
+        };
+        if let Some(pending) = state.pending_bootstrap.as_ref() {
+            referenced.insert(pending.output_handle.clone());
+        }
+        if let Some(pending) = state.pending_segment.as_ref() {
+            referenced.insert(pending.output_handle.clone());
+        }
+    }
+    let Ok(outbound) = fs::read_dir(root.join("sync").join("outbound")) else {
+        return;
+    };
+    for entry in outbound.flatten() {
+        let path = entry.path();
+        let Some(handle) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".bin"))
+        else {
+            continue;
+        };
+        if referenced.contains(handle) {
+            continue;
+        }
+        let _ = fs::remove_file(&path);
+    }
+}
+
 pub(crate) fn handle(
     runtime: &mut HostRuntime,
     method: &str,
@@ -400,6 +449,12 @@ fn sync_bootstrap_prepare(runtime: &HostRuntime, params: Value) -> Result<Value,
             true,
         ));
     }
+    // Hold the shared backup-scratch gate across the publication window: the
+    // output exists on disk before its state reference is persisted, and a
+    // host process starting in between would otherwise scavenge it.
+    let _gate = crate::backup_scratch::gate(&runtime.root).map_err(|_| {
+        RpcFailure::storage("Native synchronization publication gate is unavailable.")
+    })?;
     let output_handle = fresh_uuid();
     let path = output_path(runtime, &output_handle);
     let bootstrap = vault
@@ -530,6 +585,12 @@ fn sync_segment_prepare(runtime: &HostRuntime, params: Value) -> Result<Value, R
     if current == base {
         return Ok(json!({ "hasSegment": false, "stateHandle": state.state_handle }));
     }
+    // Hold the shared backup-scratch gate across the publication window: the
+    // output exists on disk before its state reference is persisted, and a
+    // host process starting in between would otherwise scavenge it.
+    let _gate = crate::backup_scratch::gate(&runtime.root).map_err(|_| {
+        RpcFailure::storage("Native synchronization publication gate is unavailable.")
+    })?;
     let output_handle = fresh_uuid();
     let path = output_path(runtime, &output_handle);
     let segment = vault
@@ -2388,6 +2449,57 @@ mod tests {
         let loaded = load_state(&runtime, &state.state_handle).unwrap();
         assert_eq!(loaded.revision, 0);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_scavenges_only_unreferenced_outbound_publications() {
+        let root = std::env::temp_dir().join(format!("monica-cloud-scavenge-{}", fresh_uuid()));
+        let runtime = HostRuntime::new(root.clone()).unwrap();
+        let mut superseded = new_state(
+            "11111111-1111-4111-8111-111111111111",
+            &"a".repeat(64),
+            "vault-a",
+            "device-a",
+        );
+        let superseded_handle = fresh_uuid();
+        superseded.pending_bootstrap = Some(pending_bootstrap_fixture(&superseded_handle));
+        persist_state(&runtime, &superseded).unwrap();
+        superseded.pending_bootstrap = None;
+        persist_mutated_state(&runtime, &mut superseded).unwrap();
+        let mut pending = new_state(
+            "22222222-2222-4222-8222-222222222222",
+            &"b".repeat(64),
+            "vault-b",
+            "device-b",
+        );
+        let pending_handle = fresh_uuid();
+        pending.pending_bootstrap = Some(pending_bootstrap_fixture(&pending_handle));
+        persist_state(&runtime, &pending).unwrap();
+        let orphan_handle = fresh_uuid();
+        for handle in [&superseded_handle, &pending_handle, &orphan_handle] {
+            fs::write(output_path(&runtime, handle), b"publication").unwrap();
+        }
+        drop(runtime);
+
+        let runtime = HostRuntime::new(root.clone()).unwrap();
+        assert!(output_path(&runtime, &pending_handle).exists());
+        // The superseded slot still references its publication and may be
+        // recovered by load_state, so it must survive the scavenge too.
+        assert!(output_path(&runtime, &superseded_handle).exists());
+        assert!(!output_path(&runtime, &orphan_handle).exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn pending_bootstrap_fixture(handle: &str) -> PendingBootstrapState {
+        PendingBootstrapState {
+            output_handle: handle.to_string(),
+            checkpoint: SyncCheckpointState {
+                commit_inventory: "commit-inventory".to_string(),
+                delta_inventory: "delta-inventory".to_string(),
+            },
+            file_size_bytes: 1,
+            file_sha256: "e".repeat(64),
+        }
     }
 
     #[test]
