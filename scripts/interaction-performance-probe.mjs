@@ -7,8 +7,9 @@ const count = Number(arg('--items', '2000'));
 if (!Number.isInteger(count) || count < 100 || count > 10000) throw new Error('Expected 100–10000 items');
 const output = path.resolve(arg('--output', '.artifacts/performance/interaction.json'));
 const extension = path.resolve(arg('--extension', 'dist'));
-// A fresh, short profile path avoids Windows IndexedDB path limits. Retained for diagnosis.
-const profile = path.resolve(arg('--profile', `D:/Monica-perf-${Date.now()}`));
+const root = path.resolve(import.meta.dirname, '..');
+// A short profile path avoids Windows IndexedDB path limits. Retained for diagnosis.
+const profile = path.resolve(arg('--profile', process.env.MONICA_PERF_PROFILE_DIR || path.join(root, '.tmp/perf-profile')));
 const context = await chromium.launchPersistentContext(profile, {
   channel: 'chromium', headless: true, locale: 'en-US', reducedMotion: 'reduce',
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
