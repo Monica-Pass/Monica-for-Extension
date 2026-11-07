@@ -53,4 +53,4 @@ Bitwarden 固定参考提交：`e40ce6f08ebf963db3561464e77b4defe05247e8`。本�
 
 本地 Android 源码核对：`BitwardenMutationSyncBridge.kt`、`BitwardenSyncWorker.kt`、`Mdbx2RemoteSyncCoordinator.kt`、`RemoteKeePassSyncService.kt`、`KeePassRemoteUploadWorker.kt` 和 `WebDavHelper.kt`。本轮没有修改 Android 生产代码或改变跨端数据格式。
 
-合成数据验证与安装包记录见 [0.1.40 验证](VALIDATION-0.1.40.md)。这些结果不代表已使用真实 Bitwarden 云账户或 Android 真机进行联网验收。
+合成数据验证与安装包记录见 [0.1.40 验证](verification/VALIDATION-0.1.40.md)。这些结果不代表已使用真实 Bitwarden 云账户或 Android 真机进行联网验收。

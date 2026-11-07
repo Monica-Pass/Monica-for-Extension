@@ -6,15 +6,24 @@ interface RemovalClient {
   listPasswordProjectRemovals(operationId?: string): Promise<PasswordProjectRemovalStatus[]>;
 }
 
+const isTerminal = (status: string) => status === 'completed' || status === 'cancelled';
+
 /** A lost response may hide a committed removal; an absent receipt proves nothing. */
-export async function saveProjectRemoval(client: RemovalClient, request: PasswordProjectRemovalRequest): Promise<PasswordProjectRemovalStatus> {
-  try { return await client.removePasswordProjectMembers(request, true); }
+async function settleAfterResponseLoss<T extends { operationId: string; status: string }>(
+  operationId: string, submit: () => Promise<T>, lookupReceipts: () => Promise<T[]>): Promise<T> {
+  try { return await submit(); }
   catch (cause) {
-    const rows = await client.listPasswordProjectRemovals(request.operationId).catch(() => undefined);
-    const receipt = rows?.find(row => row.operationId === request.operationId);
-    if (receipt && ['completed', 'cancelled'].includes(receipt.status)) return receipt;
+    const rows = await lookupReceipts().catch(() => undefined);
+    const receipt = rows?.find(row => row.operationId === operationId);
+    if (receipt && isTerminal(receipt.status)) return receipt;
     throw cause;
   }
+}
+
+export function saveProjectRemoval(client: RemovalClient, request: PasswordProjectRemovalRequest): Promise<PasswordProjectRemovalStatus> {
+  return settleAfterResponseLoss(request.operationId,
+    () => client.removePasswordProjectMembers(request, true),
+    () => client.listPasswordProjectRemovals(request.operationId));
 }
 
 interface KeePassRemovalClient {
@@ -28,13 +37,8 @@ interface KeePassRemovalClient {
  */
 export async function saveKeePassProjectRemoval(client: KeePassRemovalClient, request: KeePassProjectRemovalRequest): Promise<KeePassProjectRemovalStatus> {
   const previous = (await client.listKeePassProjectRemovals(request.operationId)).find(row => row.operationId === request.operationId);
-  if (previous && ['completed', 'cancelled'].includes(previous.status)) return previous;
-  try {
-    return previous ? await client.resumeKeePassProjectRemoval(request.operationId) : await client.removeKeePassProjectMembers(request, true);
-  } catch (cause) {
-    const rows = await client.listKeePassProjectRemovals(request.operationId).catch(() => undefined);
-    const receipt = rows?.find(row => row.operationId === request.operationId);
-    if (receipt && ['completed', 'cancelled'].includes(receipt.status)) return receipt;
-    throw cause;
-  }
+  if (previous && isTerminal(previous.status)) return previous;
+  return settleAfterResponseLoss(request.operationId,
+    () => previous ? client.resumeKeePassProjectRemoval(request.operationId) : client.removeKeePassProjectMembers(request, true),
+    () => client.listKeePassProjectRemovals(request.operationId));
 }

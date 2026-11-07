@@ -1,6 +1,7 @@
 import type { ProviderSourceRecord, VaultItem, VaultState } from '../core/model';
 import { parseLosslessJson } from '../core/lossless-json';
 import { isLocalTransferItem, validateLocalAttachments, type LocalItemAttachment } from '../core/local-transfer';
+import { pendingRemovalTouches, readPasswordProjectRemovalJournal } from '../core/password-project-removal-journal';
 import { mdbx2TransferOperationScope as hash } from '../providers/mdbx2/mdbx2-transfer-identity';
 import { normalizeCredentialId } from '../passkey/source-policy';
 import { nearbyLocalItemToWire, nearbyWireToLocalItem } from './application-codec';
@@ -102,7 +103,7 @@ export async function nearbyLocalSourceHash(state: VaultState): Promise<string> 
     providers: state.providers.filter(provider => provider.kind === 'local'), nearbyEpoch: state.nearbyPreferences?.epoch ?? null, attachments: state.localItemAttachments ?? [],
     origins: state.localItemOrigins ?? [], folders: state.localTransferFolders ?? [], receipts: readNearbyLocalReceipts(state.nearbyLocalReceipts), metadata: readNearbyLocalMetadata(state.nearbyLocalMetadata),
     retained: readNearbyRetainedLocals(state.nearbyRetainedLocals),
-    removals: state.passwordProjectRemovals ?? [], transfers: state.bitwardenBatchTransfers ?? [], queue: state.mutationQueue, conflicts: state.providerConflicts });
+    removals: readPasswordProjectRemovalJournal(state.passwordProjectRemovals), transfers: state.bitwardenBatchTransfers ?? [], queue: state.mutationQueue, conflicts: state.providerConflicts });
 }
 
 async function itemGuard(item: VaultItem, attachments: LocalItemAttachment[], origins: ProviderSourceRecord[]): Promise<string> {
@@ -231,8 +232,7 @@ export async function captureNearbyLocalSnapshot(state: VaultState): Promise<Nea
 
 function requireUncontended(state: VaultState, id: string): void {
   if (state.mutationQueue.some(row => row.itemId === id) || state.providerConflicts.some(row => row.itemId === id)
-    || state.passwordProjectRemovals?.some(row => !['completed', 'cancelled'].includes(row.status)
-      && [...row.retained, ...row.removed].some(item => item.id === id))
+    || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set([id]))
     || state.bitwardenBatchTransfers?.some(row => row.status === 'writing' && row.request.action === 'move' && row.request.itemIds.includes(id))) invalidNearby('local-operation-pending');
 }
 

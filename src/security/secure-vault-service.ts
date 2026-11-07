@@ -61,7 +61,7 @@ import { planPasswordProjectRemoval } from '../core/password-project-removal';
 import { assertBitwardenProjectDeletionTransition, type BitwardenProjectDeletionJournal } from '../core/bitwarden-project-removal-journal';
 import { BitwardenProjectLocalChange, bitwardenProjectCipherId, sameBitwardenProjectChild, sameBitwardenProjectChildren, snapshotBitwardenProjectChildren } from '../core/bitwarden-project-removal-local';
 import { mergeBitwardenProjectRemovalReadback, type BitwardenProjectRemovalReadback } from '../providers/bitwarden/bitwarden-project-removal-readback';
-import { isPasswordProjectRemovalPending, retainPasswordProjectRemovalHistory, passwordProjectRemovalContent, readPasswordProjectRemovalJournal, type PasswordProjectNativeDeletionIntent, type PasswordProjectRemovalProof, type PasswordProjectRemovalRecord } from '../core/password-project-removal-journal';
+import { isPasswordProjectRemovalPending, pendingRemovalForProvider, pendingRemovalTouches, retainPasswordProjectRemovalHistory, passwordProjectRemovalContent, readPasswordProjectRemovalJournal, type PasswordProjectNativeDeletionIntent, type PasswordProjectRemovalProof, type PasswordProjectRemovalRecord } from '../core/password-project-removal-journal';
 import { cancelPasswordProjectRemovalDraft, assertCancellationPreservesLaterEdits } from '../core/password-project-removal-cancel';
 import { assertPasswordProjectNativeDeletionScope } from '../core/password-project-removal-native';
 import { readMdbx2RestoreJournal, assertMdbx2RestoreScope, type Mdbx2RestoreRecord } from '../core/mdbx2-restore-journal';
@@ -1305,8 +1305,7 @@ export class SecureVaultService {
     }
     if (state.providerConflicts.some(row => row.providerId === providerId && row.requiresExplicitResolution))
       throw new Error('恢复保留的数据需要明确解决冲突，普通同步不能覆盖。');
-    if (readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-      && (row.bitwardenPasskeyPreservation || row.bitwardenPreparationRecovery) && row.providerBindings.some(binding => binding.id === providerId)))
+    if (pendingRemovalForProvider(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), providerId))
       throw new Error('密码项目的 Passkey 保留尚未完成，普通同步不能覆盖恢复状态。');
     if (readMdbx2RestoreJournal(state.mdbx2Restores).some(record => record.status === 'prepared' && record.provider.id === providerId)
       || readMdbx2RestoreBatchJournal(state.mdbx2RestoreBatches).some(record => record.status === 'prepared' && record.members[0].provider.id === providerId))
@@ -1636,8 +1635,7 @@ export class SecureVaultService {
       const ids = new Set([source.id, ...project.map(item => item.id), ...(usage.login ? [usage.login.itemId] : [])]);
       assertNoMdbx2RestoreBatchOverlap(state, ids);
       if (readMdbx2RestoreJournal(state.mdbx2Restores).some(row => row.status === 'prepared' && ids.has(row.source.id))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-          && [...row.removed, ...row.retained].some(item => ids.has(item.id)))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids)
         || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed'
           && row.entries.some(entry => ids.has(entry.expected.id) || ids.has(entry.result.id)))
         || state.providerConflicts.some(row => ids.has(row.itemId))
@@ -1697,7 +1695,7 @@ export class SecureVaultService {
       }
       const { saved, now } = preparePasswordGroupWrite(state, input.items, input.expected, this.now());
       const ids = new Set(saved.map(item => item.id));
-      if (journal.some(record => isPasswordProjectRemovalPending(record) && [...record.retained, ...record.removed].some(item => ids.has(item.id))))
+      if (pendingRemovalTouches(journal, ids))
         throw new Error('此密码项目还有待完成的移除操作，请先重试该操作。');
       const restores = readMdbx2RestoreJournal(state.mdbx2Restores);
       assertNoMdbx2RestoreBatchOverlap(state, ids);
@@ -2590,8 +2588,7 @@ export class SecureVaultService {
       if (batches.some(row=>row.status==='prepared' && passwordGroupKey(row.members[0].source as LoginItem)===passwordGroupKey(first))) throw fail();
       assertNoMdbx2RestoreBatchOverlap(state, ids);
       if (readMdbx2RestoreJournal(state.mdbx2Restores).some(row=>row.status==='prepared' && ids.has(row.source.id))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row=>isPasswordProjectRemovalPending(row)
-          && [...row.removed,...row.retained].some(item=>ids.has(item.id)))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids)
         || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row=>row.status!=='completed'
           && row.entries.some(entry=>ids.has(entry.expected.id)))
         || state.providerConflicts.some(row=>ids.has(row.itemId))) throw fail();
@@ -2728,8 +2725,7 @@ export class SecureVaultService {
         || readMdbx2RestoreJournal(state.mdbx2Restores).some(row => row.status === 'prepared' && row.source.id === expected.id)
         || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed'
           && row.entries.some(entry => entry.expected.id === expected.id))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-          && [...row.removed, ...row.retained].some(item => item.id === expected.id)))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set([expected.id])))
         throw new Error('删除结果尚未确认，请先同步后再恢复。');
       await verifyStillActive();
       const now = new Date(Math.max(this.now(), Date.parse(source.updatedAt) + 1)).toISOString();
@@ -3518,8 +3514,7 @@ export class SecureVaultService {
       const targets = assertKeePassRestoreProject(members, request);
       const ids = new Set(members.map(item => item.id));
       if (state.providerConflicts.some(row => ids.has(row.itemId))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-          && [...row.retained, ...row.removed].some(item => ids.has(item.id))))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids))
         throw new Error('项目还有待处理的同步或移除冲突，请先处理后再恢复。');
       const now = new Date(Math.max(this.now(), ...members.map(item => Date.parse(item.updatedAt) + 1))).toISOString();
       const restored = new Map(targets.map(item => [item.id, { ...item, deletedAt: undefined, updatedAt: now }]));
@@ -3602,8 +3597,7 @@ export class SecureVaultService {
       const ids = new Set([item.id, ...(item.kind === 'login' ? passwordGroupMembers(item, state.items).map(row => row.id) : [])]);
       assertNoMdbx2RestoreBatchOverlap(state, ids);
       if (readMdbx2RestoreJournal(state.mdbx2Restores).some(row => row.status === 'prepared' && ids.has(row.source.id))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-          && [...row.retained, ...row.removed].some(candidate => ids.has(candidate.id)))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids)
         || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed'
           && row.entries.some(entry => ids.has(entry.expected.id) || ids.has(entry.result.id)))
         || state.providerConflicts.some(row => ids.has(row.itemId))
@@ -3631,8 +3625,7 @@ export class SecureVaultService {
       const ids = new Set(passwordGroupMembers(item, state.items).map(row => row.id)); ids.add(item.id);
       assertNoMdbx2RestoreBatchOverlap(state, ids);
       if (readMdbx2RestoreJournal(state.mdbx2Restores).some(row => row.status === 'prepared' && ids.has(row.source.id))
-        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-          && [...row.retained, ...row.removed].some(candidate => ids.has(candidate.id)))
+        || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), ids)
         || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed'
           && row.entries.some(entry => ids.has(entry.expected.id) || ids.has(entry.result.id)))
         || state.providerConflicts.some(row => ids.has(row.itemId))
@@ -4207,8 +4200,7 @@ function queueProviderMutations(state: VaultState, item: VaultItem, operation: P
 function hasPendingLocalTrashOperation(state: VaultState, itemId: string): boolean {
   return state.mutationQueue.some(row => row.itemId === itemId)
     || state.providerConflicts.some(row => row.itemId === itemId)
-    || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-      && [...row.retained, ...row.removed].some(item => item.id === itemId))
+    || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set([itemId]))
     || readMdbx2RestoreJournal(state.mdbx2Restores).some(row => row.status === 'prepared' && row.source.id === itemId)
     || readMdbx2MoveJournal(state.mdbx2MoveFinalizations).some(row => row.status !== 'completed'
       && row.entries.some(entry => entry.expected.id === itemId || entry.result.id === itemId))
@@ -4726,8 +4718,7 @@ function assertMdbx2RestoreReady(state: VaultState, record: Mdbx2RestoreRecord, 
     || !validLocal
     || state.providerConflicts.some(row => row.itemId === record.source.id))
     throw new Error('恢复期间项目或密码源已变化，当前内容已保留。');
-  if (readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-    && [...row.retained, ...row.removed].some(item => item.id === record.source.id)))
+  if (pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set([record.source.id])))
     throw new Error('此密码项目的移除结果尚未确认，请先完成移除恢复。');
   return deletedAgain;
 }
@@ -4781,8 +4772,7 @@ function assertMdbx2RestoreBatchReady(state: VaultState, record: Mdbx2RestoreBat
       && queue[0].providerId === record.members[0].provider.id);
     if ((!deletedAgain && (JSON.stringify(current) !== JSON.stringify(source) || queue.length))
       || state.providerConflicts.some(row => row.itemId === source.id)
-      || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => isPasswordProjectRemovalPending(row)
-        && [...row.removed, ...row.retained].some(item => item.id === source.id)))
+      || pendingRemovalTouches(readPasswordProjectRemovalJournal(state.passwordProjectRemovals), new Set([source.id])))
       throw new Error('整组恢复期间成员已变化，当前内容已保留。');
     return deletedAgain;
   });

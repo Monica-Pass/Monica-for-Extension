@@ -60,18 +60,11 @@ Monica 的 Chrome/Edge 与 Firefox 桌面浏览器插件，采用独立的 Manif
 - [安全漏洞报告政策](SECURITY.md)
 - [独立安全审计交付说明](docs/SECURITY_AUDIT_HANDOFF.md)
 - [可复现发布流程](docs/RELEASE.md)
-- [0.1.31 模块化密码库首页与验证记录](docs/VALIDATION-0.1.31.md)
-- [0.1.32 首页易用性优化与验证记录](docs/VALIDATION-0.1.32.md)
-- [0.1.33 Android 风格概览与跨端兼容验证](docs/VALIDATION-0.1.33.md)
-- [0.1.28 更新后解锁修复与验证记录](docs/VALIDATION-0.1.28.md)
-- [0.1.27 性能优化与验证记录](docs/VALIDATION-0.1.27.md)
 - [性能测量与维护](docs/PERFORMANCE.md)
-- [0.1.25 多尺寸适配与验证记录](docs/VALIDATION-0.1.25.md)
-- [0.1.26 多语言与验证记录](docs/VALIDATION-0.1.26.md)
-- [0.1.24 功能、安装与互通验证记录](docs/VALIDATION-0.1.24.md)
+- [历史验证与开发记录索引](docs/README.md)：0.1.24–0.1.45 的验证记录、阶段说明与全部主题文档已分类编目
 - [参与贡献](CONTRIBUTING.md)
 
-当前正式发布见 [1.0.104 发行说明](docs/releases/Monica-Extension-1.0.104.md)和[发布验证记录](docs/verification/release-1.0.104.md)。同步与 Passkey 的兼容范围见[同步说明](docs/SYNC_COMPATIBILITY.md)和[Passkey 说明](docs/PASSKEY_COMPATIBILITY.md)。原 `docs/RELEASE-0.1.38.md` 至 `RELEASE-0.1.45.md` 是已纳入 0.1.37 的历史开发记录，保持原样；当前 0.1.48 阶段说明位于 `docs/releases/`。
+当前正式发布见 [1.0.104 发行说明](docs/releases/Monica-Extension-1.0.104.md)和[发布验证记录](docs/verification/release-1.0.104.md)。同步与 Passkey 的兼容范围见[同步说明](docs/SYNC_COMPATIBILITY.md)和[Passkey 说明](docs/PASSKEY_COMPATIBILITY.md)。原 0.1.38 至 0.1.45 的历史开发记录（已纳入 0.1.37）与其验证记录（0.1.24 至 0.1.45）已分别归档至 `docs/releases/` 与 `docs/verification/`；当前阶段说明位于 `docs/releases/`。
 
 ## 日常使用
 
@@ -130,7 +123,7 @@ API 密钥独立保存服务商、令牌、可选 API 地址、备注、自定�
 
 插件编辑登录项的独立验证器绑定时，会转换成 Android 的 `boundPasswordId`，新建、更换和解除后再次同步均保留结果。旧记录缺少插件绑定字段时保留 Android 现有关联；跨 WebDAV 数据库的绑定或一个验证器绑定多个登录项无法由 Android 反向字段完整表示，写入会明确报错，避免丢失关系。HOTP 计数器和未知字段继续保留。
 
-仅包含 Android 设备保护密钥引用的 Passkey 仍只显示元数据；受支持的便携 PKCS#8 私钥仅在加密备份边界内导入和写回。KeePass 互操作验证覆盖 AES-256 与 ChaCha20，Twofish 当前明确不支持。详见 [0.1.33 验证记录](docs/VALIDATION-0.1.33.md)。
+仅包含 Android 设备保护密钥引用的 Passkey 仍只显示元数据；受支持的便携 PKCS#8 私钥仅在加密备份边界内导入和写回。KeePass 互操作验证覆盖 AES-256 与 ChaCha20，Twofish 当前明确不支持。详见 [0.1.33 验证记录](docs/verification/VALIDATION-0.1.33.md)。
 
 ## Bitwarden 使用
 

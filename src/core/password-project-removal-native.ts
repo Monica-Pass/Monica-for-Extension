@@ -1,3 +1,4 @@
+import { sha256Hex } from './digest';
 import type { PasswordProjectNativeDeletionIntent, PasswordProjectRemovalRecord } from './password-project-removal-journal';
 
 /** Fixed tuple order keeps the durable identity independent of object key order. */
@@ -6,8 +7,7 @@ export async function passwordProjectNativeDeletionScope(record: Pick<PasswordPr
   const value = [intent.version, 'password-project-removal', record.id, record.requestHash, intent.providerId, intent.vaultHandle,
     intent.writeRevision.vaultId, intent.writeRevision.revisionSha256,
     intent.mutations.map(mutation => [mutation.kind, mutation.logicalObjectId, mutation.expectedHeadCommitId])];
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return sha256Hex(JSON.stringify(value));
 }
 
 export async function assertPasswordProjectNativeDeletionScope(record: PasswordProjectRemovalRecord): Promise<void> {

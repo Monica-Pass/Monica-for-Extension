@@ -3,6 +3,7 @@ import { readProjectCredential } from './project-credentials';
 import type { Mdbx2RestoreRecord } from './mdbx2-restore-journal';
 import { validateBitwardenProjectDeletion, type BitwardenProjectDeletionJournal } from './bitwarden-project-removal-journal';
 import { validateBitwardenProjectPasskeyPreservation, type BitwardenProjectPasskeyPreservation } from './bitwarden-passkey-preservation-journal';
+import { canonicalJson } from './digest';
 
 export interface PasswordProjectRemovalProof {
   providerId: string;
@@ -188,6 +189,22 @@ export function isPasswordProjectRemovalPending(record: PasswordProjectRemovalRe
   return record.status === 'preparing' || record.status === 'deleting';
 }
 
+/** Some pending removal still owns one of the given item ids. The records must
+ * already have passed readPasswordProjectRemovalJournal(); this is a pure query. */
+export function pendingRemovalTouches(records: PasswordProjectRemovalRecord[], itemIds: Set<string>): boolean {
+  return records.some(record => isPasswordProjectRemovalPending(record)
+    && [...record.retained, ...record.removed].some(item => itemIds.has(item.id)));
+}
+
+/** A pending removal still carrying Bitwarden passkey-preservation or
+ * preparation-recovery state for the given provider account. Records must
+ * already have passed readPasswordProjectRemovalJournal(); pure query. */
+export function pendingRemovalForProvider(records: PasswordProjectRemovalRecord[], providerId: string): boolean {
+  return records.some(record => isPasswordProjectRemovalPending(record)
+    && (record.bitwardenPasskeyPreservation || record.bitwardenPreparationRecovery)
+    && record.providerBindings.some(binding => binding.id === providerId));
+}
+
 /** Required recovery receipts outlive the ordinary recent-history window. */
 export function retainPasswordProjectRemovalHistory(records: PasswordProjectRemovalRecord[], restores: Mdbx2RestoreRecord[]): PasswordProjectRemovalRecord[] {
   const required = new Set(restores.flatMap(row => row.status === 'prepared' && row.reapply ? [row.reapply.deletionOperationId] : []));
@@ -206,7 +223,5 @@ export function passwordProjectRemovalContent(item: LoginItem): string {
   const { updatedAt: _updatedAt, providerRefs: _refs, bitwardenCustomFieldsVersion: _version, bitwardenCipherId: _cipher, ...content } = item;
   const normalized = { ...content, loginType: item.loginType || 'PASSWORD',
     uriRules: item.uriRules ?? item.uris.map(uri => ({ uri, matchType: 'base-domain' })) };
-  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable)
-    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, stable(entry)])) : value;
-  return JSON.stringify(stable(normalized));
+  return canonicalJson(normalized);
 }
