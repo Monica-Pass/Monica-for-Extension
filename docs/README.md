@@ -1,6 +1,6 @@
 # Monica Extension 文档索引
 
-`docs/` 全部 317 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
+`docs/` 全部 319 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
 
 > 机器可检索的解决方案库位于 `docs/solutions/`（YAML frontmatter：`module`、`tags`、`problem_type`）；共享领域词汇见仓库根 `CONCEPTS.md`。
 >
@@ -382,11 +382,13 @@ docs/verification/ 的功能验证、排查与发布就绪检查。
 - [wifi-stage-closeout-2026-10-16.md](verification/wifi-stage-closeout-2026-10-16.md) — Wi-Fi 同步阶段收尾冻结记录
 - [zip-advisory-scope-20261104.md](verification/zip-advisory-scope-20261104.md) — zip 依赖安全通告范围评估
 
-## 解决方案库（1）
+## 解决方案库（3）
 
 docs/solutions/ 带结构化 frontmatter 的可检索解决方案。
 
 - [refresh-build-id-json-after-source-changes.md](solutions/build-errors/refresh-build-id-json-after-source-changes.md) — 方案：源码变更后刷新 build-id.json 修复 CI 打包拒绝
+- [rebuild-mdbx2-browser-engine-after-host-src-changes.md](solutions/build-errors/rebuild-mdbx2-browser-engine-after-host-src-changes.md) — 方案：宿主源码变更后用 pinned 工具链重建浏览器引擎，修复 provenance stale 构建失败
+- [jsdom-partial-accessor-descriptor-merges.md](solutions/test-failures/jsdom-partial-accessor-descriptor-merges.md) — 方案：jsdom 负向测试夹具中部分 accessor 描述符合并导致的静默失效
 
 ## 非文档资产
 
