@@ -8,7 +8,9 @@ const root=resolve(import.meta.dirname,'..'), workspace=resolve(root,'..');
 const project=join(workspace,'Monica-main/Monica for Android');
 const output=join(root,'.tmp/android-bitwarden-repaired-318');
 const build=join(output,'build'), stage=process.argv[2];
-const adb=(...args)=>execFileSync('D:/AndroidSDK/platform-tools/adb.exe',['-s','emulator-5554',...args],{windowsHide:true,maxBuffer:256*1024*1024});
+const adbExecutable=`${process.env.ANDROID_SDK_ROOT||'D:/AndroidSDK'}/platform-tools/adb.exe`;
+const adbSerial=process.env.ANDROID_SERIAL||'emulator-5554';
+const adb=(...args)=>execFileSync(adbExecutable,['-s',adbSerial,...args],{windowsHide:true,maxBuffer:256*1024*1024});
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=async file=>JSON.parse(await readFile(join(output,file),'utf8'));
 const save=async(file,value)=>writeFile(join(output,file),JSON.stringify(value,null,2)+'\n');
@@ -52,7 +54,7 @@ if(stage==='capture'){
   if(stage==='build'){
     assert.equal(hash(await readFile(baseline.compileApi)),baseline.compileApiSha256);
     const classes=join(build,'app/intermediates/compile_app_classes_jar/debug/bundleDebugClassesToCompileJar/classes.jar');await mkdir(resolve(classes,'..'),{recursive:true});await copyFile(baseline.compileApi,classes);
-    const env={...process.env,JAVA_HOME:'C:/jdk-17.0.1',GRADLE_USER_HOME:'D:/GradleRepository',MONICA_APP_INTEROP_BUILD_DIR:build,
+    const env={...process.env,JAVA_HOME:process.env.JAVA_HOME||'C:/jdk-17.0.1',GRADLE_USER_HOME:process.env.GRADLE_USER_HOME||'D:/GradleRepository',MONICA_APP_INTEROP_BUILD_DIR:build,
       MONICA_APP_INTEROP_SOURCE_DIR:join(output,'sources'),MONICA_APP_INTEROP_REPLACE_TEST_SOURCES:'1',MONICA_APP_INTEROP_REUSE_VERIFIED_APPLICATION:'1',
       MONICA_APP_INTEROP_TEST_MANIFEST:join(root,'tests/interop/android-app/passkey-signatures-AndroidManifest.xml')};
     const args=['--init-script',`"${join(root,'tests/interop/android-app/interop.init.gradle')}"`,':app:assembleDebugAndroidTest','-PincludeX86TestAbi','--max-workers=2','--console=plain'];
@@ -79,7 +81,7 @@ if(stage==='capture'){
       adb('push',join(output,'bitwarden-snapshot-input.json'),'/data/local/tmp/monica-repaired-bw-input.json');
       adb('shell','run-as','takagi.ru.monica','cp','/data/local/tmp/monica-repaired-bw-input.json',`${remoteDir}/bitwarden-snapshot-input.json`);
       const log=join(output,'device.log');
-      await new Promise((done,fail)=>{const child=spawn('D:/AndroidSDK/platform-tools/adb.exe',['-s','emulator-5554','shell','am','instrument','-w','-r','-e','class','takagi.ru.monica.credentialexchange.ExtensionBitwardenCopyInteropTest','takagi.ru.monica.test/androidx.test.runner.AndroidJUnitRunner'],{windowsHide:true});
+      await new Promise((done,fail)=>{const child=spawn(adbExecutable,['-s',adbSerial,'shell','am','instrument','-w','-r','-e','class','takagi.ru.monica.credentialexchange.ExtensionBitwardenCopyInteropTest','takagi.ru.monica.test/androidx.test.runner.AndroidJUnitRunner'],{windowsHide:true});
         child.stdout.on('data',chunk=>{runOutput+=chunk;process.stdout.write(chunk);});child.stderr.on('data',chunk=>{runOutput+=chunk;process.stderr.write(chunk);});child.on('error',fail);child.on('exit',code=>code===0?done():fail(new Error(`adb instrument ${code}`)));});
       await writeFile(log,runOutput);
       const bytes=adb('exec-out','run-as','takagi.ru.monica','cat',`${remoteDir}/android-bitwarden-copies.json`);await writeFile(join(output,'android-bitwarden-copies.json'),bytes);

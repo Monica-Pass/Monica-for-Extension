@@ -201,7 +201,10 @@ function jsonBytes(value) {
 
 function argumentValue(name) {
   const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} requires a directory.`);
+  return value;
 }
 
 function compareText(left, right) {

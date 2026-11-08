@@ -417,6 +417,15 @@ describe("buildKeePassSecureItemPatch", () => {
     expect(updated.has("Nickname")).toBe(false);
   });
 
+  it("removes a deleted card custom field instead of leaving it on the entry", () => {
+    const existing = fields({ Title: "Visa", MonicaItemType: "BANK_CARD", "Recovery code": secret("ABCD"), Branch: "001" });
+
+    const updated = applyKeePassFieldPatch(existing, buildKeePassSecureItemPatch({ item: card(), existingFields: existing })!);
+
+    expect(updated.has("Recovery code")).toBe(false);
+    expect(updated.has("Branch")).toBe(false);
+  });
+
   it("overwrites a stale otp when an authenticator's secret changes, so no client keeps the old code", () => {
     const existing = fields({
       Title: "GitHub",

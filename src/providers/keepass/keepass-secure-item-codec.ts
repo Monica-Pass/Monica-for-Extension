@@ -348,7 +348,15 @@ export function buildKeePassSecureItemPatch(
     input.item.kind === "totp"
       ? (name: string) => isSecureItemOverlayField(name) || isKeePassTotpField(name)
       : isSecureItemOverlayField;
-  return createKeePassFieldPatch(replacementFields, removeManagedField, [...replacementFields.keys(), ...(input.item.kind === "totp" ? KEEPASS_OTP_FIELD_NAMES : [])]);
+  const removeFieldNames = [...replacementFields.keys(), ...(input.item.kind === "totp" ? KEEPASS_OTP_FIELD_NAMES : [])];
+  // A bank card rewrites its custom fields as entry fields like the password path, so names already
+  // on the entry have to be removed too: a deleted custom field would otherwise survive on the
+  // entry and reconstruct revives it once MonicaItemData is lost. Other kinds never project custom
+  // fields onto the entry, so third-party fields there must keep surviving untouched.
+  if (input.item.kind === "card" && input.existingFields) {
+    for (const field of readKeePassSecureItemCustomFields(input.existingFields)) removeFieldNames.push(field.name);
+  }
+  return createKeePassFieldPatch(replacementFields, removeManagedField, removeFieldNames);
 }
 
 /**

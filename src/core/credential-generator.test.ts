@@ -14,6 +14,12 @@ describe("Android-compatible credential generators", () => {
     expect(password).not.toMatch(/[0Ol1I{}[\]()/\\'"`~,;:.<>]/);
   });
 
+  it("keeps astral custom symbols whole without lone surrogates", () => {
+    const password = generatePassword({ length: 8, uppercaseChars: "", lowercaseChars: "", numberChars: "", symbolChars: "😀🔥a" }, sequence(0, 1, 2));
+    expect(password).not.toMatch(/\p{Surrogate}/u);
+    expect([...password].every((character) => "😀🔥a".includes(character))).toBe(true);
+  });
+
   it("rejects impossible configurations", () => {
     expect(() => generatePassword({ length: 3, uppercaseMin: 2, lowercaseMin: 2 }, sequence(0))).toThrow("不能超过");
     expect(() => generatePassword({ length: 4, uppercaseChars: "", lowercaseChars: "", numberChars: "", symbolChars: "" }, sequence(0))).toThrow("至少启用");

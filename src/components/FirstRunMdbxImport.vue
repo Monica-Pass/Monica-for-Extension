@@ -45,7 +45,14 @@ onBeforeUnmount(() => {
   pluginPassword.value = "";
   pluginConfirmation.value = "";
   if (operationId.value) void vaultClient.cancelMdbx2Import(operationId.value).catch(() => undefined);
+  releaseStagedSource();
 });
+
+function releaseStagedSource() {
+  const handle = sourceHandle.value;
+  sourceHandle.value = "";
+  if (handle) void vaultClient.releaseMdbx2File(handle).catch(() => undefined);
+}
 
 async function selectFile(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -57,7 +64,7 @@ async function selectFile(event: Event) {
   pluginOrphan.value = false;
   if (operationId.value) await vaultClient.cancelMdbx2Import(operationId.value).catch(() => undefined);
   operationId.value = "";
-  sourceHandle.value = "";
+  releaseStagedSource();
   file.value = chosen;
   if (!chosen) return;
   if (!chosen.size || chosen.size > MDBX2_MAX_INBOUND_FILE_BYTES) {
@@ -135,6 +142,7 @@ async function importVault() {
       return;
     }
     operationId.value = "";
+    releaseStagedSource();
     emit("completed", items, pluginPassword.value ? "master-password" : "device-key");
   } catch (cause) {
     const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: string }).code || "") : "";

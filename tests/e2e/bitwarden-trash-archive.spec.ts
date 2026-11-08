@@ -1,5 +1,6 @@
 import { dialogContent } from "./fixtures/material";
 import { launchTestContext } from './fixtures/edge';
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
 import path from "node:path";
 import { createLoginItem } from "../../src/core/model";
@@ -48,7 +49,7 @@ test("manager archive and recycle-bin views keep records recoverable and privile
     await expect(manager.getByRole("button", { name: "取消归档 Archived account" })).toBeVisible();
     await expect(manager.locator(".data-card").first()).toHaveCSS("border-radius", "20px");
     await manager.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-    await expectNoHorizontalOverflow(manager);
+    await expectNoHorizontalOverflow(manager.locator("html"));
     await expectNoGradients(manager.locator(".lifecycle-page"));
     await manager.getByRole("button", { name: "取消归档 Archived account" }).click();
     await expect(manager.locator(".item-card").filter({ hasText: "Archived account" })).toHaveCount(0);
@@ -120,7 +121,7 @@ test("manager requires explicit confirmation before adopting an authenticated em
     const openConfirmation = manager.getByRole("button", { name: "查看并确认空库" });
     await expect(openConfirmation).toBeVisible();
     await expectNoGradients(manager.locator(".provider-page"));
-    await expectNoHorizontalOverflow(manager);
+    await expectNoHorizontalOverflow(manager.locator("html"));
     await openConfirmation.click();
     const confirmation = dialogContent(manager, { name: "采用服务器空密码库？" });
     await expect(confirmation).toBeVisible();
@@ -192,10 +193,6 @@ function symmetricKey(seed: number): BitwardenSymmetricKey {
 
 function jsonRoute(route: Route, body: unknown, status = 200): Promise<void> {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-}
-
-async function expectNoHorizontalOverflow(page: Page): Promise<void> {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }
 
 async function expectNoGradients(locator: import("@playwright/test").Locator): Promise<void> {

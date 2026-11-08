@@ -2,6 +2,7 @@
 import ProfileExtraFields from "./ProfileExtraFields.vue";
 import { profileValues, CARD_NAMES, PROFILE_CONTACTS, PROFILE_EXTRAS, ADDRESS_EXTRAS } from "../core/profile-fields";
 import EditorContentSection from "./EditorContentSection.vue";
+import SettingsPasswordField from "./SettingsPasswordField.vue";
 import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
 
@@ -58,6 +59,9 @@ const saving = ref(false);
 const otpTransferInput = ref("");
 const otpQrDataUrl = ref("");
 const otpTransferStatus = ref("");
+const maFilePasswordDialog = ref(false);
+const maFilePasswordInput = ref("");
+let resolveMaFilePassword: ((password: string | null) => void) | undefined;
 const revealSecret = ref(false);
 const fields = reactive(emptyFields());
 type EditorFields = ReturnType<typeof emptyFields>;
@@ -784,6 +788,26 @@ async function exportOtpQr() {
   }
 }
 
+function requestMaFilePassword(): Promise<string | null> {
+  maFilePasswordInput.value = "";
+  maFilePasswordDialog.value = true;
+  return new Promise((resolve) => { resolveMaFilePassword = resolve; });
+}
+
+function confirmMaFilePassword() {
+  if (!maFilePasswordDialog.value) return;
+  maFilePasswordDialog.value = false;
+  resolveMaFilePassword?.(maFilePasswordInput.value);
+  resolveMaFilePassword = undefined;
+}
+
+function cancelMaFilePassword() {
+  if (!maFilePasswordDialog.value) return;
+  maFilePasswordDialog.value = false;
+  resolveMaFilePassword?.(null);
+  resolveMaFilePassword = undefined;
+}
+
 async function importMaFile(event: Event) {
   const files = [...((event.target as HTMLInputElement).files || [])];
   const file = files[0];
@@ -791,7 +815,15 @@ async function importMaFile(event: Event) {
   try {
     const contents = await Promise.all(files.map(async (entry) => ({ name: entry.name, content: await entry.text() })));
     const maFileContent = contents.find((entry) => /\.mafile(?:\.json)?$/i.test(entry.name))?.content || contents.find((entry) => !/manifest\.json$/i.test(entry.name))?.content || "";
-    const password = maFileContent.trim().startsWith("{") ? "" : (window.prompt(tr('请输入 Android 加密 maFile 密码')) || "");
+    let password = "";
+    if (!maFileContent.trim().startsWith("{")) {
+      const entered = await requestMaFilePassword();
+      if (entered === null) {
+        otpTransferStatus.value = "";
+        return;
+      }
+      password = entered;
+    }
     const value = await parseSteamMaFileBundle(contents, password);
     Object.assign(fields, {
       title: fields.title || value.accountName,
@@ -813,24 +845,30 @@ async function importMaFile(event: Event) {
   } catch (failure) {
     otpTransferStatus.value =
       failure instanceof Error ? failure.message : tr('无法导入 maFile。');
+  } finally {
+    (event.target as HTMLInputElement).value = "";
   }
-  (event.target as HTMLInputElement).value = "";
 }
 
 function exportMaFile() {
-  const item = buildItem(
-    fields.title.trim() || fields.accountName.trim() || "Steam",
-  );
-  if (item.kind !== "totp") return;
-  const blob = new Blob([exportSteamMaFile(item)], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${item.steamId || item.accountName || "steam"}.maFile`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  try {
+    const item = buildItem(
+      fields.title.trim() || fields.accountName.trim() || "Steam",
+    );
+    if (item.kind !== "totp") return;
+    const blob = new Blob([exportSteamMaFile(item)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${item.steamId || item.accountName || "steam"}.maFile`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  } catch (failure) {
+    otpTransferStatus.value =
+      failure instanceof Error ? failure.message : tr('导出失败，请重试。');
+  }
 }
 </script>
 
@@ -1365,6 +1403,12 @@ function exportMaFile() {
             >{{ tr('取消') }}</m3e-button
           ><m3e-button form="vault-item-form" variant="filled" type="submit" :disabled="saving">{{ saving ? tr('正在保存…') : tr('加密保存') }}</m3e-button>
         </footer>
+<div v-if="maFilePasswordDialog" class="modal-backdrop mafile-password-backdrop" role="presentation" @mousedown.self="cancelMaFilePassword">
+  <form class="editor-dialog editor-form" data-nested-dialog role="dialog" aria-modal="true" :aria-label="tr('请输入 Android 加密 maFile 密码')" @submit.prevent="confirmMaFilePassword">
+    <SettingsPasswordField v-model="maFilePasswordInput" :label="tr('请输入 Android 加密 maFile 密码')" autocomplete="off" />
+    <footer><m3e-button variant="text" type="button" data-dialog-close @click="cancelMaFilePassword">{{ tr('取消') }}</m3e-button><m3e-button variant="filled" type="submit">{{ tr('确认') }}</m3e-button></footer>
+  </form>
+</div>
 </m3e-dialog>
 </template>
 
@@ -1373,4 +1417,5 @@ function exportMaFile() {
 .wallet-pass-common-grid m3e-form-field { width: 100%; min-width: 0; --m3e-form-field-container-shape: 4px; }
 .wallet-pass-common-grid m3e-form-field:first-child { --m3e-form-field-container-shape: 24px 24px 4px 4px; }
 .wallet-pass-common-grid m3e-form-field:last-child { --m3e-form-field-container-shape: 4px 4px 24px 24px; }
+.mafile-password-backdrop { z-index: 1500; }
 </style>

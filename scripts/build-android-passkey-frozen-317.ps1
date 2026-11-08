@@ -2,7 +2,7 @@ param([ValidateSet('main', 'fdroid')][string]$Variant = 'main', [switch]$TestsOn
 $ErrorActionPreference = 'Stop'
 $extensionRoot = Split-Path $PSScriptRoot -Parent
 $workspaceRoot = Split-Path $extensionRoot -Parent
-$env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
+$env:JAVA_HOME = if ($env:JAVA_HOME) { $env:JAVA_HOME } else { 'C:/Program Files/Android/Android Studio/jbr' }
 $env:MONICA_APP_INTEROP_SOURCE_MANIFEST = Join-Path $extensionRoot ".tmp/android-passkey-fixes-317/$Variant-build-source-manifest.json"
 if ($Variant -eq 'fdroid') { $env:MONICA_APP_INTEROP_SOURCE_MANIFEST = Join-Path $extensionRoot '.tmp/android-passkey-fixes-317/fdroid-v2-build-source-manifest.json' }
 $env:MONICA_ANDROID_PROJECT = (Get-Content -LiteralPath $env:MONICA_APP_INTEROP_SOURCE_MANIFEST -Raw | ConvertFrom-Json).sourceRoot
@@ -17,7 +17,7 @@ $env:MONICA_APP_INTEROP_HEAP_MB = '4096'
 if ($Variant -eq 'fdroid') {
     $env:CARGO_BUILD_JOBS = '2'
     $env:CARGO_TARGET_DIR = Join-Path $extensionRoot '.tmp/android-passkey-fdroid-frozen-build-317/rust-target'
-    $env:ANDROID_NDK_HOME = 'D:/AndroidSDK/ndk/28.2.13676358'
+    $env:ANDROID_NDK_HOME = if ($env:ANDROID_NDK_HOME) { $env:ANDROID_NDK_HOME } else { 'D:/AndroidSDK/ndk/28.2.13676358' }
 }
 if ($TestsOnly) {
     $env:MONICA_APP_INTEROP_BUILD_APPLICATION = '0'

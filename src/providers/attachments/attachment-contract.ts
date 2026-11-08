@@ -1,6 +1,14 @@
 export const PROVIDER_ATTACHMENT_CHUNK_BYTES = 256 * 1024;
 export const PROVIDER_ATTACHMENT_MAX_ACTIVE_UPLOADS = 4;
 export const PROVIDER_ATTACHMENT_UPLOAD_TTL_MS = 5 * 60_000;
+/** Decrypted read-session cache budget for providers without offset reads
+ * (monica-webdav). Per attachment it mirrors MDBX2_ATTACHMENT_MAX_BYTES
+ * (64 MiB), the smallest existing whole-attachment in-memory ceiling, so
+ * typical multi-MB attachments still cache; the total is twice that cap so at
+ * most two concurrent sessions hold caches. Reads above either budget skip
+ * the cache and re-download per chunk instead of failing BEGIN. */
+export const PROVIDER_ATTACHMENT_READ_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+export const PROVIDER_ATTACHMENT_READ_CACHE_TOTAL_MAX_BYTES = 2 * PROVIDER_ATTACHMENT_READ_CACHE_MAX_BYTES;
 export const PROVIDER_ATTACHMENT_MAX_PAGE_SIZE = 50;
 export const PROVIDER_ATTACHMENT_MAX_CURSOR_BYTES = 4096;
 export const PROVIDER_ATTACHMENT_MAX_NAME_BYTES = 4096;

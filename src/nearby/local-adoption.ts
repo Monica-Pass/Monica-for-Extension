@@ -6,7 +6,7 @@ import { mdbx2TransferOperationScope as hash } from '../providers/mdbx2/mdbx2-tr
 import { normalizeCredentialId } from '../passkey/source-policy';
 import { nearbyLocalItemToWire, nearbyWireToLocalItem } from './application-codec';
 import { mergeNearbyOrigins, nearbyLocalOriginIndex, readNearbyOrigins, withNearbyOrigins } from './local-origins';
-import { captureNearbyMetadata, isNearbyMetadata, isNearbyTombstone, nearbyCategoryKey, nextNearbyCategoryId, readNearbyLocalMetadata, stageNearbyMetadata } from './local-metadata';
+import { captureNearbyMetadata, isNearbyMetadata, isNearbyTombstone, nearbyCategoryKey, nextNearbyCategoryId, readNearbyLocalMetadata, stageNearbyMetadata, type NearbyMetadataSnapshot } from './local-metadata';
 import { invalidNearby, validateNearbyWireData, wireInteger, wireObject, wireText, type NearbyWireData } from './wire-shape';
 
 export interface NearbyIncomingRecord {
@@ -156,12 +156,17 @@ function uuidFromDigest(digest: string): string { return `${digest.slice(0, 8)}-
 export async function captureNearbyLocalSnapshot(state: VaultState): Promise<NearbyLocalSnapshot> {
   const receipts = readNearbyLocalReceipts(state.nearbyLocalReceipts), locals = state.items.filter(item => isLocalTransferItem(item, state.providers));
   const metadata = await captureNearbyMetadata(state), originIndex = originIndexForState(state, receipts);
+  // Index both by first match so per-item lookups below keep Array.find semantics.
+  const receiptsByItem = new Map<string, NearbyLocalReceipt>();
+  for (const row of receipts) if (!receiptsByItem.has(row.itemId)) receiptsByItem.set(row.itemId, row);
+  const metadataByCategory = new Map<string, NearbyMetadataSnapshot>();
+  for (const row of metadata) if (!row.value.deleted && row.value.categoryKey !== undefined && !metadataByCategory.has(row.value.categoryKey)) metadataByCategory.set(row.value.categoryKey, row);
   const liveLocalIds = new Set(locals.map(item => `local:${item.id}`));
   const retained = readNearbyRetainedLocals(state.nearbyRetainedLocals).filter(id => !liveLocalIds.has(id));
   const identities = new Map<string, string>(), references = new Map<string, string>();
   for (const item of locals) {
     requireUncontended(state, item.id);
-    const receipt = receipts.find(row => row.itemId === item.id);
+    const receipt = receiptsByItem.get(item.id);
     const id = receipt?.recordId ?? uuidFromDigest(await hash(['nearby-local', item.id]));
     identities.set(item.id, id);
     references.set(item.id, id); references.set(`password:${item.id}`, id); references.set(`note:${item.id}`, id);
@@ -172,7 +177,7 @@ export async function captureNearbyLocalSnapshot(state: VaultState): Promise<Nea
   }
   const records: NearbyLocalSnapshot['records'] = [], assets = new Map<string, string>();
   for (const item of locals) {
-    const receipt = receipts.find(row => row.itemId === item.id), previous = receipt ? wireObject(parseLosslessJson(receipt.dataJson)) as NearbyWireData : undefined;
+    const receipt = receiptsByItem.get(item.id), previous = receipt ? wireObject(parseLosslessJson(receipt.dataJson)) as NearbyWireData : undefined;
     const origins = originIndex.get(item.id) ?? [];
     const files = (state.localItemAttachments ?? []).filter(file => file.itemId === item.id);
     await validateLocalAttachments(files, item.id);
@@ -187,7 +192,8 @@ export async function captureNearbyLocalSnapshot(state: VaultState): Promise<Nea
     if (!receipt || receipt.baseline.categoryId !== item.categoryId || receipt.baseline.categoryName !== item.categoryName) {
       folderPath = item.categoryName ? [{ id: uuidFromDigest(await hash(['nearby-local-folder', item.categoryId ?? item.categoryName])), title: item.categoryName, parent: null }] : [];
     }
-    const category = metadata.find(row => !row.value.deleted && row.value.categoryKey === nearbyCategoryKey(item) && row.value.categoryKey !== undefined);
+    const categoryKey = nearbyCategoryKey(item);
+    const category = categoryKey === undefined ? undefined : metadataByCategory.get(categoryKey);
     if (category) folderPath = wireObject(category.data.payload).path as unknown[];
     const data = withNearbyOrigins(await nearbyLocalItemToWire(item, { folder: item.categoryName ?? '', folder_path: folderPath ?? [], assets: descriptors,
       labels: previous?.labels as unknown[] | undefined, relations: previous?.relations as unknown[] | undefined },

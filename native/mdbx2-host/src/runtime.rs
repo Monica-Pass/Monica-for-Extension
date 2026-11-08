@@ -615,6 +615,7 @@ impl HostRuntime {
         for directory in ["sync/incoming", "sync/outbound", "sync/states"] {
             fs::create_dir_all(root.join(directory))?;
         }
+        crate::cloud_sync::scavenge_outbound(&root);
         let device_id = load_or_create_device_id(&root)?;
         let transfers = load_transfers(&root)?;
         let object_operations = load_object_operation_state(&root)?;
@@ -1210,6 +1211,9 @@ impl HostRuntime {
                 if created_working_copy {
                     let _ = fs::remove_dir_all(&vault_directory);
                 }
+                if backup_created {
+                    self.remove_pre_upgrade_backup(&vault_handle);
+                }
                 return Err(vault_unlock_failure(error));
             }
         };
@@ -1219,6 +1223,9 @@ impl HostRuntime {
             if let Err(error) = crate::local_export::verify_import_blobs(&vault) {
                 drop(vault);
                 let _ = fs::remove_dir_all(&vault_directory);
+                if backup_created {
+                    self.remove_pre_upgrade_backup(&vault_handle);
+                }
                 return Err(error);
             }
         }
@@ -1227,6 +1234,9 @@ impl HostRuntime {
             drop(vault);
             if created_working_copy {
                 let _ = fs::remove_dir_all(&vault_directory);
+            }
+            if backup_created {
+                self.remove_pre_upgrade_backup(&vault_handle);
             }
             return Err(RpcFailure::new(
                 "vault-invalid",
@@ -1242,7 +1252,19 @@ impl HostRuntime {
                 false,
             )
         })?;
-        let mut result = vault_diagnostics_report(&vault, &working_path, schema_version)?;
+        let mut result = match vault_diagnostics_report(&vault, &working_path, schema_version) {
+            Ok(report) => report,
+            Err(error) => {
+                drop(vault);
+                if created_working_copy {
+                    let _ = fs::remove_dir_all(&vault_directory);
+                }
+                if backup_created {
+                    self.remove_pre_upgrade_backup(&vault_handle);
+                }
+                return Err(error);
+            }
+        };
         self.vaults.insert(vault_handle.clone(), vault);
         if is_import {
             let _ = fs::remove_file(&source.path);
@@ -4194,7 +4216,8 @@ impl HostRuntime {
             }
             return Ok(receipt.clone());
         }
-        prune_object_operation_receipts(&mut self.object_operations.receipts)?;
+        let mut next_state = self.object_operations.clone();
+        prune_object_operation_receipts(&mut next_state.receipts)?;
         let receipt = ObjectOperationReceipt {
             vault_handle: vault_handle.to_string(),
             operation_id: match identity {
@@ -4212,8 +4235,12 @@ impl HostRuntime {
             commit_id: None,
             updated_at_unix_secs: unix_seconds()?,
         };
-        self.object_operations.receipts.push(receipt.clone());
-        self.persist_object_operations()?;
+        next_state.receipts.push(receipt.clone());
+        let previous_state = std::mem::replace(&mut self.object_operations, next_state);
+        if let Err(cause) = self.persist_object_operations() {
+            self.object_operations = previous_state;
+            return Err(cause);
+        }
         Ok(receipt)
     }
 
@@ -4513,6 +4540,12 @@ impl HostRuntime {
         Ok(())
     }
 
+    fn remove_pre_upgrade_backup(&self, vault_handle: &str) {
+        // A failed attempt keeps no working copy, so its backup protects
+        // nothing: every import retry mints a fresh vault handle.
+        let _ = fs::remove_dir_all(self.root.join("backups").join(vault_handle));
+    }
+
     fn persist_transfer(&self, metadata: &TransferMetadata) -> Result<(), RpcFailure> {
         let bytes = serde_json::to_vec(metadata)
             .map_err(|_| RpcFailure::storage("Native transfer state could not be encoded."))?;
@@ -4530,8 +4563,7 @@ impl HostRuntime {
 
     fn delete_transfer(&mut self, transfer_id: &str) {
         self.transfers.remove(transfer_id);
-        let _ = fs::remove_file(self.transfer_part_path(transfer_id));
-        self.delete_transfer_states(transfer_id);
+        delete_transfer_files(&self.root, transfer_id);
     }
 
     fn delete_transfer_states(&self, transfer_id: &str) {
@@ -5219,20 +5251,30 @@ fn prune_object_operation_receipts(
     if receipts.len() < MAX_OBJECT_OPERATION_RECEIPTS {
         return Ok(());
     }
-    receipts.sort_by_key(|receipt| (receipt.commit_id.is_none(), receipt.updated_at_unix_secs));
-    while receipts.len() >= MAX_OBJECT_OPERATION_RECEIPTS {
-        if receipts
-            .first()
-            .is_some_and(|receipt| receipt.commit_id.is_some())
-        {
-            receipts.remove(0);
-        } else {
-            return Err(RpcFailure::new(
-                "object-operation-receipt-limit",
-                "MDBX2 has too many unfinished Object operations.",
-                false,
-            ));
-        }
+    // Validate before mutating: a failing prune must leave the caller's
+    // receipts untouched instead of sorting and dropping entries first.
+    let remove_count = receipts.len() + 1 - MAX_OBJECT_OPERATION_RECEIPTS;
+    let mut completed = receipts
+        .iter()
+        .enumerate()
+        .filter(|(_, receipt)| receipt.commit_id.is_some())
+        .collect::<Vec<_>>();
+    completed.sort_by_key(|(_, receipt)| receipt.updated_at_unix_secs);
+    if completed.len() < remove_count {
+        return Err(RpcFailure::new(
+            "object-operation-receipt-limit",
+            "MDBX2 has too many unfinished Object operations.",
+            false,
+        ));
+    }
+    let mut removed = completed
+        .into_iter()
+        .take(remove_count)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    removed.sort_unstable_by_key(|index| std::cmp::Reverse(*index));
+    for index in removed {
+        receipts.remove(index);
     }
     Ok(())
 }
@@ -5550,6 +5592,16 @@ fn read_device_id(path: &Path) -> std::io::Result<String> {
     Ok(metadata.device_id)
 }
 
+fn delete_transfer_files(root: &Path, transfer_id: &str) {
+    let _ = fs::remove_file(root.join("transfers").join(format!("{transfer_id}.part")));
+    for slot in [0, 1] {
+        let _ = fs::remove_file(
+            root.join("transfers")
+                .join(format!("{transfer_id}.state.{slot}.json")),
+        );
+    }
+}
+
 fn load_transfers(root: &Path) -> std::io::Result<HashMap<String, TransferMetadata>> {
     let directory = root.join("transfers");
     let mut selected = HashMap::<String, TransferMetadata>::new();
@@ -5590,15 +5642,19 @@ fn load_transfers(root: &Path) -> std::io::Result<HashMap<String, TransferMetada
     selected.retain(|transfer_id, metadata| {
         let part_path = directory.join(format!("{transfer_id}.part"));
         let Ok(file) = OpenOptions::new().read(true).write(true).open(&part_path) else {
+            delete_transfer_files(root, transfer_id);
             return false;
         };
         let Ok(length) = file.metadata().map(|value| value.len()) else {
+            delete_transfer_files(root, transfer_id);
             return false;
         };
         if length < metadata.received_bytes {
+            delete_transfer_files(root, transfer_id);
             return false;
         }
         if length > metadata.received_bytes && file.set_len(metadata.received_bytes).is_err() {
+            delete_transfer_files(root, transfer_id);
             return false;
         }
         true
@@ -5606,7 +5662,9 @@ fn load_transfers(root: &Path) -> std::io::Result<HashMap<String, TransferMetada
     if selected.len() > MAX_ACTIVE_TRANSFERS {
         let mut values = selected.into_values().collect::<Vec<_>>();
         values.sort_by_key(|metadata| std::cmp::Reverse(metadata.revision));
-        values.truncate(MAX_ACTIVE_TRANSFERS);
+        for dropped in values.split_off(MAX_ACTIVE_TRANSFERS) {
+            delete_transfer_files(root, &dropped.transfer_id);
+        }
         return Ok(values
             .into_iter()
             .map(|metadata| (metadata.transfer_id.clone(), metadata))
@@ -9065,6 +9123,141 @@ mod tests {
         );
     }
 
+    fn write_transfer_fixture(
+        root: &Path,
+        transfer_id: &str,
+        revision: u64,
+        part_len: Option<usize>,
+    ) {
+        let metadata = TransferMetadata {
+            version: TRANSFER_METADATA_VERSION,
+            revision,
+            transfer_id: transfer_id.to_string(),
+            purpose: TransferPurpose::VaultBootstrap,
+            size_bytes: 32,
+            sha256: None,
+            received_bytes: 16,
+        };
+        fs::write(
+            root.join("transfers")
+                .join(format!("{transfer_id}.state.{}.json", revision % 2)),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        if let Some(length) = part_len {
+            fs::write(
+                root.join("transfers").join(format!("{transfer_id}.part")),
+                vec![0_u8; length],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn load_transfers_reclaims_files_of_dropped_transfers() {
+        let root = TestRoot::new();
+        fs::create_dir_all(root.0.join("transfers")).unwrap();
+        let mut ids = Vec::new();
+        for index in 0..=MAX_ACTIVE_TRANSFERS {
+            let transfer_id = fresh_uuid();
+            write_transfer_fixture(&root.0, &transfer_id, index as u64, Some(16));
+            ids.push(transfer_id);
+        }
+        let missing_part = fresh_uuid();
+        write_transfer_fixture(&root.0, &missing_part, 0, None);
+        let short_part = fresh_uuid();
+        write_transfer_fixture(&root.0, &short_part, 0, Some(8));
+
+        let loaded = load_transfers(&root.0).unwrap();
+        assert_eq!(loaded.len(), MAX_ACTIVE_TRANSFERS);
+        // Entries without a .part, with a short .part, or beyond the active
+        // limit are dropped and their staging files must not survive.
+        for id in [&missing_part, &short_part, &ids[0]] {
+            assert!(!loaded.contains_key(id));
+            assert!(!root.0.join("transfers").join(format!("{id}.part")).exists());
+            assert!(!root.0.join("transfers").join(format!("{id}.state.0.json")).exists());
+            assert!(!root.0.join("transfers").join(format!("{id}.state.1.json")).exists());
+        }
+        for id in &ids[1..] {
+            assert!(loaded.contains_key(id));
+            assert!(root.0.join("transfers").join(format!("{id}.part")).exists());
+        }
+    }
+
+    fn object_operation_receipt(commit_id: Option<&str>, updated_at: u64) -> ObjectOperationReceipt {
+        ObjectOperationReceipt {
+            vault_handle: "11111111-1111-4111-8111-111111111111".to_string(),
+            operation_id: fresh_uuid(),
+            operation_scope: None,
+            semantic_sha256: "a".repeat(64),
+            plan_sha256: "a".repeat(64),
+            mutation_count: 1,
+            changed_indices: Vec::new(),
+            commit_id: commit_id.map(str::to_string),
+            updated_at_unix_secs: updated_at,
+        }
+    }
+
+    #[test]
+    fn prune_object_operation_receipts_fails_without_touching_receipts() {
+        let mut receipts = (0..MAX_OBJECT_OPERATION_RECEIPTS)
+            .map(|index| object_operation_receipt(None, index as u64))
+            .collect::<Vec<_>>();
+        let before = serde_json::to_string(&receipts).unwrap();
+        let error = prune_object_operation_receipts(&mut receipts).unwrap_err();
+        assert_eq!(error.code, "object-operation-receipt-limit");
+        assert_eq!(serde_json::to_string(&receipts).unwrap(), before);
+    }
+
+    #[test]
+    fn prune_object_operation_receipts_removes_the_oldest_committed_in_place() {
+        let mut receipts = (0..MAX_OBJECT_OPERATION_RECEIPTS)
+            .map(|index| object_operation_receipt(None, index as u64))
+            .collect::<Vec<_>>();
+        receipts[10].commit_id = Some("commit-older".to_string());
+        receipts[10].updated_at_unix_secs = 1;
+        receipts[20].commit_id = Some("commit-newer".to_string());
+        receipts[20].updated_at_unix_secs = 2;
+        let before_receipts = receipts.clone();
+        prune_object_operation_receipts(&mut receipts).unwrap();
+        assert_eq!(receipts.len(), MAX_OBJECT_OPERATION_RECEIPTS - 1);
+        assert!(receipts
+            .iter()
+            .all(|receipt| receipt.commit_id.as_deref() != Some("commit-older")));
+        assert!(receipts
+            .iter()
+            .any(|receipt| receipt.commit_id.as_deref() == Some("commit-newer")));
+        // Survivors keep their original order.
+        let mut expected = serde_json::to_value(&before_receipts).unwrap();
+        expected.as_array_mut().unwrap().remove(10);
+        assert_eq!(serde_json::to_value(&receipts).unwrap(), expected);
+    }
+
+    #[test]
+    fn prepare_object_operation_restores_state_when_persistence_fails() {
+        let (root, mut runtime) = runtime();
+        // Persistence advances to the next revision and writes slot 1; make it fail.
+        fs::create_dir(root.0.join("operations").join("object-operations.state.1.json")).unwrap();
+        let plan = ObjectMutationPlan {
+            commands: Vec::new(),
+            items: Vec::new(),
+            plan_sha256: "a".repeat(64),
+            changed_indices: Vec::new(),
+        };
+        let error = runtime
+            .prepare_object_operation(
+                "11111111-1111-4111-8111-111111111111",
+                &ObjectOperationIdentity::Id("22222222-2222-4222-8222-222222222222".to_string()),
+                &"a".repeat(64),
+                1,
+                &plan,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "host-storage-error");
+        assert!(runtime.object_operations.receipts.is_empty());
+        assert_eq!(runtime.object_operations.revision, 0);
+    }
+
     #[test]
     fn vault_inspection_accepts_mdbx1_as_a_migratable_import() {
         let (_root, mut runtime) = runtime();
@@ -9247,6 +9440,28 @@ mod tests {
         );
         assert_eq!(discarded["discarded"], true);
         assert!(!root.0.join("vaults").join(&vault_handle).exists());
+    }
+
+    #[test]
+    fn failed_mdbx1_import_unlock_leaves_no_pre_upgrade_backup() {
+        let (root, mut runtime) = runtime();
+        const GOLDEN: &[u8] =
+            include_bytes!("../vendor/mdbx/crates/mdbx-storage/test-data/mdbx1-release-1.0.mdbx");
+        let file_handle = fresh_uuid();
+        fs::write(runtime.import_file_path(&file_handle), GOLDEN).unwrap();
+
+        let error = runtime
+            .handle(
+                "vault.open",
+                json!({
+                    "source": { "kind": "file", "handle": file_handle },
+                    "credential": { "method": "password", "password": "not-the-golden-password" }
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "vault-unlock-incorrect-credential");
+        assert_eq!(fs::read_dir(root.0.join("backups")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.0.join("vaults")).unwrap().count(), 0);
     }
 
     #[test]

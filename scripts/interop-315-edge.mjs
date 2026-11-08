@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile, stat, cp } from "node:fs/promises";
 import { createServer } from "node:net";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { runFeatureChecks, runAndroidUiReturnCheck, runAndroidUiReopenCheck, verifyFeaturePersistence } from "./interop-315-edge-features.mjs";
 import { runRealServiceUiChecks } from "./interop-315-edge-real-services.mjs";
@@ -293,6 +293,7 @@ async function launch() {
 }
 
 async function temporaryEdgeHost(extensionId) {
+  await restoreLeftoverNativeRegistry();
   await stat(hostExecutable);
   const snapshot = registrySnapshot();
   assert.ok(!snapshot.hasDefault || ["String", "ExpandString"].includes(snapshot.kind), "Unexpected registry value kind; refusing to replace it.");
@@ -314,6 +315,37 @@ async function temporaryEdgeHost(extensionId) {
     }
     assert.deepEqual(registrySnapshot(), snapshot, "Native registration did not return to its prior value.");
   };
+}
+
+// A hard-killed previous run could leave HKCU pointing into its .tmp run directory.
+// Recover the original registration from that run's native-registry-before.json before recording this run's snapshot.
+async function restoreLeftoverNativeRegistry() {
+  const current = registrySnapshot();
+  const leftover = current.hasDefault && current.value ? resolve(current.value) : null;
+  if (!leftover || basename(leftover) !== `${hostName}.json` || dirname(dirname(leftover)) !== artifactsRoot) return;
+  const beforePath = join(dirname(leftover), "native-registry-before.json");
+  let before;
+  try {
+    before = JSON.parse(await readFile(beforePath, "utf8"));
+  } catch {
+    console.warn(`Native host registration points into a previous run directory (${leftover}) and ${beforePath} is missing or unreadable; the original registration was not recovered.`);
+    evidence.nativeRegistrySelfHeal = { leftover, outcome: "original-state-unavailable" };
+    return;
+  }
+  try {
+    if (before.hasDefault) execFileSync("reg.exe", ["add", hostRegistry, "/ve", "/t", before.kind === "ExpandString" ? "REG_EXPAND_SZ" : "REG_SZ", "/d", before.value, "/f"], { windowsHide: true, stdio: "pipe" });
+    else if (before.exists) execFileSync("reg.exe", ["delete", hostRegistry, "/ve", "/f"], { windowsHide: true, stdio: "pipe" });
+    else {
+      assert.deepEqual(current.valueNames, [""]);
+      assert.deepEqual(current.subKeys, []);
+      execFileSync("reg.exe", ["delete", hostRegistry, "/f"], { windowsHide: true, stdio: "pipe" });
+    }
+    console.log(`Recovered the original native host registration from ${beforePath}.`);
+    evidence.nativeRegistrySelfHeal = { leftover, outcome: "restored", beforePath };
+  } catch (error) {
+    console.warn(`Failed to recover the original native host registration from ${beforePath}: ${error.message}; continuing with the current registration.`);
+    evidence.nativeRegistrySelfHeal = { leftover, outcome: "restore-failed", beforePath, error: error.message };
+  }
 }
 
 function registrySnapshot() {

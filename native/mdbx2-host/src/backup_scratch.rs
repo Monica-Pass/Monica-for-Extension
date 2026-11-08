@@ -99,7 +99,10 @@ fn single_link(file: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn gate(root: &Path) -> io::Result<File> {
+/// Cross-process publication gate for this root. Also shared by the cloud
+/// sync outbound scavenge so a starting host process never reclaims a
+/// publication another process has written but not yet referenced.
+pub(crate) fn gate(root: &Path) -> io::Result<File> {
     let file = regular_file(&root.join(GATE))?;
     file.lock_exclusive()?;
     Ok(file)

@@ -180,7 +180,8 @@ function clampMin(value: unknown, fallback: number): number {
 }
 
 function boundedText(value: unknown, maxLength: number): string {
-  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+  // Truncate by code point so a surrogate pair is never split into a lone surrogate.
+  return typeof value === "string" ? Array.from(value.trim()).slice(0, maxLength).join("") : "";
 }
 
 function sanitizeSet(value: unknown, allowed?: string[]): string {

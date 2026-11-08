@@ -820,7 +820,11 @@ export class SecureVaultService {
     });
   }
 
-  /** Ceremony reads do not need unrelated passwords, source envelopes or journals. */
+  /**
+   * Ceremony reads do not need unrelated passwords, source envelopes or journals.
+   * Providers still carry their full config (credentials included) for background
+   * passkey use only; never forward them to UI or web (use publicProviderAccount).
+   */
   async readPasskeyContext(): Promise<{ items: PasskeyItem[]; providers: ProviderAccount[]; settings: VaultState['settings'] }> {
     return this.readProjection(state => ({ items: state.items.filter((item): item is PasskeyItem => item.kind === 'passkey'), providers: state.providers, settings: state.settings }));
   }
@@ -1116,10 +1120,16 @@ export class SecureVaultService {
     return mdbx2AccountHandleBackend(this.decodedSnapshot?.state.providers || [], handle, role);
   }
 
+  /**
+   * Returns the full provider config (webDavPassword, databasePassword, accessToken and
+   * similar credentials included) for background internals only — background sync and
+   * native writers depend on it. Never forward this to UI or web surfaces; they must
+   * read through listProviders/publicProviderAccount.
+   */
   async getProvider(providerId: string): Promise<ProviderAccount | undefined> {
     const provider = await this.readProjection(state => state.providers.find(candidate => candidate.id === providerId)
       || (providerId === 'local' && state.providers.filter(row => row.kind === 'local').length === 1 ? state.providers.find(row => row.kind === 'local') : undefined));
-    return provider ? safeProviderAccount(provider) : undefined;
+    return provider ? providerWithRedactedLastError(provider) : undefined;
   }
 
   /** Ordinary native writers must call this while holding the provider queue. */
@@ -3991,12 +4001,12 @@ function autofillContextItems(items: VaultItem[], selectedItemId?: string): Vaul
   return otp ? [selected, otp] : [selected];
 }
 
-function safeProviderAccount(provider: ProviderAccount): ProviderAccount {
+function providerWithRedactedLastError(provider: ProviderAccount): ProviderAccount {
   return provider.lastError ? { ...provider, lastError: redactProviderMessage(provider.lastError) } : provider;
 }
 
 function publicProviderAccount(provider: ProviderAccount): ProviderAccount {
-  const safe = safeProviderAccount(provider);
+  const safe = providerWithRedactedLastError(provider);
   if (provider.kind === "monica-webdav") {
     return {
       ...safe,

@@ -11,8 +11,8 @@ const project = resolve(process.env.MONICA_ANDROID_PROJECT || join(repository, '
 const evidence = resolve(process.env.MONICA_315_APP_FIXTURE || join(root, '.tmp', 'android-app-interop-315'));
 const buildRoot = resolve(process.env.MONICA_APP_INTEROP_BUILD_ROOT || join(root, '.tmp', 'android-app-build-315'));
 const testApk = join(buildRoot, 'app/outputs/apk/androidTest/debug/app-debug-androidTest.apk');
-const adb = process.env.MONICA_INTEROP_ADB || 'D:/AndroidSDK/platform-tools/adb.exe';
-const serial = process.env.MONICA_MDBX2_INTEROP_SERIAL || 'emulator-5554';
+const adb = process.env.MONICA_INTEROP_ADB || (process.env.ANDROID_SDK_ROOT ? `${process.env.ANDROID_SDK_ROOT}/platform-tools/adb.exe` : 'D:/AndroidSDK/platform-tools/adb.exe');
+const serial = process.env.MONICA_MDBX2_INTEROP_SERIAL || process.env.ANDROID_SERIAL || 'emulator-5554';
 const stage = process.argv[2] || 'export';
 const runStamp = new Date().toISOString().replaceAll(':', '-');
 const env = { ...process.env, ANDROID_ADB_SERVER_PORT: '5037', MONICA_APP_INTEROP_SOURCE_DIR: join(root, 'tests', 'interop', 'android-app', 'src'), MONICA_APP_INTEROP_BUILD_DIR: buildRoot };
@@ -279,7 +279,7 @@ try {
         ...(process.env.MONICA_APP_INTEROP_BACKUP_FLAG_REGRESSIONS === '1'
           ? ['PasskeyBackupFlagsTest', 'PasskeyBackupFlagsMigrationTest', 'KeePassDxPasskeyCodecTest', 'KeePassPasskeySyncMergeTest'] : [])]
         .flatMap(name => ['--tests', `*.${name}`])] : [];
-    const result = await command('.\\gradlew.bat', ['--project-cache-dir', join(root, '.tmp', 'android-app-gradle-315'), '-I', join(root, 'tests', 'interop', 'android-app', 'interop.init.gradle'),
+    const result = await command('.\\gradlew.bat', ['--project-cache-dir', `"${join(root, '.tmp', 'android-app-gradle-315')}"`, '-I', `"${join(root, 'tests', 'interop', 'android-app', 'interop.init.gradle')}"`,
       ...passkeyRegressionTasks,
       ...(buildApplication ? [':app:assembleDebug', '-PincludeX86TestAbi'] : []), ':app:assembleDebugAndroidTest', '-PdailySeq=36', '-Pkotlin.compiler.execution.strategy=in-process', ...resourceArgs, '--no-daemon', '--console=plain'], { cwd: project, shell: true, echo: true });
     await writeFile(join(evidence, 'build.log'), result.bytes);

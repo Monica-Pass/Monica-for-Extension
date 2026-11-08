@@ -68,7 +68,7 @@ export interface MdbxImportNative {
   openVault(source: Mdbx2VaultSource, credential: Mdbx2VaultCredential): Promise<Mdbx2VaultSessionSummary>;
   vaultStatus(vaultHandle: string): Promise<{ open: boolean; available: boolean }>;
   listCollections(vaultHandle: string): Promise<{ items: Array<{ collectionId: string }> }>;
-  listObjects(vaultHandle: string, collectionId: string): Promise<{ items: unknown[] }>;
+  listObjects(vaultHandle: string, collectionId: string, input?: { cursor?: string }): Promise<{ items: unknown[]; nextCursor?: string }>;
   discardVault(vaultHandle: string): Promise<boolean>;
   lockVault(vaultHandle: string): Promise<unknown>;
   backendForVault(vaultHandle: string): Promise<"native" | "browser">;
@@ -88,7 +88,6 @@ export interface MdbxImportSync {
   (providerId: string): Promise<unknown>;
 }
 
-const credentials = new Map<string, Mdbx2VaultCredential>();
 const commitLocks = new Map<string, Promise<unknown>>();
 const inFlightCommits = new Map<string, number>();
 
@@ -239,10 +238,13 @@ export async function prepareMdbxImport(
     const collections = await native.listCollections(session.vaultHandle);
     let objectCount = 0;
     for (const collection of collections.items) {
-      const page = await native.listObjects(session.vaultHandle, collection.collectionId);
-      objectCount += page.items.length;
+      let cursor: string | undefined;
+      do {
+        const page = await native.listObjects(session.vaultHandle, collection.collectionId, cursor ? { cursor } : undefined);
+        objectCount += page.items.length;
+        cursor = page.nextCursor;
+      } while (cursor);
     }
-    credentials.set(operationId, input.credential);
     const operation: MdbxImportOperation = {
       operationId,
       stage: "prepared",
@@ -263,7 +265,6 @@ export async function prepareMdbxImport(
     return { operation, inspection, session };
   } catch (error) {
     if (session?.vaultHandle) await native.discardVault(session.vaultHandle).catch(() => undefined);
-    credentials.delete(operationId);
     const mapped = mapImportError(error);
     await upsertOperation(store, {
       operationId,
@@ -362,7 +363,6 @@ export async function commitMdbxImport(
     } catch (error) {
       const snapshot = await providersSnapshot(vault);
       const mapped = mapImportError(error);
-      credentials.delete(operationId);
       if (snapshot === undefined) {
         // Persistence can succeed before its caller sees a lock/storage error.
         // Keep the handle and committing stage until ownership can be checked.
@@ -392,7 +392,6 @@ export async function commitMdbxImport(
         ? new Mdbx2NativeHostError("mdbx-import-setup-orphan", "插件密码库已创建，MDBX 尚未接入。可在导入与导出中重试。", true)
         : toHostError(mapped);
     }
-    credentials.delete(operationId);
     const registered: MdbxImportOperation = {
       ...operation,
       stage: "registered",
@@ -417,12 +416,10 @@ export async function cancelMdbxImport(store: MdbxImportStore, native: MdbxImpor
     if (!operation) return { cancelled: true };
     const owner = await registeredOwner(vault, operation);
     if (owner || !(await shouldDiscardWorkingCopy(vault, operation))) {
-      credentials.delete(id);
       return { cancelled: true };
     }
     if (operation.vaultHandle) await native.discardVault(operation.vaultHandle).catch(() => undefined);
     if (operation.source.kind === "file") await native.releaseFile(operation.source.handle).catch(() => undefined);
-    credentials.delete(id);
     await saveOperation(store, { ...operation, stage: "cancelled", vaultHandle: undefined, updatedAt: Date.now() });
     return { cancelled: true };
   });
@@ -474,7 +471,6 @@ async function recoverOneImport(
   if (!(await shouldDiscardWorkingCopy(vault, operation))) return operation;
   if (operation.vaultHandle) await native.discardVault(operation.vaultHandle).catch(() => undefined);
   if (operation.source.kind === "file") await native.releaseFile(operation.source.handle).catch(() => undefined);
-  credentials.delete(operation.operationId);
   return {
     ...operation,
     stage: "cancelled",
@@ -564,7 +560,6 @@ async function cleanupUnregistered(store: MdbxImportStore, native: MdbxImportNat
   if (await shouldDiscardWorkingCopy(vault, operation)) {
     if (operation.vaultHandle) await native.discardVault(operation.vaultHandle).catch(() => undefined);
   }
-  credentials.delete(operation.operationId);
   const owned = await registeredOwner(vault, operation);
   await saveOperation(store, {
     ...operation,
@@ -579,7 +574,6 @@ async function failOperation(store: MdbxImportStore, operation: MdbxImportOperat
   const owned = vault ? await registeredOwner(vault, operation) : undefined;
   const discard = vault ? await shouldDiscardWorkingCopy(vault, operation) : Boolean(operation.vaultHandle && !operation.providerId && !owned);
   if (discard && operation.vaultHandle) await native.discardVault(operation.vaultHandle).catch(() => undefined);
-  credentials.delete(operation.operationId);
   await saveOperation(store, {
     ...operation,
     stage: owned ? "registered" : !discard && operation.vaultHandle ? operation.stage : "failed",

@@ -43,15 +43,14 @@ test("passkey bridge creates an encrypted ES256 credential and signs a later ass
     </script>` }));
     const page = await context.newPage(); await page.goto("https://passkey.example.test/");
     await page.locator("#register").click();
-    await confirmPasskeyCreate(page);
-    await completeUserVerification(context, masterPassword);
+    await completeUserVerification(context, masterPassword, undefined, () => confirmPasskeyCreate(page));
     await expect(page.locator("#result")).toContainText("registered:"); await expect(page.locator("#result")).not.toContainText("error:");
     const created = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(created.data).toEqual([expect.objectContaining({ kind: "passkey", sourceMode: "browser-local", privateKeyPkcs8: expect.any(String), signCount: 0 })]);
     const sessionSnapshot = await manager.evaluate(async () => chrome.storage.session.get(null));
     expect(JSON.stringify(sessionSnapshot)).not.toContain(String(created.data[0].privateKeyPkcs8));
-    await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
-    await completeUserVerification(context, masterPassword);
+    await page.locator("#authenticate").click();
+    await completeUserVerification(context, masterPassword, undefined, () => confirmFirstPasskey(page));
     await expect(page.locator("#result")).toContainText("authenticated:"); await expect(page.locator("#result")).not.toContainText("error:");
     const signed = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { data: Array<Record<string, unknown>> };
     expect(signed.data[0]).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
@@ -109,8 +108,8 @@ test("an imported Bitwarden FIDO2 credential completes the page authentication p
     expect(imported).toMatchObject({ credentialId: IMPORTED_CREDENTIAL_ID, sourceMode: "bitwarden", signCount: 4, privateKeyPkcs8: P256_PKCS8 });
 
     const page = await context.newPage(); await page.goto("https://imported-passkey.example.test/");
-    await page.locator("#authenticate").click(); await confirmFirstPasskey(page);
-    await completeUserVerification(context, vaultPassword);
+    await page.locator("#authenticate").click();
+    await completeUserVerification(context, vaultPassword, undefined, () => confirmFirstPasskey(page));
     await expect(page.locator("#result")).toContainText(`authenticated:${IMPORTED_CREDENTIAL_ID}:`);
     await expect(page.locator("#result")).not.toContainText("error:");
     expect((await decodeBitwardenCipher(remoteCipher, login.data.providerId, vaultKey)).items.find(item => item.kind === "passkey")).toMatchObject({ signCount: 5 });
@@ -215,8 +214,7 @@ test("Passkey create rechecks excluded credentials", async ({}, testInfo) => {
       algorithm: -7, publicKey: "public", privateKeyPkcs8: "private", signCount: 0, discoverable: true, sourceMode: "browser-local"
     })).toMatchObject({ ok: true });
     await expect.poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.id)).toBe("monica-passkey-prompt-host");
-    await page.keyboard.press("Enter");
-    await completeUserVerification(context, masterPassword);
+    await completeUserVerification(context, masterPassword, undefined, () => page.keyboard.press("Enter"));
     await expect(page.locator("#result")).toHaveText("error:InvalidStateError");
     await expect(page.locator("#monica-passkey-prompt-host")).toHaveCount(0);
     expect((await listVaultItems(manager)).map((item) => item.id)).toEqual(["late-excluded-passkey"]);
@@ -265,8 +263,7 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
     await context.route("https://bitwarden-passkey.example.test/**", (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: passkeyPage("bitwarden-passkey.example.test", [-257, -7]) }));
     const page = await context.newPage(); await page.goto("https://bitwarden-passkey.example.test/");
     await page.locator("#register").click();
-    await confirmPasskeyCreate(page);
-    await completeUserVerification(context, vaultPassword);
+    await completeUserVerification(context, vaultPassword, undefined, () => confirmPasskeyCreate(page));
     await expect(page.locator("#result")).toContainText("registered:");
     const createdLocally = await listVaultItems(manager);
     const localPasskey = createdLocally.find((item) => item.kind === "passkey")!;
@@ -282,8 +279,7 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
     expect(syncedPasskey).toMatchObject({ sourceMode: "bitwarden", signCount: 0, providerRefs: [{ remoteId: expect.stringContaining("#fido2:") }] });
 
     await page.locator("#authenticate").click();
-    await confirmFirstPasskey(page);
-    await completeUserVerification(context, vaultPassword);
+    await completeUserVerification(context, vaultPassword, undefined, () => confirmFirstPasskey(page));
     await expect(page.locator("#result")).toContainText("authenticated:");
     expect((await listVaultItems(manager)).find((item) => item.kind === "passkey")).toMatchObject({ signCount: 0, useCount: 1, lastUsedAt: expect.any(String) });
     expect(await manager.evaluate(async (providerId) => chrome.runtime.sendMessage({ type: "PROVIDER_SYNC", providerId }), providerId)).toMatchObject({ ok: true, data: { conflicts: 0 } });
@@ -302,7 +298,7 @@ test("Bitwarden Passkey creates, keeps zero-counter usage local, and deletes onl
     // A RSA-only RP must not be offered the ES256-only default Bitwarden target.
     await page.evaluate(() => { (window as any).algorithms = [-257]; });
     await page.locator("#register").click();
-    await confirmPasskeyCreate(page); await completeUserVerification(context, vaultPassword);
+    await completeUserVerification(context, vaultPassword, undefined, () => confirmPasskeyCreate(page));
     await expect(page.locator("#result")).toContainText("registered:");
     expect((await listVaultItems(manager)).find(item => item.kind === "passkey")).toMatchObject({ algorithm: -257, sourceMode: "browser-local", providerRefs: [] });
     expect(postCount).toBe(1); expect(putCount).toBe(1);

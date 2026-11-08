@@ -28,7 +28,7 @@ export function parseSteamMaFile(content: string, fileName = ""): SteamMaFileDat
   const session = record(first(root, "Session", "session"));
   const accountName = text(first(root, "account_name", "accountName", "AccountName")) || text(first(session, "AccountName", "account_name")) || fileName.replace(/\.maFile(?:\.json)?$/i, "") || "Steam";
   const steamLoginSecure = text(first(session, "SteamLoginSecure", "steamLoginSecure")) || text(first(root, "steamLoginSecure", "steam_login_secure"));
-  const steamId = steamIdValue(first(root, "steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64", "SteamID64")) || steamIdValue(first(session, "SteamID", "steamid")) || steamLoginSecure?.split("||", 1)[0];
+  const steamId = steamIdValue(first(root, "steamid", "steam_id", "SteamID", "steam64", "steam_id64", "steamID64", "SteamID64")) || steamIdValue(first(session, "SteamID", "steamid")) || steamIdValue(steamLoginSecure?.split("||", 1)[0]);
   const sharedSecretBase64 = normalizeSharedSecret(text(first(root, "shared_secret", "sharedSecret", "uri", "otp_uri", "otpauth_uri", "steam_uri")));
   if (!sharedSecretBase64) throw new Error("maFile 缺少有效 shared_secret。");
   return {
@@ -110,7 +110,8 @@ function normalizeSharedSecret(input: string): string {
   if (/^steam:\/\//i.test(value)) value = decodeURIComponent(value.replace(/^steam:\/\//i, "").split(/[?#]/, 1)[0]);
   else if (/^otpauth:\/\//i.test(value)) value = new URL(value).searchParams.get("secret") || "";
   const compact = value.replace(/\s+/g, "");
-  if (/^[A-Z2-7]+=*$/i.test(compact) && !/[+/]/.test(compact) && compact.length >= 32) return bytesToBase64(decodeBase32(compact));
+  // Padless [A-Z2-7] only, aligned with `isSteamSharedSecretBase64` in totp.ts: a padded base64 secret whose data chars all fit the base32 alphabet must stay base64.
+  if (/^[A-Z2-7]+$/i.test(compact) && compact.length >= 32) return bytesToBase64(decodeBase32(compact));
   try { const bytes = Uint8Array.from(atob(padBase64(compact)), (character) => character.charCodeAt(0)); return bytes.length ? bytesToBase64(bytes) : ""; } catch { return ""; }
 }
 

@@ -166,6 +166,9 @@ interface PendingRequest {
 export class Mdbx2NativeClient {
   private port?: Mdbx2NativePort;
   private readonly pending = new Map<string, PendingRequest>();
+  // Keyed by the same ownerVaultHandle that routes host.hello, so a router
+  // subclass never mixes capabilities across its native and browser engines.
+  private readonly helloCache = new Map<string | undefined, Mdbx2HostCapabilities>();
 
   constructor(
     private readonly runtime: Mdbx2NativeRuntime,
@@ -175,7 +178,11 @@ export class Mdbx2NativeClient {
   ) {}
 
   async hello(timeoutMs = 5_000, ownerVaultHandle?: string): Promise<Mdbx2HostCapabilities> {
-    return validateMdbx2HostCapabilities(await this.request("host.hello", {}, timeoutMs, ownerVaultHandle));
+    const cached = this.helloCache.get(ownerVaultHandle);
+    if (cached) return cached;
+    const capabilities = validateMdbx2HostCapabilities(await this.request("host.hello", {}, timeoutMs, ownerVaultHandle));
+    this.helloCache.set(ownerVaultHandle, capabilities);
+    return capabilities;
   }
 
   private async requireApiTokenSupport(vaultHandle: string): Promise<void> {
@@ -234,11 +241,18 @@ export class Mdbx2NativeClient {
     if (!bytes.length || bytes.length > MDBX2_MAX_BINARY_CHUNK_BYTES) {
       throw new Mdbx2NativeHostError("transfer-chunk-invalid", "MDBX2 文件分块大小无效。", false);
     }
-    return transferChunkResult(await this.request("transfer.chunk", {
+    const normalizedOffset = safeInteger(offset, "传输偏移");
+    const result = transferChunkResult(await this.request("transfer.chunk", {
       transferId: opaqueHandle(transferId, "传输"),
-      offset: safeInteger(offset, "传输偏移"),
+      offset: normalizedOffset,
       dataBase64: bytesToBase64(bytes)
     }, timeoutMs));
+    if (result.repeated) {
+      if (result.acceptedBytes !== 0 || result.nextOffset < normalizedOffset + bytes.length) throw incompatibleResult("Native Host 传输重试分块边界无效。");
+    } else if (result.acceptedBytes !== bytes.length || result.nextOffset !== normalizedOffset + bytes.length) {
+      throw incompatibleResult("Native Host 传输分块边界无效。");
+    }
+    return result;
   }
 
   async finishInboundTransfer(transferId: string, timeoutMs = 60_000): Promise<Mdbx2TransferFinishResult> {
@@ -1211,9 +1225,12 @@ export class Mdbx2NativeClient {
     const request: Mdbx2NativeRequest = { protocol: MDBX2_NATIVE_PROTOCOL_VERSION, requestId, method, params };
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
+        // The port is shared by concurrent requests, so a timeout only fails
+        // its own request; closing here would abort long in-flight operations
+        // (the host replies sequentially). A late reply hits an unknown
+        // requestId and is dropped by onMessage.
         this.pending.delete(requestId);
         reject(new Mdbx2NativeHostError("native-request-timeout", "Native Host 请求超时。", true));
-        this.close();
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timeoutId });
       try {
@@ -1230,6 +1247,7 @@ export class Mdbx2NativeClient {
   close(): void {
     const port = this.port;
     this.port = undefined;
+    this.helloCache.clear();
     if (port) {
       port.onMessage.removeListener(this.onMessage);
       port.onDisconnect.removeListener(this.onDisconnect);
@@ -1272,6 +1290,7 @@ export class Mdbx2NativeClient {
     const message = this.runtime.disconnectErrorMessage();
     const port = this.port;
     this.port = undefined;
+    this.helloCache.clear();
     if (port) {
       port.onMessage.removeListener(this.onMessage);
       port.onDisconnect.removeListener(this.onDisconnect);

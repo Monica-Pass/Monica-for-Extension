@@ -1,5 +1,6 @@
 import { launchTestContext } from './fixtures/edge';
 import { dialogContent } from "./fixtures/material";
+import { expectNoHorizontalOverflow } from "./fixtures/layout";
 import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import path from "node:path";
 
@@ -196,11 +197,6 @@ async function openMobileSection(page: Page, name: string): Promise<void> {
   await expect(openNavigation).toBeVisible();
   await openNavigation.click();
   await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name }).click();
-}
-
-async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
-  const dimensions = await locator.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
 }
 
 async function expectNoGradients(locator: Locator): Promise<void> {

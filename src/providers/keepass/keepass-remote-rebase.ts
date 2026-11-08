@@ -197,6 +197,11 @@ export function rebaseKeePassDatabase(
   if (projectConflicts.length) throw new KeePassRemoteRebaseConflictError(projectConflicts);
   const conflicts: KeePassRebaseConflict[] = [];
   let changed = false;
+  // Group-tree insertion shares one entry-uuid index built once up front; each inserted entry is
+  // added immediately, so large trees cost one scan instead of one per created group.
+  const insertedGroupEntryIds = new Set(
+    [...remoteDatabase.getDefaultGroup().allEntries()].map((entry) => entry.uuid.toString())
+  );
 
   const allGroupIds = new Set([...baseGroups.keys(), ...workingGroups.keys()]);
   for (const groupUuid of allGroupIds) {
@@ -211,7 +216,7 @@ export function rebaseKeePassDatabase(
         if (!parent) {
           conflicts.push({ kind: "group-structure", groupUuid, reason: "新建分组的父分组不存在。" });
         } else {
-          insertGroupTree(remoteDatabase, parent, working.group, workingDatabase);
+          insertGroupTree(remoteDatabase, parent, working.group, workingDatabase, insertedGroupEntryIds);
           changed = true;
         }
       } else if (groupTreeSignature(working.group, workingDatabase) !== groupTreeSignature(remote.group, remoteDatabase)) {
@@ -588,15 +593,19 @@ function cloneCustomData(data: kdbxweb.KdbxCustomDataMap | undefined): kdbxweb.K
   return result as kdbxweb.KdbxCustomDataMap;
 }
 
-function insertGroupTree(database: kdbxweb.Kdbx, parent: kdbxweb.KdbxGroup, source: kdbxweb.KdbxGroup, sourceDatabase: kdbxweb.Kdbx): kdbxweb.KdbxGroup {
+function insertGroupTree(database: kdbxweb.Kdbx, parent: kdbxweb.KdbxGroup, source: kdbxweb.KdbxGroup, sourceDatabase: kdbxweb.Kdbx, existingEntryIds: Set<string>): kdbxweb.KdbxGroup {
   const target = database.createGroup(parent, source.name || "未命名分组");
   target.uuid = source.uuid;
   copyGroupMetadata(target, source);
   target.groups = [];
   target.entries = [];
-  for (const child of source.groups) insertGroupTree(database, target, child, sourceDatabase);
-  const existingEntryIds = new Set([...database.getDefaultGroup().allEntries()].map((entry) => entry.uuid.toString()));
-  for (const entry of source.entries) if (!existingEntryIds.has(entry.uuid.toString())) insertEntry(database, target, entry, sourceDatabase);
+  for (const child of source.groups) insertGroupTree(database, target, child, sourceDatabase, existingEntryIds);
+  for (const entry of source.entries) {
+    const entryId = entry.uuid.toString();
+    if (existingEntryIds.has(entryId)) continue;
+    existingEntryIds.add(entryId);
+    insertEntry(database, target, entry, sourceDatabase);
+  }
   return target;
 }
 
