@@ -5,12 +5,13 @@ import { ProviderOperationQueue } from './provider-operation-queue';
 import { createLoginItem, type ProviderAccount } from '../core/model';
 import type { ProviderAttachmentReadBeginResult, ProviderAttachmentReadChunk, ProviderAttachmentUploadBeginResult } from '../providers/attachments/attachment-contract';
 import { base64ToBytes } from '../security/encoding';
+import { PROVIDER_ATTACHMENT_UPLOAD_TTL_MS } from '../providers/attachments/attachment-contract';
 
 const root = 'chrome-extension://synthetic/';
 const sender = { id: 'synthetic', url: `${root}index.html` };
 const operationId = '11111111-1111-4111-8111-111111111111';
 beforeEach(() => vi.stubGlobal('chrome', { runtime: { id: 'synthetic', getURL: (path: string) => root + path } }));
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 function fixture() {
   const account: ProviderAccount = { id: 'source', kind: 'monica-webdav', enabled: true, name: 'Synthetic', isDefaultSaveTarget: false, config: { backupPassword: 'synthetic' } };
@@ -107,6 +108,48 @@ describe('attachment runtime through the command interface', () => {
     f.runtime.clear();
   });
 
+  it.each([undefined, 'source'])('discards a webdav download that finishes after clearing %s', async (providerId) => {
+    const f = fixture(), bytes = Uint8Array.of(1, 2, 3);
+    let finish!: (value: Awaited<ReturnType<typeof f.adapter.readAttachment>>) => void;
+    f.adapter.readAttachment.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' });
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'attachment-read-not-found' });
+    await vi.waitFor(() => expect(f.adapter.readAttachment).toHaveBeenCalledOnce());
+    f.runtime.clear(providerId);
+    finish({ ...f.attachment, bytes });
+    await rejected;
+    expect(Array.from(bytes)).toEqual([0, 0, 0]);
+    f.runtime.clear();
+  });
+
+  it('expires cached webdav plaintext without another request and refreshes the idle deadline on reads', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const read = await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' }) as ProviderAttachmentReadBeginResult;
+    const session = await f.adapter.readAttachment.mock.results[0]!.value as { bytes: Uint8Array };
+    await vi.advanceTimersByTimeAsync(PROVIDER_ATTACHMENT_UPLOAD_TTL_MS - 1);
+    await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 0, maxBytes: 1 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(Array.from(session.bytes)).toEqual([1, 2, 3]);
+    await vi.advanceTimersByTimeAsync(PROVIDER_ATTACHMENT_UPLOAD_TTL_MS - 1);
+    expect(Array.from(session.bytes)).toEqual([0, 0, 0]);
+    await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 1, maxBytes: 1 })).rejects.toThrow();
+    f.runtime.clear();
+  });
+
+  it('rejects a webdav chunk cleared while its target check is pending', async () => {
+    const f = fixture();
+    const read = await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' }) as ProviderAttachmentReadBeginResult;
+    let finish!: (value: typeof f.item) => void;
+    f.service.getItem.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 0, maxBytes: 1 });
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'attachment-read-not-found' });
+    await vi.waitFor(() => expect(f.service.getItem).toHaveBeenCalledTimes(2));
+    f.runtime.clear();
+    finish(f.item);
+    await rejected;
+  });
+
   it('re-downloads webdav chunks without caching when one attachment exceeds the read cache budget', async () => {
     const f = fixture();
     const sizeBytes = 64 * 1024 * 1024 + 5, downloaded: Uint8Array[] = [];
@@ -142,9 +185,38 @@ describe('attachment runtime through the command interface', () => {
     expect(f.adapter.readAttachment).toHaveBeenCalledTimes(1);
     await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: -1 })).rejects.toMatchObject({ code: 'attachment-read-offset-invalid' });
     expect(f.adapter.readAttachment).toHaveBeenCalledTimes(1);
-    await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: sizeBytes + 1 })).rejects.toMatchObject({ code: 'attachment-read-offset-invalid' });
-    expect(f.adapter.readAttachment).toHaveBeenCalledTimes(2);
+    await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 0 })).rejects.toMatchObject({ code: 'attachment-read-not-found' });
+    const retry = await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' }) as ProviderAttachmentReadBeginResult;
+    await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: retry.readHandle, offset: sizeBytes + 1 })).rejects.toMatchObject({ code: 'attachment-read-offset-invalid' });
+    expect(f.adapter.readAttachment).toHaveBeenCalledTimes(3);
     expect(downloaded.every((bytes) => bytes.every((value) => value === 0))).toBe(true);
+    f.runtime.clear();
+  });
+
+  it('rejects and zeroes an uncached chunk that finishes after release', async () => {
+    const f = fixture(), sizeBytes = 64 * 1024 * 1024 + 1;
+    f.adapter.readAttachment.mockResolvedValueOnce({ ...f.attachment, sizeBytes, bytes: new Uint8Array(sizeBytes) });
+    const read = await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' }) as ProviderAttachmentReadBeginResult;
+    let finish!: (value: Awaited<ReturnType<typeof f.adapter.readAttachment>>) => void;
+    f.adapter.readAttachment.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 0, maxBytes: 1 });
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'attachment-read-not-found' });
+    await vi.waitFor(() => expect(f.adapter.readAttachment).toHaveBeenCalledTimes(2));
+    await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_RELEASE', providerId: f.account.id, readHandle: read.readHandle });
+    const bytes = Uint8Array.of(1, 2, 3);
+    finish({ ...f.attachment, bytes });
+    await rejected;
+    expect(Array.from(bytes)).toEqual([0, 0, 0]);
+    f.runtime.clear();
+  });
+
+  it('zeroes cached plaintext when a target check fails', async () => {
+    const f = fixture();
+    const read = await f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_BEGIN', providerId: f.account.id, itemId: f.item.id, attachmentId: 'file' }) as ProviderAttachmentReadBeginResult;
+    const session = await f.adapter.readAttachment.mock.results[0]!.value as { bytes: Uint8Array };
+    f.service.getItem.mockRejectedValueOnce(new Error('locked'));
+    await expect(f.invoke({ type: 'PROVIDER_ATTACHMENT_READ_CHUNK', providerId: f.account.id, readHandle: read.readHandle, offset: 0 })).rejects.toThrow('locked');
+    expect(Array.from(session.bytes)).toEqual([0, 0, 0]);
     f.runtime.clear();
   });
 
