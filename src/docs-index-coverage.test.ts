@@ -1,17 +1,23 @@
 import { access, readdir, readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const docsDir = fileURLToPath(new URL("../docs/", import.meta.url));
 const indexPath = resolve(docsDir, "README.md");
 
 async function listIndexedDocuments(): Promise<Set<string>> {
+  // Local ignored design notes are not published documentation. Keep enforcing
+  // coverage for tracked legacy notes and new, non-ignored documents alike.
+  const ignored = new Set(execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "docs/"],
+    { cwd: resolve(docsDir, ".."), encoding: "utf8", windowsHide: true }).split("\0").filter(Boolean));
   const entries = await readdir(docsDir, { recursive: true, withFileTypes: true });
   const files = new Set<string>();
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
     const rel = relative(docsDir, resolve(entry.parentPath, entry.name)).replace(/\\/g, "/");
+    if (ignored.has(`docs/${rel}`)) continue;
     if (rel !== "README.md") files.add(rel);
   }
   return files;

@@ -158,6 +158,33 @@ describe("shared interface language", () => {
     expect(runtime.tr("toString")).toBe("toString");
     expect(runtime.translateRuntimeError("__proto__")).toBe("__proto__");
   });
+
+  it.each(localeOptions)("shows portable backup format choices and security errors in $label offline", async option => {
+    browser("en-US");
+    const runtime = await import("./runtime");
+    await runtime.initializeUiLocale();
+    await runtime.selectUiLocale(option.value);
+    const messages = [
+      "ZIP 加密格式", "兼容 V1（100,000 次）", "增强 V2（600,000 次）",
+      "增强 V2 需要支持此格式的接收端；旧备份保持不变。", "ZIP 文件密码（增强 V2 必填）",
+      "增强 V2 ZIP 导出必须设置文件密码。", "不支持此 Monica Android 备份加密版本。",
+      "不支持此 Monica Android 备份加密参数。", "Monica Android 备份密码包含无效 Unicode 编码。",
+      "V2 备份需要加密密码。", "Android 备份加密格式无效。", "备份加密密码不能为空。",
+      "Monica Android 加密备份不完整。", "此 Monica Android 备份需要解密密码。",
+      "Monica Android 备份密码错误或文件已损坏。", "Android 备份安全上限无效。",
+      "Monica Android 备份明文超过安全上限。", "Monica Android 加密备份超过安全上限。",
+      "Monica Android 备份超过安全上限。"
+    ];
+    for (const message of messages) {
+      if (option.value === "zh-CN") expect(runtime.tr(message)).toBe(message);
+      else expect(runtime.tr(message), message).not.toBe(message);
+      expect(runtime.translateRuntimeError(message), message).toBe(runtime.tr(message));
+    }
+    expect(runtime.tr(messages[1]).replace(/\D/g, "")).toBe("1100000");
+    expect(runtime.tr(messages[2]).replace(/\D/g, "")).toBe("2600000");
+    // Only packaged dictionaries are loaded; no text goes to a translation service.
+    for (const [url] of vi.mocked(fetch).mock.calls) expect(url).toMatch(/^chrome-extension:\/\/localization-test\/locales\/ui-\w+\.json$/);
+  });
 });
 
 describe("translation catalog completeness", () => {

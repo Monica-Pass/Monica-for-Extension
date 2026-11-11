@@ -1,6 +1,6 @@
 # Monica Extension 文档索引
 
-`docs/` 全部 319 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
+`docs/` 全部 320 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
 
 > 机器可检索的解决方案库位于 `docs/solutions/`（YAML frontmatter：`module`、`tags`、`problem_type`）；共享领域词汇见仓库根 `CONCEPTS.md`。
 >
@@ -302,10 +302,11 @@ docs/releases/ 的发行说明、changelog 与历史阶段记录。
 - [RELEASE-0.1.44.md](releases/RELEASE-0.1.44.md) — 0.1.44 本地开发阶段记录：登录项网站图标
 - [RELEASE-0.1.45.md](releases/RELEASE-0.1.45.md) — 0.1.45 本地开发阶段记录：弹窗账号列表
 
-## 验证记录（75）
+## 验证记录（76）
 
 docs/verification/ 的功能验证、排查与发布就绪检查。
 
+- [android-backup-v2-20261111.md](verification/android-backup-v2-20261111.md) — Android V2 ZIP/WebDAV兼容：双向加解密、真实Edge与大字号、安全回归及保留的失败记录
 - [VALIDATION-0.1.24.md](verification/VALIDATION-0.1.24.md) — 0.1.24 使用与验证记录（本地开发包）
 - [VALIDATION-0.1.25.md](verification/VALIDATION-0.1.25.md) — 0.1.25 多尺寸适配与验证记录
 - [VALIDATION-0.1.26.md](verification/VALIDATION-0.1.26.md) — 0.1.26 多语言支持与验证记录

@@ -59,7 +59,7 @@ The matrix is re-audited whenever the Android reference commit changes. A featur
 
 ## Container and Encryption
 
-Android stores a ZIP directly or wraps the ZIP in this binary envelope:
+Android stores a ZIP directly or wraps it in a V1 or V2 binary envelope. File import automatically recognizes both versions; ZIP export defaults to compatible V1 and offers enhanced V2 with a required file password.
 
 | Offset | Value |
 | --- | --- |
@@ -68,7 +68,28 @@ Android stores a ZIP directly or wraps the ZIP in this binary envelope:
 | next 12 bytes | AES-GCM IV |
 | remainder | AES-256-GCM ciphertext and 128-bit tag |
 
-The key is PBKDF2-HMAC-SHA256 with 100,000 iterations and a 256-bit output. Extension parameters match Android exactly.
+V1 uses PBKDF2-HMAC-SHA256 with 100,000 iterations and a 256-bit output, without AAD. Its existing format remains compatible.
+
+V2 uses the fixed Android enhanced profile:
+
+| Offset | Value |
+| --- | --- |
+| `0..12` | UTF-8 `MONICA_ENC_V2` |
+| `13` | KDF ID `1` (PBKDF2-HMAC-SHA256) |
+| `14` | Cipher ID `1` (AES-256-GCM) |
+| `15` | Flags `0` |
+| `16..19` | Big-endian iteration count `600,000` |
+| `20..21` | Big-endian salt length `32` |
+| `22..23` | Big-endian nonce length `12` |
+| `24..55` | Random salt |
+| `56..67` | Random nonce |
+| `68..end` | Ciphertext followed by the 16-byte authentication tag |
+
+The complete 68-byte V2 header is authenticated as AES-GCM AAD. Passwords are UTF-8 encoded without trimming or Unicode normalization; unpaired UTF-16 surrogates are rejected for V2. Every new encrypted output uses fresh salt and nonce. Unknown versions, unsupported profile bytes, truncation and oversize inputs are rejected; untrusted input cannot select an arbitrary KDF cost. Authentication failure produces no import preview or WebDAV write and does not retry the payload as V1 or plaintext.
+
+WebDAV reads identify the envelope from its bytes. Successful edits, deletions, attachment changes and generator-history changes preserve a V2 source even if the saved compatibility preference is V1. New encrypted backups use V1 by default; a configured V2 output requires a password. Uploads retain the existing latest-snapshot checks, ETag checks, create-only publication and exact read-back verification. ZIP archive limits remain unchanged; the network envelope allowance includes V2's 84-byte overhead. This compatibility applies to Android ZIP snapshots; OneDrive continues to support its existing database formats.
+
+Synthetic vectors are in `tests/fixtures/portable-backup-encryption-vectors.json`; fixed fixture salt/nonce values must never be used for production encryption. Coverage includes crypto profile and tampering tests, manual transfer tests, WebDAV snapshot-race tests, a loopback HTTP provider test, and Edge import/export and WebDAV runtime tests. Device and browser execution results are recorded separately in the verification report.
 
 ## ZIP Entry Inventory
 

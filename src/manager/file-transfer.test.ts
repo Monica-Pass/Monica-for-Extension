@@ -3,6 +3,7 @@ import { strToU8, zipSync } from 'fflate';
 import { createLoginItem, type TotpItem, type VaultItem } from '../core/model';
 import { createTransferExport, independentItems, previewImport, MAX_IMPORT_BYTES, type ExportFormat } from './file-transfer';
 import { generateOtpWithParameters } from '../core/totp';
+import { getAndroidBackupEncryptionFormat } from '../providers/webdav/android-backup-crypto';
 
 const login = { ...createLoginItem({ title: '迁移登录', username: '  用户@example.invalid  ', password: '  pass,"word\r\n🔑  ',
   notes: '第一行\nsecond line', uris: ['https://example.invalid/login'] }), id: 'synthetic-file-login', username: '  用户@example.invalid  ', categoryName: '工作', totpSecret: 'JBSWY3DPEHPK3PXP' };
@@ -12,6 +13,40 @@ const note: VaultItem = { id: 'synthetic-note', kind: 'secure-note', title: '笔
 const input = (text: unknown, name = 'test.json') => ({ name, bytes: strToU8(typeof text === 'string' ? text : JSON.stringify(text)) });
 
 describe('manual file migration', () => {
+  it.each(['auto', 'zip'] as const)('imports a V2 encrypted ZIP using %s detection and preserves sensitive values', async format => {
+    const password = '  中文🔑e\u0301 backup  ';
+    const output = await createTransferExport([login, note, totp], 'zip', password, 'v2');
+    expect(getAndroidBackupEncryptionFormat(output.bytes)).toBe('v2');
+    const result = await previewImport({ name: 'opaque.backup', bytes: output.bytes, password, format });
+    expect(result.items).toHaveLength(3);
+    expect(result.items.find(item => item.kind === 'login')).toMatchObject({ username: login.username, password: login.password, notes: login.notes, providerRefs: [] });
+    expect(result.items.find(item => item.kind === 'secure-note')).toMatchObject({ content: note.content });
+    expect(result.items.find(item => item.kind === 'totp')).toMatchObject({ secret: totp.secret, algorithm: 'SHA256', digits: 8, period: 60 });
+    expect(result.items.every(item => ![login.id, note.id, totp.id].includes(item.id))).toBe(true);
+  });
+  it('keeps default encrypted ZIP exports at V1 and rejects passwordless V2', async () => {
+    const encrypted = await createTransferExport([login], 'zip', 'synthetic');
+    expect(getAndroidBackupEncryptionFormat(encrypted.bytes)).toBe('v1');
+    const plain = await createTransferExport([login], 'zip');
+    expect(getAndroidBackupEncryptionFormat(plain.bytes)).toBeUndefined();
+    await expect(createTransferExport([login], 'zip', '', 'v2')).rejects.toThrow('必须设置文件密码');
+  });
+  it('rejects V2 password errors, corrupt headers and unknown versions without producing a preview', async () => {
+    const output = await createTransferExport([login], 'zip', 'synthetic', 'v2');
+    const original = output.bytes.slice();
+    for (const password of ['', 'wrong']) {
+      await expect(previewImport({ name: 'test.zip', bytes: output.bytes, password })).rejects.toThrow(/密码/);
+    }
+    const corrupt = output.bytes.slice(); corrupt[corrupt.length - 1] ^= 1;
+    await expect(previewImport({ name: 'test.zip', bytes: corrupt, password: 'synthetic' })).rejects.toThrow('文件已损坏');
+    const parameters = output.bytes.slice(); parameters[16] ^= 1;
+    await expect(previewImport({ name: 'test.zip', bytes: parameters, password: 'synthetic' })).rejects.toThrow('加密参数');
+    const unknown = output.bytes.slice(); unknown[12] = 0x33;
+    for (const format of ['auto', 'zip', 'json', 'csv'] as const) {
+      await expect(previewImport({ name: 'test.json', bytes: unknown, password: 'synthetic', format })).rejects.toThrow('加密版本');
+    }
+    expect(output.bytes).toEqual(original);
+  });
   it.each<ExportFormat>(['json', 'csv', 'zip', 'kdbx'])('%s round trips sensitive login whitespace, folder and OTP', async format => {
     const out = await createTransferExport([login], format, 'synthetic-file-password');
     const result = await previewImport({ name: `test.${out.extension}`, bytes: out.bytes, password: 'synthetic-file-password' });

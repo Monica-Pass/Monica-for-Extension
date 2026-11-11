@@ -7,12 +7,14 @@ import { createTransferExport, exportableItems, MAX_IMPORT_BYTES, previewImport,
 import type { VaultExportResult } from '../security/authenticated-export';
 import AuthenticatedExportDialog from './AuthenticatedExportDialog.vue';
 import SettingsPasswordField from './SettingsPasswordField.vue';
+import type { AndroidBackupEncryptionFormat } from '../providers/webdav/android-backup-crypto';
 
 const props = defineProps<{ items: VaultItem[]; mode: 'master-password' | 'device-key' | 'unknown'; helloAvailable: boolean }>();
 const emit = defineEmits<{ imported: []; busy: [value: boolean]; backup: []; mdbx: [] }>();
 const file = shallowRef<File>(), keyFile = shallowRef<File>();
 const sourceFormat = ref<TransferFormat>('auto'), destinationFormat = ref<ExportFormat>('zip');
 const password = ref(''), exportPassword = ref(''), exportConfirmation = ref('');
+const backupEncryptionFormat = ref<AndroidBackupEncryptionFormat>('v1');
 const preview = shallowRef<FileImportPreview>();
 const busy = ref(false), error = ref(''), status = ref(''), authenticating = ref(false);
 let active = true;
@@ -30,9 +32,13 @@ const selectedFormat = computed(() => formats.find(format => format.value === de
 const count = computed(() => exportableItems(props.items, destinationFormat.value).length);
 const total = computed(() => props.items.filter(item => !item.deletedAt && !item.archivedAt).length);
 const protectedFile = computed(() => ['zip', 'kdbx'].includes(destinationFormat.value));
+const plaintextExport = computed(() => !protectedFile.value || destinationFormat.value === 'zip' && backupEncryptionFormat.value === 'v1' && !exportPassword.value);
+const exportPasswordLabel = computed(() => destinationFormat.value === 'kdbx' ? 'KDBX 文件密码'
+  : backupEncryptionFormat.value === 'v2' ? 'ZIP 文件密码（增强 V2 必填）' : '文件密码（留空导出明文 ZIP）');
 watch([busy, authenticating], ([processing, verifying]) => emit('busy', processing || verifying));
 watch([sourceFormat, password, keyFile], () => { preview.value = undefined; status.value = ''; }, { flush: 'sync' });
-watch(destinationFormat, () => { exportPassword.value = exportConfirmation.value = ''; error.value = ''; });
+watch(destinationFormat, () => { exportPassword.value = exportConfirmation.value = ''; backupEncryptionFormat.value = 'v1'; error.value = ''; });
+watch(backupEncryptionFormat, () => { error.value = ''; });
 onBeforeUnmount(() => { active = false; password.value = exportPassword.value = exportConfirmation.value = ''; preview.value = undefined; file.value = keyFile.value = undefined; emit('busy', false); });
 
 function selectFile(event: Event, key = false) {
@@ -68,6 +74,7 @@ function startExport() {
   error.value = status.value = '';
   if (protectedFile.value && exportPassword.value !== exportConfirmation.value) { error.value = tr('两次输入的文件密码不一致。'); return; }
   if (destinationFormat.value === 'kdbx' && !exportPassword.value) { error.value = tr('请设置 KDBX 文件密码。'); return; }
+  if (destinationFormat.value === 'zip' && backupEncryptionFormat.value === 'v2' && !exportPassword.value) { error.value = tr('增强 V2 ZIP 导出必须设置文件密码。'); return; }
   authenticating.value = true;
 }
 function closeAuthentication() {
@@ -77,10 +84,10 @@ function closeAuthentication() {
 async function finishExport(result: VaultExportResult) {
   if (!active || result.format !== 'plaintext' || busy.value) return;
   busy.value = true;
-  const format = destinationFormat.value, secret = exportPassword.value;
+  const format = destinationFormat.value, secret = exportPassword.value, encryptionFormat = backupEncryptionFormat.value;
   exportPassword.value = exportConfirmation.value = '';
   try {
-    const output = await createTransferExport(result.items, format, secret);
+    const output = await createTransferExport(result.items, format, secret, encryptionFormat);
     const lifecycle = await vaultClient.status();
     if (!active) return;
     if (lifecycle !== 'unlocked') { error.value = tr('密码库已锁定，请先解锁 Monica。'); return; }
@@ -128,8 +135,13 @@ async function finishExport(result: VaultExportResult) {
         <label class="transfer-select"><span>{{ tr('导出格式') }}</span><select v-model="destinationFormat" data-transfer-export-format><option v-for="format in formats" :key="format.value" :value="format.value">{{ tr(format.label) }}</option></select></label>
         <p class="supporting">{{ tr(selectedFormat.hint) }}</p>
         <p class="transfer-scope">{{ tr('此格式将导出 {0} / {1} 个项目。', { 0: count, 1: total }) }} {{ tr('不含回收站、附件文件与连接配置。') }}</p>
-        <template v-if="protectedFile"><SettingsPasswordField v-model="exportPassword" :label="tr(destinationFormat === 'zip' ? '文件密码（留空导出明文 ZIP）' : 'KDBX 文件密码')" autocomplete="new-password" /><SettingsPasswordField v-if="exportPassword" v-model="exportConfirmation" :label="tr('确认文件密码')" autocomplete="new-password" /></template>
-        <p v-if="destinationFormat !== 'kdbx' && (!protectedFile || !exportPassword)" class="settings-safety-note">{{ tr('明文文件包含密码等敏感信息，请保存到可信位置。') }}<template v-if="destinationFormat === 'csv'"> {{ tr('CSV 保留原始字段值，请勿在电子表格中执行公式。') }}</template></p>
+        <template v-if="destinationFormat === 'zip'">
+          <label class="transfer-select"><span>{{ tr('ZIP 加密格式') }}</span><select v-model="backupEncryptionFormat" data-transfer-encryption-format><option value="v1">V1 · 100k</option><option value="v2">V2 · 600k</option></select></label>
+          <p class="supporting" data-transfer-encryption-summary>{{ tr(backupEncryptionFormat === 'v2' ? '增强 V2（600,000 次）' : '兼容 V1（100,000 次）') }}</p>
+          <p v-if="backupEncryptionFormat === 'v2'" class="supporting">{{ tr('增强 V2 需要支持此格式的接收端；旧备份保持不变。') }}</p>
+        </template>
+        <template v-if="protectedFile"><SettingsPasswordField v-model="exportPassword" :label="tr(exportPasswordLabel)" autocomplete="new-password" /><SettingsPasswordField v-if="exportPassword" v-model="exportConfirmation" :label="tr('确认文件密码')" autocomplete="new-password" /></template>
+        <p v-if="plaintextExport" class="settings-safety-note">{{ tr('明文文件包含密码等敏感信息，请保存到可信位置。') }}<template v-if="destinationFormat === 'csv'"> {{ tr('CSV 保留原始字段值，请勿在电子表格中执行公式。') }}</template></p>
         <m3e-button variant="filled" :disabled="busy || !count" @click="startExport"><m3e-icon slot="icon" name="fingerprint" />{{ busy ? tr('正在处理…') : tr('验证身份并导出') }}</m3e-button>
       </fieldset>
     </section>

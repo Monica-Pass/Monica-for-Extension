@@ -2,7 +2,7 @@ import { strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
 import type { LoginItem, PasskeyItem, ProviderAccount, VaultItem } from "../../core/model";
 import { readAndroidBackup } from "./android-backup-codec";
-import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
+import { decryptAndroidBackup, encryptAndroidBackup, getAndroidBackupEncryptionFormat, isAndroidEncryptedBackup } from "./android-backup-crypto";
 import { MonicaWebDavProvider } from "./monica-webdav-provider";
 import { parseMultiStatus } from "./webdav-client";
 
@@ -80,6 +80,116 @@ function server(remote: Uint8Array, latest = multiStatus()) {
 }
 
 describe("Monica WebDAV provider", () => {
+  it("preserves V2 through sync, create, update, attachment changes, history deletion and removal", async () => {
+    const backupPassword = "synthetic V2 backup";
+    const historyPath = "Monica_20261111_120000_generated_history.json";
+    const history = [{ password: "remove-synthetic", timestamp: 1_700_000_003_000, type: "PIN" },
+      { password: "retain-synthetic", timestamp: 1_700_000_002_000, type: "PIN", future: true }];
+    let remote = await encryptAndroidBackup(zipSync({ ...unzipSync(androidZip()), [historyPath]: strToU8(JSON.stringify(history)) }), backupPassword, undefined, undefined, "v2");
+    // The persisted V1 preference must not silently downgrade a V2 source.
+    let target = account({ backupPassword, backupEncryptionFormat: "v1" });
+    const next = () => { const mock = server(remote, multiStatus("monica_backup_synthetic.enc.zip")); return { mock, provider: new MonicaWebDavProvider(mock.fetcher) }; };
+    const publication = async (mock: ReturnType<typeof server>) => {
+      const published = mock.uploaded()!;
+      expect(getAndroidBackupEncryptionFormat(published)).toBe("v2");
+      const zip = await decryptAndroidBackup(published, backupPassword);
+      expect(unzipSync(zip)["future/unknown.bin"]).toEqual(Uint8Array.of(9, 8, 7));
+      remote = published;
+      return zip;
+    };
+    let step = next();
+    const first = await step.provider.sync(target, { now: "2026-11-11T00:00:00Z", localItems: [] });
+    target = account(first.accountPatch?.config);
+    const changed = { ...first.items[0], password: "browser V2 edit", updatedAt: "2026-11-11T00:01:00Z" } as LoginItem;
+    const synced = await step.provider.sync(target, { now: "2026-11-11T00:02:00Z", localItems: [changed] });
+    expect(synced.conflicts).toEqual([]);
+    expect(readAndroidBackup(await publication(step.mock), PROVIDER_ID).items[0]).toMatchObject({ password: changed.password, id: changed.id });
+    step = next();
+    const created = await step.provider.create(target, { ...localLogin(), id: "synthetic-v2-created", title: "V2 created" });
+    await publication(step.mock);
+    step = next();
+    const edited = await step.provider.update(target, { ...created, notes: "V2 update", updatedAt: "2026-11-11T00:03:00Z" });
+    expect(readAndroidBackup(await publication(step.mock), PROVIDER_ID).items.find(item => item.title === created.title)).toMatchObject({ notes: "V2 update" });
+    step = next();
+    const payload = Uint8Array.of(0, 1, 255, 2);
+    const sha256Hex = Buffer.from(await crypto.subtle.digest("SHA-256", payload)).toString("hex");
+    const attachment = await step.provider.addAttachment(target, edited, { fileName: "synthetic-v2.bin", sizeBytes: payload.length, sha256Hex }, payload);
+    await publication(step.mock);
+    step = next();
+    expect((await step.provider.readAttachment(target, edited, attachment.attachmentId)).bytes).toEqual(payload);
+    expect(await step.provider.deleteAttachment(target, edited, attachment.attachmentId)).toBe(true);
+    await publication(step.mock);
+    step = next();
+    const [entry] = await step.provider.listGeneratorHistory(target);
+    expect(await step.provider.deleteGeneratorHistoryEntry(target, entry.id)).toBe(true);
+    expect(JSON.parse(new TextDecoder().decode(unzipSync(await publication(step.mock))[historyPath]))).toEqual([history[1]]);
+    step = next();
+    await step.provider.remove(target, edited);
+    expect(readAndroidBackup(await publication(step.mock), PROVIDER_ID).items.some(item => item.title === created.title)).toBe(false);
+  });
+
+  it.each([undefined, "v1", "v2"] as const)("creates a new encrypted snapshot with the %s format preference", async backupEncryptionFormat => {
+    const backupPassword = "synthetic new backup";
+    const mock = server(new Uint8Array(), '<d:multistatus xmlns:d="DAV:"/>');
+    await new MonicaWebDavProvider(mock.fetcher).create(account({ backupPassword, backupEncryptionFormat }), localLogin());
+    expect(getAndroidBackupEncryptionFormat(mock.uploaded()!)).toBe(backupEncryptionFormat || "v1");
+    expect(readAndroidBackup(await decryptAndroidBackup(mock.uploaded()!, backupPassword), PROVIDER_ID).items[0]).toMatchObject({ title: "Local" });
+  });
+
+  it.each(["wrong-password", "header", "ciphertext", "unknown-version"] as const)("rejects %s V2 sources without upload or caller mutation", async failure => {
+    const backupPassword = "synthetic correct V2 password";
+    const remote = await encryptAndroidBackup(androidZip(), backupPassword, undefined, undefined, "v2");
+    if (failure === "header") remote[16] ^= 1;
+    if (failure === "ciphertext") remote[remote.length - 1] ^= 1;
+    if (failure === "unknown-version") remote[12] = 0x39;
+    const mock = server(remote, multiStatus("monica_backup_synthetic.enc.zip"));
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    const target = account({ backupPassword: failure === "wrong-password" ? "wrong synthetic password" : backupPassword });
+    const item = localLogin(), before = structuredClone(item), remoteBefore = remote.slice();
+    await expect(provider.create(target, item)).rejects.toThrow();
+    await expect(provider.sync(target, { now: "2026-11-11T00:00:00Z", localItems: [item] })).rejects.toThrow();
+    expect(mock.uploaded()).toBeUndefined();
+    expect(item).toEqual(before);
+    expect(remote).toEqual(remoteBefore);
+    expect(vi.mocked(mock.fetcher).mock.calls.every(([, init]) => init?.method !== "PUT")).toBe(true);
+  });
+
+  it("refuses explicit V2 creation without a password or with an invalid profile", async () => {
+    const mock = server(new Uint8Array(), '<d:multistatus xmlns:d="DAV:"/>');
+    const provider = new MonicaWebDavProvider(mock.fetcher);
+    await expect(provider.create(account({ backupEncryptionFormat: "v2" }), localLogin())).rejects.toThrow("需要加密密码");
+    await expect(provider.create(account({ backupEncryptionFormat: "v3", backupPassword: "synthetic" }), localLogin())).rejects.toThrow("格式无效");
+    expect(mock.uploaded()).toBeUndefined();
+  });
+
+  it("retains the three-way conflict guard for a newer V2 remote", async () => {
+    const backupPassword = "synthetic V2 conflict";
+    const firstMock = server(await encryptAndroidBackup(androidZip(), backupPassword, undefined, undefined, "v2"));
+    const first = await new MonicaWebDavProvider(firstMock.fetcher).sync(account({ backupPassword }), { now: "2026-11-11T00:00:00Z", localItems: [] });
+    const local = { ...first.items[0], password: "synthetic browser change", updatedAt: "2026-11-11T00:01:00Z" } as LoginItem;
+    const before = structuredClone(local);
+    const remote = await encryptAndroidBackup(androidZip("synthetic Android change", 1_800_000_000_000), backupPassword, undefined, undefined, "v2");
+    const mock = server(remote, multiStatus("monica_backup_new.enc.zip", '"new"'));
+    const result = await new MonicaWebDavProvider(mock.fetcher).sync(account(first.accountPatch?.config), { now: "2026-11-11T00:02:00Z", localItems: [local] });
+    expect(result.conflicts).toHaveLength(1);
+    expect(local).toEqual(before);
+    expect(mock.uploaded()).toBeUndefined();
+  });
+
+  it.each(["read", "create"] as const)("rejects a cancellation during V2 decryption before returning a %s result or uploading", async operation => {
+    const backupPassword = "synthetic V2 cancellation";
+    const remote = await encryptAndroidBackup(androidZip(), backupPassword, undefined, undefined, "v2");
+    const mock = server(remote), controller = new AbortController();
+    const fetcher: typeof fetch = async (input, init) => {
+      const response = await mock.fetcher(input, init);
+      if (init?.method === "GET") setTimeout(() => controller.abort(new Error("Synthetic cancellation")), 0);
+      return response;
+    };
+    const provider = new MonicaWebDavProvider(fetcher), target = account({ backupPassword }), item = localLogin(), before = structuredClone(item);
+    await expect(operation === "create" ? provider.create(target, item, controller.signal) : provider.loadLatest(target, controller.signal)).rejects.toThrow("Synthetic cancellation");
+    expect(item).toEqual(before);
+    expect(mock.uploaded()).toBeUndefined();
+  });
   it("marks the uploaded Passkey counter as confirmed instead of echoing a pending lower watermark", async () => {
     const original = await encryptAndroidBackup(portablePasskeyZip(), "synthetic-backup");
     const mock = server(original, multiStatus("monica_backup_synthetic.enc.zip"));
@@ -93,8 +203,11 @@ describe("Monica WebDAV provider", () => {
     expect(remote.items[0]).toMatchObject({ signCount: 42, privateKeyPkcs8: P256_PKCS8 });
   });
 
-  it.each(["new-backup", "changed-baseline", "changed-publication", "missing-publication"] as const)("retains caller data when upload confirmation detects %s", async mode => {
-    const mock = server(androidZip()); let directoryReads = 0;
+  it.each((["new-backup", "changed-baseline", "changed-publication", "missing-publication"] as const)
+    .flatMap(mode => (["plaintext", "v2"] as const).map(format => [mode, format] as const)))("retains caller data when upload confirmation detects %s with %s encryption", async (mode, format) => {
+    const backupPassword = "synthetic V2 publication conflict";
+    const remote = format === "v2" ? await encryptAndroidBackup(androidZip(), backupPassword, undefined, undefined, "v2") : androidZip();
+    const mock = server(remote); let directoryReads = 0;
     const fetcher: typeof fetch = async (input, init) => {
       const response = await mock.fetcher(input, init);
       if (init?.method === "PROPFIND" && new Headers(init.headers).get("Depth") === "1" && ++directoryReads === 3) {
@@ -109,9 +222,12 @@ describe("Monica WebDAV provider", () => {
     };
     const item = { ...localLogin(), id: "synthetic-new-login", categoryName: "New category", providerRefs: [{ providerId: PROVIDER_ID }] };
     const original = structuredClone(item);
-    await expect(new MonicaWebDavProvider(fetcher).create(account(), item)).rejects.toThrow("尚未确认");
+    await expect(new MonicaWebDavProvider(fetcher).create(account(format === "v2" ? { backupPassword } : {}), item)).rejects.toThrow("尚未确认");
     expect(mock.uploaded()).toBeDefined(); expect(item).toEqual(original);
-    expect(readAndroidBackup(mock.uploaded()!, PROVIDER_ID).items).toEqual(expect.arrayContaining([expect.objectContaining({ title: item.title })]));
+    const published = mock.uploaded()!;
+    if (format === "v2") expect(getAndroidBackupEncryptionFormat(published)).toBe("v2");
+    const decoded = format === "v2" ? await decryptAndroidBackup(published, backupPassword) : published;
+    expect(readAndroidBackup(decoded, PROVIDER_ID).items).toEqual(expect.arrayContaining([expect.objectContaining({ title: item.title })]));
   });
 
   it("keeps a browser-created identity across archive reads, edits and portable attachment writes", async () => {

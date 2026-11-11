@@ -26,8 +26,9 @@ export interface WebDavClientLimits {
 
 export const DEFAULT_WEBDAV_CLIENT_LIMITS: Readonly<WebDavClientLimits> = Object.freeze({
   maxMultiStatusBytes: 2 * 1024 * 1024,
-  maxDownloadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 64,
-  maxUploadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 64
+  // V2 adds a fixed 68-byte authenticated header and a 16-byte GCM tag.
+  maxDownloadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 84,
+  maxUploadBytes: DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 84
 });
 
 const BACKUP_FILE_PATTERN = /^monica_backup_[^/]+(?:\.enc)?\.zip$/i;

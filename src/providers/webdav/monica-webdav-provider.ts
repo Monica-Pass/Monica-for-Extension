@@ -1,6 +1,6 @@
 import type { ProviderAccount, ProviderReference, ProviderSourceRecord, VaultItem } from "../../core/model";
 import type { ProviderAdapter, ProviderSyncContext, ProviderSyncResult } from "../../core/provider";
-import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from "./android-backup-crypto";
+import { decryptAndroidBackup, encryptAndroidBackup, getAndroidBackupEncryptionFormat, isAndroidEncryptedBackup, type AndroidBackupEncryptionFormat } from "./android-backup-crypto";
 import { deleteAndroidBackupItem, deleteAndroidGeneratorHistoryEntry, deleteAndroidPortableAttachment, listAndroidGeneratorHistory, listAndroidPortableAttachments, readAndroidBackup, readAndroidPortableAttachment, upsertAndroidPortableAttachment, writeAndroidBackup, type AndroidBackupDocument, type AndroidGeneratorHistoryEntry } from "./android-backup-codec";
 import type { ProviderAttachmentPage, ProviderAttachmentReadBeginResult, ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { WebDavClient, type WebDavBackupFile, type WebDavCredentials } from "./webdav-client";
@@ -9,6 +9,7 @@ import { assertPasswordProjectRemovalSyncSafe } from "../../core/password-projec
 
 export interface MonicaWebDavConfig extends WebDavCredentials, Record<string, unknown> {
   backupPassword?: string;
+  backupEncryptionFormat?: AndroidBackupEncryptionFormat;
   lastFileName?: string;
   lastEtag?: string;
 }
@@ -126,7 +127,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     }
 
     let baselineFile = loaded.file;
-    if (needsUpload) baselineFile = await this.uploadDocument(account, loaded.document, merged, context.signal, loaded.file);
+    if (needsUpload) baselineFile = await this.uploadDocument(account, loaded.document, merged, context.signal, loaded.file, loaded.encryptionFormat);
     const synced = finalizeItems(merged, account.id, baselineFile);
     return {
       items: [...unrelated, ...synced],
@@ -140,7 +141,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
   async create(account: ProviderAccount, item: VaultItem, signal?: AbortSignal): Promise<VaultItem> {
     const loaded = await this.loadLatest(account, signal);
     const document = loaded?.document || emptyDocument();
-    const uploaded = await this.uploadDocument(account, document, [...document.items, item], signal, loaded?.file);
+    const uploaded = await this.uploadDocument(account, document, [...document.items, item], signal, loaded?.file, loaded?.encryptionFormat);
     return finalizeItem(item, account.id, uploaded);
   }
 
@@ -151,7 +152,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     const items = document.items.some((candidate) => candidate.id === item.id)
       ? document.items.map((candidate) => (candidate.id === item.id ? item : candidate))
       : [...document.items, item];
-    const uploaded = await this.uploadDocument(account, document, items, signal, loaded?.file);
+    const uploaded = await this.uploadDocument(account, document, items, signal, loaded?.file, loaded?.encryptionFormat);
     return finalizeItem(item, account.id, uploaded);
   }
 
@@ -160,7 +161,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     if (!loaded) return;
     bindDocumentIdentity(loaded.document, item, account.id);
     deleteAndroidBackupItem(loaded.document, item.id);
-    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file, loaded.encryptionFormat);
   }
 
   async listGeneratorHistory(account: ProviderAccount, signal?: AbortSignal): Promise<AndroidGeneratorHistoryEntry[]> {
@@ -171,7 +172,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
   async deleteGeneratorHistoryEntry(account: ProviderAccount, entryId: string, signal?: AbortSignal): Promise<boolean> {
     const loaded = await this.loadLatest(account, signal);
     if (!loaded || !deleteAndroidGeneratorHistoryEntry(loaded.document, entryId)) return false;
-    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file, loaded.encryptionFormat);
     return true;
   }
 
@@ -200,7 +201,7 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     if (!loaded) throw new Error("WebDAV 中尚无 Monica Android 备份，请先完成一次同步。");
     bindDocumentIdentity(loaded.document, item, account.id);
     const entry = upsertAndroidPortableAttachment(loaded.document, item, { ...input, mimeType: input.mediaType }, bytes);
-    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file, loaded.encryptionFormat);
     return portableSummary(entry);
   }
 
@@ -212,19 +213,21 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     bindDocumentIdentity(loaded.document, item, account.id);
     const changed = deleteAndroidPortableAttachment(loaded.document, item, attachmentId);
     if (!changed) return false;
-    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file);
+    await this.uploadDocument(account, loaded.document, loaded.document.items, signal, loaded.file, loaded.encryptionFormat);
     return true;
   }
 
-  async loadLatest(account: ProviderAccount, signal?: AbortSignal, selectedFile?: WebDavBackupFile): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument } | null> {
+  async loadLatest(account: ProviderAccount, signal?: AbortSignal, selectedFile?: WebDavBackupFile): Promise<{ file: WebDavBackupFile; document: AndroidBackupDocument; encryptionFormat?: AndroidBackupEncryptionFormat } | null> {
     const client = this.client(account);
     const file = selectedFile || (await client.listBackups(signal))[0];
     if (!file) return null;
     const config = readConfig(account);
     const remoteBytes = await client.download(file, signal);
-    const encrypted = isAndroidEncryptedBackup(remoteBytes);
+    const encryptionFormat = getAndroidBackupEncryptionFormat(remoteBytes);
+    const encrypted = Boolean(encryptionFormat);
     const zipBytes = encrypted ? await decryptAndroidBackup(remoteBytes, config.backupPassword || "") : remoteBytes;
-    return { file, document: readAndroidBackup(zipBytes, account.id, { allowPortablePasskeys: encrypted, allowPortableAttachments: encrypted }) };
+    signal?.throwIfAborted();
+    return { file, document: readAndroidBackup(zipBytes, account.id, { allowPortablePasskeys: encrypted, allowPortableAttachments: encrypted }), encryptionFormat };
   }
 
   /** Complete read-only snapshot for a batch. Do not create a missing source
@@ -252,14 +255,19 @@ export class MonicaWebDavProvider implements ProviderAdapter {
     document: AndroidBackupDocument,
     items: VaultItem[],
     signal?: AbortSignal,
-    expectedLatest?: WebDavBackupFile
+    expectedLatest?: WebDavBackupFile,
+    previousEncryptionFormat?: AndroidBackupEncryptionFormat
   ): Promise<WebDavBackupFile> {
     signal?.throwIfAborted();
     const config = readConfig(account);
+    // The successfully authenticated source determines the minimum profile.
+    // A saved compatibility preference must never downgrade an existing V2 archive.
+    const encryptionFormat = previousEncryptionFormat === "v2" ? "v2" : config.backupEncryptionFormat || previousEncryptionFormat || "v1";
+    if (encryptionFormat === "v2" && !config.backupPassword) throw new Error("V2 备份需要加密密码。");
     const encrypted = Boolean(config.backupPassword);
     const stagedItems = structuredClone(items);
     const zipBytes = writeAndroidBackup(document, stagedItems, account.id, { allowPortablePasskeys: encrypted });
-    const payload = encrypted ? await encryptAndroidBackup(zipBytes, config.backupPassword!) : zipBytes;
+    const payload = encrypted ? await encryptAndroidBackup(zipBytes, config.backupPassword!, undefined, undefined, encryptionFormat) : zipBytes;
     signal?.throwIfAborted();
     const client = this.client(account);
     const before = await client.listBackups(signal);
@@ -303,11 +311,13 @@ function portableSummary(attachment: { attachmentId: string; fileName: string; s
 function readConfig(account: ProviderAccount): MonicaWebDavConfig {
   const config = account.config as Partial<MonicaWebDavConfig>;
   if (!config.baseUrl || typeof config.baseUrl !== "string") throw new Error("WebDAV 地址未配置。");
+  if (config.backupEncryptionFormat !== undefined && config.backupEncryptionFormat !== "v1" && config.backupEncryptionFormat !== "v2") throw new Error("Android 备份加密格式无效。");
   return {
     baseUrl: config.baseUrl,
     username: typeof config.username === "string" ? config.username : "",
     password: typeof config.password === "string" ? config.password : "",
     backupPassword: typeof config.backupPassword === "string" ? config.backupPassword : undefined,
+    backupEncryptionFormat: config.backupEncryptionFormat,
     lastFileName: typeof config.lastFileName === "string" ? config.lastFileName : undefined,
     lastEtag: typeof config.lastEtag === "string" ? config.lastEtag : undefined
   };

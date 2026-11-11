@@ -10,7 +10,7 @@ import { isPlainBitwardenExport, importPlainBitwardenJson } from './bitwarden-js
 import { parseCsvToVaultItems } from './csv-import';
 import { decodeAegis, decodeStratum, otpItem, readAuthenticators, record } from './authenticator-import';
 import { readAndroidBackup, writeAndroidBackup, vaultItemToAndroidRecord } from '../providers/webdav/android-backup-codec';
-import { decryptAndroidBackup, encryptAndroidBackup, isAndroidEncryptedBackup } from '../providers/webdav/android-backup-crypto';
+import { decryptAndroidBackup, encryptAndroidBackup, getAndroidBackupEncryptionFormat, type AndroidBackupEncryptionFormat } from '../providers/webdav/android-backup-crypto';
 import { openKeePassVault } from '../providers/keepass/keepass-vault';
 import { createKeePassEntry } from '../providers/keepass/keepass-writer';
 import { installKdbxCryptoEngine } from '../providers/keepass/keepass-crypto';
@@ -33,9 +33,10 @@ export async function previewImport(input: TransferInput): Promise<FileImportPre
   if (sniffed.kind === 'plugin-backup-json') throw new Error('这是插件加密整库备份，请在“加密备份与恢复”中恢复。');
   if (sniffed.kind === 'mdbx-vault' || sniffed.kind === 'mdbx-complete-backup-zip') throw new Error('这是独立 MDBX 密码库，请在“打开已有的密码库”中导入。');
   const password = input.password || '', prefix = new TextDecoder().decode(input.bytes.subarray(0, 20));
+  const encryptionFormat = getAndroidBackupEncryptionFormat(input.bytes);
   let format = input.format || 'auto';
   if (format === 'auto') {
-    if (isAndroidEncryptedBackup(input.bytes) || input.bytes[0] === 0x50 && input.bytes[1] === 0x4b) format = 'zip';
+    if (encryptionFormat || input.bytes[0] === 0x50 && input.bytes[1] === 0x4b) format = 'zip';
     else if (/\.kdbx$/i.test(input.name) || input.bytes[0] === 3 && input.bytes[1] === 0xd9) format = 'kdbx';
     else if (/^(AUTHENTICATORPRO|AuthenticatorPro)/.test(prefix)) format = 'stratum';
     else if (/\.csv$/i.test(input.name)) format = 'csv';
@@ -44,8 +45,8 @@ export async function previewImport(input: TransferInput): Promise<FileImportPre
   }
   let items: VaultItem[] = [], skipped = 0; const warnings: string[] = [];
   if (format === 'zip') {
-    if (isAndroidEncryptedBackup(input.bytes) && !password) throw new Error('请输入文件密码。');
-    const bytes = isAndroidEncryptedBackup(input.bytes) ? await decryptAndroidBackup(input.bytes, password) : input.bytes;
+    if (encryptionFormat && !password) throw new Error('请输入文件密码。');
+    const bytes = encryptionFormat ? await decryptAndroidBackup(input.bytes, password) : input.bytes;
     const entries = safeUnzipSync(bytes);
     const steamFiles = Object.entries(entries).filter(([path]) => /\.mafile(?:\.json)?$/i.test(path));
     if (steamFiles.length) {
@@ -135,14 +136,15 @@ export function exportableItems(items: VaultItem[], format: ExportFormat): Vault
   return active.filter(item => item.kind !== 'opaque');
 }
 
-export async function createTransferExport(items: VaultItem[], format: ExportFormat, password = ''): Promise<{ bytes: Uint8Array; extension: string; count: number }> {
+export async function createTransferExport(items: VaultItem[], format: ExportFormat, password = '', backupEncryptionFormat: AndroidBackupEncryptionFormat = 'v1'): Promise<{ bytes: Uint8Array; extension: string; count: number }> {
+  if (format === 'zip' && backupEncryptionFormat === 'v2' && !password) throw new Error('增强 V2 ZIP 导出必须设置文件密码。');
   const selected = structuredClone(exportableItems(items, format));
   if (!selected.length) throw new Error('当前没有可按此格式导出的项目。');
   let bytes: Uint8Array, extension: string = format;
   if (format === 'json') bytes = strToU8(JSON.stringify({ version: 1, items: selected }, null, 2));
   else if (format === 'zip') {
     bytes = writeAndroidBackup({ entries: {}, records: new Map(), warnings: [], items: [] }, selected, 'file-export', portable);
-    if (password) bytes = await encryptAndroidBackup(bytes, password);
+    if (password) bytes = await encryptAndroidBackup(bytes, password, undefined, undefined, backupEncryptionFormat);
   } else if (format === 'kdbx') {
     if (!password) throw new Error('请设置 KDBX 文件密码。');
     installKdbxCryptoEngine();

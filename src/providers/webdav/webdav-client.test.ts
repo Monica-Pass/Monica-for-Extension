@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { backupFolderUrl, normalizeServerUrl, parseMultiStatus, WebDavClient } from "./webdav-client";
+import { backupFolderUrl, DEFAULT_WEBDAV_CLIENT_LIMITS, normalizeServerUrl, parseMultiStatus, WebDavClient } from "./webdav-client";
+import { DEFAULT_ZIP_SAFETY_LIMITS } from "./zip-safety";
 
 const MULTISTATUS = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
   <d:response><d:href>/dav/Monica_Backups/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>
@@ -8,6 +9,17 @@ const MULTISTATUS = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 </d:multistatus>`;
 
 describe("WebDAV client", () => {
+  it("allows the complete V2 envelope overhead but rejects larger declared downloads before fetching", async () => {
+    const fetcher = vi.fn(async () => new Response(Uint8Array.of(1)));
+    const client = new WebDavClient({ baseUrl: "https://example.test/dav", username: "synthetic", password: "synthetic" }, fetcher);
+    const size = DEFAULT_ZIP_SAFETY_LIMITS.maxArchiveBytes + 84;
+    const file = { name: "monica_backup_synthetic.enc.zip", url: "https://example.test/dav/Monica_Backups/monica_backup_synthetic.enc.zip", encrypted: true, size };
+    await expect(client.download(file)).resolves.toEqual(Uint8Array.of(1));
+    fetcher.mockClear();
+    await expect(client.download({ ...file, size: size + 1 })).rejects.toThrow("超过安全上限");
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(DEFAULT_WEBDAV_CLIENT_LIMITS.maxUploadBytes).toBe(size);
+  });
   it("reconciles a lost upload response under the default retry policy with exactly one PUT", async () => {
     const bytes = Uint8Array.of(9, 7, 5);
     const methods: string[] = [];

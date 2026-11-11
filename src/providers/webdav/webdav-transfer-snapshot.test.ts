@@ -3,14 +3,14 @@ import { strToU8, zipSync } from 'fflate';
 import type { ProviderAccount } from '../../core/model';
 import { createPasskey } from '../../passkey/webauthn-core';
 import { MonicaWebDavProvider } from './monica-webdav-provider';
-import { encryptAndroidBackup } from './android-backup-crypto';
+import { encryptAndroidBackup, type AndroidBackupEncryptionFormat } from './android-backup-crypto';
 import { listAndroidPortableAttachments, readAndroidPortableAttachment } from './android-backup-codec';
 
 const name = 'monica_backup_snapshot.enc.zip', baseUrl = 'https://example.test/dav';
 const account: ProviderAccount = { id: 'dav', kind: 'monica-webdav', name: 'Synthetic', enabled: true, isDefaultSaveTarget: false,
   config: { baseUrl, username: 'synthetic', password: 'synthetic', backupPassword: 'synthetic backup', lastFileName: name, lastEtag: '"v1"' } };
 const sha = async (value: Uint8Array) => Buffer.from(await crypto.subtle.digest('SHA-256', value as BufferSource)).toString('hex');
-async function fixture(mode = '') {
+async function fixture(mode = '', format: AndroidBackupEncryptionFormat = 'v1') {
   const key = await createPasskey({ origin: 'https://example.test', challenge: Buffer.alloc(32, 1).toString('base64url'), rpName: 'Synthetic',
     userId: 'dXNlcg', userName: 'user', userDisplayName: 'User', algorithms: [-7], excludeCredentialIds: [] });
   const attachment = Uint8Array.of(1, 2, 3, 4);
@@ -22,7 +22,7 @@ async function fixture(mode = '') {
       payloadPath: 'attachments_portable/test.bin', fileName: 'recovery.txt', sizeBytes: attachment.length, sha256Hex: await sha(attachment) }] })),
     'attachments_portable/test.bin': attachment
   }, { level: 0 }); // Stored ZIP entries must also outlive the cleared archive buffer.
-  let remote = mode === 'plaintext' ? zip : await encryptAndroidBackup(zip, 'synthetic backup'), lists = 0;
+  let remote = mode === 'plaintext' ? zip : await encryptAndroidBackup(zip, 'synthetic backup', undefined, undefined, format), lists = 0;
   const controller = new AbortController();
   const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
     if (init?.method === 'PROPFIND') {
@@ -43,11 +43,11 @@ async function fixture(mode = '') {
   });
   const provider = new MonicaWebDavProvider(fetcher);
   return { key, attachment, fetcher, controller, provider, hash: () => sha(remote),
-    replace: async () => { remote = await encryptAndroidBackup(zip, 'synthetic backup'); lists = 0; } };
+    replace: async () => { remote = await encryptAndroidBackup(zip, 'synthetic backup', undefined, undefined, format); lists = 0; } };
 }
 
-it.each(['strong', 'weak'])('returns an intact encrypted snapshot with %s ETags and no writes', async mode => {
-  const f = await fixture(mode), snapshot = await f.provider.readTransferSnapshot(account);
+it.each([['strong', 'v1'], ['weak', 'v1'], ['strong', 'v2'], ['weak', 'v2']] as const)('returns an intact encrypted snapshot with %s ETags and %s encryption with no writes', async (mode, format) => {
+  const f = await fixture(mode, format), snapshot = await f.provider.readTransferSnapshot(account);
   expect(snapshot.sha256).toBe(await f.hash());
   expect(snapshot.document.items.find(item => item.kind === 'passkey')).toMatchObject({ privateKeyPkcs8: f.key.privateKeyPkcs8, credentialId: f.key.credentialId, signCount: 0 });
   const login = snapshot.document.items.find(item => item.kind === 'login')!;
@@ -58,8 +58,9 @@ it.each(['strong', 'weak'])('returns an intact encrypted snapshot with %s ETags 
   expect((await f.provider.readTransferSnapshot(account)).sha256).not.toBe(snapshot.sha256);
 });
 
-it.each(['latest', 'etag', 'size', 'modified', 'response-etag', 'abort'])('refuses %s changes during snapshot reading', async mode => {
-  const f = await fixture(mode); await expect(f.provider.readTransferSnapshot(account, f.controller.signal)).rejects.toThrow();
+it.each(['latest', 'etag', 'size', 'modified', 'response-etag', 'abort']
+  .flatMap(mode => (['v1', 'v2'] as const).map(format => [mode, format] as const)))('refuses %s changes during %s snapshot reading', async (mode, format) => {
+  const f = await fixture(mode, format); await expect(f.provider.readTransferSnapshot(account, f.controller.signal)).rejects.toThrow();
   expect(f.fetcher.mock.calls.every(([, init]) => ['GET', 'PROPFIND'].includes(init!.method!))).toBe(true);
 });
 
