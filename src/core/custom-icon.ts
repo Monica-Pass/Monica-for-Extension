@@ -1,4 +1,4 @@
-import catalog from './brand-icon-catalog.json';
+import catalog from './brand-icon-catalog.json' with { type: 'json' };
 import { bitmapIconDataUrl, KEEPASS_CUSTOM_ICON_TYPE } from './bitmap-icon';
 export const brandIcons = catalog;
 export const quickEmojiIcons = ['🔑','🔐','💳','🏦','🎁','🛒','📧','📱','🎮','🎵','🎬','📚','🏠','🚗','✈️','🏥','💼','🏫','☁️','🌐','⭐','❤️','🍔','🐱'];
