@@ -77,7 +77,9 @@ describe("reproducible release contract", () => {
       read("scripts/verify-release.mjs")
     ]);
     expect(pkg.version).toBe(manifest.version);
-    expect(pkg.scripts.build).toContain("verify-extension-pages.mjs");
+    expect(pkg.scripts.build).toContain("build-extension.mjs");
+    expect(await read("scripts/build-extension.mjs")).toContain("run('scripts/verify-extension-pages.mjs')");
+    expect(pkg.scripts.validate).toContain("test:build");
     expect(pkg.scripts["package:verify"]).toContain("verify-release.mjs");
     expect(pkg.scripts["release:check"]).toContain("package:verify");
     expect(pkg.scripts["verify:supply-chain"]).toContain("verify:lockfile");

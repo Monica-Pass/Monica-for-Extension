@@ -868,7 +868,9 @@ export class KeePassProvider implements ProviderAdapter {
         continue;
       }
       /** No stored fingerprint means no baseline, so the safe move is always to take the file's copy. */
-      const localChanged = Boolean(reference.etag) && fingerprint(local) !== storedFingerprint(reference.etag!);
+      const etag = reference.etag;
+      const localContent = etag ? fingerprint(local) : undefined;
+      const localChanged = Boolean(etag && localContent !== etag && localContent !== storedFingerprint(etag));
 
       if (pendingByItemId && !pendingByItemId.has(local.id) && (localChanged || local.deletedAt)) {
         keepLocal.set(entryUuid, local);
@@ -885,9 +887,14 @@ export class KeePassProvider implements ProviderAdapter {
 
       // UsageCount is not an edit revision: Android/KeePass clients can change
       // fields without incrementing it. Compare the represented native content.
-      const remoteBaseline = restoreContentFingerprint(reference.etag || '');
-      const remoteChanged = (referenceOf(remote, account.id)?.revision || "") !== (reference.revision || "")
-        || Boolean(remoteBaseline && restoreContentFingerprint(fingerprint(remote)) !== remoteBaseline);
+      let remoteChanged = (referenceOf(remote, account.id)?.revision || "") !== (reference.revision || "");
+      if (!remoteChanged && etag) {
+        const remoteContent = fingerprint(remote);
+        if (remoteContent !== etag) {
+          const baseline = restoreContentFingerprint(etag);
+          remoteChanged = Boolean(baseline && restoreContentFingerprint(remoteContent) !== baseline);
+        }
+      }
       if (remote.deletedAt) {
         if (local.deletedAt) continue; // Already in the bin: never purge it on a repeated sync.
         if (pendingByItemId?.get(local.id)?.keepassRestore) {
@@ -1313,7 +1320,6 @@ function conflictingPasskeyMutations(
   updates: Array<{ entryUuid: string; item: VaultItem }>,
   creations: VaultItem[]
 ): Set<string> {
-  const existingOwners = rawPasskeyCredentialOwners(session);
   const desiredOwners = new Map<string, Array<{ itemId: string; entryUuid?: string }>>();
   for (const mutation of [
     ...updates.map((update) => ({ item: update.item, entryUuid: update.entryUuid })),
@@ -1327,6 +1333,8 @@ function conflictingPasskeyMutations(
   }
 
   const conflicts = new Set<string>();
+  if (!desiredOwners.size) return conflicts;
+  const existingOwners = rawPasskeyCredentialOwners(session);
   for (const [credentialId, desired] of desiredOwners) {
     if (desired.length > 1) for (const owner of desired) conflicts.add(owner.itemId);
     const existing = existingOwners.get(credentialId);

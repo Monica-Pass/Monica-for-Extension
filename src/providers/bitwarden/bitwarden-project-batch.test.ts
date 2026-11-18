@@ -49,11 +49,13 @@ async function fixture(singles = 99) {
 
 it('defers the complete project at a 100-item boundary and uploads both members after a vault/coordinator restart', async () => {
   const f = await fixture();
-  const first = await new BitwardenDurableSyncCoordinator(new BitwardenProvider(f.fetcher), f.vault).synchronize(f.account);
+  const first = await new BitwardenDurableSyncCoordinator(new BitwardenProvider(f.fetcher), f.vault)
+    .synchronize(f.account, undefined, { diagnosticStartedAt: f.clock() });
   expect(first.conflicts).toEqual([]);
   expect(f.requests).toHaveLength(99);
   expect(first.warnings.join(' ')).toContain('99');
   const remaining = await f.vault.readState();
+  expect(remaining.providerDiagnostics[remaining.providerDiagnostics.length - 1]).toMatchObject({ warnings: first.warnings.length });
   expect(remaining.mutationQueue.map(row => row.itemId).sort()).toEqual(['project-0', 'project-1']);
   expect(remaining.providerMutationReceipts).toEqual([]);
   for (const original of f.project) expect(remaining.items.find(row => row.id === original.id)).toMatchObject({

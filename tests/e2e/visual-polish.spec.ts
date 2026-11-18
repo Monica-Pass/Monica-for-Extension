@@ -11,7 +11,7 @@ test("auth card omits the decorative avatar", async ({}, testInfo) => {
     context = await launchTestContext(testInfo.outputPath("auth-polish-profile"), { channel: "chromium", headless: true, locale: "zh-CN", args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker"); const extensionId = new URL(worker.url()).host;
     const page = await context.newPage(); await page.goto(`chrome-extension://${extensionId}/index.html`);
-    await expect(page.locator(".login-card h1")).toHaveText("创建加密密码库");
+    await expect(page.locator(".login-card h1")).toHaveText("首次使用");
     await expect(page.locator(".avatar-icon")).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath("auth-card.png"), fullPage: true });
   } finally { await context?.close(); }

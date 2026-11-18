@@ -5,7 +5,13 @@ gradle.beforeProject { project ->
             if (sourceDirectory == null || sourceDirectory.trim().isEmpty()) {
                 throw new GradleException('MONICA_KEEPASS_INTEROP_SOURCE_DIR is required')
             }
-            project.android.sourceSets.test.java.srcDir(sourceDirectory)
+            def testSources = project.android.sourceSets.test
+            // AGP built-in Kotlin uses its own source set for .kt files.
+            if (testSources.hasProperty('kotlin')) {
+                testSources.kotlin.srcDir(sourceDirectory)
+            } else {
+                testSources.java.srcDir(sourceDirectory)
+            }
             project.tasks.matching { task -> task.name == 'testDebugUnitTest' }.configureEach { task ->
                 task.outputs.upToDateWhen { false }
             }

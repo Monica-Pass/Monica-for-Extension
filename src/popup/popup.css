@@ -578,6 +578,8 @@ body.popup-body {
   to { transform: rotate(360deg); }
 }
 
+.popup-supplement-loading { padding: 12px; color: var(--app-muted); font-size: .8125rem; }
+
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none !important; }
 }

@@ -44,6 +44,7 @@ const JVM_ANDROID_SOURCES = [
   "keepass/KeePassChangeSet.kt", "keepass/KeePassSecureItemPhotoAttachments.kt",
   "keepass/KeePassPasskeySyncCodec.kt", "utils/KeePassCodecSupport.kt",
   "keepass/KeePassXmlContentParser.kt", "keepass/KeePassKotpassXmlReader.java",
+  "keepass/KeePassNativeKdf.kt", "keepass/KeePassNativeAesKdf.kt", "rustcore/RustKeePassKdfCore.kt",
   "passkey/PasskeyPrivateKeySupport.kt"
 ];
 
@@ -98,7 +99,8 @@ describe("KeePass current Android and browser KDBX interoperability", () => {
     let primaryError: unknown;
     let evidence: Record<string, unknown> | undefined;
     try {
-      const jvmProject = standalone ? await prepareStandaloneJvm(extensionRoot, coreSources, sourceDirectory, runRoot) : undefined;
+      const kotpassSources = join(androidProject, "kotpass/src/main/kotlin");
+      const jvmProject = standalone ? await prepareStandaloneJvm(extensionRoot, coreSources, kotpassSources, sourceDirectory, runRoot) : undefined;
       await runAndroidFixtureMethod(androidProject, initScript, sourceDirectory, runRoot, "generateAndroidKdbxFixtures", jvmProject);
 
       const variantEvidence: Record<string, unknown>[] = [];
@@ -473,13 +475,14 @@ async function runAndroidFixtureMethod(
   });
 }
 
-async function prepareStandaloneJvm(extensionRoot: string, coreSources: string, fixtures: string, runRoot: string): Promise<string> {
+async function prepareStandaloneJvm(extensionRoot: string, coreSources: string, kotpassSources: string, fixtures: string, runRoot: string): Promise<string> {
   const apiJar = process.env.MONICA_ANDROID_API_JAR;
   if (!apiJar || !existsSync(apiJar)) throw new Error("MONICA_ANDROID_API_JAR must name the local Android SDK android.jar for standalone JVM verification.");
   const project = join(runRoot, "jvm");
   const template = join(extensionRoot, "tests/interop/android-keepass/jvm");
   await mkdir(project, { recursive: true });
   for (const name of ["build.gradle", "settings.gradle"]) await cp(join(template, name), join(project, name));
+  await cp(kotpassSources, join(project, "src/main/kotlin"), { recursive: true });
   for (const file of JVM_ANDROID_SOURCES) {
     const target = join(project, file.endsWith(".java") ? "src/main/java/takagi/ru/monica" : "src/main/kotlin/takagi/ru/monica", file);
     await mkdir(dirname(target), { recursive: true });

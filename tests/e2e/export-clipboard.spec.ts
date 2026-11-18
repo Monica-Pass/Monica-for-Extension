@@ -104,7 +104,7 @@ test('encrypted checkpoints survive reopening, require authentication, and diagn
     expect(before.bytes).toBeGreaterThan(0);
     // Read actual IndexedDB records to prove checkpoints contain ciphertext only.
     expect(await page.evaluate(async()=>{
-      const database=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open('monica-extension-secure-vault',1);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+      const database=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open('monica-extension-secure-vault');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
       try {return await new Promise<boolean>((resolve,reject)=>{const request=database.transaction('vault').objectStore('vault').get('recovery');request.onsuccess=()=>{const json=JSON.stringify(request.result);resolve(Array.isArray(request.result)&&request.result.length===1&&!json.includes('synthetic-private')&&!json.includes('Never in diagnostics')&&typeof request.result[0].envelope.ciphertext==='string');};request.onerror=()=>reject(request.error);});}
       finally {database.close();}
     })).toBe(true);

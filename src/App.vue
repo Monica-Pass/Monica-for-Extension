@@ -37,7 +37,7 @@ import AutoLockSettings from './components/AutoLockSettings.vue';
 import VaultStoragePanel from './components/VaultStoragePanel.vue';
 import RuntimeDiagnostics from './components/RuntimeDiagnostics.vue';
 import ExtensionUpdates from './components/ExtensionUpdates.vue';
-import { runtimeInfo } from './runtime/version';
+import { RELEASE_CODENAME, runtimeInfo } from './runtime/version';
 import { writeSecretClipboard } from './lib/secret-clipboard';
 import type { VaultExportResult } from './security/authenticated-export';
 import { connectLiveVault } from "./runtime/live-vault";
@@ -47,12 +47,12 @@ import BitwardenProviderCard from "./components/BitwardenProviderCard.vue";
 const BitwardenSendsPanel = defineAsyncComponent(() => import("./components/BitwardenSendsPanel.vue"));
 const GeneratorPanel = defineAsyncComponent(() => import("./components/GeneratorPanel.vue"));
 import KeePassGroupsDialog from "./components/KeePassGroupsDialog.vue";
-import KeePassHistoryDialog from "./components/KeePassHistoryDialog.vue";
+const KeePassHistoryDialog = defineAsyncComponent(() => import('./components/KeePassHistoryDialog.vue'));
 import Mdbx2BatchTransferDialog from "./components/Mdbx2BatchTransferDialog.vue";
 import Mdbx2PendingMoves from "./components/Mdbx2PendingMoves.vue";
-import Mdbx2SourceDialog from "./components/Mdbx2SourceDialog.vue";
+const Mdbx2SourceDialog = defineAsyncComponent(() => import('./components/Mdbx2SourceDialog.vue'));
 import FirstRunMdbxImport from "./components/FirstRunMdbxImport.vue";
-import ProviderAttachmentsDialog from "./components/ProviderAttachmentsDialog.vue";
+const ProviderAttachmentsDialog = defineAsyncComponent(() => import('./components/ProviderAttachmentsDialog.vue'));
 import M3eConfirmationDialog from "./components/ProviderConfirmationDialog.vue";
 const SteamAccountDialog = defineAsyncComponent(() => import("./components/SteamAccountDialog.vue"));
 import VaultItemTile from "./components/VaultItemTile.vue";
@@ -62,7 +62,8 @@ import OtpTileCountdown from "./components/OtpTileCountdown.vue";
 import TotpCodeCell from "./components/TotpCodeCell.vue";
 import { selectAuthenticatorItems } from './manager/authenticator-items';
 import VaultItemDetail from "./components/VaultItemDetail.vue";
-import VaultItemEditor, { type EditableVaultKind } from "./components/VaultItemEditor.vue";
+import type { EditableVaultKind } from './components/VaultItemEditor.vue';
+const VaultItemEditor = defineAsyncComponent(() => import('./components/VaultItemEditor.vue'));
 import LoginEditorFields from "./components/LoginEditorFields.vue";
 import PasswordProjectPendingRemovals from './components/PasswordProjectPendingRemovals.vue';
 import PasswordProjectPendingRestores from './components/PasswordProjectPendingRestores.vue';
@@ -209,7 +210,9 @@ const createButtonLabel = computed(() => activeSection.value === "wallet" ? tr('
 const loading = ref(true);
 const authBusy = ref(false);
 const authError = ref("");
-const authAction = ref<"create" | "mdbx" | "restore">("create");
+type FirstRunAction = "start" | "create" | "mdbx" | "restore";
+const authAction = ref<FirstRunAction>("start");
+const firstRunImportBusy = ref(false);
 const runtimeReloadRequired = ref(false);
 const mobileNavOpen = ref(false);
 let navigationOpener: HTMLElement | undefined;
@@ -336,7 +339,7 @@ const settingsEntries = computed(() => [
   {id: 'transfer', group: 'vault', title: tr('导入与导出'), description: tr('Android 备份、KeePass、JSON、CSV 与验证器'), icon: 'swap_vert'},
   {id: 'backup', group: 'vault', title: tr('加密备份与恢复'), description: tr('完整备份插件，包括附件文件与连接配置。'), icon: 'encrypted'},
   {id: 'diagnostics', group: 'general', title: tr('运行诊断'), description: tr('检查构建与组件状态，下载脱敏报告'), icon: 'info'},
-  {id: 'updates', group: 'general', title: tr('检查更新'), description: tr('当前版本 {0}', {0: runtimeInfo.version}), icon: 'download'}
+  {id: 'updates', group: 'general', title: tr('检查更新'), description: `${tr('当前版本 {0}', {0: runtimeInfo.version})} · ${RELEASE_CODENAME}`, icon: 'download'}
 ]);
 watch(settingsPage, (_page, previous) => {
   securityError.value = '';
@@ -741,6 +744,16 @@ function rememberProtectionMode(mode: "master-password" | "device-key") {
   } catch {
     // Storage may be unavailable in private mode; the runtime still validates.
   }
+}
+
+async function chooseFirstRunAction(action: FirstRunAction) {
+  if (lifecycle.value !== 'uninitialized' || authBusy.value || securityBusy.value || firstRunImportBusy.value) return;
+  auth.masterPassword = auth.confirmation = '';
+  restoreForm.backupPassword = restoreForm.currentPassword = '';
+  authError.value = securityError.value = '';
+  authAction.value = action;
+  await nextTick();
+  document.querySelector<HTMLElement>(action === 'start' ? '.first-run-actions button' : '.auth-step-heading')?.focus();
 }
 
 function submitAuthForm() {
@@ -2893,7 +2906,7 @@ function errorCode(error: unknown): string | undefined {
       <img class="brand-logo" src="/icons/logo-256.png" width="48" height="48" alt="" /><h1>Monica</h1><p>{{ tr('正在检查加密密码库…') }}</p>
     </div>
 
-    <form v-else-if="lifecycle !== 'unlocked'" class="login vault-auth" @submit.prevent="submitAuthForm">
+    <section v-else-if="lifecycle !== 'unlocked'" class="login vault-auth">
       <m3e-card variant="filled" class="login-card">
         <div slot="content" class="stack login-stack">
           <div class="login-brand"><img class="brand-logo" src="/icons/logo-256.png" width="48" height="48" alt="" /><span class="login-brand-copy">Monica<small>{{ tr('浏览器插件') }}</small></span></div>
@@ -2903,13 +2916,17 @@ function errorCode(error: unknown): string | undefined {
             <p class="supporting">{{ tr('请先保存其他 Monica 窗口中的修改。重新加载后，再打开 Monica。') }}</p>
             <m3e-button variant="filled" type="button" @click="reloadRuntime">{{ tr('重新加载扩展') }}</m3e-button>
           </div>
-          <template v-else>
-          <div class="login-heading"><h1>{{ lifecycle === 'uninitialized' ? tr('创建加密密码库') : tr('解锁 Monica') }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? (authAction === 'create' ? tr('主密码可选，也可使用设备密钥。') : authAction === 'mdbx' ? tr('打开已有的 MDBX、KDBX 或完整备份，并同时选择插件保护方式。') : tr('恢复插件状态（条目与密码源配置）。独立 MDBX 数据库需要单独的 MDBX 备份。')) : protectionMode === 'device-key' ? tr('设备密钥模式可留空解锁。') : tr('输入主密码解锁。') }}</p></div>
-          <div v-if="lifecycle === 'uninitialized'" class="auth-action-picker" role="tablist" :aria-label="tr('首次使用')">
-            <button type="button" role="tab" :aria-selected="authAction === 'create'" :class="{ selected: authAction === 'create' }" @click="authAction = 'create'">{{ tr('创建密码库') }}</button>
-            <button type="button" role="tab" :aria-selected="authAction === 'mdbx'" :class="{ selected: authAction === 'mdbx' }" @click="authAction = 'mdbx'">{{ tr('打开已有的密码库') }}</button>
-            <button type="button" role="tab" :aria-selected="authAction === 'restore'" :class="{ selected: authAction === 'restore' }" @click="authAction = 'restore'">{{ tr('恢复插件备份') }}</button>
-          </div>
+          <section v-else-if="lifecycle === 'uninitialized' && authAction === 'start'" class="stack first-run-start" aria-labelledby="first-run-title">
+            <div class="login-heading"><h1 id="first-run-title">{{ tr('首次使用') }}</h1></div>
+            <div class="first-run-actions">
+              <button type="button" @click="chooseFirstRunAction('create')"><m3e-icon name="add" aria-hidden="true" /><span>{{ tr('创建密码库') }}</span><m3e-icon name="chevron_right" aria-hidden="true" /></button>
+              <button type="button" @click="chooseFirstRunAction('mdbx')"><m3e-icon name="folder_open" aria-hidden="true" /><span>{{ tr('打开已有的密码库') }}</span><m3e-icon name="chevron_right" aria-hidden="true" /></button>
+              <button type="button" @click="chooseFirstRunAction('restore')"><m3e-icon name="restore" aria-hidden="true" /><span>{{ tr('恢复插件备份') }}</span><m3e-icon name="chevron_right" aria-hidden="true" /></button>
+            </div>
+          </section>
+          <form v-else class="stack auth-form" @submit.prevent="submitAuthForm">
+          <button v-if="lifecycle === 'uninitialized'" type="button" class="auth-back" :disabled="authBusy || Boolean(securityBusy) || firstRunImportBusy" @click="chooseFirstRunAction('start')"><m3e-icon name="arrow_back" aria-hidden="true" />{{ tr('返回') }}</button>
+          <div class="login-heading"><h1 class="auth-step-heading" tabindex="-1">{{ lifecycle === 'uninitialized' ? authAction === 'create' ? tr('创建加密密码库') : authAction === 'mdbx' ? tr('打开已有的密码库') : tr('恢复插件备份') : tr('解锁 Monica') }}</h1><p class="supporting">{{ lifecycle === 'uninitialized' ? (authAction === 'create' ? tr('主密码可选，也可使用设备密钥。') : authAction === 'mdbx' ? tr('打开已有的 MDBX、KDBX 或完整备份，并同时选择插件保护方式。') : tr('恢复插件状态（条目与密码源配置）。独立 MDBX 数据库需要单独的 MDBX 备份。')) : protectionMode === 'device-key' ? tr('设备密钥模式可留空解锁。') : tr('输入主密码解锁。') }}</p></div>
           <template v-if="lifecycle !== 'uninitialized' || authAction === 'create'">
           <m3e-form-field v-field-label variant="outlined" hide-required-marker class="field auth-password-field"><label slot="label">{{ lifecycle === 'uninitialized' || protectionMode === 'device-key' ? tr('主密码（可选）') : tr('主密码') }}</label><input v-model="auth.masterPassword" :aria-label="tr('主密码')" type="password" :minlength="auth.masterPassword ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="current-password" autofocus /></m3e-form-field>
           <m3e-form-field v-field-label variant="outlined" hide-required-marker v-if="lifecycle === 'uninitialized'" class="field auth-password-field"><label slot="label">{{ tr('确认主密码') }}</label><input v-model="auth.confirmation" type="password" :minlength="auth.confirmation ? MIN_MASTER_PASSWORD_LENGTH : undefined" autocomplete="new-password" /></m3e-form-field>
@@ -2924,7 +2941,7 @@ function errorCode(error: unknown): string | undefined {
           <p v-else-if="lifecycle === 'locked' && windowsHelloError" class="supporting hello-status-note">{{ tr('Windows Hello 状态检查失败。') }}</p>
           <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
           <m3e-button v-if="lifecycle !== 'uninitialized' || authAction === 'create'" variant="filled" type="submit" :disabled="authBusy">{{ authBusy ? tr('处理中…') : lifecycle === 'uninitialized' ? tr('创建并解锁') : tr('解锁') }}</m3e-button>
-          <FirstRunMdbxImport v-if="lifecycle === 'uninitialized' && authAction === 'mdbx'" @completed="finishFirstRunMdbx" />
+          <FirstRunMdbxImport v-if="lifecycle === 'uninitialized' && authAction === 'mdbx'" @completed="finishFirstRunMdbx" @busy-change="firstRunImportBusy = $event" />
           <div v-if="lifecycle === 'uninitialized' && authAction === 'restore' || lifecycle === 'locked' && windowsHelloStatus?.vaultEnrolled" class="recovery-panel stack">
             <div><strong>{{ lifecycle === 'locked' ? tr('备份恢复') : tr('恢复插件备份') }}</strong><p class="supporting">{{ lifecycle === 'uninitialized' ? tr('恢复插件状态（条目与密码源配置）。独立 MDBX 数据库需要单独的 MDBX 备份。') : tr('选择备份文件恢复。') }}</p></div>
             <label class="file-action"><m3e-icon name="upload" aria-hidden="true"></m3e-icon><span>{{ tr('选择加密整库备份') }}</span><input type="file" :aria-label="tr('选择加密整库备份')" accept="application/json,.json" @change="selectEncryptedBackup" /></label>
@@ -2935,11 +2952,11 @@ function errorCode(error: unknown): string | undefined {
             </template>
             <p v-if="securityError" class="form-error" role="alert">{{ securityError }}</p>
           </div>
-          </template>
+          </form>
         <div class="security-note"><m3e-icon name="encrypted"></m3e-icon><span>{{ tr('AES-256-GCM · 会话级解锁') }}</span></div>
         </div>
       </m3e-card>
-    </form>
+    </section>
 
     <div v-else class="shell" :class="{ 'nav-open': mobileNavOpen }">
       <a class="skip-link" href="#main-content">{{ tr('跳到主内容') }}</a>

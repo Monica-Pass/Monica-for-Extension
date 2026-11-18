@@ -81,16 +81,18 @@ try {
   evidence.browser.userAgent = await manager.evaluate(() => navigator.userAgent);
   assert.match(evidence.browser.userAgent, /Edg\//, "The running browser is not Edge.");
   assert.match(manager.url(), /^chrome-extension:\/\//);
-  await manager.getByRole("heading", { name: "创建加密密码库", exact: true }).waitFor();
+  await manager.getByRole("heading", { name: "首次使用", exact: true }).waitFor();
   await screenshot(manager, "01-manager-setup.png");
   pass("real-unpacked-extension-load", { serviceWorker: launched.worker.url(), managerUrl: manager.url() });
   if (!loadOnly) {
     if (recoveryFixture) {
+      await manager.getByRole("button", { name: "恢复插件备份", exact: true }).click();
       if (recoveryFixture.kind === 'mixed-restore') await manager.evaluate(()=>chrome.storage.local.set({'monica.sync.preferences.v1':{enabled:false}}));
       await manager.getByLabel("选择加密整库备份", { exact: true }).setInputFiles(recoveryFixture.backup);
       await manager.getByLabel("备份密码", { exact: true }).fill(vaultPassword);
       await manager.getByRole("button", { name: "恢复并解锁", exact: true }).click();
     } else {
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill(vaultPassword);
     await manager.locator('input[autocomplete="new-password"]').fill(vaultPassword);
     await manager.getByRole("button", { name: "创建并解锁", exact: true }).click();

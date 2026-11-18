@@ -71,7 +71,7 @@ export function createProviderSyncRuntime(dependencies: ProviderSyncDependencies
   const automaticSync = new AutomaticSyncScheduler(async (providerId, hint) => {
     if (activity.isBusy(providerId)) return { busy: true };
     const result = await synchronizeProvider(providerId, { automatic: true, syncHint: hint });
-    const state = await service.readState(false);
+    const state = await service.readProviderSyncSchedule();
     void reconcileAutomaticSync().catch(() => undefined);
     return { morePending: !result.conflicts.length && !result.unchanged && state.mutationQueue.some(mutation => mutation.providerId === providerId && !mutation.lastError) };
   });
@@ -119,7 +119,7 @@ export function createProviderSyncRuntime(dependencies: ProviderSyncDependencies
       if (account.kind === "keepass") {
         result = await synchronizeKeePassProvider(account, controller.signal, options.syncHint?.type === "check-remote");
       } else if (account.kind === "bitwarden") {
-        result = await bitwardenDurableSync.synchronize(recovered, controller.signal, { allowEmptyRemote: options.allowEmptyRemote === true, syncHint: options.syncHint });
+        result = await bitwardenDurableSync.synchronize(recovered, controller.signal, { allowEmptyRemote: options.allowEmptyRemote === true, syncHint: options.syncHint, diagnosticStartedAt: startedAt });
       } else {
         // The adapter mutates its copy, so the snapshot is what `applyProviderSync` diffs a
         // concurrent local edit against. Both must be the same read of the vault.
@@ -137,7 +137,9 @@ export function createProviderSyncRuntime(dependencies: ProviderSyncDependencies
         controller.signal.throwIfAborted();
         if (!result.unchanged) await service.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot, [], [], false, [], { expectedAccount: account });
       }
-      if (!result.unchanged) await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
+      // Bitwarden records this with the encrypted projection, avoiding another
+      // whole-vault commit. Failure diagnostics below remain independently durable.
+      if (!result.unchanged && account.kind !== 'bitwarden') await recordProviderDiagnosticIfUnlocked(createProviderDiagnostic(account.id, account.kind, undefined, new Date().toISOString(), {
         operation: "sync",
         outcome: result.conflicts.length ? "conflict" : "success",
         code: result.conflicts.length ? "conflict" : "ok",
@@ -214,7 +216,7 @@ export function createProviderSyncRuntime(dependencies: ProviderSyncDependencies
         if (!await readAutomaticSyncEnabled()) { stopAutomaticSync(); return; }
         // This must not call status(): a periodic background tick must never
         // auto-unlock a device-key vault or renew its inactivity timeout.
-        const state = await service.readState(false);
+        const state = await service.readProviderSyncSchedule();
         const paused = await readPausedSyncProviders();
         if (generation !== automaticSyncGeneration) continue;
         const accounts = state.providers.filter(account => account.enabled && !paused.has(account.id) && (

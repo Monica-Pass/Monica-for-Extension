@@ -11,6 +11,7 @@ import type { VaultItem } from "../core/model";
 
 const emit = defineEmits<{
   completed: [items: VaultItem[], protection: "master-password" | "device-key"];
+  busyChange: [busy: boolean];
 }>();
 
 const file = shallowRef<File>();
@@ -23,6 +24,7 @@ const vaultPassword = ref("");
 const pluginPassword = ref("");
 const pluginConfirmation = ref("");
 const busy = ref<"upload" | "prepare" | "commit" | "">("");
+watch(busy, value => emit('busyChange', Boolean(value)), { flush: 'sync' });
 const error = ref("");
 const pluginOrphan = ref(false);
 

@@ -104,9 +104,9 @@ export class BitwardenSyncCache {
     }
     signal?.throwIfAborted();
     const selectedPayload = payload;
-    const decoded = cached && cryptoContext(cached.payload) === cryptoContext(payload)
+    const decoded = cached && !unchanged && cryptoContext(cached.payload) === cryptoContext(payload)
       ? new Map(cached.decoded) : new Map<string, DecodedCipherCacheEntry>();
-    const records = new Map(cached?.records);
+    const records = new Map(unchanged ? undefined : cached?.records);
     return {
       session, payload, unchanged, deletedIds, decoded, records,
       commit: ciphers => {

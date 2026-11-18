@@ -30,6 +30,7 @@ test("MDBX2 batch transfer provides safe M3E planning progress confirmation and 
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
 
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill("mdbx2 batch transfer password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("mdbx2 batch transfer password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();

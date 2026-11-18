@@ -56,7 +56,7 @@ test("website icons are private, cached, and consistent across lists, details an
     const page = await context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${extensionOrigin}/index.html`);
-    await expect(page.getByRole("heading", { name: "创建加密密码库", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "首次使用", exact: true })).toBeVisible();
     expect(await page.evaluate(() => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "Synthetic favicon fixture master password" }))).toMatchObject({ ok: true });
     const main = { ...login("icon-main", "Studio account", ["https://private-user:private-password@icons.example.com/sign-in?token=private-token#private-fragment"]), favorite: true };
     const fixtures = [

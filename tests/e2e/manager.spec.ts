@@ -18,7 +18,8 @@ test("manager UI creates edits imports and deletes non-login vault records", asy
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
 
-    await expect(manager.getByRole("heading", { name: "创建加密密码库" })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "首次使用" })).toBeVisible();
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill("manager e2e master password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("manager e2e master password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();
@@ -141,6 +142,7 @@ test("manager rotates the master password and atomically restores an encrypted f
 
     const originalPassword = "manager original password";
     const rotatedPassword = "manager rotated password";
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill(originalPassword);
     await manager.getByLabel("确认主密码", { exact: true }).fill(originalPassword);
     await manager.getByRole("button", { name: "创建并解锁" }).click();
@@ -226,6 +228,7 @@ test("encrypted backup dialog rejects mismatched password and produces no downlo
     const launched = await launchManager(testInfo, "export-mismatch-profile");
     context = launched.context;
     const { manager } = launched;
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill("export mismatch password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("export mismatch password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();
@@ -255,6 +258,7 @@ test("encrypted backup dialog cancels without exporting", async ({}, testInfo) =
     const launched = await launchManager(testInfo, "export-cancel-profile");
     context = launched.context;
     const { manager } = launched;
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill("export cancel password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("export cancel password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();
@@ -285,6 +289,7 @@ test("device-key vault restores an encrypted backup while leaving the current pa
     // Export with fresh authentication, then switch the target to device-key
     // protection before restoring. Device-key export without Hello is blocked.
     const exportPassword = "device-key export authentication";
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill(exportPassword);
     await manager.getByLabel("确认主密码", { exact: true }).fill(exportPassword);
     await manager.getByRole("button", { name: "创建并解锁" }).click();

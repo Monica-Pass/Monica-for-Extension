@@ -2,7 +2,7 @@ import type { LoginItem, VaultItem, VaultState } from "../core/model";
 import { effectiveLoginUriRules, hasAndroidUrlRules, writeAndroidUrlRules } from '../core/url-rules';
 import { autofillCredentialIdentities, type AutofillCredentialIdentity } from "../autofill/credential-identity";
 import { base64ToBytes, bytesToBase64, randomBytes } from "./encoding";
-import type { VaultEnvelope } from "./vault-crypto";
+import type { StoredHead as VaultEnvelope } from "./vault-records";
 
 /** This is a device-local grant, never a provider field or a portable credential. */
 export interface LockedAutofillSnapshot {

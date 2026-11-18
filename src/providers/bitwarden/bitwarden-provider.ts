@@ -6,7 +6,7 @@ import { assertPortablePasswordHistory } from '../../core/password-history';
 import { preserveLocalWalletContentOrder } from '../../core/wallet-content-order';
 import { assertKnownBitwardenCipher, bitwardenSshComparableData, decodeBitwardenCipher, encodeBitwardenCipher, encodeBitwardenPasskeyCipher, mergeBitwardenCipherProjection, mergeBitwardenCustomFieldOccurrences, mergeBitwardenSshLocalMetadata, resolveBitwardenCipherKey } from "./bitwarden-cipher-codec";
 import { bitwardenOrganizationRecords, resolveBitwardenOrganizationKeys } from "./bitwarden-organization";
-import { decryptBitwardenString, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { decryptBitwardenString, encryptBitwardenString, reuseBitwardenCryptoKey, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { generateOtpUri } from "../../core/totp";
 import { parametersFromItem } from "../../core/login-otp";
 import { createSourceRecord } from "../../core/source-records";
@@ -16,7 +16,7 @@ import { isSteamMaFileLogin, isSteamMaFileName, parseSteamMaFile, STEAM_MAFILE_M
 import { PROVIDER_ATTACHMENT_CHUNK_BYTES, type ProviderAttachmentSummary } from "../attachments/attachment-contract";
 import { normalizeCredentialId } from "../../passkey/source-policy";
 import { assertPasskeyCounterNotRegressed, preservePasskeyCounterHistory, samePasskeyCredential } from "../../passkey/ownership-policy";
-import { BitwardenSyncCache, ciphersOf } from "./bitwarden-sync-cache";
+import { BitwardenSyncCache, ciphersOf, type BitwardenRemoteRead } from "./bitwarden-sync-cache";
 import { assertPasswordProjectRemovalSyncSafe } from "../../core/password-project-removal-sync";
 import { assertWritableBitwardenPasskey } from './bitwarden-cipher-codec';
 
@@ -41,14 +41,19 @@ export class BitwardenProvider implements ProviderAdapter {
     await this.client.prelogin(config.vaultUrl, config.email, signal);
   }
 
-  async sync(account: ProviderAccount, context: ProviderSyncContext): Promise<ProviderSyncResult> {
+  /** Only the durable coordinator's authenticated, clean-state probe uses this. */
+  prefetchSync(account: ProviderAccount, hint: ProviderSyncContext['syncHint'], signal?: AbortSignal): Promise<BitwardenRemoteRead> {
+    return this.syncCache.read(account.id, readSession(account), hint, true, signal);
+  }
+
+  async sync(account: ProviderAccount, context: ProviderSyncContext, prefetched?: BitwardenRemoteRead): Promise<ProviderSyncResult> {
     assertPasswordProjectRemovalSyncSafe(account, context);
-    let session = readSession(account);
+    let session = prefetched?.session || readSession(account);
     const localScoped = context.localItems.filter((item) => hasProviderReference(item, account.id));
     const mayReuse = context.pendingMutations !== undefined && !context.pendingMutations.length
       && !context.mutationReceipts?.length && !context.acknowledgedMutations?.length
       && !localScoped.some(item => item.updatedAt !== providerReference(item, account.id)?.revision);
-    const synced = await this.syncCache.read(account.id, session, context.syncHint, mayReuse, context.signal);
+    const synced = prefetched && mayReuse ? prefetched : await this.syncCache.read(account.id, session, context.syncHint, mayReuse, context.signal);
     session = synced.session;
     // An unchanged Cipher revision does not mean its attachment was readable on
     // the previous attempt. Retry incomplete Steam projections from the snapshot.
@@ -100,7 +105,7 @@ export class BitwardenProvider implements ProviderAdapter {
       };
     }
 
-    const vaultKey = this.client.vaultKey(session);
+    const vaultKey = reuseBitwardenCryptoKey(this.client.vaultKey(session));
     const resolvedFolderNames = await bitwardenFolderNames(synced.payload, vaultKey);
     const organizations = await resolveBitwardenOrganizationKeys(synced.payload, vaultKey);
     const remoteItems: VaultItem[] = [];
@@ -129,6 +134,7 @@ export class BitwardenProvider implements ProviderAdapter {
           ? { items: structuredClone(cached.items), legacyIdentityFullName: cached.legacyIdentityFullName, warning: undefined, historyWarning: undefined, unsupported: false }
           : await decodeBitwardenCipher(rawCipher, account.id, ownerKey, resolvedFolderNames.get(folderId));
         let hydrationFailed = false;
+        let hydratedSteam = false;
         const steamCarrier = decoded.items.find((item): item is LoginItem => item.kind === "login" && isSteamMaFileLogin(item));
         if (steamCarrier && (!reused || !steamCarrier.steamSharedSecretBase64)) {
           try {
@@ -144,12 +150,15 @@ export class BitwardenProvider implements ProviderAdapter {
             session = hydrated.session;
             const index = decoded.items.indexOf(steamCarrier);
             decoded.items[index] = { ...steamCarrier, ...hydrated.fields };
+            hydratedSteam = true;
           } catch (error) {
             hydrationFailed = true;
             warnings.push(`Bitwarden Steam 项目 ${steamCarrier.title} 的 maFile 附件读取失败：${errorMessage(error)}`);
           }
         }
-        if (!decoded.warning && !decoded.historyWarning && !hydrationFailed) synced.decoded.set(cipherId, { fingerprint, items: structuredClone(decoded.items), legacyIdentityFullName: decoded.legacyIdentityFullName });
+        if (!decoded.warning && !decoded.historyWarning && !hydrationFailed && (!reused || hydratedSteam)) {
+          synced.decoded.set(cipherId, { fingerprint, items: structuredClone(decoded.items), legacyIdentityFullName: decoded.legacyIdentityFullName });
+        }
         remoteItems.push(...decoded.items.map(remote => {
           if (remote.kind !== "identity" || !decoded.legacyIdentityFullName) return remote;
           const local = localScoped.find(item => item.kind === "identity" && baseCipherId(providerReference(item, account.id)?.remoteId) === cipherId);

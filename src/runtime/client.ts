@@ -192,6 +192,7 @@ export const vaultClient = {
   resumePasswordProjectRestore: (operationId: string) => send<import('../background/password-project-restore').PasswordProjectRestoreStatus>({ type: 'VAULT_PASSWORD_PROJECT_RESTORE_RESUME', operationId }),
   matchLogins: (pageUrl: string, fieldSignature?: string) => send<LoginMatchSummary[]>({ type: "VAULT_MATCH_LOGINS", pageUrl, fieldSignature }),
   listLoginSummaries: () => send<LoginMatchSummary[]>({ type: "VAULT_LIST_LOGIN_SUMMARIES" }),
+  queryLoginSummaries: (query: import('../autofill/login-summaries').LoginSummaryQuery) => send<import('../autofill/login-summaries').LoginSummaryPage>({ type: 'VAULT_LIST_LOGIN_SUMMARIES', query }),
   loginSecret: (itemId: string, field: "username" | "password") => send<{ value: string }>({ type: "VAULT_LOGIN_SECRET", itemId, field }),
   matchPasskeys: (pageUrl: string) => send<PasskeyMatchSummary[]>({ type: "VAULT_MATCH_PASSKEYS", pageUrl }),
   passkeyVerificationContext: (verificationId: string) => send<PasskeyVerificationContext>({ type: "PASSKEY_VERIFICATION_CONTEXT", verificationId }),

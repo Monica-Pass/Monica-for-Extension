@@ -15,6 +15,7 @@ async function launch(testInfo: TestInfo): Promise<{ context: BrowserContext; pa
   const extensionId = new URL(worker.url()).host;
   const page = await context.newPage();
   await page.goto("chrome-extension://" + extensionId + "/index.html");
+  await page.getByRole("button", { name: "创建密码库", exact: true }).click();
   await page.getByLabel("主密码", { exact: true }).fill("site policy e2e password");
   await page.getByLabel("确认主密码", { exact: true }).fill("site policy e2e password");
   await page.getByRole("button", { name: "创建并解锁" }).click();

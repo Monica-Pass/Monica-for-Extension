@@ -65,6 +65,8 @@ export interface ProviderSyncResult {
 export interface ProviderSyncGuard {
   expectedAccount?: ProviderAccount;
   confirmedRemovedItemIds?: string[];
+  /** Internal sync telemetry committed with adoption, never a remote mutation receipt. */
+  syncDiagnostic?: { startedAt: number; warnings: number };
   /** Internal file receipt; finalize the encrypted transfer journal with adoption. */
   keePassTransfer?: import('../providers/keepass/keepass-working-copy-store').KeePassDurableMutationReceipt;
   bitwardenBatchTransfer?: { operationId: string; sessionId: string };

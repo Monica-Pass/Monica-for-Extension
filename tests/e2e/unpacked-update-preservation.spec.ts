@@ -13,7 +13,7 @@ async function send(page: Page, message: object) {
 async function fingerprint(page: Page) {
   return page.evaluate(async () => {
     const envelope = await new Promise((resolve, reject) => {
-      const open = indexedDB.open('monica-extension-secure-vault', 1);
+      const open = indexedDB.open('monica-extension-secure-vault');
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
         const db = open.result, request = db.transaction('vault').objectStore('vault').get('primary');
@@ -75,6 +75,7 @@ test('real stable files can be overwritten and relocated without resetting the v
     await send(reopened, { type: 'VAULT_UNLOCK', masterPassword: password });
     const exported = await send(reopened, { type: 'VAULT_AUTHENTICATED_EXPORT', input: { format: 'encrypted', masterPassword: password, backupPassword: password, confirmed: true } });
     const { key: exportKey } = await deriveVaultKey(password, exported.backup.envelope.kdf);
+    const migratedFingerprint = await fingerprint(reopened);
     const after = await decryptVaultState(exported.backup.envelope, exportKey);
     expect(after.providers.find(value => value.id === provider.id)).toEqual(provider);
     expect(after.items).toEqual(state.items);
@@ -85,7 +86,7 @@ test('real stable files can be overwritten and relocated without resetting the v
     const moved = await context.newPage(); await moved.goto(`${base}/index.html`);
     expect(await moved.evaluate(() => chrome.runtime.id)).toBe(id);
     expect(await moved.evaluate(() => fetch(chrome.runtime.getURL('synthetic-location.txt')).then(r => r.text()))).toBe('relocated');
-    expect(await fingerprint(moved)).toBe(before);
+    expect(await fingerprint(moved)).toBe(migratedFingerprint);
     await send(moved, { type: 'VAULT_UNLOCK', masterPassword: password });
     expect(await send(moved, { type: 'VAULT_LIST_ITEMS' })).toEqual(state.items);
     const evidencePath = info.outputPath('upgrade-results.json');

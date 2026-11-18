@@ -128,16 +128,26 @@ export async function encryptVaultState(state: VaultState, key: CryptoKey, kdf: 
 }
 
 export async function decryptVaultState(envelope: VaultEnvelope, key: CryptoKey): Promise<VaultState> {
+  return validateVaultPayload(await decryptVaultPayload(envelope, key));
+}
+
+/** Storage migration must also preserve data the current model does not project. */
+export async function decryptVaultPayload(envelope: VaultEnvelope, key: CryptoKey): Promise<unknown> {
   validateEnvelope(envelope);
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: base64ToBytes(envelope.iv) as BufferSource, additionalData: AAD as BufferSource, tagLength: 128 },
     key,
     base64ToBytes(envelope.ciphertext) as BufferSource
   );
-  let state: VaultState;
-  try { state = migrateVaultState(JSON.parse(new TextDecoder().decode(decrypted))); }
+  try { return JSON.parse(new TextDecoder().decode(decrypted)); }
   catch { throw new Error('Vault payload is invalid or unsupported'); }
   finally { new Uint8Array(decrypted).fill(0); }
+}
+
+export function validateVaultPayload(payload: unknown): VaultState {
+  let state: VaultState;
+  try { state = migrateVaultState(payload); }
+  catch { throw new Error('Vault payload is invalid or unsupported'); }
   if (
     state.magic !== "MONICA_EXTENSION_VAULT" ||
     state.schemaVersion !== 2 ||
@@ -239,7 +249,7 @@ function validateEnvelope(value: VaultEnvelope): void {
   }
 }
 
-function validateKdfParameters(value: unknown): asserts value is VaultKdfParameters {
+export function validateKdfParameters(value: unknown): asserts value is VaultKdfParameters {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Unsupported or unsafe vault KDF parameters");
   const kdf = value as Partial<VaultKdfParameters>;
   if (kdf.name === "DEVICE-KEY") {

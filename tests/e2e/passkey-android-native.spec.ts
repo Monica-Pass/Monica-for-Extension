@@ -97,6 +97,7 @@ test(`actual Android MDBX Passkeys authenticate in Edge through Native Host and 
     host = await temporaryNativeHost(id, info.outputPath("native"));
     expect(host.evidence.sha256).toBe(returnEvidence.hostSha256);
     let manager = await context.newPage(); await manager.goto(`chrome-extension://${id}/index.html`);
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill(password);
     await manager.locator('input[autocomplete="new-password"]').fill(password);
     await manager.getByRole("button", { name: "创建并解锁", exact: true }).click();

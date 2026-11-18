@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef } from 'vue';
 import { tr } from '../i18n';
-import { runtimeInfo } from '../runtime/version';
+import { RELEASE_CODENAME, runtimeInfo } from '../runtime/version';
 import { checkGitHubUpdate, GITHUB_RELEASES_URL, GitHubUpdateError, type GitHubUpdateResult, type UpdateFailure } from '../runtime/github-update';
 import GroupedSettingsList from './GroupedSettingsList.vue';
 import { isFirefoxExtension } from '../runtime/browser-platform';
@@ -55,7 +55,7 @@ function reload() {
   <section class="settings-content extension-updates" aria-labelledby="extension-update-title" data-extension-updates>
     <h2 id="extension-update-title">{{ tr('Monica 浏览器扩展') }}</h2>
     <GroupedSettingsList>
-      <div class="update-version"><m3e-icon name="info" aria-hidden="true" /><div><strong>{{ tr('当前版本 {0}', {0: runtimeInfo.version}) }}</strong><small>{{ tr('构建标识：{0}', {0: runtimeInfo.buildId}) }}</small><small v-if="extensionId">{{ tr('扩展 ID：{0}', {0: extensionId}) }}</small></div></div>
+      <div class="update-version"><m3e-icon name="info" aria-hidden="true" /><div><strong>{{ tr('当前版本 {0}', {0: runtimeInfo.version}) }} · {{ RELEASE_CODENAME }}</strong><small>{{ tr('构建标识：{0}', {0: runtimeInfo.buildId}) }}</small><small v-if="extensionId">{{ tr('扩展 ID：{0}', {0: extensionId}) }}</small></div></div>
       <div class="update-status" :class="{'update-available': result?.kind === 'available', 'update-failed': failure}" role="status" aria-live="polite" aria-atomic="true" :aria-busy="busy"><m3e-icon :name="result?.kind === 'available' ? 'download' : failure ? 'error' : 'info'" aria-hidden="true" /><p>{{ status }}</p></div>
     </GroupedSettingsList>
     <div class="update-actions">

@@ -2,7 +2,7 @@
 import { writeSecretClipboard } from '../lib/secret-clipboard';
 import { materialSelectTag, materialOptionTag } from "../lib/material-controls";
 import { tr } from '../i18n';
-import { formatAutofillCredential } from '../autofill/credential-identity';
+import { createLoginSummaryMatcher } from '../autofill/login-search';
 
 import "@m3e/web/theme";
 import "@m3e/web/button";
@@ -15,7 +15,7 @@ import { firefoxSidebar } from '../runtime/browser-platform';
 import WebsiteIcon from "../components/WebsiteIcon.vue";
 import { websiteIconCache } from "../lib/website-icon-cache";
 import { useListPagination } from "../lib/list-pagination";
-import { computed, onMounted, onUnmounted, ref, shallowRef } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { connectLiveVault } from "../runtime/live-vault";
 import { normalizeHost } from "../core/matching";
 import { activeScheme, themeColor, useThemePreferences } from "../lib/theme";
@@ -41,6 +41,7 @@ interface PageScan {
 }
 
 const loading = ref(true);
+const matchesLoading = ref(false);
 const unlocking = ref(false);
 const fillingId = ref<string | null>(null);
 const status = ref("");
@@ -59,12 +60,17 @@ const matches = shallowRef<LoginMatchSummary[]>([]);
 const passkeys = shallowRef<PasskeyMatchSummary[]>([]);
 const walletItems = shallowRef<WalletMatchSummary[]>([]);
 const allLogins = shallowRef<LoginMatchSummary[]>([]);
+const loginTotal = ref(0);
+const loginPage = ref(1);
+const loginQueryLoading = ref(false);
 const search = ref("");
 const pageUnsupported = ref(false);
 const currentFieldBlocked = ref(false);
 const fieldPolicyBusy = ref(false);
 let initializeRevision = 0;
 let matchRevision = 0;
+let loginQueryRevision = 0;
+let loginQueryTimer: ReturnType<typeof setTimeout> | undefined;
 let disconnectLiveVault: (() => void) | undefined;
 
 useThemePreferences();
@@ -88,6 +94,8 @@ onUnmounted(() => {
   disconnectLiveVault?.();
   initializeRevision += 1;
   matchRevision += 1;
+  loginQueryRevision += 1;
+  if (loginQueryTimer !== undefined) clearTimeout(loginQueryTimer);
   chrome.storage.onChanged.removeListener(onSessionChanged);
 });
 
@@ -113,6 +121,8 @@ async function initialize(preserveTarget = false) {
   runtimeReloadRequired.value = false;
   const revision = ++initializeRevision;
   matchRevision += 1;
+  clearMatches();
+  matchesLoading.value = false;
   loading.value = true;
   error.value = "";
   try {
@@ -145,7 +155,9 @@ async function initialize(preserveTarget = false) {
       ?? fillTargets.value.find((candidate) => candidate.hasPasswordField || candidate.hasTotpField)?.frameId
       ?? nextScans[0]?.frameId ?? 0;
     lifecycle.value = nextLifecycle;
-    if (lifecycle.value !== "uninitialized") await loadMatches();
+    if (lifecycle.value !== "uninitialized") await loadMatches(() => {
+      if (revision === initializeRevision) loading.value = false;
+    });
   } catch (cause) {
     if (revision === initializeRevision) {
       runtimeReloadRequired.value = cause instanceof ExtensionRuntimeError && cause.code === "RUNTIME_RELOAD_REQUIRED";
@@ -175,44 +187,103 @@ async function unlock() {
   }
 }
 
-async function loadMatches() {
+function clearMatches() {
+  matches.value = [];
+  passkeys.value = [];
+  walletItems.value = [];
+  allLogins.value = [];
+  loginTotal.value = 0;
+  loginPage.value = 1;
+  loginQueryRevision += 1;
+  loginQueryLoading.value = false;
+  if (loginQueryTimer !== undefined) clearTimeout(loginQueryTimer);
+}
+
+async function loadLoginPage(page = loginPage.value) {
+  if (loginQueryTimer !== undefined) clearTimeout(loginQueryTimer);
+  const revision = ++loginQueryRevision, refresh = matchRevision;
+  const current = () => revision === loginQueryRevision && refresh === matchRevision && lifecycle.value === 'unlocked';
+  if (!current()) return;
+  loginQueryLoading.value = true;
+  try {
+    const pageUrl = scan.value?.url || tabUrl.value;
+    const result = await vaultClient.queryLoginSummaries({ page, text: search.value,
+      passwordLabel: tr('密码 {0}', { 0: '{0}' }),
+      excludeIds: matches.value.length <= 100 ? matches.value.map(item => item.id) : undefined,
+      excludeMatchingUrl: matches.value.length > 100 && isSensitivePageAllowed(pageUrl) && !pageUnsupported.value && !currentFieldBlocked.value ? pageUrl : undefined });
+    if (!current()) return;
+    allLogins.value = result.items;
+    loginTotal.value = result.total;
+    loginPage.value = result.page;
+  } catch (cause) {
+    if (!current()) return;
+    allLogins.value = [];
+    loginTotal.value = 0;
+    throw cause;
+  } finally {
+    if (current()) loginQueryLoading.value = false;
+  }
+}
+
+function changeLoginPage(page: number) {
+  void loadLoginPage(page).catch(cause => { status.value = errorMessage(cause, tr('无法连接当前页面，请刷新网页后重试。')); });
+}
+
+watch(search, () => {
+  loginQueryRevision += 1;
+  if (loginQueryTimer !== undefined) clearTimeout(loginQueryTimer);
+  allLogins.value = [];
+  loginTotal.value = 0;
+  loginPage.value = 1;
+  loginQueryLoading.value = lifecycle.value === 'unlocked';
+  // Coalesce synchronous changes without adding a fixed delay to a completed query.
+  if (loginQueryLoading.value) loginQueryTimer = setTimeout(() => changeLoginPage(1), 0);
+}, { flush: 'sync' });
+
+async function loadMatches(primaryReady?: () => void) {
   const revision = ++matchRevision;
-  const allowFill = isSensitivePageAllowed(scan.value?.url || tabUrl.value) && !pageUnsupported.value;
+  const pageUrl = scan.value?.url || tabUrl.value;
+  const fieldSignature = scan.value?.currentField?.signature;
+  const walletKinds = scan.value?.walletKinds || [];
+  const allowFill = isSensitivePageAllowed(pageUrl) && !pageUnsupported.value;
   const unlocked = lifecycle.value === "unlocked";
-  const blocked = Boolean(scan.value?.currentField?.signature && await vaultClient.isAutofillFieldBlocked(scan.value.currentField.signature));
-  const [loginMatches, passkeyMatches, walletMatches] = await Promise.all([
-    allowFill && !blocked ? vaultClient.matchLogins(scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([]),
-    allowFill && unlocked ? vaultClient.matchPasskeys(tabUrl.value) : Promise.resolve([]),
-    allowFill && unlocked && !blocked ? vaultClient.listWalletItems(scan.value?.walletKinds || [], scan.value?.url || tabUrl.value, scan.value?.currentField?.signature) : Promise.resolve([])
-  ]);
-  const summaries = unlocked ? await vaultClient.listLoginSummaries().catch(() => []) : [];
-  if (revision !== matchRevision || unlocked !== (lifecycle.value === "unlocked")) return;
-  currentFieldBlocked.value = blocked;
-  matches.value = loginMatches;
-  passkeys.value = passkeyMatches;
-  walletItems.value = walletMatches;
-  allLogins.value = summaries;
+  const current = () => revision === matchRevision && unlocked === (lifecycle.value === 'unlocked');
+  matchesLoading.value = true;
+  try {
+    const blocked = Boolean(fieldSignature && await vaultClient.isAutofillFieldBlocked(fieldSignature));
+    if (!current()) return;
+    currentFieldBlocked.value = blocked;
+    const primary = (allowFill && !blocked ? vaultClient.matchLogins(pageUrl, fieldSignature) : Promise.resolve([])).then(items => {
+      if (!current()) return;
+      matches.value = items;
+      primaryReady?.();
+    });
+    await Promise.all([
+      primary,
+      (allowFill && unlocked ? vaultClient.matchPasskeys(tabUrl.value) : Promise.resolve([])).then(items => { if (current()) passkeys.value = items; }),
+      (allowFill && unlocked && !blocked && walletKinds.length ? vaultClient.listWalletItems(walletKinds, pageUrl, fieldSignature) : Promise.resolve([]))
+        .then(items => { if (current()) walletItems.value = items; }),
+      // Publish current-site candidates before preparing the full-vault fallback.
+      // Every later response still belongs to this exact refresh/lock generation.
+      primary.then(async () => {
+        if (!unlocked || !current()) return;
+        await loadLoginPage();
+      })
+    ]);
+  } catch (cause) {
+    if (current()) { matchRevision += 1; clearMatches(); matchesLoading.value = false; }
+    throw cause;
+  } finally {
+    if (current()) matchesLoading.value = false;
+  }
 }
 
-const filteredLogins = computed(() => {
-  const query = search.value.trim().toLowerCase();
-  const matched = new Set(matches.value.map((item) => item.id));
-  const base = allLogins.value.filter((item) => !matched.has(item.id));
-  if (!query) return base;
-  return base.filter((item) => loginSearchText(item).includes(query));
-});
 const visibleMatches = computed(() => {
-  const query = search.value.trim().toLowerCase();
-  return matches.value.filter((item) => !query || loginSearchText(item).includes(query));
+  return matches.value.filter(createLoginSummaryMatcher(search.value, tr('密码 {0}', { 0: '{0}' })));
 });
-
-function loginSearchText(item: LoginMatchSummary): string {
-  return `${item.title}\n${item.username}\n${item.uris.join(' ')}\n${formatAutofillCredential(item.credentialIdentity, tr)}`.toLowerCase();
-}
 
 // Live vault refreshes replace these arrays; only a different search or item set returns to page 1.
 const listKey = (items: readonly { id: string }[]) => `${search.value}\n${items.map((item) => item.id).join("\n")}`;
-const loginPagination = useListPagination(() => filteredLogins.value.length, () => listKey(allLogins.value), 20);
 const matchPagination = useListPagination(() => visibleMatches.value.length, () => listKey(matches.value), 20);
 const passkeyPagination = useListPagination(() => passkeys.value.length, () => passkeys.value, 20);
 const walletPagination = useListPagination(() => walletItems.value.length, () => walletItems.value, 20);
@@ -304,6 +375,7 @@ async function fill(item: LoginMatchSummary) {
 async function selectTarget(event: Event) {
   selectedFrameId.value = Number((event.target as HTMLSelectElement).value);
   status.value = "";
+  clearMatches();
   await loadMatches();
 }
 
@@ -376,9 +448,9 @@ function isSensitivePageAllowed(raw: string): boolean {
         <section v-if="visibleMatches.length" id="popup-matches" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ tr('匹配的登录项') }}</h2><span>{{ visibleMatches.length }}</span></div><m3e-list class="match-list">
           <PopupLoginRow v-for="item in matchPagination.slice(visibleMatches)" :key="item.id" :item="item" :can-fill="canFill" :busy="Boolean(fillingId)" :filling="fillingId === item.id" :fallback="item.hasTotp && scan?.hasTotpField ? 'timer' : 'language'" @fill="fill" />
         </m3e-list><ListPagination :page="matchPagination.page.value" :total="visibleMatches.length" :page-size="20" target="popup-matches" @change="matchPagination.change" /></section>
-        <section v-if="!currentFieldBlocked && filteredLogins.length" id="popup-login-results" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ search.trim() ? tr('搜索结果') : tr('全部登录项') }}</h2><span>{{ filteredLogins.length }}</span></div><m3e-list class="match-list">
-          <PopupLoginRow v-for="item in loginPagination.slice(filteredLogins)" :key="item.id" :item="item" :can-fill="canFill" :busy="Boolean(fillingId)" :filling="fillingId === item.id" copy-actions @fill="fill" @copy="copyLoginSecret" />
-        </m3e-list><ListPagination :page="loginPagination.page.value" :total="filteredLogins.length" :page-size="20" target="popup-login-results" @change="loginPagination.change" /></section>
+        <section v-if="!currentFieldBlocked && loginTotal" id="popup-login-results" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ search.trim() ? tr('搜索结果') : tr('全部登录项') }}</h2><span>{{ loginTotal }}</span></div><m3e-list class="match-list">
+          <PopupLoginRow v-for="item in allLogins" :key="item.id" :item="item" :can-fill="canFill" :busy="Boolean(fillingId)" :filling="fillingId === item.id" copy-actions @fill="fill" @copy="copyLoginSecret" />
+        </m3e-list><ListPagination :page="loginPage" :total="loginTotal" :page-size="20" target="popup-login-results" @change="changeLoginPage" /></section>
 
         <section v-if="passkeys.length" id="popup-passkeys" tabindex="-1" class="match-section"><div class="section-title"><h2>Passkey</h2><span>{{ passkeys.length }}</span></div><m3e-list class="match-list" variant="segmented">
           <m3e-list-item v-for="item in passkeyPagination.slice(passkeys)" :key="item.id" class="passkey-card"><span slot="leading" class="credential-icon"><m3e-icon name="passkey" /></span><span class="popup-item-title">{{ item.title }}</span><span slot="supporting-text" class="popup-passkey-support"><span>{{ item.userName || tr('无用户名') }} · {{ passkeySource(item) }}</span><span class="passkey-state" :class="{ ready: item.availability === 'ready' }"><m3e-icon aria-hidden="true" :name="item.availability === 'ready' ? 'check_circle' : 'info'" /><span>{{ passkeyState(item) }}</span></span></span></m3e-list-item>
@@ -386,7 +458,8 @@ function isSensitivePageAllowed(raw: string): boolean {
         <section v-if="walletItems.length" id="popup-wallet" tabindex="-1" class="match-section"><div class="section-title"><h2>{{ tr('证件与支付方式') }}</h2><span>{{ walletItems.length }}</span></div><m3e-action-list class="match-list" variant="segmented">
           <m3e-list-action v-for="item in walletPagination.slice(walletItems)" :key="item.id" v-list-action="`${tr('填充')} · ${item.title} · ${walletKindLabel(item.kind)}`" class="wallet-row" :disabled="Boolean(fillingId) || !canFill" @click="!fillingId && canFill && fillWallet(item)"><span slot="leading" class="credential-icon"><m3e-icon :name="walletIcon(item.kind)" /></span><span class="popup-item-title">{{ item.title }}</span><span slot="supporting-text" class="popup-wallet-support">{{ walletKindLabel(item.kind) }} · {{ item.subtitle }}{{ item.sensitive ? tr(' · 点击后填充敏感信息') : '' }}</span><span slot="trailing" class="fill-action">{{ fillingId === item.id ? tr('填充中') : tr('填充') }}<m3e-icon name="arrow_forward" aria-hidden="true" /></span></m3e-list-action>
         </m3e-action-list><ListPagination :page="walletPagination.page.value" :total="walletItems.length" :page-size="20" target="popup-wallet" @change="walletPagination.change" /></section>
-        <div v-if="!visibleMatches.length && !passkeys.length && !walletItems.length && !filteredLogins.length" class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>{{ search.trim() ? tr('没有匹配的登录项') : tr('密码库还是空的') }}</strong><small>{{ search.trim() ? tr('换个关键词试试。') : tr('请在密码库中添加当前页面可使用的登录、Passkey、证件、地址或支付项目。') }}</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('打开密码库') }}</m3e-button></div>
+        <div v-if="matchesLoading || loginQueryLoading" class="popup-supplement-loading" role="status">{{ tr('正在加载…') }}</div>
+        <div v-else-if="!visibleMatches.length && !passkeys.length && !walletItems.length && !loginTotal" class="popup-state empty-popup"><m3e-icon name="key_off"></m3e-icon><strong>{{ search.trim() ? tr('没有匹配的登录项') : tr('密码库还是空的') }}</strong><small>{{ search.trim() ? tr('换个关键词试试。') : tr('请在密码库中添加当前页面可使用的登录、Passkey、证件、地址或支付项目。') }}</small><m3e-button variant="filled" @click="openManager"><m3e-icon slot="icon" name="add"></m3e-icon>{{ tr('打开密码库') }}</m3e-button></div>
       </template>
 
       <p class="popup-status" aria-live="polite">{{ status }}</p>

@@ -1,6 +1,8 @@
 import { createEmptyVaultState, type PasskeyItem, type PendingMutation, type ProviderAccount, type ProviderConflict, type ProviderConflictInput, type ProviderConflictResolution, type ProviderDiagnostic, type ProviderDiagnosticExport, type ProviderMutationReceipt, type ProviderReference, type ProviderSourceRecord, type VaultItem, type VaultState, type WindowsHelloBinding } from "../core/model";
 import { validAutoLockMinutes } from '../core/auto-lock';
 import { sameProviderBinding, type ProviderAcknowledgedMutation, type ProviderRequestedMutation, type ProviderSyncGuard } from "../core/provider";
+import type { BitwardenSyncProbe } from '../providers/bitwarden/bitwarden-durable-sync';
+import { isSteamMaFileLogin } from '../providers/bitwarden/bitwarden-steam-mafile';
 import { matchesBinding, oneDriveConnectionBinding, parseOneDriveConnection, validOneDriveTokens, type OneDriveConnection } from "../providers/onedrive/onedrive-token-manager";
 import type { OneDriveTokens } from "../providers/onedrive/onedrive-auth";
 import { capturePasswordHistory } from '../core/password-history';
@@ -36,18 +38,21 @@ import { assertBitwardenPasskeyPreservationTransition, type BitwardenPasskeyPres
 import { bitwardenRemovalSnapshotSha256 } from '../providers/bitwarden/bitwarden-project-removal-transaction';
 import { parseLosslessJson } from '../core/lossless-json';
 import { adoptBitwardenPasskeyCopies } from '../providers/bitwarden/bitwarden-passkey-preservation-adoption';
-import { redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
+import { createProviderDiagnostic, redactProviderDiagnostic, redactProviderMessage } from "../providers/provider-diagnostics";
+import { normalizeLoginSummaryQuery, selectLoginSummaries, type LoginSummaryQuery } from '../autofill/login-summaries';
 import { validateExportInput, type VaultExportInput, type VaultExportResult } from './authenticated-export';
 import { recoveryOverview, type VaultStorageOverview } from './vault-recovery';
 import { createDeviceVaultKey, decryptVaultState, deriveVaultKey, encryptVaultState, exportVaultKey, importVaultKey, vaultKdfNeedsUpgrade, type DeviceVaultKdfParameters, type VaultEnvelope, type VaultKdfParameters } from "./vault-crypto";
 import { validateMasterPassword } from "./master-password-policy";
 import { bytesToBase64, randomBytes } from "./encoding";
 import type { VaultSessionRecord, VaultSessionStore } from "./vault-session";
+import { indexPayload, prepareRecords, readRecords, VaultRecordIntegrityError, type RecordIndex, type StoredHead } from './vault-records';
+import { decryptVaultPayload, validateVaultPayload } from './vault-crypto';
 import type { VaultEnvelopeStorage } from "./vault-storage";
 import { MemoryVaultDeviceKeyStore, type VaultDeviceKeyStore } from "./vault-device-key";
 import { LockedAutofillCache, supportsLockedAutofill } from "./locked-autofill";
 import { autofillCredentialIdentities, type AutofillCredentialIdentity } from "../autofill/credential-identity";
-import { normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
+import { isAutofillBlocked, normalizeSitePolicy, type AutofillSitePolicy } from "../autofill/site-policy";
 import { addBlockedFieldSignature, normalizeBlockedFieldSignature, type BlockedFieldSignatureRecord } from "../autofill/field-policy";
 import { normalizeHomePreferences, type HomePreferences } from "../core/home-preferences";
 import { apiTokenValidationError } from "../core/api-token";
@@ -94,7 +99,7 @@ export interface AutofillContext {
   blockedHosts: string[];
   blockedFieldSignatures: string[];
   /** Internal revision check; never returned through extension messages. */
-  envelopeVersion: Readonly<VaultEnvelope>;
+  envelopeVersion: Readonly<StoredHead>;
 }
 
 export interface EncryptedVaultBackup {
@@ -133,7 +138,10 @@ export class VaultUnlockError extends Error {
 
 export class SecureVaultService {
   private operationTail: Promise<void> = Promise.resolve();
-  private decodedSnapshot?: { envelope: VaultEnvelope; sessionId?: string; rawKey: string; state: VaultState };
+  private mutationBase = new WeakMap<CryptoKey, { head: StoredHead; session: VaultSessionRecord; epoch: number }>();
+  private recordIndex?: RecordIndex;
+  private migrationDeferred = false;
+  private decodedSnapshot?: { envelope: StoredHead; sessionId?: string; rawKey: string; state: VaultState };
   private snapshotTimer?: ReturnType<typeof setTimeout>;
   private snapshotEpoch = 0;
 
@@ -141,6 +149,7 @@ export class SecureVaultService {
   clearDecryptedState(): void {
     this.snapshotEpoch++;
     this.decodedSnapshot = undefined;
+    this.recordIndex = undefined;
     if (this.snapshotTimer !== undefined) clearTimeout(this.snapshotTimer);
     this.snapshotTimer = undefined;
   }
@@ -164,9 +173,9 @@ export class SecureVaultService {
       if (envelope.kdf.windowsHelloBindingId) return "locked";
       try {
         const key = await this.deviceKey(envelope.kdf);
-        const state = await decryptVaultState(envelope, key);
+        const state = await this.decode(envelope, key);
         if (state.settings.windowsHello) {
-          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)));
+          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)), envelope);
           return "locked";
         }
         await this.startSession(key, state.settings.autoLockMinutes);
@@ -205,7 +214,7 @@ export class SecureVaultService {
       await this.deviceKeys.setAutoUnlockSuspended(false);
     }
     const envelope = await encryptVaultState(state, key, kdf);
-    await this.storage.write(envelope);
+    await this.storage.write(envelope, null);
     await this.startSession(key, state.settings.autoLockMinutes);
     return state;
     });
@@ -220,30 +229,40 @@ export class SecureVaultService {
     let state: VaultState;
     try {
       key = envelope.kdf.name === "DEVICE-KEY" ? await this.deviceKey(envelope.kdf) : (await deriveVaultKey(masterPassword, envelope.kdf)).key;
-      state = await decryptVaultState(envelope, key);
-    } catch {
+      state = await this.decode(envelope, key);
+    } catch (error) {
       this.clearDecryptedState();
       await this.sessions.clear();
+      if (error instanceof VaultRecordIntegrityError) throw error;
       throw new VaultUnlockError();
     }
     if (envelope.kdf.name === "DEVICE-KEY" && state.settings.windowsHello) {
-      await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)));
+      await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, state.settings.windowsHello.bindingId)), envelope);
       throw new VaultHelloRequiredError();
     }
     assertActive?.();
+    let deferRecords = false;
     if (envelope.kdf.name !== "DEVICE-KEY" && vaultKdfNeedsUpgrade(envelope.kdf)) {
       try {
         const upgraded = await deriveVaultKey(masterPassword);
-        await this.storage.write(await encryptVaultState(state, upgraded.key, upgraded.kdf));
+        if (this.storage.records && envelope.version === 1) {
+          await this.stageRecords(envelope, key, upgraded.key, upgraded.kdf, () => { assertActive?.(); });
+        } else {
+          await this.storage.write(await encryptVaultState(state, upgraded.key, upgraded.kdf), envelope);
+        }
         key = upgraded.key;
-      } catch {
+      } catch (error) {
         // A failed best-effort migration must not make a valid legacy vault unreadable.
+        if (!sameVaultEnvelope(envelope, await this.requireEnvelope())) throw error;
+        deferRecords = true;
       }
     }
     assertActive?.();
     await this.startSession(key, state.settings.autoLockMinutes);
+    this.migrationDeferred = deferRecords;
     await this.deviceKeys.setAutoUnlockSuspended(false);
-    await this.refreshLockedAutofill(state, await this.requireEnvelope());
+    const currentHead = this.storage.records ? (await this.unlockedContext()).envelope : await this.requireEnvelope();
+    await this.refreshLockedAutofill(state, currentHead);
     return state;
     });
   }
@@ -273,7 +292,7 @@ export class SecureVaultService {
       if (!bindingId) {
         try {
           key = await this.deviceKey(deviceKdf);
-          state = await decryptVaultState(envelope, key);
+          state = await this.decode(envelope, key);
         } catch {
           this.clearDecryptedState();
           await this.sessions.clear();
@@ -282,8 +301,9 @@ export class SecureVaultService {
         const legacyBinding = state.settings.windowsHello;
         if (!legacyBinding) throw new VaultHelloRequiredError("当前密码库没有有效的 Windows Hello 绑定。");
         bindingId = legacyBinding.bindingId;
+        const old = envelope;
         envelope = await encryptVaultState(state, key, withWindowsHelloBindingId(deviceKdf, bindingId));
-        await this.storage.write(envelope);
+        await this.storage.write(envelope, old);
       }
       const challengeBase64Url = bytesToBase64(randomBytes(32))
         .replace(/\+/g, "-")
@@ -292,7 +312,7 @@ export class SecureVaultService {
       await verify(bindingId, challengeBase64Url);
       try {
         key ||= await this.deviceKey(deviceKdf);
-        state ||= await decryptVaultState(envelope, key);
+        state ||= await this.decode(envelope, key);
       } catch {
         this.clearDecryptedState();
         await this.sessions.clear();
@@ -315,7 +335,7 @@ export class SecureVaultService {
   async windowsHelloBinding(): Promise<WindowsHelloBinding | undefined> {
     return this.runExclusive(async () => {
       const { envelope, key } = await this.unlockedContext();
-      const state = await decryptVaultState(envelope, key);
+      const state = await this.decode(envelope, key);
       await this.touchSession(state.settings.autoLockMinutes);
       return structuredClone(state.settings.windowsHello);
     });
@@ -332,10 +352,10 @@ export class SecureVaultService {
         if (session && session.expiresAt > this.now()) key = await importVaultKey(session.rawKey);
         else if (envelope.kdf.name === "DEVICE-KEY") key = await this.deviceKey(envelope.kdf);
         else return undefined;
-        const state = await decryptVaultState(envelope, key);
+        const state = await this.decode(envelope, key);
         const bindingId = state.settings.windowsHello?.bindingId;
         if (bindingId && envelope.kdf.name === "DEVICE-KEY") {
-          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, bindingId)));
+          await this.storage.write(await encryptVaultState(state, key, withWindowsHelloBindingId(envelope.kdf, bindingId)), envelope);
         }
         return bindingId;
       } catch {
@@ -361,7 +381,7 @@ export class SecureVaultService {
       if (typeof masterPassword !== "string" || !masterPassword || masterPassword.length > 4096) throw new VaultUnlockError();
       try {
         const { key } = await deriveVaultKey(masterPassword, envelope.kdf);
-        await decryptVaultState(envelope, key);
+        await this.decode(envelope, key);
       } catch {
         throw new VaultUnlockError();
       }
@@ -422,7 +442,7 @@ export class SecureVaultService {
       let state: VaultState;
       try {
         const currentKey = envelope.kdf.name === "DEVICE-KEY" ? await this.deviceKey(envelope.kdf) : (await deriveVaultKey(currentPassword, envelope.kdf)).key;
-        state = await decryptVaultState(envelope, currentKey);
+        state = await this.decode(envelope, currentKey);
       } catch {
         throw new VaultUnlockError();
       }
@@ -443,7 +463,7 @@ export class SecureVaultService {
       state.updatedAt = new Date(this.now()).toISOString();
       const newEnvelope = await encryptVaultState(state, newKey, newKdf);
       await this.refreshLockedAutofill(state, newEnvelope);
-      await this.storage.write(newEnvelope);
+      await this.storage.write(newEnvelope, envelope);
       if (envelope.kdf.name === "DEVICE-KEY" && envelope.kdf.keyId !== (newKdf.name === "DEVICE-KEY" ? newKdf.keyId : "")) await this.deviceKeys.remove(envelope.kdf.keyId);
       await this.deviceKeys.setAutoUnlockSuspended(false);
       try {
@@ -475,7 +495,7 @@ export class SecureVaultService {
       if (!input.masterPassword) throw new VaultUnlockError();
       try {
         const { key } = await deriveVaultKey(input.masterPassword, captured.envelope.kdf);
-        await decryptVaultState(captured.envelope, key);
+        await this.decode(captured.envelope, key);
       } catch { throw new VaultUnlockError(); }
     }
     const backupKey = input.format === 'encrypted' ? await deriveVaultKey(input.backupPassword!) : undefined;
@@ -484,10 +504,10 @@ export class SecureVaultService {
       if (session.id !== captured.sessionId || session.rawKey !== captured.rawKey || !sameVaultEnvelope(envelope, captured.envelope)) {
         throw new Error('验证期间密码库或会话已变化，请重新验证导出。');
       }
-      const currentState = await decryptVaultState(envelope, key);
+      const currentState = await this.decode(envelope, key);
       if (currentState.settings.windowsHello?.bindingId !== captured.bindingId) throw new Error('验证方式已变化，请重新验证。');
       if (input.recoveryId && !(await this.storage.recoveryCopies?.())?.some(copy => copy.id === input.recoveryId)) throw new Error('此恢复副本已不再可用，请刷新列表。');
-      const state = captured.recovery ? await decryptVaultState(captured.recovery, key) : currentState;
+      const state = captured.recovery ? await this.decode(captured.recovery, key) : currentState;
       if (input.format === 'plaintext') return { format: 'plaintext', version: 1, items: state.items.filter(item => !item.deletedAt && !item.archivedAt) };
       validateMasterPassword(input.backupPassword!);
       const backupEnvelope = await encryptVaultState(state, backupKey!.key, backupKey!.kdf);
@@ -501,7 +521,7 @@ export class SecureVaultService {
   async exportEncryptedBackup(backupPassword: string): Promise<EncryptedVaultBackup> {
     return this.runExclusive(async () => {
       const { envelope, key } = await this.unlockedContext();
-      const state = await decryptVaultState(envelope, key);
+      const state = await this.decode(envelope, key);
       validateMasterPassword(backupPassword);
       // A vault envelope can be tied to a device-local key.  Backups always get
       // their own password-derived envelope so they can be restored elsewhere.
@@ -561,7 +581,7 @@ export class SecureVaultService {
       if (existing) {
         try {
           const currentKey = existing.kdf.name === "DEVICE-KEY" ? await this.deviceKey(existing.kdf) : (await deriveVaultKey(options.currentPassword || "", existing.kdf)).key;
-          await decryptVaultState(existing, currentKey);
+          await this.decode(existing, currentKey);
         } catch {
           throw new VaultUnlockError();
         }
@@ -577,7 +597,7 @@ export class SecureVaultService {
           // Preserve compatibility if the runtime cannot complete the optional KDF upgrade.
         }
       }
-      await this.storage.write(restoredEnvelope);
+      await this.storage.write(restoredEnvelope, existing);
       await this.refreshLockedAutofill(restoredState, restoredEnvelope);
       try {
         await this.startSession(backupKey, restoredState.settings.autoLockMinutes);
@@ -596,6 +616,56 @@ export class SecureVaultService {
 
   async readState(activity = false): Promise<VaultState> {
     return this.readProjection(state => state, activity);
+  }
+
+  /** Detached merge baseline. Keep unrelated source payloads, attachments and journals out of sync copies. */
+  readBitwardenSyncState() {
+    return this.readProjection(state => ({
+      items: state.items, mutationQueue: state.mutationQueue, providerMutationReceipts: state.providerMutationReceipts,
+      passwordProjectRemovals: state.passwordProjectRemovals, providerConflicts: state.providerConflicts,
+      bitwardenBatchTransfers: state.bitwardenBatchTransfers
+    }));
+  }
+
+  readKeePassSyncState() {
+    return this.readProjection(state => ({ items: state.items, mutationQueue: state.mutationQueue }));
+  }
+
+  async readBitwardenSyncProbe(account: ProviderAccount): Promise<BitwardenSyncProbe | undefined> {
+    return this.runExclusive(async () => {
+      const { envelope, key, session } = await this.unlockedContext();
+      const state = await this.readDecodedSnapshot(envelope, key, session);
+      const current = state.providers.find(row => row.id === account.id);
+      if (!current?.enabled || !sameProviderBinding(current, account)) throw new Error('Bitwarden 密码源已变化，已停止同步。');
+      if (!session.id) return undefined;
+      if (state.mutationQueue.some(row => row.providerId === account.id)
+        || state.providerMutationReceipts.some(row => row.providerId === account.id)
+        || state.providerConflicts.some(row => row.providerId === account.id && row.requiresExplicitResolution)
+        || state.bitwardenBatchTransfers?.some(row => row.target.id === account.id && row.status === 'writing')
+        || readPasswordProjectRemovalJournal(state.passwordProjectRemovals).some(row => row.providerBindings.some(binding => binding.id === account.id))) return undefined;
+      for (const item of state.items) {
+        const reference = item.providerRefs.find(row => row.providerId === account.id);
+        if (reference && (item.updatedAt !== reference.revision
+          || item.kind === 'login' && isSteamMaFileLogin(item) && !item.steamSharedSecretBase64)) return undefined;
+      }
+      return { epoch: this.snapshotEpoch, sessionId: session.id };
+    });
+  }
+
+  async verifyBitwardenSyncProbe(account: ProviderAccount, probe: BitwardenSyncProbe): Promise<boolean> {
+    return this.runExclusive(async () => {
+      const { envelope, key, session } = await this.unlockedContext();
+      const state = await this.readDecodedSnapshot(envelope, key, session);
+      const current = state.providers.find(row => row.id === account.id);
+      if (!current?.enabled || !sameProviderBinding(current, account)) throw new Error('Bitwarden 密码源已变化，已停止同步。');
+      return probe.sessionId === session.id && probe.epoch === this.snapshotEpoch;
+    });
+  }
+
+  /** Scheduling needs account configuration and queue routing, never item payloads. */
+  readProviderSyncSchedule() {
+    return this.readProjection(state => ({ providers: state.providers,
+      mutationQueue: state.mutationQueue.map(row => ({ providerId: row.providerId, lastError: row.lastError })) }));
   }
 
   async storageOverview(): Promise<VaultStorageOverview> {
@@ -1049,6 +1119,14 @@ export class SecureVaultService {
     return this.readProjection(state => state.items.filter((item) => !item.deletedAt && !item.archivedAt));
   }
 
+  async listLoginSummaries(query?: LoginSummaryQuery) {
+    const normalized = query === undefined ? undefined : normalizeLoginSummaryQuery(query);
+    return this.readProjection(state => selectLoginSummaries(state.items,
+      normalized?.excludeMatchingUrl && isAutofillBlocked(normalized.excludeMatchingUrl, {
+        blockedHosts: state.settings.autofillBlockedHosts, saveBlockedHosts: state.settings.saveBlockedHosts
+      }) ? { ...normalized, excludeMatchingUrl: undefined } : normalized));
+  }
+
   async listLockedAutofillItemIds(): Promise<string[]> {
     return this.readProjection(state => state.settings.lockedAutofillItemIds || []);
   }
@@ -1274,7 +1352,7 @@ export class SecureVaultService {
     guard: ProviderSyncGuard = {}
   ): Promise<{ conflicts: number }> {
     return this.runExclusive(async () => {
-    const { state, envelope, key } = await this.mutableContext();
+    const { state, envelope, key } = await this.mutableContext(!guard.keePassTransfer && !guard.bitwardenBatchTransfer);
     const provider = state.providers.find((candidate) => candidate.id === providerId);
     if (!provider) throw new Error("密码源不存在。");
     if (guard.expectedAccount && !sameProviderBinding(guard.expectedAccount, provider)) throw new Error("同步期间密码源配置已变化，请重新同步。");
@@ -1476,6 +1554,18 @@ export class SecureVaultService {
       state.bitwardenBatchTransfers = readBitwardenBatches(bitwardenBatches);
     }
     state.updatedAt = new Date(this.now()).toISOString();
+    if (guard.syncDiagnostic) {
+      // Ordinary telemetry shares the data commit. Receipt preparation, remote
+      // attempts and acknowledgements retain their separate durability barriers.
+      this.appendProviderDiagnostic(state, createProviderDiagnostic(providerId, provider.kind, undefined, state.updatedAt, {
+        operation: 'sync', outcome: persistedConflicts.length ? 'conflict' : 'success',
+        code: persistedConflicts.length ? 'conflict' : 'ok', conflicts: persistedConflicts.length,
+        warnings: guard.syncDiagnostic.warnings,
+        // Time through adoption preparation; the containing storage commit is not yet complete.
+        durationMs: Math.max(0, this.now() - guard.syncDiagnostic.startedAt),
+        message: persistedConflicts.length ? `发现 ${persistedConflicts.length} 个同步冲突。` : '同步完成。'
+      }));
+    }
     await this.persist(state, key, envelope.kdf, false, false, guard.bitwardenBatchTransfer
       ? () => this.assertLocalTransferSession(guard.bitwardenBatchTransfer!.sessionId) : undefined);
     return { conflicts: persistedConflicts.length };
@@ -1497,11 +1587,15 @@ export class SecureVaultService {
   async recordProviderDiagnostic(diagnostic: ProviderDiagnostic): Promise<void> {
     return this.runExclusive(async () => {
       const { state, envelope, key } = await this.mutableContext();
-      const safe = redactProviderDiagnostic(structuredClone(diagnostic));
-      state.providerDiagnostics = [...state.providerDiagnostics, safe].slice(-100);
+      this.appendProviderDiagnostic(state, diagnostic);
       state.updatedAt = new Date(this.now()).toISOString();
       await this.persist(state, key, envelope.kdf, false, false);
     });
+  }
+
+  private appendProviderDiagnostic(state: VaultState, diagnostic: ProviderDiagnostic): void {
+    const safe = redactProviderDiagnostic(structuredClone(diagnostic));
+    state.providerDiagnostics = [...state.providerDiagnostics, safe].slice(-100);
   }
 
   async exportProviderDiagnostics(): Promise<ProviderDiagnosticExport> {
@@ -1592,7 +1686,7 @@ export class SecureVaultService {
 
   async upsertItem(item: VaultItem, allowLockedAutofill?: boolean, expectedUpdatedAt?: string): Promise<VaultItem> {
     return this.runExclusive(async () => {
-    const { state, envelope, key } = await this.mutableContext();
+    const { state, envelope, key } = await this.mutableContext(true);
     assertApiTokenDestination(item, state.providers);
     const existing = state.items.find((candidate) => candidate.id === item.id);
     if (item.kind === "opaque" || existing?.kind === "opaque") throw new Error("此原生类型或版本仅可读取，不能改写或转换为密码。");
@@ -1612,8 +1706,8 @@ export class SecureVaultService {
     if (allowLockedAutofill !== undefined) this.updateLockedAutofillGrant(state, normalized.id, allowLockedAutofill);
     queueProviderMutations(state, normalized, existing ? "update" : "create", now, walletContentOrderOnlyChanged(existing, normalized));
     state.updatedAt = now;
-    await this.persist(state, key, envelope.kdf, allowLockedAutofill === true);
-    return normalized;
+    await this.persist(state, key, envelope.kdf, allowLockedAutofill === true, true, undefined, normalized.kind === 'login' ? normalized.id : undefined);
+    return structuredClone(normalized);
     });
   }
 
@@ -3872,21 +3966,70 @@ export class SecureVaultService {
     return result;
   }
 
-  private async mutableContext(): Promise<{ state: VaultState; envelope: VaultEnvelope; key: CryptoKey }> {
+  private async mutableContext(replacesRows = false): Promise<{ state: VaultState; envelope: StoredHead; key: CryptoKey }> {
     const { envelope, key, session } = await this.unlockedContext();
-    return { state: structuredClone(await this.readDecodedSnapshot(envelope, key, session)), envelope, key };
+    const base = await this.readDecodedSnapshot(envelope, key, session);
+    this.mutationBase.set(key, { head: envelope, session, epoch: this.snapshotEpoch });
+    // Individual edits and ordinary provider merges replace rows; journal operations use an isolated copy.
+    return { state: replacesRows && envelope.version === 2 ? { ...base, settings: structuredClone(base.settings) } : structuredClone(base), envelope, key };
+  }
+
+  private recordBackend() {
+    if (!this.storage.records) throw new Error('Record vault storage is unavailable');
+    return this.storage.records;
+  }
+
+  private async decode(envelope: StoredHead, key: CryptoKey): Promise<VaultState> {
+    if (envelope.version === 1) return decryptVaultState(envelope, key);
+    return validateVaultPayload(indexPayload(await readRecords(envelope, key, this.recordBackend().blocks)));
+  }
+
+  private async assertSessionCurrent(session: VaultSessionRecord) {
+    const current = await this.sessions.read();
+    if (!current || current.id !== session.id || current.rawKey !== session.rawKey || current.expiresAt <= this.now())
+      throw new VaultLockedError();
+  }
+
+  private async migrate(envelope: VaultEnvelope, key: CryptoKey, session: VaultSessionRecord): Promise<StoredHead> {
+    let staged;
+    try {
+      staged = await this.stageRecords(envelope, key, key, envelope.kdf, () => this.assertSessionCurrent(session));
+    } catch (error) {
+      await this.assertSessionCurrent(session);
+      const active = await this.requireEnvelope();
+      if (!sameVaultEnvelope(active, envelope)) throw error;
+      this.migrationDeferred = true;
+      return envelope;
+    }
+    await this.refreshLockedAutofill(staged.state, staged.head);
+    return staged.head;
+  }
+
+  private async stageRecords(envelope: VaultEnvelope, from: CryptoKey, to: CryptoKey, kdf: VaultKdfParameters, guard: () => void | Promise<void>) {
+    const backend = this.recordBackend(), raw = await decryptVaultPayload(envelope, from);
+    const state = validateVaultPayload(raw);
+    const plan = await prepareRecords(raw as object, to, kdf, envelope.updatedAt);
+    await guard();
+    await backend.stage(envelope, plan);
+    const checked = await readRecords(plan.head, to, backend.blocks);
+    if (JSON.stringify(indexPayload(checked)) !== JSON.stringify(raw)) throw new Error('Vault migration verification failed');
+    await guard();
+    await backend.activate(envelope, plan.head);
+    return { state, head: plan.head };
   }
 
   /** Only a byte-identical authenticated envelope in the same live session can hit. */
-  private async readDecodedSnapshot(envelope: VaultEnvelope, key: CryptoKey, session: VaultSessionRecord): Promise<VaultState> {
+  private async readDecodedSnapshot(envelope: StoredHead, key: CryptoKey, session: VaultSessionRecord): Promise<VaultState> {
     const cached = this.decodedSnapshot;
     const same = cached && cached.sessionId === session.id && cached.rawKey === session.rawKey
       && sameVaultEnvelope(cached.envelope, envelope);
     if (!same) this.clearDecryptedState();
     const epoch = this.snapshotEpoch;
-    const state = same ? cached.state : await decryptVaultState(envelope, key);
+    const index = !same && envelope.version === 2 ? await readRecords(envelope, key, this.recordBackend().blocks) : undefined;
+    const state = same ? cached.state : index ? validateVaultPayload(indexPayload(index)) : await this.decode(envelope, key);
     if (session.expiresAt <= this.now()) { this.clearDecryptedState(); throw new VaultLockedError(); }
     if (epoch !== this.snapshotEpoch) throw new VaultLockedError();
+    if (index) this.recordIndex = index;
     this.decodedSnapshot = { envelope, sessionId: session.id, rawKey: session.rawKey, state };
     if (this.snapshotTimer !== undefined) clearTimeout(this.snapshotTimer);
     this.snapshotTimer = setTimeout(() => this.clearDecryptedState(), session.expiresAt - this.now());
@@ -3904,7 +4047,7 @@ export class SecureVaultService {
     state.settings.lockedAutofillItemIds = [...ids];
   }
 
-  private async refreshLockedAutofill(state: VaultState, envelope: VaultEnvelope, required = false): Promise<void> {
+  private async refreshLockedAutofill(state: VaultState, envelope: StoredHead, required = false): Promise<void> {
     try { await this.lockedAutofill.prepare(state, envelope); }
     catch (error) {
       // Normal vault writes still commit: the new envelope invalidates the old cache.
@@ -3913,7 +4056,7 @@ export class SecureVaultService {
     }
   }
 
-  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters, requireLockedAutofill = false, activity = true, beforeCommit?: () => Promise<void>): Promise<void> {
+  private async persist(state: VaultState, key: CryptoKey, kdf: VaultKdfParameters, requireLockedAutofill = false, activity = true, beforeCommit?: () => Promise<void>, editedLoginId?: string): Promise<void> {
     // Once native deletion is authorized, freeze its local sources through
     // final adoption. This also covers edits through import, groups and settings.
     if (state.bitwardenBatchTransfers?.some(batch => batch.status === 'writing' && (batch.mdbxMoves?.length || batch.keepassMoves?.length))) {
@@ -3929,11 +4072,48 @@ export class SecureVaultService {
     }
     const eligible = new Set(state.items.filter(supportsLockedAutofill).map((item) => item.id));
     state.settings.lockedAutofillItemIds = (state.settings.lockedAutofillItemIds || []).filter((id) => eligible.has(id));
-    const envelope = await encryptVaultState(state, key, kdf);
-    await this.refreshLockedAutofill(state, envelope, requireLockedAutofill);
-    await beforeCommit?.();
-    await this.storage.write(envelope);
-    this.clearDecryptedState();
+    const base = this.mutationBase.get(key);
+    if (!base) throw new VaultLockedError();
+    const check = async () => {
+      await beforeCommit?.();
+      if (base.epoch !== this.snapshotEpoch) throw new VaultLockedError();
+      await this.assertSessionCurrent(base.session);
+    };
+    if (base.head.version === 2 && JSON.stringify(kdf) === JSON.stringify(base.head.kdf)) {
+      const index = this.recordIndex, backend = this.recordBackend();
+      if (!index || !sameVaultEnvelope(index.head, base.head)) throw new VaultLockedError();
+      const previous = this.decodedSnapshot?.state;
+      const plan = await prepareRecords(state, key, kdf, state.updatedAt, index,
+        editedLoginId && previous ? previous as unknown as Record<string,unknown> : undefined);
+      // Only a single login edit can reuse the previously validated unrelated state.
+      // Validate its JSON representation, including settings and provider bindings, before publishing.
+      let next: VaultState;
+      if (editedLoginId && previous) {
+        const selected = state.items.find(row => row.id === editedLoginId);
+        const partial = validateVaultPayload(JSON.parse(JSON.stringify({
+          magic: state.magic, schemaVersion: state.schemaVersion, providers: state.providers, settings: state.settings,
+          items: [selected], mutationQueue: state.mutationQueue
+        })));
+        next = { ...previous, updatedAt: state.updatedAt, settings: partial.settings, mutationQueue: partial.mutationQueue,
+          items: state.items.map(row => row.id === editedLoginId ? partial.items[0] : row) };
+      } else next = validateVaultPayload(indexPayload(plan));
+      const checkpoint = await backend.checkpointDue()
+        ? await encryptVaultState(indexPayload(index) as unknown as VaultState, key, kdf) : undefined;
+      await this.refreshLockedAutofill(state, plan.head, requireLockedAutofill);
+      await check();
+      await backend.commit(base.head, plan, checkpoint);
+      if (base.epoch === this.snapshotEpoch && this.decodedSnapshot && base.session.expiresAt > this.now()) {
+        this.snapshotEpoch++;
+        this.recordIndex = { head: plan.head, fields: plan.fields };
+        this.decodedSnapshot = { ...this.decodedSnapshot, envelope: plan.head, state: next };
+      } else this.clearDecryptedState();
+    } else {
+      const envelope = await encryptVaultState(state, key, kdf);
+      await this.refreshLockedAutofill(state, envelope, requireLockedAutofill);
+      await check();
+      await this.storage.write(envelope, base.head);
+      this.clearDecryptedState();
+    }
     try {
       if (activity) await this.touchSession(state.settings.autoLockMinutes);
     } catch {
@@ -3943,7 +4123,7 @@ export class SecureVaultService {
     }
   }
 
-  private async requireEnvelope(): Promise<VaultEnvelope> {
+  private async requireEnvelope(): Promise<StoredHead> {
     const envelope = await this.storage.read();
     if (!envelope) { this.clearDecryptedState(); throw new Error("Vault is not initialized"); }
     return envelope;
@@ -3955,8 +4135,8 @@ export class SecureVaultService {
     return importVaultKey(rawKey);
   }
 
-  private async unlockedContext(): Promise<{ envelope: VaultEnvelope; key: CryptoKey; session: VaultSessionRecord }> {
-    const envelope = await this.requireEnvelope();
+  private async unlockedContext(): Promise<{ envelope: StoredHead; key: CryptoKey; session: VaultSessionRecord }> {
+    let envelope = await this.requireEnvelope();
     const session = await this.sessions.read();
     if (!session || session.expiresAt <= this.now()) {
       this.clearDecryptedState();
@@ -3964,11 +4144,16 @@ export class SecureVaultService {
       throw new VaultLockedError();
     }
     if (this.decodedSnapshot && (this.decodedSnapshot.rawKey !== session.rawKey || this.decodedSnapshot.sessionId !== session.id)) this.clearDecryptedState();
-    return { envelope, key: await importVaultKey(session.rawKey), session };
+    const key = await importVaultKey(session.rawKey);
+    if (envelope.version === 1 && this.storage.records && !this.migrationDeferred) {
+      envelope = await this.migrate(envelope, key, session);
+    }
+    return { envelope, key, session };
   }
 
   private async startSession(key: CryptoKey, autoLockMinutes: number): Promise<void> {
     this.clearDecryptedState();
+    this.migrationDeferred = false;
     const now = this.now();
     await this.sessions.write({
       id: crypto.randomUUID(),
@@ -3986,8 +4171,8 @@ export class SecureVaultService {
   }
 }
 
-function sameVaultEnvelope(left: Readonly<VaultEnvelope>, right: Readonly<VaultEnvelope>): boolean {
-  return left.version === right.version && left.cipher === right.cipher && left.iv === right.iv
+function sameVaultEnvelope(left: Readonly<StoredHead>, right: Readonly<StoredHead>): boolean {
+  return left.version === right.version && (left.version !== 2 || (right.version === 2 && left.vaultId === right.vaultId && left.bytes === right.bytes)) && left.cipher === right.cipher && left.iv === right.iv
     && left.ciphertext === right.ciphertext && left.updatedAt === right.updatedAt
     && JSON.stringify(left.kdf) === JSON.stringify(right.kdf);
 }

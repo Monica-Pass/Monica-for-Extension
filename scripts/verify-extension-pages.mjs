@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const dist = resolve(root, "dist");
+const dist = resolve(root, process.env.MONICA_BUILD_OUT_DIR || "dist");
 const pageNames = ["index.html", "popup.html", "passkey-verify.html", "mdbx-offscreen.html"];
 
 for (const pageName of pageNames) await verifyPage(pageName);

@@ -10,7 +10,13 @@ import { parsePortablePasskeyPrivateKey } from '../../passkey/private-key-portab
 
 export const BITWARDEN_ITEM_SYNC_BATCH_LIMIT = 100;
 
+export interface BitwardenSyncProbe { epoch: number; sessionId: string }
+
 export interface BitwardenDurableSyncVault {
+  /** Returns a fresh isolated projection which the caller can retain across receipt writes. */
+  readBitwardenSyncState?(): ReturnType<BitwardenDurableSyncVault['readState']>;
+  readBitwardenSyncProbe?(account: ProviderAccount): Promise<BitwardenSyncProbe | undefined>;
+  verifyBitwardenSyncProbe?(account: ProviderAccount, probe: BitwardenSyncProbe): Promise<boolean>;
   readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue" | "providerMutationReceipts" | "passwordProjectRemovals"> & Partial<Pick<VaultState, "providerConflicts" | "bitwardenBatchTransfers">>>;
   prepareProviderMutationReceipts(receipts: ProviderMutationReceipt[]): Promise<void>;
   markProviderMutationReceiptsAttempted(providerId: string, mutationIds: string[]): Promise<void>;
@@ -87,11 +93,37 @@ export class BitwardenDurableSyncCoordinator {
     private readonly vault: BitwardenDurableSyncVault
   ) {}
 
-  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { allowEmptyRemote?: boolean; readOnly?: boolean; itemIds?: string[]; syncHint?: ProviderSyncContext["syncHint"] } = {}): Promise<ProviderSyncResult> {
+  async synchronize(account: ProviderAccount, signal?: AbortSignal, options: { allowEmptyRemote?: boolean; readOnly?: boolean; itemIds?: string[]; syncHint?: ProviderSyncContext["syncHint"]; diagnosticStartedAt?: number } = {}): Promise<ProviderSyncResult> {
+    try { return await this.synchronizeAttempt(account, signal, options); }
+    catch (error) {
+      // The provider may have prepared a new remote baseline before the local
+      // encrypted commit failed. Never acknowledge it on the next revision check.
+      this.provider.lockAccount(account.id);
+      throw error;
+    }
+  }
+
+  private async synchronizeAttempt(account: ProviderAccount, signal: AbortSignal | undefined, options: { allowEmptyRemote?: boolean; readOnly?: boolean; itemIds?: string[]; syncHint?: ProviderSyncContext["syncHint"]; diagnosticStartedAt?: number }): Promise<ProviderSyncResult> {
     if (account.kind !== "bitwarden") throw new Error("所选密码源不是 Bitwarden。");
     signal?.throwIfAborted();
 
-    let state = await this.vault.readState(false);
+    let prefetched: Awaited<ReturnType<BitwardenProvider['prefetchSync']>> | undefined;
+    if (options.syncHint?.type === 'check-remote' && !options.readOnly && !options.itemIds && !options.allowEmptyRemote
+      && this.vault.readBitwardenSyncProbe && this.vault.verifyBitwardenSyncProbe) {
+      const probe = await this.vault.readBitwardenSyncProbe(account);
+      if (probe) {
+        prefetched = await this.provider.prefetchSync(account, options.syncHint, signal);
+        signal?.throwIfAborted();
+        const current = await this.vault.verifyBitwardenSyncProbe(account, probe);
+        signal?.throwIfAborted();
+        // Unchanged results are never adopted as snapshots. No caller needs a
+        // copy of every item to report that this check changed nothing.
+        if (current && prefetched.unchanged) return { items: [], conflicts: [], warnings: [], unchanged: true };
+      }
+    }
+
+    const readState = () => this.vault.readBitwardenSyncState?.() ?? this.vault.readState(false);
+    let state = await readState();
     if (state.bitwardenBatchTransfers?.some(row => row.target.id === account.id && row.status === 'writing'))
       throw new Error('Bitwarden 还有未完成的整批传输，请先恢复。');
     if (state.providerConflicts?.some(row => row.providerId === account.id && row.requiresExplicitResolution))
@@ -113,7 +145,7 @@ export class BitwardenDurableSyncCoordinator {
     const pending = selectProjectBatch(eligiblePending, itemById);
     const processedIds = new Set(pending.map(mutation => mutation.id));
     const deferredMutationIds = allPending.filter(mutation => !processedIds.has(mutation.id)).map(mutation => mutation.id);
-    const snapshot = structuredClone(state.items);
+    const snapshot = this.vault.readBitwardenSyncState ? state.items : structuredClone(state.items);
     const providerReceipts = state.providerMutationReceipts
       .filter((receipt) => receipt.providerId === account.id)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.mutationId.localeCompare(right.mutationId));
@@ -125,19 +157,18 @@ export class BitwardenDurableSyncCoordinator {
     const staleSafeReceipts = providerReceipts.filter((receipt) => receipt.stage !== "attempted" && !allPendingById.has(receipt.mutationId));
     if (staleSafeReceipts.length) {
       await this.vault.clearProviderMutationReceipts(account.id, staleSafeReceipts.map((receipt) => receipt.mutationId));
-      state = await this.vault.readState(false);
+      state = await readState();
     }
 
     const currentReceipts = state.providerMutationReceipts
       .filter((receipt) => receipt.providerId === account.id)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.mutationId.localeCompare(right.mutationId));
     const receiptByMutationId = new Map(currentReceipts.map((receipt) => [receipt.mutationId, receipt]));
-    const snapshotById = new Map(snapshot.map((item) => [item.id, item]));
     const newReceipts: ProviderMutationReceipt[] = [];
     const refreshedPreparedIds: string[] = [];
     const now = new Date().toISOString();
     for (const mutation of pending) {
-      const item = snapshotById.get(mutation.itemId);
+      const item = itemById.get(mutation.itemId);
       if (!item) throw new Error("Bitwarden 持久同步批次引用的项目不存在。");
       const existing = receiptByMutationId.get(mutation.id);
       const intentFingerprint = await bitwardenMutationFingerprint(item, 2);
@@ -167,7 +198,7 @@ export class BitwardenDurableSyncCoordinator {
     if (refreshedPreparedIds.length) await this.vault.clearProviderMutationReceipts(account.id, refreshedPreparedIds);
     if (newReceipts.length) {
       await this.vault.prepareProviderMutationReceipts(newReceipts);
-      state = await this.vault.readState(false);
+      state = await readState();
     }
 
     const currentByMutationId = new Map(state.providerMutationReceipts
@@ -197,11 +228,14 @@ export class BitwardenDurableSyncCoordinator {
       allowEmptyRemote: options.allowEmptyRemote === true,
       readOnly: options.readOnly === true,
       syncHint: options.syncHint
-    });
+    }, prefetched);
 
     signal?.throwIfAborted();
     if (result.unchanged) return result;
 
+    if (eligiblePending.length > pending.length) {
+      result.warnings = [...result.warnings, `本轮处理了 ${pending.length} 条 Bitwarden 修改，其余修改将在下次同步继续；同一密码项目的修改会一起处理。`];
+    }
     const acknowledgements = uniqueAcknowledgements([...committed, ...(result.acknowledgedMutations || [])]);
     if (acknowledgements.length) await this.vault.commitProviderMutationReceipts(account.id, acknowledgements);
     await this.vault.applyProviderSync(
@@ -215,13 +249,11 @@ export class BitwardenDurableSyncCoordinator {
       result.requestedMutations,
       result.adoptRemoteRemovals,
       deferredMutationIds,
-      { expectedAccount: account, confirmedRemovedItemIds: result.confirmedRemovedItemIds }
+      { expectedAccount: account, confirmedRemovedItemIds: result.confirmedRemovedItemIds,
+        ...(options.diagnosticStartedAt === undefined ? {} : { syncDiagnostic: { startedAt: options.diagnosticStartedAt, warnings: result.warnings.length } }) }
     );
     if (acknowledgements.length) await this.vault.clearProviderMutationReceipts(account.id, acknowledgements.map((acknowledgement) => acknowledgement.mutationId));
 
-    if (eligiblePending.length > pending.length) {
-      result.warnings = [...result.warnings, `本轮处理了 ${pending.length} 条 Bitwarden 修改，其余修改将在下次同步继续；同一密码项目的修改会一起处理。`];
-    }
     return result;
   }
 }

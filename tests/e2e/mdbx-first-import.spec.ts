@@ -11,7 +11,7 @@ const GOLDEN = path.resolve("native/mdbx2-host/vendor/mdbx/crates/mdbx-storage/t
 async function completeBackup(testInfo: { outputPath: (name: string) => string }): Promise<Uint8Array> {
   const { context, manager } = await openManager({ outputPath: name => testInfo.outputPath(`zip-seed-${name}`) });
   try {
-    await manager.getByRole("tab", { name: "打开已有的密码库" }).click();
+    await manager.getByRole("button", { name: "打开已有的密码库", exact: true }).click();
     await manager.locator('input[type="file"][accept*=".mdbx"]').setInputFiles(GOLDEN);
     await manager.getByLabel("MDBX 密码").fill("mdbx1-golden-password");
     await manager.getByRole("button", { name: "打开并接入密码库" }).click();
@@ -52,26 +52,32 @@ async function openManager(testInfo: { outputPath: (name: string) => string }): 
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker", { timeout: 20_000 });
   const manager = await context.newPage();
   await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
-  await expect(manager.getByRole("heading", { name: "创建加密密码库", exact: true })).toBeVisible();
+  await expect(manager.getByRole("heading", { name: "首次使用", exact: true })).toBeVisible();
   return { context, manager };
 }
 
-test("first-run shows three entries and keeps ordinary open locked", async ({}, testInfo) => {
+test("first-run choices stay separate from password forms and ordinary unlock", async ({}, testInfo) => {
   let context: BrowserContext | undefined;
   try {
     const opened = await openManager(testInfo);
     context = opened.context;
     const manager = opened.manager;
-    await expect(manager.getByRole("heading", { name: "创建加密密码库", exact: true })).toBeVisible();
-    await expect(manager.getByRole("tab", { name: "创建密码库" })).toBeVisible();
-    await expect(manager.getByRole("tab", { name: "打开已有的密码库" })).toBeVisible();
-    await expect(manager.getByRole("tab", { name: "恢复插件备份" })).toBeVisible();
+    await expect(manager.locator('.first-run-actions button')).toHaveCount(3);
+    await expect(manager.locator('input[type="password"], .auth-form')).toHaveCount(0);
+    await manager.screenshot({ path: testInfo.outputPath('first-run-choices.png') });
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
+    await expect(manager.locator('.first-run-actions')).toHaveCount(0);
     await expect(manager.getByRole("button", { name: "创建并解锁" })).toBeVisible();
-    await manager.getByRole("tab", { name: "打开已有的密码库" }).click();
+    await manager.getByLabel('主密码', { exact: true }).fill('synthetic-draft-password');
+    await manager.screenshot({ path: testInfo.outputPath('create-password.png') });
+    await manager.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(manager.getByRole('button', { name: '创建密码库', exact: true })).toBeFocused();
+    await manager.getByRole("button", { name: "打开已有的密码库", exact: true }).click();
+    await expect(manager.locator('.first-run-actions')).toHaveCount(0);
     await expect(manager.getByText("将在独立工作副本上升级为 MDBX-2。原始文件不会被修改。").first()).toBeVisible();
-    await mkdir("docs/design/first-run-import-20261031", { recursive: true });
-    await manager.screenshot({ path: "docs/design/first-run-import-20261031/edge-first-run.png", fullPage: true });
-    await manager.getByRole("tab", { name: "恢复插件备份" }).click();
+    await manager.getByRole('button', { name: '返回', exact: true }).click();
+    await manager.getByRole("button", { name: "恢复插件备份", exact: true }).click();
+    await expect(manager.locator('.first-run-actions')).toHaveCount(0);
     await expect(manager.getByText("恢复插件状态（条目与密码源配置）。独立 MDBX 数据库需要单独的 MDBX 备份。").first()).toBeVisible();
     const locked = await manager.evaluate(async () => chrome.runtime.sendMessage({
       type: "MDBX2_VAULT_OPEN",
@@ -82,6 +88,21 @@ test("first-run shows three entries and keeps ordinary open locked", async ({}, 
       }
     }));
     expect(locked).toMatchObject({ ok: false, code: "VAULT_LOCKED" });
+    await manager.getByRole('button', { name: '返回', exact: true }).click();
+    await manager.getByRole('button', { name: '创建密码库', exact: true }).click();
+    await expect(manager.getByLabel('主密码', { exact: true })).toHaveValue('');
+    await manager.getByRole('button', { name: '创建并解锁', exact: true }).click();
+    await expect(manager.locator('.shell')).toBeVisible();
+    expect(await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'VAULT_LOCK' }))).toMatchObject({ ok: true });
+    await manager.reload();
+    await expect(manager.getByRole('heading', { name: '解锁 Monica', exact: true })).toBeVisible();
+    await expect(manager.locator('.first-run-actions, .auth-back, [role="tablist"]')).toHaveCount(0);
+    await expect(manager.getByRole('button', { name: '解锁', exact: true })).toBeVisible();
+    await manager.setViewportSize({ width: 320, height: 700 });
+    await manager.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await manager.screenshot({ path: testInfo.outputPath('unlock-320-large.png'), fullPage: true });
+    await manager.getByRole('button', { name: '解锁', exact: true }).click();
+    await expect(manager.locator('.shell')).toBeVisible();
   } finally {
     await context?.close();
   }
@@ -95,7 +116,7 @@ test(`uninitialized manager imports ${container} with a plugin master password a
     const opened = await openManager(testInfo);
     context = opened.context;
     const manager = opened.manager;
-    await manager.getByRole("tab", { name: "打开已有的密码库" }).click();
+    await manager.getByRole("button", { name: "打开已有的密码库", exact: true }).click();
     const bytes = await readFile(GOLDEN);
     const originalHash = createHash("sha256").update(bytes).digest("hex");
     const inputFile = container === "mdbx" ? GOLDEN : testInfo.outputPath("complete-backup.zip");
@@ -138,7 +159,7 @@ test("uninitialized manager imports an MDBX1 golden with a device key", async ({
     const opened = await openManager(testInfo);
     context = opened.context;
     const manager = opened.manager;
-    await manager.getByRole("tab", { name: "打开已有的密码库" }).click();
+    await manager.getByRole("button", { name: "打开已有的密码库", exact: true }).click();
     await manager.locator('input[type="file"][accept*=".mdbx"]').setInputFiles(GOLDEN);
     await manager.getByLabel("MDBX 密码").fill("mdbx1-golden-password");
     await manager.getByRole("button", { name: "打开并接入密码库" }).click();
@@ -162,7 +183,7 @@ test("uninitialized manager imports a KeePass KDBX as an existing vault", async 
     const opened = await openManager(testInfo);
     context = opened.context;
     const manager = opened.manager;
-    await manager.getByRole("tab", { name: "打开已有的密码库" }).click();
+    await manager.getByRole("button", { name: "打开已有的密码库", exact: true }).click();
     await manager.locator('input[type="file"][accept*=".kdbx"]').setInputFiles(kdbxPath);
     await manager.getByLabel("数据库密码（可留空）").fill("incorrect-password");
     await manager.getByRole("button", { name: "打开并接入密码库" }).click();

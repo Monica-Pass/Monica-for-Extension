@@ -42,7 +42,7 @@ try {
   }));
   const manager = await ownerContext.newPage();
   await manager.goto(`chrome-extension://${extensionId}/index.html`);
-  await manager.getByRole("heading", { name: "创建加密密码库", exact: true }).waitFor();
+  await manager.getByRole("heading", { name: "首次使用", exact: true }).waitFor();
   const setup = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: "popup icon probe password" }));
   assert(setup?.ok, "Action Popup probe could not create its temporary vault.");
   const locked = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LOCK" }));

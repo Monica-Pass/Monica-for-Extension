@@ -1,10 +1,10 @@
 // Compile copied Android core sources without building the Compose application.
-// Versions match the current Android project; no Android implementation is stubbed.
+// Keep the Kotlin compiler and serialization compiler plugin aligned with Android.
 buildscript {
     repositories { google(); mavenCentral(); gradlePluginPortal() }
     dependencies {
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'
-        classpath 'org.jetbrains.kotlin:kotlin-serialization:2.0.21'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21'
+        classpath 'org.jetbrains.kotlin:kotlin-serialization:2.4.21'
     }
 }
 apply plugin: 'org.jetbrains.kotlin.jvm'
@@ -12,8 +12,7 @@ apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 
 repositories { google(); mavenCentral() }
 dependencies {
-    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.20'
-    implementation 'app.keemobile:kotpass:0.10.0'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.4.21'
     implementation 'org.redundent:kotlin-xml-builder:1.9.1'
     implementation 'com.squareup.okio:okio-jvm:3.9.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'

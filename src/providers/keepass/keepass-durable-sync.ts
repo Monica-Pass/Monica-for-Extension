@@ -10,6 +10,7 @@ export const KEEPASS_ITEM_SYNC_RECEIPT_ID = "item-sync-pending";
 export const KEEPASS_ITEM_SYNC_BATCH_LIMIT = 100;
 
 export interface KeePassDurableSyncVault {
+  readKeePassSyncState?(): ReturnType<KeePassDurableSyncVault['readState']>;
   readState(activity?: boolean): Promise<Pick<VaultState, "items" | "mutationQueue">>;
   applyProviderSync(
     providerId: string,
@@ -33,6 +34,7 @@ export type KeePassDurableSyncPersistence = Pick<KeePassRemoteSessionService,
 export class KeePassDurableSyncCoordinator {
   private readonly projectedWorkingCopies = new Map<string, string>();
   clearProjectionCache(): void { this.projectedWorkingCopies.clear(); }
+  private readSyncState() { return this.vault.readKeePassSyncState?.() ?? this.vault.readState(false); }
   constructor(
     private readonly provider: KeePassProvider,
     private readonly remoteSessions: KeePassDurableSyncPersistence,
@@ -46,7 +48,7 @@ export class KeePassDurableSyncCoordinator {
     }
     await this.recoverPending(account, signal);
     signal?.throwIfAborted();
-    const state = await this.vault.readState(false);
+    const state = await this.readSyncState();
     const snapshot = state.items;
     const allPending = state.mutationQueue
       .filter((mutation) => mutation.providerId === account.id)
@@ -85,7 +87,7 @@ export class KeePassDurableSyncCoordinator {
       }
     }
     signal?.throwIfAborted();
-    const acknowledgements = journal ? receiptAcknowledgements(journal, (await this.vault.readState(false)).mutationQueue) : [];
+    const acknowledgements = journal ? receiptAcknowledgements(journal, (await this.readSyncState()).mutationQueue) : [];
     await this.vault.applyProviderSync(account.id, result.items, result.accountPatch, result.conflicts, result.sourceRecords, snapshot,
       acknowledgements, [], false, deferredMutationIds, { expectedAccount: account });
     if (published && !result.conflicts.length) this.projectedWorkingCopies.set(account.id, published.workingSha256);
@@ -103,7 +105,7 @@ export class KeePassDurableSyncCoordinator {
       throw new KeePassRemoteSessionError("remote-operation-reused", "KeePass 项目同步回执类型无效。");
     }
     signal?.throwIfAborted();
-    const state = await this.vault.readState(false);
+    const state = await this.readSyncState();
     const published = await this.remoteSessions.publishWorkingCopy(account, signal);
     if (!published) throw new KeePassRemoteSessionError("remote-working-copy-missing", "KeePass 远端工作副本无法发布。");
     await this.writeAccountConfig(account, published.accountConfig);

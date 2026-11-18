@@ -10,6 +10,38 @@ export interface BitwardenSymmetricKey {
   macKey: Uint8Array;
 }
 
+interface ImportedBitwardenKeys {
+  encBytes: Uint8Array;
+  macBytes: Uint8Array;
+  decrypt?: Promise<CryptoKey>;
+  encrypt?: Promise<CryptoKey>;
+  hmac?: Promise<CryptoKey>;
+}
+// Only explicitly prepared operation keys opt in. Weak ownership does not
+// retain an account or raw key after its operation drops the key object.
+const importedKeys = new WeakMap<BitwardenSymmetricKey, ImportedBitwardenKeys>();
+
+export function reuseBitwardenCryptoKey(key: BitwardenSymmetricKey): BitwardenSymmetricKey {
+  validateSymmetricKey(key);
+  if (!validImportedKeys(key)) importedKeys.set(key, { encBytes: key.encKey.slice(), macBytes: key.macKey.slice() });
+  return key;
+}
+
+function validImportedKeys(key: BitwardenSymmetricKey): ImportedBitwardenKeys | undefined {
+  const cached = importedKeys.get(key);
+  if (cached && (!constantTimeEqual(cached.encBytes, key.encKey) || !constantTimeEqual(cached.macBytes, key.macKey))) {
+    cached.encBytes.fill(0); cached.macBytes.fill(0); importedKeys.delete(key); return undefined;
+  }
+  return cached;
+}
+
+function bitwardenAesKey(key: BitwardenSymmetricKey, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
+  const cached = validImportedKeys(key);
+  const load = () => crypto.subtle.importKey('raw', key.encKey as BufferSource, { name: 'AES-CBC' }, false, [usage]);
+  if (!cached) return load();
+  return cached[usage] ||= load();
+}
+
 export interface ParsedBitwardenCipherString {
   type: 0 | 2;
   iv: Uint8Array;
@@ -91,11 +123,11 @@ export async function decryptBitwardenBytes(value: string, key: BitwardenSymmetr
   validateSymmetricKey(key);
   const parsed = parseBitwardenCipherString(value);
   if (parsed.type === 2) {
-    const expected = await hmacSha256(key.macKey, concatBytes(parsed.iv, parsed.data));
+    const expected = await hmacSha256(key.macKey, concatBytes(parsed.iv, parsed.data), key);
     if (!parsed.mac || !constantTimeEqual(expected, parsed.mac)) throw new Error("Bitwarden CipherString MAC 校验失败。");
   }
   try {
-    const cryptoKey = await crypto.subtle.importKey("raw", key.encKey as BufferSource, { name: "AES-CBC" }, false, ["decrypt"]);
+    const cryptoKey = await bitwardenAesKey(key, 'decrypt');
     return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-CBC", iv: parsed.iv as BufferSource }, cryptoKey, parsed.data as BufferSource));
   } catch {
     throw new Error("Bitwarden CipherString 解密失败。");
@@ -191,9 +223,9 @@ export async function encryptBitwardenBytes(
   validateSymmetricKey(key);
   const iv = randomness(IV_BYTES);
   if (iv.length !== IV_BYTES) throw new Error("Bitwarden IV 长度无效。");
-  const cryptoKey = await crypto.subtle.importKey("raw", key.encKey as BufferSource, { name: "AES-CBC" }, false, ["encrypt"]);
+  const cryptoKey = await bitwardenAesKey(key, 'encrypt');
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: iv as BufferSource }, cryptoKey, plaintext as BufferSource));
-  const mac = await hmacSha256(key.macKey, concatBytes(iv, data));
+  const mac = await hmacSha256(key.macKey, concatBytes(iv, data), key);
   return `2.${bytesToBase64(iv)}|${bytesToBase64(data)}|${bytesToBase64(mac)}`;
 }
 
@@ -225,8 +257,10 @@ async function hkdfExpand(prk: Uint8Array, info: Uint8Array, length: number): Pr
   return output;
 }
 
-async function hmacSha256(key: Uint8Array, value: Uint8Array): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey("raw", key as BufferSource, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+async function hmacSha256(key: Uint8Array, value: Uint8Array, owner?: BitwardenSymmetricKey): Promise<Uint8Array> {
+  const cached = owner && validImportedKeys(owner);
+  const load = () => crypto.subtle.importKey("raw", key as BufferSource, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const cryptoKey = await (cached ? cached.hmac ||= load() : load());
   return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, value as BufferSource));
 }
 

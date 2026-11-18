@@ -15,6 +15,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('bounded explicit popup reads', () => {
+  it.each([false, true])('reads only the selected login and rejects archived rows: %s', async archived => {
+    const item = { ...createLoginItem({ title: 'Synthetic', password: 'synthetic', uris: [url] }), ...(archived ? { archivedAt: '2026-11-12T00:00:00.000Z' } : {}) };
+    const service = { getItem: vi.fn(async () => item), listItems: vi.fn(async () => [item]) };
+    const runtime = createAutofillRuntime({ service } as unknown as Parameters<typeof createAutofillRuntime>[0]);
+    const result = runtime.handlers.VAULT_LOGIN_SECRET({ type: 'VAULT_LOGIN_SECRET', itemId: item.id, field: 'password' }, sender, false);
+    if (archived) await expect(result).rejects.toThrow();
+    else await expect(result).resolves.toEqual({ value: 'synthetic' });
+    expect(service.getItem).toHaveBeenCalledWith(item.id);
+    expect(service.listItems).not.toHaveBeenCalled();
+  });
+  it('returns an empty wallet selection without copying the complete vault', async () => {
+    const service = { listItems: vi.fn(async () => []) };
+    const runtime = createAutofillRuntime({ service, autofillBlocked: async () => false } as unknown as Parameters<typeof createAutofillRuntime>[0]);
+    await expect(runtime.handlers.VAULT_LIST_WALLET_ITEMS({ type: 'VAULT_LIST_WALLET_ITEMS', kinds: [], pageUrl: url }, sender, false)).resolves.toEqual([]);
+    expect(service.listItems).not.toHaveBeenCalled();
+  });
+});
+
 describe('autofill HOTP acknowledgements after partial page success', () => {
   function fixture(filledTotp: boolean, consumed = true) {
     const item = { ...createLoginItem({ title: 'Fixture', username: 'alice', password: 'password', uris: [url] }),

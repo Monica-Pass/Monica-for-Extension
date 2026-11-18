@@ -33,11 +33,11 @@ export async function first() {
   try { await service.commitLocalTransfer(prepared); } catch { aborted = true; }
   finally { IDBObjectStore.prototype.put = originalPut; }
   if(!aborted || JSON.stringify(await storage.read())!==before) throw new Error('Aborted IndexedDB transaction changed the vault');
-  const write = storage.write.bind(storage);
-  storage.write = async envelope => { await write(envelope); throw new Error('Synthetic lost reply after commit'); };
+  const write = storage.records.commit.bind(storage.records);
+  storage.records.commit = async (...args) => { await write(...args); throw new Error('Synthetic lost reply after commit'); };
   let lostReply = false;
   try { await service.commitLocalTransfer(prepared); } catch { lostReply = true; }
-  storage.write = write;
+  storage.records.commit = write;
   if(!lostReply) throw new Error('Lost response was not injected');
   const actual = await service.readState();
   if(actual.items.length!==4 || actual.localTransferReceipts.length!==1) throw new Error('Group commit was incomplete');

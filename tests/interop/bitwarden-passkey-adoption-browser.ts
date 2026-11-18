@@ -6,7 +6,6 @@ import { bytesToBase64, base64ToBytes } from '../../src/security/encoding';
 import { SecureVaultService } from '../../src/security/secure-vault-service';
 import { IndexedDbVaultStorage } from '../../src/security/vault-storage';
 import { MemoryVaultSessionStore } from '../../src/security/vault-session';
-import type { VaultEnvelope } from '../../src/security/vault-crypto';
 import { BitwardenClient, type BitwardenSessionConfig } from '../../src/providers/bitwarden/bitwarden-client';
 import { BitwardenProvider } from '../../src/providers/bitwarden/bitwarden-provider';
 import { BitwardenPasswordProjectRemovalCoordinator } from '../../src/providers/bitwarden/bitwarden-project-removal';
@@ -22,9 +21,13 @@ const load = <T>(name: string): T => JSON.parse(localStorage.getItem(name)!);
 const save = (name: string, value: unknown) => localStorage.setItem(name, JSON.stringify(value));
 class Storage extends IndexedDbVaultStorage {
   failNext = false;
-  override async write(value: VaultEnvelope) {
-    if (this.failNext) { this.failNext = false; throw new Error('Synthetic final vault save loss'); }
-    return super.write(value);
+  constructor() {
+    super();
+    const commit = this.records.commit;
+    this.records.commit = async (...args) => {
+      if (this.failNext) { this.failNext = false; throw new Error('Synthetic final vault save loss'); }
+      await commit(...args);
+    };
   }
 }
 const fetcher: typeof fetch = async (input, init) => {

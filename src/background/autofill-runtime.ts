@@ -1,17 +1,15 @@
 import { assertManagerPage, assertExtensionPage } from './request-access';
 import { walletPayload } from "../autofill/wallet-payload";
-import { isLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type LoginItem, type PaymentAccountItem, type VaultItem } from "../core/model";
+import { isLoginItem, type BillingAddressItem, type CardItem, type IdentityItem, type PaymentAccountItem, type VaultItem } from "../core/model";
 import { loginMatchScore, matchingLogins } from "../core/matching";
-import { customIconProjection } from '../core/custom-icon';
 import { readInlineAutofillEnabled } from "../autofill/inline-preferences";
 import { assertInlineSessionId, INLINE_SUGGESTION_LIMIT, type InlineAutofillResult } from "../autofill/inline-contract";
 import { websiteAutofillFields } from "../autofill/custom-fields";
-import { autofillCredentialIdentities } from "../autofill/credential-identity";
+import { toMatchSummary } from '../autofill/login-summaries';
 import { resolveLoginOtp } from "../core/login-otp";
 import { currentFrameDocument } from '../runtime/document-target';
 import { isFirefoxExtension } from '../runtime/browser-platform';
-import { loginWebsiteOrigin } from "../core/website-icon";
-import type { LoginMatchSummary, PasskeyMatchSummary, WalletFillKind, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
+import type { PasskeyMatchSummary, WalletFillKind, WalletFillResult, WalletMatchSummary } from "../runtime/messages";
 import { isSecureSensitivePageUrl } from "../runtime/sender-policy";
 import { normalizeRpId } from "../passkey/webauthn-core";
 import { passkeyAvailability, passkeyMatchesPageHost } from "../passkey/source-policy";
@@ -27,7 +25,7 @@ interface Dependencies {
     afterRuntimeRequest: CommandEffects["afterRuntimeRequest"];
     autofillBlocked: AutofillPolicyRuntime["autofillBlocked"];
     dismissInlineMenus: CommandEffects["dismissInlineMenus"];
-    service: Pick<import("../security/secure-vault-service").SecureVaultService, "addAutofillBlockedFieldSignature" | "consumeHotp" | "dispatchAutofill" | "getAutofillSitePolicy" | "getItem" | "isAutofillFieldSignatureBlocked" | "listAutofillBlockedFieldSignatures" | "listItems" | "readAutofillContext" | "readPasskeyContext" | "removeAutofillBlockedFieldSignature" | "setAutofillSitePolicy" | "status">;
+    service: Pick<import("../security/secure-vault-service").SecureVaultService, "addAutofillBlockedFieldSignature" | "consumeHotp" | "dispatchAutofill" | "getAutofillSitePolicy" | "getItem" | "isAutofillFieldSignatureBlocked" | "listAutofillBlockedFieldSignatures" | "listItems" | "listLoginSummaries" | "readAutofillContext" | "readPasskeyContext" | "removeAutofillBlockedFieldSignature" | "setAutofillSitePolicy" | "status">;
 }
 export type AutofillRuntimeRequest = Extract<ExtensionRequest, {
     type: "AUTOFILL_INLINE_QUERY" | "AUTOFILL_INLINE_FILL" | "AUTOFILL_INLINE_OPEN" | "VAULT_MATCH_LOGINS" | "VAULT_LIST_LOGIN_SUMMARIES" | "VAULT_LOGIN_SECRET" | "VAULT_MATCH_PASSKEYS" | "VAULT_FILL_LOGIN" | "VAULT_LIST_WALLET_ITEMS" | "VAULT_FILL_WALLET" | "AUTOFILL_SITE_POLICY_GET" | "AUTOFILL_SITE_POLICY_SET" | "AUTOFILL_FIELD_POLICY_LIST" | "AUTOFILL_FIELD_POLICY_STATUS" | "AUTOFILL_FIELD_POLICY_SET_CURRENT" | "AUTOFILL_FIELD_POLICY_REMOVE";
@@ -145,6 +143,7 @@ export function createAutofillRuntime(deps: Dependencies) {
     type WalletItem = IdentityItem | BillingAddressItem | CardItem | PaymentAccountItem;
     async function listWalletItems(requestedKinds: WalletFillKind[]): Promise<WalletMatchSummary[]> {
         const kinds = new Set(requestedKinds.filter(isWalletKind));
+        if (!kinds.size) return [];
         return (await deps.service.listItems()).filter(isWalletItem).filter((item) => kinds.has(item.kind)).map((item) => ({
             id: item.id,
             kind: item.kind,
@@ -194,9 +193,6 @@ export function createAutofillRuntime(deps: Dependencies) {
     function documentLabel(type: IdentityItem["documentType"]): string {
         return ({ ID_CARD: "身份证", PASSPORT: "护照", DRIVER_LICENSE: "驾驶证", SOCIAL_SECURITY: "社会保障号", OTHER: "证件" } as const)[type];
     }
-    function toMatchSummary(item: LoginItem, credentialIdentity?: LoginMatchSummary['credentialIdentity']): LoginMatchSummary {
-        return { id: item.id, title: item.title, username: item.username, favorite: item.favorite, uris: item.uris, loginType: item.loginType, iconOrigin: loginWebsiteOrigin(item), ...customIconProjection(item), hasTotp: Boolean(item.totpSecret || item.boundTotpItemId), ...(credentialIdentity ? { credentialIdentity } : {}) };
-    }
     const handlers: CommandHandlers<AutofillRuntimeRequest> = {
         "AUTOFILL_INLINE_QUERY": async (request, sender) => {
             return queryInlineAutofill(sender, request.sessionId);
@@ -232,17 +228,12 @@ export function createAutofillRuntime(deps: Dependencies) {
         },
         "VAULT_LIST_LOGIN_SUMMARIES": async (request, sender) => {
             assertExtensionPage(sender);
-            const items = await deps.service.listItems();
-            const identities = autofillCredentialIdentities(items);
-            return items
-                .filter((item): item is LoginItem => isLoginItem(item) && !item.deletedAt)
-                .sort((left, right) => Number(right.favorite) - Number(left.favorite) || right.updatedAt.localeCompare(left.updatedAt))
-                .map(item => toMatchSummary(item, identities[item.id]));
+            return deps.service.listLoginSummaries(request.query);
         },
         "VAULT_LOGIN_SECRET": async (request, sender) => {
             assertExtensionPage(sender);
-            const item = (await deps.service.listItems()).find((candidate): candidate is LoginItem => candidate.id === request.itemId && isLoginItem(candidate) && !candidate.deletedAt);
-            if (!item)
+            const item = await deps.service.getItem(request.itemId);
+            if (!item || !isLoginItem(item) || item.deletedAt || item.archivedAt)
                 throw new Error("登录项不存在或已删除。");
             return { value: request.field === "password" ? item.password : item.username };
         },

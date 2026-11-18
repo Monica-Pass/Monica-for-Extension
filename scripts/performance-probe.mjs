@@ -61,8 +61,13 @@ try {
     window.__monicaPerformance = () => ({ intervals: intervals.size, signatures });
   });
   await manager.goto(`chrome-extension://${id}/index.html`);
+  const versionCdp = await context.newCDPSession(manager);
+  result.browser = (await versionCdp.send('Browser.getVersion')).product;
+  await versionCdp.detach();
+  result.runtime = await manager.evaluate(() => chrome.runtime.sendMessage({ type: 'RUNTIME_INFO' }));
+  result.measuredAt = new Date().toISOString();
   await expect(manager.locator('.login-heading h1')).toBeVisible();
-  await expect(manager.locator('input[type="password"]')).toHaveCount(2);
+  await expect(manager.locator('.first-run-actions button')).toHaveCount(3);
   await manager.evaluate(() => document.fonts.ready);
   await sample(manager, 'managerCold');
   result.managerInitialResources = await resources(manager);
@@ -128,8 +133,41 @@ try {
   observeResources(popup);
   await popup.setViewportSize({ width: 390, height: 600 });
   await site.bringToFront();
+  const popupStart = performance.now();
   await popup.goto(`chrome-extension://${id}/popup.html`);
   await expect(popup.getByRole('searchbox')).toBeVisible();
+  result.latency.popupPrimaryReadyMs = performance.now() - popupStart;
+  await expect(popup.locator('.popup-supplement-loading')).toHaveCount(0);
+  result.renderedPopupFallbackRows = await popup.locator('#popup-login-results .credential-card').count();
+  result.latency.popupFallbackReadyMs = performance.now() - popupStart;
+  result.latency.popupWarmRefreshMs = [];
+  for (let index = 0; index < 3; index++) {
+    await site.bringToFront();
+    result.latency.popupWarmRefreshMs.push(await popup.evaluate(async () => {
+      const start = performance.now();
+      await window.__monicaPopupRefresh();
+      return performance.now() - start;
+    }));
+  }
+  result.loginQueries = await popup.evaluate(async count => {
+    const results = [];
+    for (const text of ['', `Performance account ${String(count - 1).padStart(5, '0')} user${count - 1}`]) {
+      for (let index = 0; index < 3; index++) {
+        const start = performance.now();
+        const response = await chrome.runtime.sendMessage({ type: 'VAULT_LIST_LOGIN_SUMMARIES', query: { page: 1, text } });
+        results.push({ query: text ? 'cross-field-single-match' : 'first-page', ms: performance.now() - start,
+          ok: response.ok, total: response.data?.total, rows: response.data?.items?.length,
+          jsonBytes: new TextEncoder().encode(JSON.stringify(response)).length });
+      }
+    }
+    return results;
+  }, count);
+  for (const query of result.loginQueries) {
+    expect(query.ok).toBe(true);
+    expect(query.rows).toBe(query.query === 'first-page' ? 20 : 1);
+    expect(query.total).toBe(query.query === 'first-page' ? count : 1);
+  }
+  expect(result.renderedPopupFallbackRows).toBeLessThanOrEqual(20);
   await popup.evaluate(() => document.fonts.ready);
   await sample(popup, 'popup');
   result.popupResources = await resources(popup);

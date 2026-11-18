@@ -5,7 +5,7 @@ import {zipSync} from 'fflate';
 import {requestWindowsHelloHost,expectHostSuccess} from './windows-hello-native-protocol.mjs';
 
 // Package an existing executable; never trigger a native rebuild from UI builds.
-const output=resolve('dist/nearby-helper');await mkdir(output,{recursive:true});
+const output=resolve(process.env.MONICA_BUILD_OUT_DIR || 'dist','nearby-helper');await mkdir(output,{recursive:true});
 const executable=resolve(process.env.MONICA_WIFI_HOST_EXECUTABLE || 'native/mdbx2-host/target/release/monica-mdbx2-host.exe');
 let available=process.platform==='win32' && process.arch==='x64';
 try{await access(executable);}catch{available=false;}

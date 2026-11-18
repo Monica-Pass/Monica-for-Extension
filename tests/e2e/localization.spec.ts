@@ -15,6 +15,7 @@ test("browser language initializes the UI, system appearance follows changes, an
     const extensionId = new URL(worker.url()).host;
     const manager = await context.newPage();
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    await manager.getByRole("button", { name: "Create vault", exact: true }).click();
     await expect(manager.getByRole("heading", { name: "Create encrypted vault" })).toBeVisible();
     await expect(manager.locator(".language-picker")).toHaveCount(0);
     await expect(manager.locator("html")).toHaveAttribute("lang", "en");

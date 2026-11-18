@@ -14,6 +14,7 @@ export default defineConfig({
   ],
   base: "./",
   build: {
+    outDir: process.env.MONICA_BUILD_OUT_DIR || "dist",
     modulePreload: false,
     rollupOptions: {
       input: {

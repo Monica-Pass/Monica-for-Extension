@@ -1,6 +1,6 @@
 import type { CardItem, IdentityItem, LoginItem, LoginUriMatchType, LoginUriRule, PasskeyItem, ProviderReference, SecureCustomField, SecureNoteItem, TotpItem, VaultItem } from "../../core/model";
 import { hasAndroidUrlRules, readAndroidUrlRules, writeAndroidUrlRules } from '../../core/url-rules';
-import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, type BitwardenSymmetricKey } from "./bitwarden-crypto";
+import { decryptBitwardenString, decryptBitwardenSymmetricKey, encryptBitwardenString, reuseBitwardenCryptoKey, type BitwardenSymmetricKey } from "./bitwarden-crypto";
 import { parseTotpParameters } from "../../core/totp";
 import { parsePortablePasskeyPrivateKey } from "../../passkey/private-key-portability";
 import { decodeBitwardenCredentialId, normalizeCredentialId, toBitwardenCredentialId } from "../../passkey/source-policy";
@@ -300,7 +300,7 @@ export async function decodeBitwardenCipher(raw: Record<string, unknown>, provid
 
 export async function resolveBitwardenCipherKey(raw: Record<string, unknown>, vaultKey: BitwardenSymmetricKey): Promise<BitwardenSymmetricKey> {
   const keyCipher = stringValue(raw, "Key", "key");
-  return keyCipher ? decryptBitwardenSymmetricKey(keyCipher, vaultKey) : vaultKey;
+  return reuseBitwardenCryptoKey(keyCipher ? await decryptBitwardenSymmetricKey(keyCipher, vaultKey) : vaultKey);
 }
 
 export async function encodeBitwardenCipher(item: VaultItem, encryptionKey: BitwardenSymmetricKey, preservedRaw?: Record<string, unknown>): Promise<Record<string, unknown>> {

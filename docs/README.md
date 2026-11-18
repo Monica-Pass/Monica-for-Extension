@@ -1,6 +1,6 @@
 # Monica Extension 文档索引
 
-`docs/` 全部 320 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
+`docs/` 全部 327 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
 
 > 机器可检索的解决方案库位于 `docs/solutions/`（YAML frontmatter：`module`、`tags`、`problem_type`）；共享领域词汇见仓库根 `CONCEPTS.md`。
 >
@@ -276,7 +276,7 @@ docs/design/ 的 M3E 布局草图与设计证据。
 - [RELEASE-navigation-20260914.md](development/RELEASE-navigation-20260914.md) — 0.1.37导航与编辑改版说明：直开全部项目、新增API密钥类型
 - [VALIDATION-navigation-20260914.md](development/VALIDATION-navigation-20260914.md) — 0.1.37密码库导航与编辑改版的本地开发验证记录
 
-## 发布与阶段记录（21）
+## 发布与阶段记录（22）
 
 docs/releases/ 的发行说明、changelog 与历史阶段记录。
 
@@ -290,6 +290,7 @@ docs/releases/ 的发行说明、changelog 与历史阶段记录。
 - [Monica-Extension-1.0.102.md](releases/Monica-Extension-1.0.102.md) — 1.0.102 正式版发行说明
 - [Monica-Extension-1.0.103.md](releases/Monica-Extension-1.0.103.md) — 1.0.103 正式版发行说明
 - [Monica-Extension-1.0.104.md](releases/Monica-Extension-1.0.104.md) — 1.0.104 正式版发行说明
+- [Monica-Extension-1.0.105.md](releases/Monica-Extension-1.0.105.md) — 1.0.105 中英文发行说明及大库实测
 - [Monica-Extension-next-changelog.md](releases/Monica-Extension-next-changelog.md) — 下一版未发布改动记录（changelog）
 - [RELEASE-0.1.36.md](releases/RELEASE-0.1.36.md) — 0.1.36 发行说明：概览、自动填充、多语言
 - [RELEASE-0.1.37.md](releases/RELEASE-0.1.37.md) — 0.1.37 公开预览版发行说明
@@ -302,7 +303,15 @@ docs/releases/ 的发行说明、changelog 与历史阶段记录。
 - [RELEASE-0.1.44.md](releases/RELEASE-0.1.44.md) — 0.1.44 本地开发阶段记录：登录项网站图标
 - [RELEASE-0.1.45.md](releases/RELEASE-0.1.45.md) — 0.1.45 本地开发阶段记录：弹窗账号列表
 
-## 验证记录（76）
+## 验证记录（82）
+
+- [bitwarden-extension-comparison-20261112.md](verification/bitwarden-extension-comparison-20261112.md) — 官方Bitwarden对照、后台摘要分页搜索与管理页按需加载。
+
+- [extension-performance-20261112.md](verification/extension-performance-20261112.md) — Bitwarden诊断合并提交、Popup分阶段加载和大库分页性能验证。
+- [extension-performance-20261118.md](verification/extension-performance-20261118.md) — 当前扩展三个库规模的Edge/Bitwarden性能实测及Sengoku Nadeko代号展示。
+- [bitwarden-sync-optimization-20261118.md](verification/bitwarden-sync-optimization-20261118.md) — 无变化快路径、批次密钥与原生Base64优化；冻结生产链路对照、Edge及剩余整库写入成本。
+- [record-vault-20261118.md](verification/record-vault-20261118.md) — 逐记录加密、旧库迁移、故障恢复及 Bitwarden、KeePass 同步耗时对照。
+- [unpacked-dist-build-20261118.md](verification/unpacked-dist-build-20261118.md) — 暂存构建、失败保留与普通Edge重启的注册/合成库保留；原扩展消失原因尚未复现。
 
 docs/verification/ 的功能验证、排查与发布就绪检查。
 

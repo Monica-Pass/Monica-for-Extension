@@ -45,9 +45,9 @@ const app = {
   coordinatorClose: () => coordinator.close(),
   coordinatorStatus: () => coordinator.status(),
   async coordinatorPoll(loseReply = false) {
-    const original = storage.write.bind(storage);
-    if (loseReply) storage.write = async envelope => { await original(envelope); throw Error('synthetic application reply lost'); };
-    try { return await coordinator.poll(); } finally { storage.write = original; }
+    const original = storage.records.commit.bind(storage.records);
+    if (loseReply) storage.records.commit = async (...args) => { await original(...args); throw Error('synthetic application reply lost'); };
+    try { return await coordinator.poll(); } finally { storage.records.commit = original; }
   },
   async itemIds() { await ready(); return (await service.readState()).items.map(item => ({ id: item.id, title: item.title })); },
   async seedAdditional(count: number) {
@@ -88,15 +88,15 @@ const app = {
     if (status.phase !== 'received') throw Error('not authenticated');
     const remote = status.peer, p = await preferences(), old = p.peers.find(peer => peer.deviceId === remote.device_id);
     if (binding.peerId && binding.peerId !== remote.device_id || remote.content_type !== 'vault' || remote.vault_content_version !== 2) throw Error('unexpected peer');
-    const original = storage.write.bind(storage);
-    if (loseReply) storage.write = async envelope => { await original(envelope); throw Error('synthetic trust response lost'); };
+    const original = storage.records.commit.bind(storage.records);
+    if (loseReply) storage.records.commit = async (...args) => { await original(...args); throw Error('synthetic trust response lost'); };
     try {
       return await service.updateNearbyPreferences({ kind: 'remember', enrollment: !binding.peerId, peer: {
         deviceId: remote.device_id, name: remote.name, pairId: old?.pairId ?? remote.pairing.pair_id,
         trustedKey: old?.trustedKey ?? remote.pairing.trusted_key, lastSyncedAt: Date.now(),
         sentRevision: '', receivedRevision: remote.revision, receivedRequest: nearbySettingsCounter(remote.sync_request)
       } }, binding.epoch, (await service.passkeySessionId())!);
-    } finally { storage.write = original; }
+    } finally { storage.records.commit = original; }
   },
   async forgetOwned(peerId: string) {
     const p = await preferences(); return service.updateNearbyPreferences({ kind: 'forget', deviceId: peerId }, p.epoch, (await service.passkeySessionId())!);
@@ -153,14 +153,14 @@ const app = {
     }
     const input = { providerId: state.providers[0].id, sourceHash: await service.nearbyLocalSnapshotHash(), assets: [...assets.values()],
       records: pending.items.map(item => ({ id: item.record.id, deleted: item.record.deleted, clockJson: JSON.stringify(item.record.clock), dataJson: JSON.stringify(item.record.data) })) };
-    const original = storage.write.bind(storage);
-    if (loseReply) storage.write = async envelope => { await original(envelope); throw new Error('synthetic stored response lost'); };
+    const original = storage.records.commit.bind(storage.records);
+    if (loseReply) storage.records.commit = async (...args) => { await original(...args); throw new Error('synthetic stored response lost'); };
     try {
       const receipts = await service.adoptNearbyLocalRecords(input, (await service.passkeySessionId())!);
       await transport.call('replica_applied_batch', { handle: replica, items: receipts.map(row => ({ record_id: row.recordId, clock: parseLosslessJson(row.clockJson),
         local_id: row.localId, scope: row.scope, guard: row.guard, data: parseLosslessJson(row.dataJson) })) });
       return receipts.length;
-    } finally { storage.write = original; }
+    } finally { storage.records.commit = original; }
   },
   async inspect() {
     await ready(); const state = await service.readState(), one = state.items.find(item => item.title === 'Nearby project one');

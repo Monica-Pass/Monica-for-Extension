@@ -46,7 +46,7 @@ test("language names stay readable in settings on narrow screens", async ({}, te
     const manager = await context.newPage();
     await context.setOffline(true);
     await manager.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
-    await expect(manager.getByRole("heading", { name: "创建加密密码库", exact: true })).toBeVisible();
+    await expect(manager.getByRole("heading", { name: "首次使用", exact: true })).toBeVisible();
     await expect(manager.locator(".language-picker")).toHaveCount(0);
     expect(await manager.evaluate(password => chrome.runtime.sendMessage({ type: "VAULT_SETUP", masterPassword: password }), password)).toMatchObject({ ok: true });
     await manager.reload();
@@ -99,6 +99,7 @@ for (const language of extraLanguages) {
       const manager = await context.newPage();
       await manager.goto(`chrome-extension://${id}/index.html`);
       await expect(manager.locator("html")).toHaveAttribute("lang", language.value);
+      await manager.getByRole("button", { name: catalog["创建密码库"], exact: true }).click();
       await expect(manager.getByRole("heading", { name: catalog["创建加密密码库"], exact: true })).toBeVisible();
       await expect(manager.locator(".language-picker")).toHaveCount(0);
       await manager.getByLabel(catalog["主密码"], { exact: true }).fill(password);

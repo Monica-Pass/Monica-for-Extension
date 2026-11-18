@@ -83,9 +83,9 @@ test('production settings show retained conflict and legacy recovery without exp
     const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker'),page=await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/index.html`);
     const seed=async(value:typeof envelope)=>page.evaluate(envelope=>new Promise<void>((resolve,reject)=>{
-      const open=indexedDB.open('monica-extension-secure-vault',1);
+      const open=indexedDB.open('monica-extension-secure-vault');
       open.onupgradeneeded=()=>{if(!open.result.objectStoreNames.contains('vault'))open.result.createObjectStore('vault');};
-      open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result,tx=db.transaction('vault','readwrite');tx.objectStore('vault').put(envelope,'primary');tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};
+      open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result,tx=db.transaction('vault','readwrite');tx.objectStore('vault').clear();tx.objectStore('vault').put(envelope,'primary');tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};
     }),value);
     await seed(envelope);
     const unlock=await page.evaluate(masterPassword=>chrome.runtime.sendMessage({type:'VAULT_UNLOCK',masterPassword}),password);expect(unlock.ok).toBe(true);

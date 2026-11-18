@@ -30,14 +30,19 @@ const STANDARD_FIELD_NAMES = new Set(Object.values(STANDARD_FIELD_BY_CODE));
 
 export function buildKeePassReferenceContext(entries: Iterable<KeePassReferenceEntry>): KeePassReferenceContext {
   const list = [...entries];
-  const entriesByNormalizedUuid = new Map<string, KeePassReferenceEntry[]>();
-  for (const entry of list) {
-    const key = normalizeUuid(entry.uuid);
-    const bucket = entriesByNormalizedUuid.get(key);
-    if (bucket) bucket.push(entry);
-    else entriesByNormalizedUuid.set(key, [entry]);
-  }
-  return { entries: list, entriesByNormalizedUuid };
+  let index: Map<string, KeePassReferenceEntry[]> | undefined;
+  return { entries: list, get entriesByNormalizedUuid() {
+    if (!index) {
+      index = new Map();
+      for (const entry of list) {
+        const key = normalizeUuid(entry.uuid);
+        const bucket = index.get(key);
+        if (bucket) bucket.push(entry);
+        else index.set(key, [entry]);
+      }
+    }
+    return index;
+  } };
 }
 
 /**
@@ -62,6 +67,7 @@ export function resolveKeePassReferenceValue(
   currentEntry: KeePassReferenceEntry,
   context: KeePassReferenceContext | undefined
 ): string {
+  if (!context || !rawValue.includes('{')) return rawValue;
   return resolveInternal(rawValue, currentEntry, context, new Set(), 0);
 }
 

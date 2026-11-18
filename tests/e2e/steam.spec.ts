@@ -53,6 +53,7 @@ test("Steam manager handles approvals, inventory, market listings, and devices",
     const manager = await context.newPage();
     await manager.setViewportSize({ width: 1280, height: 900 });
     await manager.goto(`chrome-extension://${extensionId}/index.html`);
+    await manager.getByRole("button", { name: "创建密码库", exact: true }).click();
     await manager.getByLabel("主密码", { exact: true }).fill("steam e2e master password");
     await manager.getByLabel("确认主密码", { exact: true }).fill("steam e2e master password");
     await manager.getByRole("button", { name: "创建并解锁" }).click();

@@ -30,6 +30,7 @@ function fixture() {
   const sync = vi.fn(async (_account: unknown, _context: any) => result);
   const service = {
     getProvider: vi.fn(async () => account), readState: vi.fn(async () => ({ items: [], providers: [account], mutationQueue: [] })),
+    readProviderSyncSchedule: vi.fn(async () => ({ providers: [account], mutationQueue: [] })),
     applyProviderSync: vi.fn(async () => {}), markProviderSyncFailure: vi.fn(async () => {}), upsertProvider: vi.fn(async () => {}),
     saveBitwardenSessionTokens: vi.fn(async (current, session) => ({ ...current, config: { ...current.config, ...session } }))
   };
@@ -47,6 +48,17 @@ function fixture() {
 }
 
 describe('synchronization runtime behavior', () => {
+  it('lets Bitwarden persist ordinary telemetry with adoption instead of writing it again', async () => {
+    const f = fixture();
+    Object.assign(f.account, { kind: 'bitwarden' });
+    const synchronize = vi.fn(async () => f.result);
+    Object.assign(f.dependencies.bitwardenDurableSync, { synchronize });
+    await f.runtime.synchronize('source');
+    expect(synchronize).toHaveBeenCalledWith(f.account, expect.any(AbortSignal), expect.objectContaining({ diagnosticStartedAt: expect.any(Number) }));
+    expect(f.dependencies.recordProviderDiagnosticIfUnlocked).not.toHaveBeenCalled();
+    expect(f.dependencies.publishVaultChanged).toHaveBeenCalledTimes(1);
+    f.runtime.stop();
+  });
   it('shares automatic work but a manual request reads a new snapshot after the first sync', async () => {
     const f = fixture(), first = deferred<typeof f.result>();
     f.sync.mockImplementationOnce(() => first.promise);

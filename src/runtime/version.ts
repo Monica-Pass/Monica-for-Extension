@@ -1,6 +1,8 @@
 import { version } from "../../package.json";
 import { buildId } from './build-id.json';
 
+export const RELEASE_CODENAME = 'Sengoku Nadeko';
+
 export interface RuntimeInfo {
   version: string;
   protocolVersion: number;

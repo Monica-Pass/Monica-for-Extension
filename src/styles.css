@@ -311,6 +311,33 @@ m3e-icon-button {
   background: var(--md-sys-color-secondary-container, var(--app-surface-container));
 }
 
+.first-run-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.first-run-actions button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  min-height: 64px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--md-sys-color-secondary-container, var(--app-surface-container));
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.auth-form { gap: 18px; }
+.auth-back { display: flex; align-items: center; gap: 8px; justify-self: start; min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.auth-back:disabled { opacity: .5; cursor: default; }
+.first-run-actions button:focus-visible, .auth-back:focus-visible { outline: 2px solid var(--md-sys-color-primary, var(--app-primary)); outline-offset: 3px; }
+
 .mdbx-first-import .mdbx2-inspection {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
