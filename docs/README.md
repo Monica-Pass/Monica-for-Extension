@@ -1,6 +1,6 @@
 # Monica Extension 文档索引
 
-`docs/` 全部 327 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
+`docs/` 全部 328 篇文档的分类索引。常青参考是维护与发版随时查阅的入口；编号过程记录（316–321 等阶段标记）按主题归组，保留原始决策与验证细节；历史开发记录（`RELEASE-0.1.36`–`0.1.45`）与验证记录（`VALIDATION-0.1.24`–`0.1.45`）已分别归档至 `releases/` 与 `verification/`。
 
 > 机器可检索的解决方案库位于 `docs/solutions/`（YAML frontmatter：`module`、`tags`、`problem_type`）；共享领域词汇见仓库根 `CONCEPTS.md`。
 >
@@ -303,7 +303,7 @@ docs/releases/ 的发行说明、changelog 与历史阶段记录。
 - [RELEASE-0.1.44.md](releases/RELEASE-0.1.44.md) — 0.1.44 本地开发阶段记录：登录项网站图标
 - [RELEASE-0.1.45.md](releases/RELEASE-0.1.45.md) — 0.1.45 本地开发阶段记录：弹窗账号列表
 
-## 验证记录（82）
+## 验证记录（83）
 
 - [bitwarden-extension-comparison-20261112.md](verification/bitwarden-extension-comparison-20261112.md) — 官方Bitwarden对照、后台摘要分页搜索与管理页按需加载。
 
@@ -379,6 +379,7 @@ docs/verification/ 的功能验证、排查与发布就绪检查。
 - [release-1.0.102.md](verification/release-1.0.102.md) — 1.0.102 正式版发布验证
 - [release-1.0.103.md](verification/release-1.0.103.md) — 1.0.103 正式版发布验证
 - [release-1.0.104.md](verification/release-1.0.104.md) — 1.0.104 正式版发布验证
+- [release-1.0.105.md](verification/release-1.0.105.md) — 1.0.105 正式版发布验证
 - [selection-bottom-20261021.md](verification/selection-bottom-20261021.md) — 底部多选操作栏布局验证
 - [sidebar-passkey-20261021.md](verification/sidebar-passkey-20261021.md) — CLI 独立导航与 Passkey 验证窗口验证
 - [test-cache-cleanup-20261014.md](verification/test-cache-cleanup-20261014.md) — 扩展测试缓存清理验证记录
