@@ -68,6 +68,8 @@ test("manager edits Android Wi-Fi SSH key and barcode records with local QR oper
     });
     await manager.getByRole("button", { name: "加密保存" }).click();
 
+    // A completed click does not mean the asynchronous encrypted save has finished.
+    await expect(dialogContent(manager)).toHaveCount(0);
     const response = await manager.evaluate(async () => chrome.runtime.sendMessage({ type: "VAULT_LIST_ITEMS" })) as { ok: boolean; data: Array<Record<string, unknown>> };
     expect(response.ok).toBe(true);
     const wifi = response.data.find((item) => item.title === "Monica Lab Wi-Fi")!;
