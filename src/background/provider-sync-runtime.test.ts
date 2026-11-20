@@ -59,6 +59,22 @@ describe('synchronization runtime behavior', () => {
     expect(f.dependencies.publishVaultChanged).toHaveBeenCalledTimes(1);
     f.runtime.stop();
   });
+
+  it('skips the provider rewrite when a repeated failure reports the same lastError', async () => {
+    const f = fixture();
+    f.sync.mockImplementation(async () => { throw new Error('offline again'); });
+    Object.assign(f.account, { lastError: 'offline again' });
+    await expect(f.runtime.synchronize('source')).rejects.toThrow('offline again');
+    expect(f.service.markProviderSyncFailure).toHaveBeenCalledWith('source', 'offline again');
+    expect(f.service.upsertProvider).not.toHaveBeenCalled();
+    expect(f.dependencies.recordProviderDiagnosticIfUnlocked).toHaveBeenCalledWith(expect.objectContaining({ message: 'offline again' }));
+    // A changed stored message still rewrites the provider record.
+    Object.assign(f.account, { lastError: undefined });
+    await expect(f.runtime.synchronize('source')).rejects.toThrow('offline again');
+    expect(f.service.upsertProvider).toHaveBeenCalledTimes(1);
+    expect(f.service.upsertProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 'source', lastError: 'offline again' }), false);
+    f.runtime.stop();
+  });
   it('shares automatic work but a manual request reads a new snapshot after the first sync', async () => {
     const f = fixture(), first = deferred<typeof f.result>();
     f.sync.mockImplementationOnce(() => first.promise);

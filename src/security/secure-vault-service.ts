@@ -1587,6 +1587,12 @@ export class SecureVaultService {
   async recordProviderDiagnostic(diagnostic: ProviderDiagnostic): Promise<void> {
     return this.runExclusive(async () => {
       const { state, envelope, key } = await this.mutableContext();
+      // A repeat of the latest record (same provider, operation, outcome, code,
+      // and message) carries no new information; skip the append and the write.
+      const safe = redactProviderDiagnostic(structuredClone(diagnostic));
+      const tail = state.providerDiagnostics[state.providerDiagnostics.length - 1];
+      if (tail && tail.providerRef === safe.providerRef && tail.operation === safe.operation
+        && tail.outcome === safe.outcome && tail.code === safe.code && tail.message === safe.message) return;
       this.appendProviderDiagnostic(state, diagnostic);
       state.updatedAt = new Date(this.now()).toISOString();
       await this.persist(state, key, envelope.kdf, false, false);
@@ -3905,6 +3911,9 @@ export class SecureVaultService {
   async markProviderSyncFailure(providerId: string, message: string): Promise<void> {
     return this.runExclusive(async () => {
     const { state, envelope, key } = await this.mutableContext();
+    // An empty queue for this provider leaves no retry state to advance; skip
+    // the whole-vault write instead of persisting an unchanged vault.
+    if (!state.mutationQueue.some((mutation) => mutation.providerId === providerId)) return;
     state.mutationQueue = state.mutationQueue.map((mutation) => mutation.providerId === providerId ? { ...mutation, attempts: Math.min(5, mutation.attempts + 1), lastError: message } : mutation);
     await this.persist(state, key, envelope.kdf, false, false);
     });

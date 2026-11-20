@@ -173,7 +173,9 @@ export function createProviderSyncRuntime(dependencies: ProviderSyncDependencies
         if (remoteFailure) await persistKeePassRemoteFailure(account.id, remoteFailure, diagnostic.message);
         else {
           const latest = await service.getProvider(account.id);
-          if (latest) await service.upsertProvider({ ...latest, lastError: diagnostic.message }, false);
+          // An unchanged lastError means the stored provider record already
+          // reflects this failure; skip the redundant provider write.
+          if (latest && latest.lastError !== diagnostic.message) await service.upsertProvider({ ...latest, lastError: diagnostic.message }, false);
         }
       }
       await recordProviderDiagnosticIfUnlocked(diagnostic);
