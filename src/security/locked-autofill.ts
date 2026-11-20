@@ -81,8 +81,19 @@ export class LockedAutofillCache {
 
   async prepare(state: VaultState, envelope: VaultEnvelope): Promise<void> {
     const snapshot = lockedAutofillSnapshot(state);
-    if (!snapshot.logins.length) return this.storage.write(null);
     const digest = await envelopeDigest(envelope);
+    const existing = await this.storage.read();
+    if (!snapshot.logins.length) {
+      // Deleting an already absent record stays a no-op instead of rewriting null.
+      if (!existing) return;
+      return this.storage.write(null);
+    }
+    // The cache key lives in the same record, so re-encrypting identical bytes adds no
+    // protection; the envelope digest binding is what fails stale copies closed. Skip
+    // the rewrite when the stored plaintext still equals the freshly projected snapshot;
+    // a damaged record simply falls through to the self-healing rewrite below.
+    if (existing && existing.version === 1 && existing.envelopeDigest === digest
+      && await this.matchesSnapshot(existing, digest, snapshot)) return;
     const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
     const iv = randomBytes(12);
     const plaintext = new TextEncoder().encode(JSON.stringify(snapshot));
@@ -91,6 +102,22 @@ export class LockedAutofillCache {
       await this.storage.write({ version: 1, envelopeDigest: digest, key, iv: bytesToBase64(iv), ciphertext: bytesToBase64(new Uint8Array(ciphertext)) });
     } finally {
       plaintext.fill(0);
+    }
+  }
+
+  /**
+   * Both sides are produced by the same deterministic projection, so comparing the
+   * serialized forms is a byte-equal check. Any decrypt or parse damage means false.
+   */
+  private async matchesSnapshot(record: LockedAutofillRecord, digest: string, snapshot: LockedAutofillSnapshot): Promise<boolean> {
+    try {
+      const bytes = await crypto.subtle.decrypt({
+        name: "AES-GCM", iv: base64ToBytes(record.iv) as BufferSource,
+        additionalData: associatedData(digest)
+      }, record.key, base64ToBytes(record.ciphertext) as BufferSource);
+      return new TextDecoder().decode(bytes) === JSON.stringify(snapshot);
+    } catch {
+      return false;
     }
   }
 }
