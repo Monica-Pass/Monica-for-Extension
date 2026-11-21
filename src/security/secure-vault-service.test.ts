@@ -459,6 +459,62 @@ describe("encrypted vault", () => {
     expect((await service.readState()).mutationQueue).toEqual([]);
   });
 
+  it("skips vault writes when a repeated sync failure changes nothing", async () => {
+    const storage = new CountingMemoryVaultStorage();
+    const service = new SecureVaultService(storage, new MemoryVaultSessionStore());
+    await service.setup("idempotent failure password");
+    await service.upsertProvider({ id: "bw", kind: "bitwarden", name: "Bitwarden", enabled: true, isDefaultSaveTarget: false, config: {} });
+    const login = createLoginItem({ title: "Queued", password: "secret", uris: ["example.com"], providerRefs: [{ providerId: "bw" }] });
+    await service.upsertItem(login);
+
+    // First failure persists the retry state and the diagnostic.
+    let writes = storage.writeCount;
+    await service.markProviderSyncFailure("bw", "offline");
+    expect((await service.readState()).mutationQueue[0]).toMatchObject({ attempts: 1, lastError: "offline" });
+    expect(storage.writeCount).toBe(writes + 1);
+    const failure = { providerRef: "provider-9d656a4b", kind: "bitwarden" as const, operation: "sync", outcome: "failure" as const, code: "unknown", retryable: true, attempts: 1, message: "offline" };
+    await service.recordProviderDiagnostic({ ...failure, at: "2026-11-20T01:00:00.000Z" });
+    expect((await service.exportProviderDiagnostics()).diagnostics).toHaveLength(1);
+
+    // The same failure again with an empty queue must not write the vault.
+    const providerWithoutQueue = { id: "idle", kind: "bitwarden" as const, name: "Idle", enabled: true, isDefaultSaveTarget: false, config: {} };
+    await service.upsertProvider(providerWithoutQueue);
+    writes = storage.writeCount;
+    await service.markProviderSyncFailure("idle", "offline");
+    await service.markProviderSyncFailure("idle", "offline");
+    expect(storage.writeCount).toBe(writes);
+    // Scheduling still sees unchanged routing: the idle provider gains no pending
+    // entry and the queued mutation keeps its lastError gate (morePending).
+    expect(await service.readProviderSyncSchedule()).toMatchObject({ mutationQueue: [{ providerId: "bw", lastError: "offline" }] });
+
+    // A non-empty queue still advances attempts and persists on every failure.
+    await service.markProviderSyncFailure("bw", "offline");
+    expect((await service.readState()).mutationQueue[0]).toMatchObject({ attempts: 2, lastError: "offline" });
+    expect(storage.writeCount).toBe(writes + 1);
+    writes += 1;
+
+    // An identical diagnostic is neither appended nor persisted.
+    const updatedAt = (await service.readState()).updatedAt;
+    await service.recordProviderDiagnostic({ ...failure, at: "2026-11-20T02:00:00.000Z" });
+    expect(storage.writeCount).toBe(writes);
+    expect((await service.readState()).updatedAt).toBe(updatedAt);
+    const dedupedExport = await service.exportProviderDiagnostics();
+    expect(dedupedExport.diagnostics).toHaveLength(1);
+    expect(dedupedExport.summary).toMatchObject({ total: 1, failures: 1 });
+
+    // A changed message appends a new diagnostic and persists again.
+    await service.recordProviderDiagnostic({ ...failure, at: "2026-11-20T03:00:00.000Z", message: "offline again" });
+    expect(storage.writeCount).toBe(writes + 1);
+    const grownExport = await service.exportProviderDiagnostics();
+    expect(grownExport.diagnostics).toHaveLength(2);
+    expect(grownExport.summary).toMatchObject({ total: 2, failures: 2 });
+
+    // A successful sync still clears lastError and the queued mutations.
+    await service.applyProviderSync("bw", [login], { lastSyncAt: new Date().toISOString(), lastError: undefined });
+    expect((await service.getProvider("bw"))?.lastError).toBeUndefined();
+    expect((await service.readState()).mutationQueue).toEqual([]);
+  });
+
   it("keeps conflicted mutations and both encrypted versions until explicit resolution", async () => {
     const storage = new MemoryVaultStorage();
     const service = new SecureVaultService(storage, new MemoryVaultSessionStore());

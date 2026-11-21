@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createLoginItem, type LoginItem } from "../core/model";
+import { createEmptyVaultState, createLoginItem, type LoginItem } from "../core/model";
+import type { VaultEnvelope } from "./vault-crypto";
+import { base64ToBytes, bytesToBase64 } from "./encoding";
 import { LockedAutofillCache, MemoryLockedAutofillStorage } from "./locked-autofill";
 import { SecureVaultService, VaultLockedError } from "./secure-vault-service";
 import { MemoryVaultStorage } from "./vault-storage";
@@ -197,5 +199,121 @@ describe("device-local selective autofill", () => {
     cacheStorage.write = async () => { throw new Error("storage unavailable"); };
     await expect(service.setLockedAutofill(item.id, true)).rejects.toThrow("storage unavailable");
     expect(await service.listLockedAutofillItemIds()).toEqual([]);
+  });
+});
+
+function grantedVault(password: string) {
+  const state = createEmptyVaultState();
+  const item = createLoginItem({ title: "Granted account", username: "granted-user", password, uris: ["https://example.com"] });
+  state.items.push(item);
+  state.settings.lockedAutofillItemIds = [item.id];
+  return { state, item };
+}
+
+function envelopeFixture(tag: string): VaultEnvelope {
+  return {
+    version: 1,
+    kdf: { name: "ARGON2ID", iterations: 3, memoryKiB: 65536, parallelism: 1, salt: `salt-${tag}` },
+    cipher: "AES-256-GCM", iv: `iv-${tag}`, ciphertext: `ciphertext-${tag}`, updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+}
+
+describe("locked autofill cache prepare write policy", () => {
+  it("skips rewriting when the snapshot and envelope are unchanged", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state, item } = grantedVault("granted-password-sentinel");
+    const envelope = envelopeFixture("stable");
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(structuredClone(state), envelope);
+    await cache.prepare(structuredClone(state), envelope);
+    expect(write).toHaveBeenCalledTimes(1);
+    const snapshot = await cache.read(envelope);
+    expect(snapshot?.logins).toHaveLength(1);
+    expect(snapshot?.logins[0]).toMatchObject({ id: item.id, username: "granted-user", password: "granted-password-sentinel" });
+  });
+
+  it.each(["password", "uri rules", "blocked hosts"] as const)("rewrites when the granted %s change although the granted ids match", async (change) => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state } = grantedVault("granted-password-sentinel");
+    await cache.prepare(state, envelopeFixture("before"));
+    const changed = structuredClone(state);
+    if (change === "password") (changed.items[0] as LoginItem).password = "rotated-password-sentinel";
+    if (change === "uri rules") (changed.items[0] as LoginItem).uris = ["https://example.com", "https://rotated.example.org"];
+    if (change === "blocked hosts") changed.settings.autofillBlockedHosts = ["blocked.example.com"];
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(changed, envelopeFixture("after"));
+    expect(write).toHaveBeenCalledTimes(1);
+    const snapshot = await cache.read(envelopeFixture("after"));
+    expect(snapshot?.logins).toHaveLength(1);
+    if (change === "password") expect(snapshot?.logins[0]).toMatchObject({ password: "rotated-password-sentinel" });
+    if (change === "uri rules") expect(snapshot?.logins[0].uris).toHaveLength(2);
+    if (change === "blocked hosts") expect(snapshot?.blockedHosts).toEqual(["blocked.example.com"]);
+  });
+
+  it("rewrites changed content even when the envelope digest still matches", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state } = grantedVault("granted-password-sentinel");
+    const envelope = envelopeFixture("stable");
+    await cache.prepare(state, envelope);
+    const changed = structuredClone(state);
+    (changed.items[0] as LoginItem).password = "rotated-password-sentinel";
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(changed, envelope);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect((await cache.read(envelope))?.logins[0]).toMatchObject({ password: "rotated-password-sentinel" });
+  });
+
+  it("rewrites when the envelope digest no longer matches", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state } = grantedVault("granted-password-sentinel");
+    await cache.prepare(state, envelopeFixture("first"));
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(structuredClone(state), envelopeFixture("second"));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(await cache.read(envelopeFixture("first"))).toBeNull();
+    expect((await cache.read(envelopeFixture("second")))?.logins).toHaveLength(1);
+  });
+
+  it("self-heals a corrupted cached record instead of skipping the write", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state } = grantedVault("granted-password-sentinel");
+    const envelope = envelopeFixture("stable");
+    await cache.prepare(state, envelope);
+    const corrupted = cacheStorage.record!;
+    const bytes = base64ToBytes(corrupted.ciphertext);
+    bytes[0] = bytes[0] ^ 0xff;
+    await cacheStorage.write({ ...corrupted, ciphertext: bytesToBase64(bytes) });
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(structuredClone(state), envelope);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect((await cache.read(envelope))?.logins[0]).toMatchObject({ password: "granted-password-sentinel" });
+  });
+
+  it("does not write when the cache is already empty and nothing is granted", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(createEmptyVaultState(), envelopeFixture("stable"));
+    expect(write).not.toHaveBeenCalled();
+    expect(cacheStorage.record).toBeNull();
+  });
+
+  it("still deletes a non-empty record when the last grant disappears", async () => {
+    const cacheStorage = new MemoryLockedAutofillStorage();
+    const cache = new LockedAutofillCache(cacheStorage);
+    const { state } = grantedVault("granted-password-sentinel");
+    await cache.prepare(state, envelopeFixture("granted"));
+    const revoked = structuredClone(state);
+    revoked.settings.lockedAutofillItemIds = [];
+    const write = vi.spyOn(cacheStorage, "write");
+    await cache.prepare(revoked, envelopeFixture("revoked"));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith(null);
+    expect(cacheStorage.record).toBeNull();
   });
 });

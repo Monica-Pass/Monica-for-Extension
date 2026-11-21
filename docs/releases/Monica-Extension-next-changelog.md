@@ -25,6 +25,7 @@
 - 内置浏览器 MDBX 引擎改用 zip 9.0.5，消除 GitHub 对 zip 2.4.2 报告的严重、高危和中危告警；完整备份 ZIP 格式不变，已与 zip 2.4.2 互相读取验证。可选 Windows 本机助手仍使用 zip 2.4.2，因为其 Rust 1.86.0 工具链需与已审查的核心版本一致。
 - API 密钥新增自定义字段时，如已有 64 位字符串字段标识，不再生成无效标识导致无法保存。
 - 开发与发布检查：`npm run check` 改用 vue-tsc，单文件组件的脚本与模板纳入类型检查；修复每次运行都失败的 MonicaDocs 通知工作流和每周全历史密钥扫描（逐条复核的误报按精确路径排除，并由 `verify:workflows` 限制排除范围）；开发依赖 minimatch 覆盖为 11.0.4，`npm audit` 不再报告 ESLint 工具链的 moderate 告警。
+- 减少无变化时的重复写盘：解锁时若锁定自动填充缓存的内容与密码库摘要都未变，跳过重写；缓存损坏或内容变化仍自动重建，摘要绑定与最小化字段投影不变。自动同步重复失败不再改写密码源记录、不追加完全相同的诊断；队列中有待写修改时的重试计数、恢复回执与成功诊断同事务提交的语义保持不变。重新加载扩展并解锁后，无改动的本地库不再产生额外写入，重复同步失败不再刷穿诊断环形缓冲。
 
 ## English
 
@@ -49,3 +50,4 @@
 - The bundled browser MDBX engine now uses zip 9.0.5, which resolves the critical, high and medium GitHub advisories reported for zip 2.4.2. The complete-backup ZIP format is unchanged and was cross-read with zip 2.4.2. The optional Windows helper keeps zip 2.4.2 because its Rust 1.86.0 toolchain must match the reviewed core release.
 - Adding a custom field to an API key that already has 64-bit string field IDs no longer creates an invalid ID that blocks saving.
 - Development and release checks: `npm run check` now uses vue-tsc, so single-file component scripts and templates are type-checked. Fixed the MonicaDocs notification workflow, which failed on every run, and the weekly full-history secret scan; reviewed false positives are excluded by exact path and `verify:workflows` keeps the exclusions narrow. The development dependency minimatch is overridden to 11.0.4, so `npm audit` no longer reports the moderate ESLint toolchain advisory.
+- Fewer redundant writes when nothing changed. Unlocking skips rewriting the locked-autofill cache when its content and the vault envelope digest are both unchanged; damaged or changed caches are rebuilt as before, preserving the digest binding and the minimized field projection. Repeated automatic-sync failures no longer rewrite the provider record or append identical diagnostics, while retry counters for queued mutations, recovery receipts, and the shared transaction for successful sync diagnostics keep their semantics. Reloading the extension and unlocking an unchanged vault no longer produces extra writes, and repeated failures no longer flood the diagnostic ring buffer.
